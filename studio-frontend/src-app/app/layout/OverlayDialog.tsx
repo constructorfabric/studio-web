@@ -50,7 +50,7 @@ export const OverlayDialog: React.FC = () => {
 
   const close = useCallback(() => {
     if (!openExtensionId) return;
-    void app.mfeRegistry?.executeActionsChain({
+    app.mfeRegistry?.executeActionsChain({
       action: {
         type: FRONTX_ACTION_UNMOUNT_EXT,
         target: overlayDomain.id,

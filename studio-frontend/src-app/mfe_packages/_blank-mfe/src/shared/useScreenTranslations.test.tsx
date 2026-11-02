@@ -23,7 +23,7 @@ function makeBridge(language: string): ChildMfeBridge {
       value: language,
     })),
     subscribeToProperty: vi.fn(() => vi.fn()),
-    executeActionsChain: vi.fn().mockResolvedValue(undefined),
+    executeActionsChain: vi.fn(),
     registerActionHandler: vi.fn(),
   };
 }
@@ -100,7 +100,7 @@ describe('useScreenTranslations', () => {
           return vi.fn();
         },
       ),
-      executeActionsChain: vi.fn().mockResolvedValue(undefined),
+      executeActionsChain: vi.fn(),
       registerActionHandler: vi.fn(),
     };
 
@@ -151,7 +151,7 @@ describe('useScreenTranslations', () => {
         value: 'en',
       })),
       subscribeToProperty: vi.fn(() => unsubscribe),
-      executeActionsChain: vi.fn().mockResolvedValue(undefined),
+      executeActionsChain: vi.fn(),
       registerActionHandler: vi.fn(),
     };
     const languageModules = {

@@ -1,3 +1,4 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
@@ -12,11 +13,7 @@ import type { ConnectionRow } from '../../../shared/useConnectionList';
  * columns, and above all that the four without a data source render a
  * placeholder rather than a value borrowed from a different fact.
  */
-// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return { ...actual, queryCacheShared: actual.queryCache };
-});
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
 
 vi.mock('./HealthInline', () => ({
   HealthInline: ({ connectionId }: { connectionId: string }) => (

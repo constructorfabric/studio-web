@@ -18,7 +18,7 @@ import {
   STUDIO_EXTENSION_WORKSPACE_CREATE,
   closeOverlay,
   requestFromHost,
-  sendAndForget,
+  sendToHost,
 } from '@constructor-studio/mfe-shared';
 import './../events/workspaceEvents';
 
@@ -27,7 +27,7 @@ import './../events/workspaceEvents';
  * overlay that will not unmount, and mfes 0.4.0 does not report a refusal anyway.
  */
 export function closeWorkspaceForm(bridge: ChildMfeBridge | null): void {
-  closeOverlay(bridge, STUDIO_EXTENSION_WORKSPACE_CREATE, 'projects');
+  closeOverlay(bridge, STUDIO_EXTENSION_WORKSPACE_CREATE);
 }
 
 /**
@@ -52,15 +52,11 @@ export function publishCreatedWorkspace(
  * over.
  */
 export function publishWorkspaceScope(bridge: ChildMfeBridge | null): void {
-  sendAndForget(
-    bridge,
-    {
-      type: STUDIO_ACTION_WORKSPACES_PUBLISH,
-      target: FRONTX_SCREEN_DOMAIN,
-      payload: { kind: 'scoped' },
-    },
-    'projects'
-  );
+  sendToHost(bridge, {
+    type: STUDIO_ACTION_WORKSPACES_PUBLISH,
+    target: FRONTX_SCREEN_DOMAIN,
+    payload: { kind: 'scoped' },
+  });
 }
 
 export function requestWorkspaceCreate(orgId: string, name: string): void {

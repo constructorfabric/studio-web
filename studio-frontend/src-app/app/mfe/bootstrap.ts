@@ -188,8 +188,15 @@ class HostContainerHooks implements ContainerHooks {
     el.dataset.extensionId = extensionId;
     if (this.fill) el.style.height = '100%';
     this.elements.set(extensionId, el);
-    occupancyOf(this.registry).created(this.domainId, extensionId);
     return el;
+  }
+
+  /**
+   * The runtime creates the container before it loads the remote, so the
+   * extension counts as mounted only from here: once its mount has finished.
+   */
+  mounted(extensionId: string): void {
+    occupancyOf(this.registry).created(this.domainId, extensionId);
   }
 
   destroy(extensionId: string): void {
@@ -198,16 +205,22 @@ class HostContainerHooks implements ContainerHooks {
   }
 }
 
+/** Mounts through the domain's strategy, and records the extension once it is in. */
+function mountHandler(strategy: MountStrategy, hooks: HostContainerHooks): ActionHandler {
+  return ActionHandler.fromFunction(async (_t, p) => {
+    const payload = p as ActionPayload;
+    await strategy.mount(payload);
+    hooks.mounted(payload.subject);
+  });
+}
+
 class ScreenDomainImpl extends ExtensionDomainImplementation {
   private readonly strategy: ExclusiveMountStrategy;
 
-  constructor(ctx: DomainContext, hooks: ContainerHooks, registry: MfeRegistry) {
+  constructor(ctx: DomainContext, hooks: HostContainerHooks, registry: MfeRegistry) {
     super();
     this.strategy = new ExclusiveMountStrategy(ctx.mounter, hooks);
-    ctx.registerHandler(
-      FRONTX_ACTION_MOUNT_EXT,
-      ActionHandler.fromFunction((_t, p) => this.strategy.mount(p as ActionPayload)),
-    );
+    ctx.registerHandler(FRONTX_ACTION_MOUNT_EXT, mountHandler(this.strategy, hooks));
     // The screen domain is where the mounted MFE lives, so it is also where an
     // MFE's context publication arrives. See contextActions.ts for why this is
     // an action chain and not an event.
@@ -228,13 +241,10 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
 class OptionalDomainImpl extends ExtensionDomainImplementation {
   private readonly strategy: OptionalMountStrategy;
 
-  constructor(ctx: DomainContext, hooks: ContainerHooks, handlers: Record<string, ActionHandler> = {}) {
+  constructor(ctx: DomainContext, hooks: HostContainerHooks, handlers: Record<string, ActionHandler> = {}) {
     super();
     this.strategy = new OptionalMountStrategy(ctx.mounter, hooks);
-    ctx.registerHandler(
-      FRONTX_ACTION_MOUNT_EXT,
-      ActionHandler.fromFunction((_t, p) => this.strategy.mount(p as ActionPayload)),
-    );
+    ctx.registerHandler(FRONTX_ACTION_MOUNT_EXT, mountHandler(this.strategy, hooks));
     ctx.registerHandler(
       FRONTX_ACTION_UNMOUNT_EXT,
       ActionHandler.fromFunction((_t, p) => this.strategy.unmount!(p as ActionPayload)),

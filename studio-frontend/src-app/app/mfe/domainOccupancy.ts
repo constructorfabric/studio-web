@@ -1,8 +1,8 @@
 /**
- * What each domain has mounted, as its container hooks report it: an extension
- * counts from the creation of its container until its destruction. The runtime
- * no longer exposes mounted state (mfes 0.4.0); this only records, and decides
- * nothing.
+ * What each domain has mounted, as the shell's domains report it: an extension
+ * counts from the end of its mount until its container's destruction. The
+ * runtime creates the container before it loads the remote, and no longer
+ * exposes mounted state (mfes 0.4.0); this only records, and decides nothing.
  */
 
 import { useCallback, useRef, useSyncExternalStore } from 'react';

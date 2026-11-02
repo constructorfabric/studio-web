@@ -1,3 +1,4 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
@@ -9,11 +10,7 @@ import { CONNECTION_LIST_NAMESPACE } from '../../../i18n';
 import en from '../i18n/en.json';
 import { ConnectionsToolbar } from './ConnectionsToolbar';
 
-// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return { ...actual, queryCacheShared: actual.queryCache };
-});
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
 
 /**
  * The header's controls come from the kit and are configured, not written, so

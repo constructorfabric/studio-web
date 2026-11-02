@@ -3,7 +3,8 @@
  * location already reflects a navigation when its subscribers run, `push` and
  * `replace` notify at once, `go` lands later as a `'history'` round, every entry
  * keeps its position, and a round started from inside another waits for it.
- * `@gears-frontx/routing` 0.4 builds its own only over `window`.
+ * `@gears-frontx/routing` 0.4 builds its own only over `window`;
+ * `memoryNavigationHistory.test.ts` walks both through the same steps.
  */
 import type {
   HistoryNotification,
@@ -114,10 +115,11 @@ export function freshNavigationHistory(initialUrl = '/'): {
       notify('replace');
     },
     go(delta) {
-      const next = index + delta;
-      if (next < 0 || next >= stack.length) return;
-      // The browser lands a `go` later, as a popstate; so does this.
+      // The browser lands a `go` later, as a popstate, counting from the entry
+      // it is on by then; so does this.
       queueMicrotask(() => {
+        const next = index + delta;
+        if (next < 0 || next >= stack.length) return;
         index = next;
         notify('history');
       });

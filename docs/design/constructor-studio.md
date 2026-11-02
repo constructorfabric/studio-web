@@ -1210,7 +1210,7 @@ The FrontX host that mounts microfrontends and owns navigation (ADR-0006, ADR-00
 
 ##### Responsibility scope
 
-`studio-frontend/src-app/app/`: OIDC sign-in, the levels with each level's header and tabs, the overlay domain, the organization and workspace in scope, the `studio-events` subscription, the Module Federation and iframe entry handlers (`mfe/MfeHandlerIframe.ts`, ADR-0021); `studio-frontend/packages/` holds the FrontX solution packages. `_iframe-fixture` is the frame-entry fixture package (Frame fixture, `/fixture/frame`, organization level), `_blank-mfe` the template, `shared` the code MFEs share.
+`studio-frontend/src-app/app/`: OIDC sign-in, the levels with each level's header and tabs, the overlay domain, the organization and workspace in scope, the `studio-events` subscription, the Module Federation and iframe entry handlers (`mfe/MfeHandlerIframe.ts`, ADR-0021); the FrontX solution packages come from npm at exact versions (#946). `_iframe-fixture` is the frame-entry fixture package (Frame fixture, `/fixture/frame`, organization level), `_blank-mfe` the template, `shared` the code MFEs share.
 
 ##### Responsibility boundaries
 

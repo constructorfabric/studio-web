@@ -1,3 +1,4 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import {
@@ -42,25 +43,23 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
   };
 });
 
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  // `apiRegistry` is a singleton instance — `register`/`initialize` (called by
-  // the real `./init`) live on its prototype, so replacing the object with a
-  // spread copy would silently drop them. Spying in place keeps the instance,
-  // and with it every method `./init` needs, while only `getService` is faked.
-  vi.spyOn(actual.apiRegistry, 'getService').mockImplementation(getServiceMock);
-  return {
-    ...actual,
-    // One FrontX app per runtime: `./init`'s own, holding the query client a host would share.
-    queryCacheShared: actual.queryCache,
-    useApiQuery: useApiQueryMock,
-    // The screen-level loader is a real `@gears-frontx/react` export now (the
-    // scaffold's own `useScreenTranslations` is gone) — overridden the same
-    // way `useApiQuery` is, so the screen's busy/error gate stays deterministic
-    // instead of racing a real dynamic import.
-    useScreenTranslations: useScreenTranslationsMock,
-  };
-});
+vi.mock('@gears-frontx/react', (importOriginal) =>
+  withOwnQueryCache(importOriginal, (actual) => {
+    // `apiRegistry` is a singleton instance — `register`/`initialize` (called by
+    // the real `./init`) live on its prototype, so replacing the object with a
+    // spread copy would silently drop them. Spying in place keeps the instance,
+    // and with it every method `./init` needs, while only `getService` is faked.
+    vi.spyOn(actual.apiRegistry, 'getService').mockImplementation(getServiceMock);
+    return {
+      useApiQuery: useApiQueryMock,
+      // The screen-level loader is a real `@gears-frontx/react` export now (the
+      // scaffold's own `useScreenTranslations` is gone) — overridden the same
+      // way `useApiQuery` is, so the screen's busy/error gate stays deterministic
+      // instead of racing a real dynamic import.
+      useScreenTranslations: useScreenTranslationsMock,
+    };
+  })
+);
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),

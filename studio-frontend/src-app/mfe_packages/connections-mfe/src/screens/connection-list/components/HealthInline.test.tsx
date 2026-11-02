@@ -1,3 +1,4 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
@@ -21,13 +22,14 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
   return { ...actual, useQuery: useQueryMock };
 });
 
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  // Spy in place: `register`/`initialize` live on the prototype, so a spread
-  // copy of the singleton would drop what `./init` needs.
-  vi.spyOn(actual.apiRegistry, 'getService').mockImplementation(getServiceMock);
-  return { ...actual, queryCacheShared: actual.queryCache };
-});
+vi.mock('@gears-frontx/react', (importOriginal) =>
+  withOwnQueryCache(importOriginal, (actual) => {
+    // Spy in place: `register`/`initialize` live on the prototype, so a spread
+    // copy of the singleton would drop what `./init` needs.
+    vi.spyOn(actual.apiRegistry, 'getService').mockImplementation(getServiceMock);
+    return {};
+  })
+);
 
 /** The gears' RFC 7807 body, with their own vocabulary under `context`. */
 function problem(status: number, violations?: readonly unknown[]) {

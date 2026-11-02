@@ -13,11 +13,11 @@ export const WIZARD_EXTENSION_ID =
   'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.overlay.v1~constructor_studio.overlays.project_create.main.v1';
 
 export function openProjectWizard(bridge: ChildMfeBridge | null): void {
-  openOverlay(bridge, WIZARD_EXTENSION_ID, 'projects');
+  openOverlay(bridge, WIZARD_EXTENSION_ID);
 }
 
 export function closeProjectWizard(bridge: ChildMfeBridge | null): void {
-  closeOverlay(bridge, WIZARD_EXTENSION_ID, 'projects');
+  closeOverlay(bridge, WIZARD_EXTENSION_ID);
 }
 
 export function requestProjectCreate(workspaceId: string, draft: ProjectDraft): void {

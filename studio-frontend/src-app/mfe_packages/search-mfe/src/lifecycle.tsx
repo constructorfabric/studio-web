@@ -16,8 +16,7 @@ const KIT_THEME_ON_HOST = anchorKitThemeOnShadowHost(kitTheme);
 
 class ScreensetLifecycle extends StudioMfeLifecycle {
   constructor() {
-    // ThemeAwareReactLifecycle consumes the host handoff and passes the
-    // shared server-state runtime into FrontXProvider for this mounted root.
+    // StudioMfeLifecycle puts the kit theme on the shadow host; the base class does the rest.
     super(mfeApp, KIT_THEME_ON_HOST);
   }
 

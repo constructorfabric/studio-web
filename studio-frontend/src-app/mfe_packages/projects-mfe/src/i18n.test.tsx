@@ -1,3 +1,4 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
@@ -13,11 +14,7 @@ import {
   useSpecsText,
 } from './i18n';
 
-// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return { ...actual, queryCacheShared: actual.queryCache };
-});
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
 
 /**
  * Two things worth pinning down about the split: that a child can read without

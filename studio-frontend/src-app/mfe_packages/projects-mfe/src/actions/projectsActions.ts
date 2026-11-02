@@ -24,7 +24,6 @@
 import { FRONTX_SCREEN_DOMAIN, type ChildMfeBridge } from '@gears-frontx/react';
 import {
   STUDIO_ACTION_CONTEXT_PUBLISH,
-  sendAndForget,
   sendToHost,
 } from '@constructor-studio/mfe-shared';
 import type { ProjectSection } from '../slices/navSlice';
@@ -36,11 +35,7 @@ type ContextEntity = { id: string; name: string };
  * chrome, and the list it decorates is already rendered by the time we publish.
  */
 function publish(bridge: ChildMfeBridge | null, payload: Record<string, unknown>): void {
-  sendAndForget(
-    bridge,
-    { type: STUDIO_ACTION_CONTEXT_PUBLISH, target: FRONTX_SCREEN_DOMAIN, payload },
-    'projects'
-  );
+  sendToHost(bridge, { type: STUDIO_ACTION_CONTEXT_PUBLISH, target: FRONTX_SCREEN_DOMAIN, payload });
 }
 
 /**

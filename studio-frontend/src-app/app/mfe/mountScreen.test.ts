@@ -1,19 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ActionsChain, MfeRegistry } from '@gears-frontx/react';
-
-const { SCREEN_DOMAIN, mockEmit } = vi.hoisted(() => ({
-  SCREEN_DOMAIN: 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1',
-  mockEmit: vi.fn(),
-}));
-
-vi.mock('@gears-frontx/react', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
-  eventBus: { on: vi.fn(), emit: mockEmit },
-  screenDomain: { id: SCREEN_DOMAIN },
-}));
-
+import { describe, expect, it, vi } from 'vitest';
+import { screenDomain, FRONTX_ACTION_MOUNT_EXT, type ActionsChain, type MfeRegistry } from '@gears-frontx/react';
 import { mountScreen } from './mountScreen';
-import { occupancyOf } from './domainOccupancy';
 import { outcomesOf } from './shellOutcomes';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 
@@ -29,63 +16,41 @@ const editor = {
   presentation: { label: 'Editor', level: 'project', placement: 'hidden' },
 } as unknown as StudioScreenExtension;
 
-/** A registry that mounts into the screen domain's occupancy and, like the runtime, answers through `next` or `fallback`. */
-function registryThat(chain: () => Promise<void>): MfeRegistry {
+/**
+ * A registry that answers like the runtime, through the chain's `next` or its
+ * `fallback`. How a real one orders and records mounts is in
+ * `domainRegistration.test.ts`.
+ */
+function registryThat(outcome: 'next' | 'fallback'): MfeRegistry {
   const registry = {
-    executeActionsChain: vi.fn(async ({ action, next, fallback }: ActionsChain) => {
+    executeActionsChain: vi.fn(async ({ next, fallback }: ActionsChain) => {
       const outcomes = outcomesOf(registry);
-      try {
-        await chain();
-      } catch {
-        await outcomes.failed.handleAction(fallback!.action.type, fallback!.action.payload);
-        return;
-      }
-      const occupancy = occupancyOf(registry);
-      for (const id of occupancy.mounted(SCREEN_DOMAIN)) occupancy.destroyed(SCREEN_DOMAIN, id);
-      occupancy.created(SCREEN_DOMAIN, action.payload?.subject as string);
-      await outcomes.done.handleAction(next!.action.type, next!.action.payload);
+      if (outcome === 'next') await outcomes.done.handleAction(next!.action.type, next!.action.payload);
+      else await outcomes.failed.handleAction(fallback!.action.type, fallback!.action.payload);
     }),
   } as unknown as MfeRegistry;
   return registry;
 }
 
-afterEach(() => vi.clearAllMocks());
-
 describe('mountScreen', () => {
-  it('mounts the extension into the screen domain, and says nothing else', async () => {
-    const registry = registryThat(() => Promise.resolve());
+  it.each([
+    ['a section', artifacts],
+    ['a screen hidden from the tabs', editor],
+  ])('asks the screen domain to mount %s', async (_kind, extension) => {
+    const registry = registryThat('next');
 
-    await mountScreen(registry, artifacts);
-
+    await expect(mountScreen(registry, extension)).resolves.toBeUndefined();
     expect(registry.executeActionsChain).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: expect.objectContaining({
-          target: SCREEN_DOMAIN,
-          payload: { subject: 'ext.project.artifacts' },
-        }),
+        action: { type: FRONTX_ACTION_MOUNT_EXT, target: screenDomain.id, payload: { subject: extension.id } },
       })
     );
-    // The section belongs to the click that asked for this mount, and was
-    // written before it began. Naming it here would name it on the far side of
-    // an await, where a later click can no longer overrule it.
-    expect(mockEmit).not.toHaveBeenCalled();
   });
 
-  it('mounts a screen hidden from the tabs like any other', async () => {
-    const registry = registryThat(() => Promise.resolve());
-
-    await mountScreen(registry, editor);
-
-    expect(occupancyOf(registry).mounted(SCREEN_DOMAIN)).toEqual([editor.id]);
-  });
-
-  it('lets the failure through, and names no section', async () => {
-    const registry = registryThat(() => Promise.reject(new Error('no such entry')));
+  it('rejects when the chain takes its fallback', async () => {
+    const registry = registryThat('fallback');
 
     // The runtime keeps the reason to itself: the failed reply says only that it failed.
     await expect(mountScreen(registry, artifacts)).rejects.toThrow();
-
-    // A failed mount names no section: the screen it would have named is not on.
-    expect(mockEmit).not.toHaveBeenCalled();
   });
 });

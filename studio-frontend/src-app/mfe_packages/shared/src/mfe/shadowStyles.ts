@@ -193,6 +193,8 @@ export interface WarmStyles {
    * the order FrontX's DOM path gives them, so the MFE wins ties.
    */
   readonly sheets: readonly CSSStyleSheet[];
+  /** How many of `sheets`, from the front, are the host document's. */
+  readonly hostSheets: number;
   /** The handler's `<link>`s whose sheets are in `sheets` and must stop applying. */
   readonly supersededLinks: readonly HTMLLinkElement[];
   /** Host `<link>`s never adopted (cross-origin), cloned in as they always were. */
@@ -241,13 +243,14 @@ export function warmShadowStyles(shadowRoot: ShadowRoot): WarmStyles | null {
     sheets.push(sheetFromElement(node));
   }
 
+  const hostSheets = sheets.length;
   for (const link of remoteLinks) {
     const settled = settledByHref.get(link.href);
     if (!settled) return null;
     sheets.push(settled);
   }
 
-  return { sheets, supersededLinks: remoteLinks, crossOriginLinks };
+  return { sheets, hostSheets, supersededLinks: remoteLinks, crossOriginLinks };
 }
 
 /** The handler's `<link>` hrefs in this root, to warm after a cold mount. */

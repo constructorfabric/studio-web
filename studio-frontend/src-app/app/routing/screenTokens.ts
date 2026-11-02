@@ -20,9 +20,7 @@ import {
   type ScreenLevel,
   type StudioScreenExtension,
 } from '@/app/mfe/screenLevels';
-
-/** The library's own `name` pattern: @gears-frontx/routing 0.4 no longer exports its check. */
-const NAME = /^[a-z][a-z0-9-]*$/;
+import { ROUTE_NAME } from './route';
 
 export interface ScreenGroup {
   token: string;
@@ -34,7 +32,7 @@ export function tokenOf(extension: StudioScreenExtension): string | undefined {
   const route = extension.presentation?.route ?? '';
   const trimmed = route.startsWith('/') ? route.slice(1) : route;
   const [first = ''] = trimmed.split('/');
-  return NAME.test(first) ? first : undefined;
+  return ROUTE_NAME.test(first) ? first : undefined;
 }
 
 function ownerRank(extension: StudioScreenExtension): [number, number, number] {

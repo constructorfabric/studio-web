@@ -11,6 +11,7 @@ import {
   gtsPlugin,
   hasSlice,
   microfrontends,
+  overlayDomain,
   presets,
   registerSlice,
   screenDomain,
@@ -66,9 +67,34 @@ const BROKEN_SCREEN = fixtureScreen('broken');
 /** What a recorded fixture was last mounted with, by entry id; `null` until it mounts. */
 const recorded = new Map<string, { container: Element | ShadowRoot; bridge: ChildMfeBridge } | null>();
 
+/** The mounts and unmounts of the scripted fixtures, in order: `mount <name>`, `unmount <name>`. */
+const lifecycleLog: string[] = [];
+/** A scripted fixture's remote, by entry id: `requested` when the runtime asks for it, loaded once `arrived` resolves. */
+const scripted = new Map<string, { name: string; requested: () => void; arrived: Promise<void> }>();
+
+/** Scripts screen `name` before it registers: its lifecycle logs, and its remote arrives when the test calls `arrive`. */
+function scriptedRemote(name: string): { requested: Promise<void>; arrive: () => void } {
+  let requested!: () => void;
+  let arrive!: () => void;
+  const asked = new Promise<void>((resolve) => (requested = resolve));
+  scripted.set(fixtureEntry(name), { name, requested, arrived: new Promise<void>((resolve) => (arrive = resolve)) });
+  return { requested: asked, arrive };
+}
+
 /** Loads frames; the `broken` one then fails to mount, a recorded one keeps its container and bridge. */
 class FixtureFrameHandler extends MfeHandlerIframe {
   override load(entry: MfeEntryIframe, extensionId: string): Promise<MfeEntryLifecycle<ChildMfeBridge>> {
+    const script = scripted.get(entry.id);
+    if (script) {
+      script.requested();
+      return script.arrived.then(() => ({
+        mount: () => void lifecycleLog.push(`mount ${script.name}`),
+        unmount: () => {
+          lifecycleLog.push(`unmount ${script.name}`);
+          return Promise.resolve();
+        },
+      }));
+    }
     if (entry.id === fixtureEntry('broken')) {
       return Promise.resolve({
         mount: () => Promise.reject(new Error('broken screen')),
@@ -168,7 +194,7 @@ describe('shell domains on a real registry', () => {
     for (const declaration of declarations) expect(declaration).not.toHaveProperty('route');
   });
 
-  it('a failed mount leaves nothing mounted', async () => {
+  it('a failed mount never counts as mounted', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const registry = await registryWithScreen('broken');
     const occupancy = occupancyOf(registry);
@@ -177,8 +203,7 @@ describe('shell domains on a real registry', () => {
 
     await executeAndSettle(registry, mount(BROKEN_SCREEN)).catch(() => undefined);
 
-    // Counted while its container existed, gone once the mount failed.
-    expect(seen).toContainEqual([BROKEN_SCREEN]);
+    expect(seen.flat()).not.toContain(BROKEN_SCREEN);
     expect(occupancy.mounted(screenDomain.id)).toEqual([]);
   });
 
@@ -250,27 +275,105 @@ describe('an MFE request to the shell on a real registry', () => {
   });
 });
 
-describe('the screen slot re-attaching on a real registry', () => {
-  const ORG = { id: 'o1', name: 'Org' };
+const ORG = { id: 'o1', name: 'Org' };
+const addressOf = (name: string) => `/?screen=${name};org=${ORG.id}`;
 
-  /** What startRouting builds for this file's registry, at screen `name`. */
-  async function routedTo(name: string) {
-    await registryWithScreen(name, { route: `/${name}`, record: true });
-    if (!hasSlice(APP_CONTEXT_SLICE_KEY)) registerSlice(appContextSlice);
-    app.store.dispatch(setContextOrganizations([ORG]));
-    app.store.dispatch(setContextAccess('ready'));
-    const screen = registry
-      .getExtensionsForDomain(screenDomain.id)
-      .filter((extension) => extension.id === fixtureScreen(name)) as StudioScreenExtension[];
-    const catalogs = { loadOrganizations: vi.fn(), loadWorkspaces: vi.fn(), loadProjects: vi.fn(), resolveProject: vi.fn() };
-    return createMaterializer({
-      app,
-      navigation: createShellNavigation(freshNavigationHistory(`/?screen=${name};org=${ORG.id}`).history),
-      groups: () => groupScreens(screen),
-      catalogs,
-      warn: vi.fn(),
+/** What startRouting builds for this file's registry over screens `names`, at the first; with its history. */
+async function routedAmong(names: string[], { record = false } = {}) {
+  for (const name of names) await registryWithScreen(name, { route: `/${name}`, record });
+  if (!hasSlice(APP_CONTEXT_SLICE_KEY)) registerSlice(appContextSlice);
+  app.store.dispatch(setContextOrganizations([ORG]));
+  app.store.dispatch(setContextAccess('ready'));
+  const screens = registry
+    .getExtensionsForDomain(screenDomain.id)
+    .filter((extension) => names.some((name) => extension.id === fixtureScreen(name))) as StudioScreenExtension[];
+  const catalogs = { loadOrganizations: vi.fn(), loadWorkspaces: vi.fn(), loadProjects: vi.fn(), resolveProject: vi.fn() };
+  const { history } = freshNavigationHistory(addressOf(names[0]));
+  const materializer = createMaterializer({
+    app,
+    navigation: createShellNavigation(history),
+    groups: () => groupScreens(screens),
+    catalogs,
+    warn: vi.fn(),
+  });
+  return { ...materializer, history };
+}
+
+describe('a screen whose remote is still loading, on a real registry', () => {
+  const mounted = () => occupancyOf(registry).mounted(screenDomain.id);
+
+  it('is not mounted yet, and is once its mount has finished', async () => {
+    const remote = scriptedRemote('loading');
+    await registryWithScreen('loading');
+
+    const settled = executeAndSettle(registry, mount(fixtureScreen('loading')));
+    await remote.requested;
+    const whileLoading = mounted();
+    remote.arrive();
+    await settled;
+
+    expect(whileLoading).toEqual([]);
+    expect(mounted()).toEqual([fixtureScreen('loading')]);
+  });
+
+  // OverlayDialog shows its scrim for what the overlay domain has mounted.
+  it('in the overlay domain is not open until its mount has finished', async () => {
+    const remote = scriptedRemote('overlay_loading');
+    await bootstrapped();
+    registry.typeSystem.register({
+      id: fixtureEntry('overlay_loading'),
+      requiredProperties: [],
+      actions: [],
+      domainActions: [],
+      urlProperty: STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
     });
-  }
+    const overlay = 'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.overlay.v1~constructor_studio.overlays.fixture_loading.main.v1';
+    await registry.registerExtension({
+      id: overlay,
+      domain: overlayDomain.id,
+      entry: fixtureEntry('overlay_loading'),
+      presentation: { label: 'Fixture', route: '/fixture-overlay' },
+    } as never);
+    // What OverlayDialog's slot does once it is in the page.
+    registry.getMounter(overlayDomain.id).attach(document.createElement('div'));
+    const open = () => occupancyOf(registry).mounted(overlayDomain.id);
+
+    const settled = executeAndSettle(registry, { type: FRONTX_ACTION_MOUNT_EXT, target: overlayDomain.id, payload: { subject: overlay } });
+    await remote.requested;
+    const whileLoading = open();
+    remote.arrive();
+    await settled;
+
+    expect(whileLoading).toEqual([]);
+    expect(open()).toEqual([overlay]);
+  });
+
+  // Away and straight back during the first load of a remote: the request for
+  // it joins the mount still running and replaces the one for the screen left.
+  it('mounts once when the person leaves and comes back before it arrives, and never the screen in between', async () => {
+    const back = scriptedRemote('back');
+    scriptedRemote('between').arrive();
+    const { materialize, transition, history } = await routedAmong(['back', 'between']);
+
+    materialize();
+    await back.requested;
+    lifecycleLog.length = 0;
+    history.push(addressOf('between'));
+    transition();
+    history.push(addressOf('back'));
+    transition();
+    back.arrive();
+
+    await vi.waitFor(() => expect(mounted()).toEqual([fixtureScreen('back')]));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(lifecycleLog).toEqual(['mount back']);
+    expect(mounted()).toEqual([fixtureScreen('back')]);
+  });
+});
+
+describe('the screen slot re-attaching on a real registry', () => {
+  /** What startRouting builds for this file's registry, at screen `name`. */
+  const routedTo = (name: string) => routedAmong([name], { record: true });
 
   /**
    * What a remount of the slot does: ExtensionDomainSlot detaches (the release

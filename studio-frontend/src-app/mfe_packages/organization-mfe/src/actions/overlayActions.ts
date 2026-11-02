@@ -12,5 +12,5 @@ import type { ChildMfeBridge } from '@gears-frontx/react';
 import { STUDIO_EXTENSION_WORKSPACE_CREATE, openOverlay } from '@constructor-studio/mfe-shared';
 
 export function openWorkspaceForm(bridge: ChildMfeBridge | null): void {
-  openOverlay(bridge, STUDIO_EXTENSION_WORKSPACE_CREATE, 'organization');
+  openOverlay(bridge, STUDIO_EXTENSION_WORKSPACE_CREATE);
 }

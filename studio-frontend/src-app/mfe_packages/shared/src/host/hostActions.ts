@@ -97,18 +97,6 @@ export function sendToHost(bridge: ChildMfeBridge | null, action: HostAction): v
   bridge?.executeActionsChain({ action });
 }
 
-/**
- * `sendToHost` that logs, under `tag`, an exception the call itself throws.
- * mfes 0.4.0 throws none, so a refusal never reaches this log.
- */
-export function sendAndForget(bridge: ChildMfeBridge | null, action: HostAction, tag: string): void {
-  try {
-    sendToHost(bridge, action);
-  } catch (error) {
-    console.error(`[${tag}] host action failed`, action.type, error);
-  }
-}
-
 const outcomesByBridge = new WeakMap<ChildMfeBridge, ChainOutcomes>();
 
 /**
@@ -132,22 +120,18 @@ export function requestFromHost(bridge: ChildMfeBridge | null, action: HostActio
   return outcomes.run((chain) => bridge.executeActionsChain(chain), action, bridge.extensionId);
 }
 
-export function notify(bridge: ChildMfeBridge | null, notice: StudioNotice, tag: string): void {
-  sendAndForget(
-    bridge,
-    { type: STUDIO_ACTION_NOTIFY, target: FRONTX_SCREEN_DOMAIN, payload: { ...notice } },
-    tag
-  );
+export function notify(bridge: ChildMfeBridge | null, notice: StudioNotice): void {
+  sendToHost(bridge, { type: STUDIO_ACTION_NOTIFY, target: FRONTX_SCREEN_DOMAIN, payload: { ...notice } });
 }
 
 function overlayAction(type: string, extensionId: string): HostAction {
   return { type, target: FRONTX_OVERLAY_DOMAIN, payload: { subject: extensionId } };
 }
 
-export function openOverlay(bridge: ChildMfeBridge | null, extensionId: string, tag: string): void {
-  sendAndForget(bridge, overlayAction(FRONTX_ACTION_MOUNT_EXT, extensionId), tag);
+export function openOverlay(bridge: ChildMfeBridge | null, extensionId: string): void {
+  sendToHost(bridge, overlayAction(FRONTX_ACTION_MOUNT_EXT, extensionId));
 }
 
-export function closeOverlay(bridge: ChildMfeBridge | null, extensionId: string, tag: string): void {
-  sendAndForget(bridge, overlayAction(FRONTX_ACTION_UNMOUNT_EXT, extensionId), tag);
+export function closeOverlay(bridge: ChildMfeBridge | null, extensionId: string): void {
+  sendToHost(bridge, overlayAction(FRONTX_ACTION_UNMOUNT_EXT, extensionId));
 }

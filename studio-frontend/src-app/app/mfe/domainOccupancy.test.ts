@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { MfeRegistry } from '@gears-frontx/react';
-import { occupancyOf } from './domainOccupancy';
+import { createElement, type ReactNode } from 'react';
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FrontXContext, type Extension, type FrontXApp, type MfeRegistry } from '@gears-frontx/react';
+import { occupancyOf, useMountedExtensions } from './domainOccupancy';
 
 const registry = (): MfeRegistry => ({}) as MfeRegistry;
 
 describe('domain occupancy', () => {
-  it("an extension is mounted from its container's creation until its destruction", () => {
+  it('an extension counts as mounted from created until destroyed', () => {
     const occupancy = occupancyOf(registry());
 
     expect(occupancy.mounted('screen')).toEqual([]);
@@ -50,5 +52,66 @@ describe('domain occupancy', () => {
     expect(occupancyOf(first)).toBe(occupancyOf(first));
     expect(occupancyOf(first).mounted('screen')).toEqual(['projects']);
     expect(occupancyOf(second).mounted('screen')).toEqual([]);
+  });
+});
+
+describe('useMountedExtensions', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const SEARCH = { id: 'search', domain: 'overlay' } as Extension;
+  const WIZARD = { id: 'wizard', domain: 'overlay' } as Extension;
+
+  /** A registry that knows `extensions`, and nothing else. */
+  const registryOf = (...extensions: Extension[]): MfeRegistry =>
+    ({ getExtension: (id: string) => extensions.find((extension) => extension.id === id) }) as unknown as MfeRegistry;
+
+  function renderMounted(mfeRegistry: MfeRegistry | undefined) {
+    const app = { mfeRegistry } as unknown as FrontXApp;
+    return renderHook(() => useMountedExtensions('overlay'), {
+      wrapper: ({ children }: { children: ReactNode }) => createElement(FrontXContext.Provider, { value: app }, children),
+    });
+  }
+
+  it('returns the same array across renders while nothing changes', () => {
+    const mfeRegistry = registryOf(SEARCH);
+    occupancyOf(mfeRegistry).created('overlay', 'search');
+    const { result, rerender } = renderMounted(mfeRegistry);
+    const first = result.current;
+
+    rerender();
+
+    expect(first).toEqual([SEARCH]);
+    expect(result.current).toBe(first);
+  });
+
+  it('returns a new array once an extension is created or destroyed', () => {
+    const mfeRegistry = registryOf(SEARCH, WIZARD);
+    const { result } = renderMounted(mfeRegistry);
+    const before = result.current;
+
+    act(() => occupancyOf(mfeRegistry).created('overlay', 'wizard'));
+    const created = result.current;
+    act(() => occupancyOf(mfeRegistry).destroyed('overlay', 'wizard'));
+
+    expect(before).toEqual([]);
+    expect(created).toEqual([WIZARD]);
+    expect(result.current).toEqual([]);
+    expect(result.current).not.toBe(created);
+  });
+
+  it('leaves out an id whose extension is no longer registered', () => {
+    const mfeRegistry = registryOf(SEARCH);
+    occupancyOf(mfeRegistry).created('overlay', 'unregistered');
+    occupancyOf(mfeRegistry).created('overlay', 'search');
+
+    const { result } = renderMounted(mfeRegistry);
+
+    expect(result.current).toEqual([SEARCH]);
+  });
+
+  it('throws without the microfrontends plugin', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(() => renderMounted(undefined)).toThrow(/requires the microfrontends plugin/);
   });
 });

@@ -71,7 +71,7 @@ describe('MfeScreenContainer', () => {
         // The workspace level's screen: never the entry point of a session.
         { id: 'projects', presentation: { route: '/projects', order: 20, level: 'workspace' } },
       ]),
-      executeActionsChain: vi.fn().mockResolvedValue(undefined),
+      executeActionsChain: vi.fn(),
     };
     app = { mfeRegistry: registry };
     mockUseFrontX.mockReturnValue(app);

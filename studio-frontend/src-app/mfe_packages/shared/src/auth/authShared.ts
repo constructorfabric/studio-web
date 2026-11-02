@@ -54,7 +54,7 @@ class SharedAuthRestPlugin extends BaseAuthRestPlugin {
  * ```
  *
  * Composing it in an app that also composes `auth()` is harmless but pointless —
- * that app already has the real transport binding.
+ * that app's own transport (`frontxApiTransport()`) already binds its session.
  */
 export function authShared(): FrontXPlugin {
   let restPlugin: SharedAuthRestPlugin | null = null;
@@ -65,11 +65,12 @@ export function authShared(): FrontXPlugin {
       if (!readSharedAuthSession()) {
         // Not fatal: the accessor is resolved per request, so a host that
         // publishes later still works. Warn, because the far more likely cause
-        // is a host that never composed auth() at all — and then every request
-        // from this app goes out unauthenticated with no other symptom.
+        // is a host whose auth plugin publishes nothing — `auth()` without the
+        // shell's `sharedAuthTransport()` — and then every request from this app
+        // goes out unauthenticated with no other symptom.
         console.warn(
           '[Gears FrontX] authShared(): no host auth session published yet. ' +
-            'Requests stay unauthenticated until the host app composes auth().'
+            'Requests stay unauthenticated until the host composes auth({ transport: sharedAuthTransport() }).'
         );
       }
       restPlugin = new SharedAuthRestPlugin();
@@ -77,9 +78,9 @@ export function authShared(): FrontXPlugin {
     },
     onDestroy(app) {
       if (!restPlugin) return;
-      // Typed through the same signature `auth()` uses for its own removal: a
-      // RestPlugin subclass that overrides `onError` with the richer context
-      // shape is not structurally assignable to the base plugin class.
+      // Typed through a constructor signature of its own: a RestPlugin subclass
+      // that overrides `onError` with the richer context shape is not
+      // structurally assignable to the base plugin class.
       const removeRestPlugin = (pluginClass: new (...args: never[]) => RestPlugin): void => {
         app.apiRegistry.plugins.remove(RestProtocol, pluginClass);
       };

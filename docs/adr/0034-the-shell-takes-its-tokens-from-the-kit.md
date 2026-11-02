@@ -187,13 +187,12 @@ and writes the `:root:root` rule itself. The rest of this record stands.
 
 ## More Information
 
-- **Not in this record:** taking the FrontX packages from npm; MFEs
-  inheriting the shell's tokens through the shadow boundary instead of
-  carrying `theme.css` (it would bring Dracula to the screens, and goes
-  against the template's stated reason above); the differences in component
-  metrics between the kit and the prototype (Button, Input, Tabs,
-  TableHead, Empty), which are a question for the kit against Figma, not
-  for this shell.
+- **Not in this record:** MFEs inheriting the shell's tokens through the
+  shadow boundary instead of carrying `theme.css` (it would bring Dracula to
+  the screens, and goes against the template's stated reason above); the
+  differences in component metrics between the kit and the prototype (Button,
+  Input, Tabs, TableHead, Empty), which are a question for the kit against
+  Figma, not for this shell.
 
 ## Traceability
 

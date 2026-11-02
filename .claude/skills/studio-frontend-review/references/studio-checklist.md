@@ -1,7 +1,7 @@
 # Studio frontend rules
 
-Project-specific rules for `studio-frontend/` (the shell, MFEs under `src-app/mfe_packages/`, packages under
-`packages/`, `mfe-shared`). Written by the frontend team. They extend `checklist.md`; where the two disagree,
+Project-specific rules for `studio-frontend/` (the shell, MFEs under `src-app/mfe_packages/`, `mfe-shared`; the
+FrontX packages come from npm since #946). Written by the frontend team. They extend `checklist.md`; where the two disagree,
 **these win** — they describe how this project is actually built.
 
 **Correctness first, then project patterns, traceability, hygiene and maintainability.**
@@ -12,7 +12,7 @@ a pure UI change skips API contracts unless it calls an endpoint.
 ## 0. What the review may and may not change
 
 * Tracked files are read-only: no edits to source, generated files under git, formatting, dependencies, lockfiles or snapshots.
-* Rebuilding untracked build output is allowed when verification needs it: `dist`, `packages/*/dist`, generated `mfe.json` in `dist`. Check with `git status --short` afterwards that nothing tracked changed.
+* Rebuilding untracked build output is allowed when verification needs it: `dist`, `dist-lib` (`npm run build:package`), generated `mfe.json` in `dist`. Check with `git status --short` afterwards that nothing tracked changed.
 * Use check-only commands: `cfs validate`, `cfs validate-toc <files>`. Do **not** run `cfs toc` — it rewrites the Markdown files.
 * `cfs validate` works only from `studio-frontend/` (in the repo root it answers "not initialized"); run it as
   `cfs validate --local-only`. `prepare_review.py` already ran it at the head and the base: its output is in
@@ -281,7 +281,7 @@ Use the most appropriate evidence:
 For Studio runtime verification:
 
 * MFE menu items do nothing without the `:30xx` preview servers;
-* rebuild `packages/*/dist` after a branch switch when generated package output is relevant.
+* rebuild `dist-lib` (`npm run build:package`) after a branch switch: MFEs import the shell's library from it, and `dev:all` does not rebuild it.
 
 Every finding must have concrete evidence.
 

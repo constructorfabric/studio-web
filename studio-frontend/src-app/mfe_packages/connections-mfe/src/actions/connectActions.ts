@@ -13,11 +13,11 @@ import type { ConnectionDraft } from '../model/connectionDraft';
 import './../events/connectEvents';
 
 export function openConnectDialog(bridge: ChildMfeBridge | null): void {
-  openOverlay(bridge, STUDIO_EXTENSION_CONNECTION_CREATE, 'connections');
+  openOverlay(bridge, STUDIO_EXTENSION_CONNECTION_CREATE);
 }
 
 export function closeConnectDialog(bridge: ChildMfeBridge | null): void {
-  closeOverlay(bridge, STUDIO_EXTENSION_CONNECTION_CREATE, 'connections');
+  closeOverlay(bridge, STUDIO_EXTENSION_CONNECTION_CREATE);
 }
 
 export function requestConnectionCreate(orgId: string, draft: ConnectionDraft): void {

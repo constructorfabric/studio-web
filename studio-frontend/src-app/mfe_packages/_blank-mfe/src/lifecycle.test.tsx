@@ -26,19 +26,23 @@ vi.mock('@gears-frontx/react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@gears-frontx/react')>();
   return {
     ...actual,
-    ThemeAwareReactLifecycle: class ThemeAwareReactLifecycle {
-      constructor(public readonly app: TestApp) {}
-
-      mount(container: Element | ShadowRoot, bridge: TestBridge): void {
-        superMountSpy(container, bridge);
-      }
-    },
     apiRegistry: {
       getService: getServiceMock,
     },
     useApiQuery: useApiQueryMock,
   };
 });
+
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  StudioMfeLifecycle: class StudioMfeLifecycle {
+    constructor(public readonly app: TestApp) {}
+
+    mount(container: Element | ShadowRoot, bridge: TestBridge): void {
+      superMountSpy(container, bridge);
+    }
+  },
+}));
 
 vi.mock('./init', () => ({
   mfeApp: { id: 'blank-mfe-app' },

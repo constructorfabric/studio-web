@@ -1,3 +1,4 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { TENANT_TYPES, type Tenant } from '@constructor-studio/mfe-shared';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,11 +26,7 @@ const CONFIG = { status: 'draft' as const, owner_id: 'user-1' };
 /** Reassigned per test: the Status cell reads all four fields differently. */
 let configState: ProjectConfigState;
 
-// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return { ...actual, queryCacheShared: actual.queryCache };
-});
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
 
 vi.mock('../../../shared/useProjectConfig', () => ({
   useProjectConfig: () => configState,

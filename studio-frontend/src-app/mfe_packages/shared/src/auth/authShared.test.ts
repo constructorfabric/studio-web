@@ -1,11 +1,11 @@
 /**
  * Unit tests for authShared — the MFE side of the auth transport.
  *
- * This path used to be a hand-copy of auth()'s plugin that had lost half its
- * rules, with no coverage but an MFE init asserting the plugin got composed. What
- * is checked here is that a child realm's requests obey the SAME policy as the
- * host's, and that the policy travels across the `globalThis` handoff rather than
- * being guessed.
+ * This path used to be a hand-copy of the host's transport plugin that had lost
+ * half its rules, with no coverage but an MFE init asserting the plugin got
+ * composed. What is checked here is that a child realm's requests obey the SAME
+ * policy as the host's, and that the policy travels across the `globalThis`
+ * handoff rather than being guessed.
  *
  * Covers:
  * 1. Bearer header from the host-published session.
@@ -31,7 +31,7 @@ import {
 } from './sharedAuthSession';
 
 /** Concrete auth transport plugins implement hooks; `RestPlugin` instance type omits optional hook keys. */
-type AuthRestPlugin = RestPlugin & Pick<RestPluginHooks, 'onRequest' | 'onError'>;
+type AuthRestPlugin = RestPlugin & Pick<RestPluginHooks, 'onRequest' | 'onResponse' | 'onError'>;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -229,6 +229,45 @@ describe('authShared plugin', () => {
       expect(second.retry).toHaveBeenCalledWith({ headers: { Authorization: 'Bearer fresh' } });
     });
 
+    // The host's own plugin (npm's AuthRestPlugin) stops there too: a server that
+    // keeps refusing a refreshed session is not asked for a token per request.
+    it('stops refreshing after two refreshes with no 2xx, until 30 s have passed', async () => {
+      vi.useFakeTimers();
+      try {
+        const refresh = vi.fn().mockResolvedValue({ kind: 'bearer', token: 'fresh' } satisfies AuthSession);
+        publishBearer('stale', { refresh });
+        const plugin = childPlugin();
+
+        await plugin.onError?.(make401Ctx());
+        await plugin.onError?.(make401Ctx());
+        const refused = make401Ctx();
+        const result = await plugin.onError?.(refused);
+
+        expect(refresh).toHaveBeenCalledTimes(2);
+        expect(refused.retry).not.toHaveBeenCalled();
+        expect(result).toBe(refused.error);
+
+        vi.advanceTimersByTime(30_000);
+        await plugin.onError?.(make401Ctx());
+        expect(refresh).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('counts the refreshes from zero again once a request succeeds', async () => {
+      const refresh = vi.fn().mockResolvedValue({ kind: 'bearer', token: 'fresh' } satisfies AuthSession);
+      publishBearer('stale', { refresh });
+      const plugin = childPlugin();
+
+      await plugin.onError?.(make401Ctx());
+      await plugin.onError?.(make401Ctx());
+      await plugin.onResponse?.({ status: 200, headers: {}, data: {} });
+      await plugin.onError?.(make401Ctx());
+
+      expect(refresh).toHaveBeenCalledTimes(3);
+    });
+
     it('returns the error untouched for a non-401', async () => {
       const refresh = vi.fn();
       publishBearer('tok', { refresh });
@@ -265,7 +304,7 @@ describe('authShared plugin', () => {
       expect(result).toBe(errCtx.error);
     });
 
-    it('warns on init, because the far likelier cause is a host with no auth()', () => {
+    it('warns on init, because the far likelier cause is a host that publishes no session', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
       childPlugin();
@@ -308,7 +347,7 @@ describe('authShared plugin', () => {
     const [protocol, pluginClass] = remove.mock.calls[0] as [unknown, unknown];
     expect(protocol).toBe(RestProtocol);
     // Not the host's class, and not the shared base: removal matches the first
-    // `instanceof`, so a class shared with auth() could unregister its plugin.
+    // `instanceof`, so two plugins sharing a class could unregister each other.
     expect((pluginClass as { name: string }).name).toBe('SharedAuthRestPlugin');
   });
 });

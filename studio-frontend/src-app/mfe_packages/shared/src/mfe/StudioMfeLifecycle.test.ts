@@ -29,6 +29,9 @@ vi.hoisted(() => {
 
 const ADDITIONAL = ':host { --kit: 1; }';
 const HOST_STYLE = 'body { margin: 0; }';
+const TRANSPARENT = ':host { background-color: transparent; }';
+/** FrontX's own resets, a `<style>` the base class places on every mount. */
+const isResets = (css: string) => css.includes('border-color: currentColor');
 
 class TestLifecycle extends StudioMfeLifecycle {
   protected renderContent(): ReactNode {
@@ -92,7 +95,37 @@ describe('StudioMfeLifecycle', () => {
 
     mount(shadow);
 
-    expect(texts(shadow).slice(0, 4)).toEqual([cssOf('/host.css'), HOST_STYLE, cssOf('/mfe-order.css'), ADDITIONAL]);
+    const adopted = texts(shadow);
+    expect(adopted.slice(0, 2)).toEqual([cssOf('/host.css'), HOST_STYLE]);
+    expect(adopted.slice(3)).toEqual([cssOf('/mfe-order.css'), ADDITIONAL, TRANSPARENT]);
+  });
+
+  // A first mount takes the cold path and the next ones the warm path, so a tie
+  // between two sheets has to go the same way on both: FrontX's resets say
+  // `border-color: currentColor` and the host's preflight its own border colour.
+  it('ranks the sheets in one order on both paths: host, resets, MFE, kit theme, transparent host', async () => {
+    const cold = shadowLinking('/mfe-rank-cold.css');
+    mount(cold);
+    const warm = await warmed('/mfe-rank-warm.css');
+    mount(warm);
+
+    const label = (css: string, href?: string): string => {
+      if (href?.endsWith('/host.css') || css === cssOf('/host.css') || css === HOST_STYLE) return 'host';
+      if (isResets(css)) return 'resets';
+      if (href?.includes('/mfe-rank-') || css.includes('/mfe-rank-')) return 'mfe';
+      if (css === ADDITIONAL) return 'kit';
+      return css === TRANSPARENT ? 'transparent' : css;
+    };
+    const coldOrder = Array.from(cold.querySelectorAll<HTMLStyleElement | HTMLLinkElement>('style, link[rel="stylesheet"]'), (node) =>
+      node instanceof HTMLLinkElement ? label('', node.href) : label(node.textContent ?? '')
+    );
+    // Adopted sheets rank after every `<style>`, so on the warm path the order is
+    // the adopted one; the resets `<style>` left in the root ranks below it all.
+    const warmOrder = texts(warm).map((css) => label(css));
+
+    const order = ['host', 'host', 'resets', 'mfe', 'kit', 'transparent'];
+    expect(coldOrder).toEqual(order);
+    expect(warmOrder).toEqual(order);
   });
 
   it("a warm mount switches off the handler's links", async () => {

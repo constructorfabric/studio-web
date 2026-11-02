@@ -4,6 +4,7 @@ export { RestMockPlugin, type RestMockConfig } from './api/plugins/RestMockPlugi
 export { SseMockPlugin, type SseMockConfig } from './api/plugins/SseMockPlugin';
 export { MockEventSource, type SseMockEvent } from './api/mocks/MockEventSource';
 export { SseAuthPlugin, type SseAuthConfig } from './api/plugins/SseAuthPlugin';
+export { SHARED_AUTH_SESSION_SYMBOL } from './api/sharedAuthSession';
 export {
   FetchEventSource,
   type FetchEventSourceOptions,

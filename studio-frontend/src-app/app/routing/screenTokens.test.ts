@@ -2,8 +2,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { parseGrammar, serializeGrammar, type ExtensionToken } from '@gears-frontx/routing';
 import { screen } from '@frontx-test-utils/screenFixture';
-import { EDITOR_SCREEN_TOKEN } from './route';
+import { EDITOR_SCREEN_TOKEN, SCREEN_DOMAIN_KEY } from './route';
 import { entryTokenOf, groupOfExtension, groupOfToken, groupScreens, tokenOf } from './screenTokens';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 
@@ -78,6 +79,23 @@ describe('the real manifests', () => {
     .filter((dir) => existsSync(join(packagesDir, dir, 'mfe.json')))
     .flatMap((dir) => (JSON.parse(readFileSync(join(packagesDir, dir, 'mfe.json'), 'utf-8')).extensions ?? []) as StudioScreenExtension[])
     .filter((extension) => extension.domain === 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1');
+
+  // The library is the judge of a token, not `ROUTE_NAME`: a screen whose token
+  // it would refuse is not routable, and nothing else would say so.
+  it('give every screen a token the library writes into the address and reads back', () => {
+    for (const extension of extensions) {
+      const token = tokenOf(extension);
+      expect(token, extension.id).toBeDefined();
+      const address = serializeGrammar({
+        shellSubroute: '',
+        hash: undefined,
+        entries: [{ domainKey: SCREEN_DOMAIN_KEY, extension: token as ExtensionToken, params: [] }],
+      });
+      expect(parseGrammar(address).entries, extension.id).toEqual([
+        expect.objectContaining({ domainKey: SCREEN_DOMAIN_KEY, extension: token }),
+      ]);
+    }
+  });
 
   it('register space-mfe as the one owner of the editor token', () => {
     const space = groupOfToken(groupScreens(extensions), EDITOR_SCREEN_TOKEN);

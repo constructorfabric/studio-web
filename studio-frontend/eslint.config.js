@@ -1,11 +1,7 @@
 /**
- * FrontX Template ESLint Configuration (template-shell/, self-contained)
- *
- * Covers the template-side packages (state, i18n, framework, react, auth,
- * studio) and the host app (src-app/), relocated here from the ecosystem
- * monorepo by Phase 11 template-move. See the ecosystem root's
- * `eslint.config.js` for the rules that still apply to `mfes`, `gts-plugin`,
- * `api`.
+ * ESLint configuration for studio-frontend: the host app and its MFE packages
+ * (`src-app/`) and the shell's own library (`src/`). The FrontX packages come
+ * from npm (#946) and are not linted here.
  */
 
 import js from '@eslint/js';

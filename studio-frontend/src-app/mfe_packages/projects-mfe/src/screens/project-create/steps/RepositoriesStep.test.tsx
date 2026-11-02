@@ -1,3 +1,4 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, type FrontXApp } from '@gears-frontx/react';
@@ -9,11 +10,7 @@ import type { ConnectionDto, RemoteRepoDto } from '@constructor-studio/mfe-share
 
 /** The wizard's step hands the picker the create slice, and its handlers reach their reducers. */
 
-// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return { ...actual, queryCacheShared: actual.queryCache };
-});
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),

@@ -1,3 +1,4 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
@@ -44,11 +45,8 @@ vi.mock('../../i18n', async (importOriginal) => {
   };
 });
 
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return {
-    ...actual,
-    queryCacheShared: actual.queryCache,
+vi.mock('@gears-frontx/react', (importOriginal) =>
+  withOwnQueryCache(importOriginal, () => ({
     useApiQuery: () => ({
       data: { items: providers },
       isLoading: false,
@@ -57,8 +55,8 @@ vi.mock('@gears-frontx/react', async (importOriginal) => {
       error: null,
       refetch: vi.fn(),
     }),
-  };
-});
+  }))
+);
 
 async function renderDialog(organization: unknown = { id: 'org-1', name: 'Acme' }) {
   const { mfeApp } = await import('../../init');

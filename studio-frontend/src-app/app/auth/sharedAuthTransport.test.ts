@@ -91,4 +91,39 @@ describe('sharedAuthTransport', () => {
     expect(first.retry).toHaveBeenCalledWith({ headers: { Authorization: 'Bearer fresh' } });
     expect(second.retry).toHaveBeenCalledWith({ headers: { Authorization: 'Bearer fresh' } });
   });
+
+  it('a failed refresh rejects every MFE waiting on it and is reported as rejected', async () => {
+    const failure = new Error('refresh token expired');
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { binding } = bind(provider(vi.fn().mockRejectedValue(failure)), () => report);
+    bindings.push(binding);
+    const accessor = readSharedAuthSession();
+
+    const outcomes = await Promise.allSettled([accessor?.refresh?.(), accessor?.refresh?.()]);
+
+    expect(outcomes).toEqual([
+      { status: 'rejected', reason: failure },
+      { status: 'rejected', reason: failure },
+    ]);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledWith({ rejected: failure });
+  });
+
+  it('asks the provider again once a refresh has failed', async () => {
+    const refresh = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(FRESH);
+    const { binding } = bind(provider(refresh));
+    bindings.push(binding);
+    const accessor = readSharedAuthSession();
+
+    await expect(accessor?.refresh?.()).rejects.toThrow('offline');
+    await expect(accessor?.refresh?.()).resolves.toEqual(FRESH);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('publishes no refresh when the provider has none', () => {
+    const { binding } = bind(provider());
+    bindings.push(binding);
+
+    expect(readSharedAuthSession()?.refresh).toBeUndefined();
+  });
 });

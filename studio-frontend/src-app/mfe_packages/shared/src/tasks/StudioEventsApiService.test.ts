@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SHARED_AUTH_SESSION_SYMBOL } from '@gears-frontx/frontx-template-shell';
 import { StudioEventsApiService, pageThrough, type StudioEvent } from './StudioEventsApiService';
-
-const SHARED_AUTH_SESSION_SYMBOL = Symbol.for('frontx:auth:shared-session');
 
 type SharedAuthHost = typeof globalThis & { [SHARED_AUTH_SESSION_SYMBOL]?: unknown };
 
-/** Publish a host session, the way the `auth()` plugin does for MFEs. */
+/** Publish a host session, the way the shell's `sharedAuthTransport()` does for MFEs. */
 function publishBearerSession(token: string): void {
   (globalThis as SharedAuthHost)[SHARED_AUTH_SESSION_SYMBOL] = {
     getSession: async () => ({ kind: 'bearer', token }),

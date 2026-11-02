@@ -35,7 +35,7 @@ describe('notify', () => {
   it('asks the screen domain for a toast with the notice as it was given', () => {
     const executeActionsChain = vi.fn(() => Promise.resolve());
     const bridge = { executeActionsChain } as unknown as ChildMfeBridge;
-    notify(bridge, { kind: 'error', text: 'Could not change the type' }, 'test');
+    notify(bridge, { kind: 'error', text: 'Could not change the type' });
     expect(executeActionsChain).toHaveBeenCalledWith({
       action: {
         type: STUDIO_ACTION_NOTIFY,
@@ -48,7 +48,7 @@ describe('notify', () => {
   it('passes the id through, for a toast the next notice replaces', () => {
     const executeActionsChain = vi.fn(() => Promise.resolve());
     const bridge = { executeActionsChain } as unknown as ChildMfeBridge;
-    notify(bridge, { kind: 'loading', text: 'Checking', id: 'specs-check:p-1' }, 'test');
+    notify(bridge, { kind: 'loading', text: 'Checking', id: 'specs-check:p-1' });
     expect(executeActionsChain).toHaveBeenCalledWith({
       action: {
         type: STUDIO_ACTION_NOTIFY,
@@ -96,7 +96,7 @@ describe('sendToHost', () => {
   it('notify throws nothing when the bridge returns undefined', () => {
     const { bridge } = voidBridge();
 
-    expect(() => notify(bridge, { kind: 'info', text: 'Saved' }, 'test')).not.toThrow();
+    expect(() => notify(bridge, { kind: 'info', text: 'Saved' })).not.toThrow();
   });
 });
 

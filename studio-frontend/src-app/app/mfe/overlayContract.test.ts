@@ -15,7 +15,7 @@
  * type. Hence `extension_overlay.v1.json`, and hence this test.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -88,6 +88,31 @@ const entriesById = new Map(
   manifests.flatMap((config) => config.entries).map((entry) => [entry.id, entry])
 );
 
+/**
+ * The entries whose code waits on the shell with `requestFromHost`, by package.
+ * A package that starts calling it fails the test below until its entry is here
+ * (the mfe-package-contract guideline says why).
+ */
+const REQUEST_FROM_HOST_ENTRIES: Record<string, string[]> = {
+  'projects-mfe': [
+    'gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.workspace_create.v1',
+  ],
+};
+
+const MFE_PACKAGES = path.resolve(__dirname, '../../mfe_packages');
+
+/** The MFE packages whose own sources call `requestFromHost`; mfe-shared only defines it. */
+function packagesCallingRequestFromHost(): string[] {
+  return readdirSync(MFE_PACKAGES)
+    .filter((name) => name !== 'shared' && existsSync(path.join(MFE_PACKAGES, name, 'src')))
+    .filter((name) =>
+      readdirSync(path.join(MFE_PACKAGES, name, 'src'), { recursive: true, encoding: 'utf8' })
+        .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+        .some((file) => /\brequestFromHost\(/.test(readFileSync(path.join(MFE_PACKAGES, name, 'src', file), 'utf8')))
+    )
+    .sort();
+}
+
 // Exactly what main.tsx registers before constructing the app.
 for (const schema of SHELL_SCHEMAS) gtsPlugin.registerSchema(schema);
 
@@ -109,14 +134,16 @@ describe('generated MFE manifest', () => {
   });
 
   // requestFromHost's replies come back to the entry that asked, and the runtime
-  // drops a reply its target does not declare without a word: New workspace
-  // would wait forever (domainRegistration.test shows it on a real registry).
-  it('lets New workspace take the replies to its request to the shell', () => {
-    const entry = entriesById.get(
-      'gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.workspace_create.v1'
-    );
+  // drops a reply its target does not declare without a word: the request would
+  // wait forever (domainRegistration.test shows it on a real registry).
+  it('names the entries of every MFE that waits on the shell with requestFromHost', () => {
+    expect(packagesCallingRequestFromHost()).toEqual(Object.keys(REQUEST_FROM_HOST_ENTRIES).sort());
+  });
 
-    expect(entry?.actions).toEqual(expect.arrayContaining([STUDIO_ACTION_CHAIN_DONE, STUDIO_ACTION_CHAIN_FAILED]));
+  it.each(Object.values(REQUEST_FROM_HOST_ENTRIES).flat())('lets %s take the replies to its requests', (id) => {
+    expect(entriesById.get(id)?.actions).toEqual(
+      expect.arrayContaining([STUDIO_ACTION_CHAIN_DONE, STUDIO_ACTION_CHAIN_FAILED])
+    );
   });
 
   it('gives every declared property and action a well-formed GTS id', () => {

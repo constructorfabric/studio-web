@@ -1,7 +1,8 @@
 /**
  * The REST transport rules `authShared()` applies to an MFE's requests. They are
- * the host's, carried over from the framework copy we used to vendor; npm's
- * framework keeps its own inside `frontxApiTransport()`.
+ * the host's, carried over from the framework copy we used to vendor and kept in
+ * step with the one npm's framework keeps inside `frontxApiTransport()`
+ * (`AuthRestPlugin`, 0.2.0-alpha.16), its refresh guard included.
  *
  * None of this is policy an MFE gets to differ on: it is the host's, applied to
  * requests that merely originate in another module realm. All that differs is
@@ -122,6 +123,10 @@ export function shouldIncludeCredentials(
 // The plugin
 // ---------------------------------------------------------------------------
 
+/** npm's `AuthRestPlugin` values: see `refreshExhausted`. */
+const MAX_REFRESHES_WITHOUT_SUCCESS = 2;
+const REFRESH_BACKOFF_MS = 30_000;
+
 /**
  * Attaches the session to outgoing REST calls and refreshes once on a 401.
  *
@@ -134,6 +139,9 @@ export function shouldIncludeCredentials(
 export abstract class BaseAuthRestPlugin extends RestPlugin {
   /** Shared in-flight refresh promise — deduplicates concurrent 401 refresh calls. */
   private refreshPromise: Promise<AuthSession | null> | null = null;
+  /** Refreshes started since the last 2xx response, and when the last one started. */
+  private refreshesWithoutSuccess = 0;
+  private lastRefreshAt = 0;
 
   /**
    * Resolved per request, never cached: the host may publish its session after a
@@ -183,6 +191,24 @@ export abstract class BaseAuthRestPlugin extends RestPlugin {
     return ctx;
   }
 
+  onResponse(ctx: RestResponseContext): RestResponseContext {
+    if (ctx.status >= 200 && ctx.status < 300) this.refreshesWithoutSuccess = 0;
+    return ctx;
+  }
+
+  /**
+   * A server that keeps answering 401 to a refreshed session would otherwise get
+   * a refresh for every request: after `MAX_REFRESHES_WITHOUT_SUCCESS` refreshes
+   * with no 2xx response, a 401 fails without one until `REFRESH_BACKOFF_MS` pass
+   * or a request succeeds.
+   */
+  private refreshExhausted(): boolean {
+    if (this.refreshesWithoutSuccess < MAX_REFRESHES_WITHOUT_SUCCESS) return false;
+    if (Date.now() - this.lastRefreshAt < REFRESH_BACKOFF_MS) return true;
+    this.refreshesWithoutSuccess = 0;
+    return false;
+  }
+
   async onError(ctx: ApiPluginErrorContext): Promise<Error | RestResponseContext> {
     const resolved = this.resolveTransport();
     if (!resolved) return ctx.error;
@@ -210,9 +236,12 @@ export abstract class BaseAuthRestPlugin extends RestPlugin {
     // provider's responsibility (timeout / internal lifecycle).
     //
     // This dedups within ONE realm only. Several mounted MFEs each hold their own
-    // copy of this plugin, which is why auth() publishes an already-shared
-    // refresh rather than the raw provider method.
+    // copy of this plugin, which is why the shell's `sharedAuthTransport()`
+    // publishes an already-shared refresh rather than the raw provider method.
+    if (!this.refreshPromise && this.refreshExhausted()) return ctx.error;
     if (!this.refreshPromise) {
+      this.refreshesWithoutSuccess += 1;
+      this.lastRefreshAt = Date.now();
       this.refreshPromise = refresh()
         .finally(() => {
           this.refreshPromise = null;

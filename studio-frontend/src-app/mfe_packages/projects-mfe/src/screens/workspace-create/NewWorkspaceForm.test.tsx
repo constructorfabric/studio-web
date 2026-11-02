@@ -1,6 +1,13 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, eventBus, type ActionHandler, type ActionsChain } from '@gears-frontx/react';
+import {
+  FrontXProvider,
+  eventBus,
+  FRONTX_ACTION_UNMOUNT_EXT,
+  type ActionHandler,
+  type ActionsChain,
+} from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -28,11 +35,7 @@ class StubService {
   readonly getPlugins = () => new Map();
 }
 
-// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return { ...actual, queryCacheShared: actual.queryCache };
-});
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
@@ -50,7 +53,7 @@ vi.mock('../../i18n', async (importOriginal) => ({
 
 const CREATED = { id: 'ws-9', name: 'Platform' };
 
-type Chain = [{ action: { payload?: Record<string, unknown> } }];
+type Chain = [{ action: { type: string; payload?: Record<string, unknown> } }];
 
 /** The reply handlers the form registered on its bridge. */
 const handlers = new Map<string, ActionHandler>();
@@ -69,6 +72,14 @@ function announcements(calls: Chain[]): Record<string, unknown>[] {
   return calls
     .map(([chain]) => chain.action.payload)
     .filter((payload): payload is Record<string, unknown> => payload?.kind === 'created');
+}
+
+/** What the form asked of the shell about the new workspace, in order: `announce`, then `close` its overlay. */
+function requests(calls: Chain[]): string[] {
+  return calls.flatMap(([chain]) => {
+    if (chain.action.payload?.kind === 'created') return ['announce'];
+    return chain.action.type === FRONTX_ACTION_UNMOUNT_EXT ? ['close'] : [];
+  });
 }
 
 async function mountForm(executeActionsChain?: ReturnType<typeof vi.fn>) {
@@ -183,6 +194,33 @@ describe('the organization a new workspace is announced under', () => {
     expect(screen.getByRole('alert').textContent).toBe('error_no_org');
     expect(createWorkspace).not.toHaveBeenCalled();
     expect(announcements(executeActionsChain.mock.calls as never)).toEqual([]);
+  });
+});
+
+describe('the form once the workspace is announced', () => {
+  beforeEach(() => {
+    createWorkspace.mockReset();
+    createWorkspace.mockResolvedValue(CREATED);
+  });
+
+  it('closes its overlay when the shell takes the announcement', async () => {
+    const executeActionsChain = shellAnswering('next');
+    const { written } = await mountForm(executeActionsChain);
+
+    await written('org-1');
+
+    await vi.waitFor(() =>
+      expect(requests(executeActionsChain.mock.calls as never)).toEqual(['announce', 'close'])
+    );
+  });
+
+  it('stays open while the shell has not answered', async () => {
+    const { executeActionsChain, written } = await mountForm();
+
+    await written('org-1');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(requests(executeActionsChain.mock.calls as never)).toEqual(['announce']);
   });
 });
 

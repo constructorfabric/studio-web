@@ -80,15 +80,21 @@ Add a screen to an existing MFE (e.g. `src-app/mfe_packages/demo-mfe`):
    );
    ```
 
-2. **Wrap it in a Module Federation lifecycle**
+2. **Wrap it in a Module Federation lifecycle.** A Studio MFE extends
+   `StudioMfeLifecycle` from `@constructor-studio/mfe-shared`, not FrontX's
+   `ThemeAwareReactLifecycle`: it gives the first mount a styled paint and keeps
+   the shadow host transparent over the shell's page.
    ```tsx
    // src/lifecycle-my-screen.tsx
-   import { ThemeAwareReactLifecycle } from '@gears-frontx/react';
+   import { anchorKitThemeOnShadowHost, StudioMfeLifecycle } from '@constructor-studio/mfe-shared';
+   import kitTheme from '@gears-frontx/ui-kit/theme.css?inline';
    import { mfeApp } from './init';
    import { MyScreen } from './screens/my-screen/MyScreen';
 
-   class MyScreenLifecycle extends ThemeAwareReactLifecycle {
-     constructor() { super(mfeApp); }
+   const KIT_THEME_ON_HOST = anchorKitThemeOnShadowHost(kitTheme);
+
+   class MyScreenLifecycle extends StudioMfeLifecycle {
+     constructor() { super(mfeApp, KIT_THEME_ON_HOST); }
      protected renderContent(bridge) { return <MyScreen bridge={bridge} />; }
    }
    export default new MyScreenLifecycle();
@@ -155,8 +161,10 @@ const MenuToggle = () => {
 ```
 
 The app is **event-driven**: prefer emitting events over dispatching directly.
-Hooks such as `useMountedExtensions`, `useTheme`, `useTranslation`, and
-`useApiQuery` subscribe to store changes without polling.
+Hooks such as `useTheme`, `useTranslation`, and `useApiQuery` subscribe to
+store changes without polling. The shell's own `useMountedExtensions`
+(`@/app/mfe/domainOccupancy`) counts an extension from the end of its mount
+until its container is destroyed.
 
 ## Styling
 

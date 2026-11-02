@@ -249,9 +249,10 @@ Below the organization the address decides, and `materialize` applies it.
 
 The mount is the last step: if the mounted group is not the route's group,
 `materialize` calls `mountScreen` with the group's owner and, when the mount
-resolves, runs again — the address may have moved meanwhile, and
-`mountScreen`'s own generation counter already refuses a superseded mount.
-Nothing else in the shell calls `mountScreen`.
+settles, runs again — the address may have moved meanwhile. The runtime's
+queue keeps one mount running and one waiting, and a newer request replaces
+the waiting one; `materialize` ignores how a mount started for an address it
+has since left ended. Nothing else in the shell calls `mountScreen`.
 
 ### Start-up and the first report
 
@@ -300,12 +301,13 @@ Every refusal is a `console.warn` and a normalized `replace`; none throws.
   workspace other than the default), is dropped, and the section with it. The
   type check matters: every workspace's parent is the organization too.
 - A mount that does not happen is retried once as the level's entry point; if
-  that fails too, nothing is mounted and the warning says so. The registry
-  logs a failed actions chain and resolves — it never rejects — so success is
-  read off the mounted set, not off the promise, and a screen that did not
-  mount is not tried again until the address changes or the slot re-attaches
-  (`app/routing/start` a second time). Without that guard every catalog
-  arrival would mount again, without end. "The address changes" is the
+  that fails too, nothing is mounted and the warning says so. `mountScreen`
+  settles with the actions chain: it rejects when the chain takes `fallback`,
+  and a mount that resolves is confirmed against what the screen domain holds
+  (`DomainOccupancy`, which records an extension once its mount has finished).
+  A screen that did not mount is not tried again until the address changes
+  or the slot re-attaches (`app/routing/start` a second time). Without that
+  guard every catalog arrival would mount again, without end. "The address changes" is the
   observer's report of a transition, not a comparison of parameters: a mount
   is judged by the visit it started in, so a quick there-and-back to the same
   address is a new visit with an attempt of its own, a failure that settles
@@ -383,7 +385,28 @@ every domain that declares a `route`: it would clear the query string on load
 and push entries of its own on every mount. The shell registers its four
 domains without `route` (`unrouted` in `bootstrap.ts`), so that router has
 nothing to start and this record stands. Extensions keep `presentation.route`.
-Revisit together with ADR-0036 upstream.
+Revisit together with [gears-frontx ADR-0036](https://github.com/constructorfabric/gears-frontx/blob/main/architecture/ADR/0036-extension-routing-port.md).
+
+### Amendment 2026-11-02 — the mount follows the runtime
+
+The same change (#946) drops the shell's own mount mechanism: the lock in
+`mountScreen`, its generation counter and `converge` are gone. The shell
+follows what mfes 0.4.0 already does:
+
+- The order of mounts is the runtime's occupancy queue. One mount runs and one
+  waits; a newer request replaces the waiting one, which takes its `fallback`.
+- What is mounted is what the shell's domains record (`domainOccupancy.ts`):
+  an extension counts from the end of its mount until its container is
+  destroyed. The runtime creates the container before it loads the remote, and
+  keeps no mounted set the shell can read.
+- How a mount ended is the chain's own `next` or `fallback` (`chainOutcome.ts`
+  in mfe-shared; `executeAndSettle` in `shellOutcomes.ts`).
+
+"The mount is the last step" and the failure bullet under it are rewritten to
+match. Two consequences above are out of date for the same reason:
+`@gears-frontx/routing` is 0.4.0 and every MFE shares it through the
+framework, and `FrontXConfig.routerMode` went with the vendored
+`packages/framework`.
 
 ## Traceability
 

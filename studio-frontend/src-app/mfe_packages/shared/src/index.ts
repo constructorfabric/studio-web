@@ -25,7 +25,6 @@ export {
   STUDIO_EXTENSION_CONNECTION_CREATE,
   isStudioArtifactKind,
   sendToHost,
-  sendAndForget,
   openOverlay,
   closeOverlay,
   requestFromHost,
