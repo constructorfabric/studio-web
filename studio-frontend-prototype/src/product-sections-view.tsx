@@ -14,7 +14,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, type ProjectConfig, type ProjectTargets } from "./api";
 import { FrontendConstructor } from "./frontend-constructor-view";
 import {
-  FRONTX_SHELL_TEMPLATE,
   PRODUCT_SECTIONS,
   hasFrontend,
   comesWith,
@@ -391,9 +390,7 @@ function ProductFrontend({
     <section className="card" data-product-section="frontend" data-product-frontend={has ? "yes" : "no"}>
       {has && (
         <div className="row" style={{ alignItems: "center", marginBottom: 8 }}>
-          <span className="grow muted" style={{ fontSize: 12 }}>
-            Shell from <code>{cfg?.frontend?.shell ?? FRONTX_SHELL_TEMPLATE}</code>.
-          </span>
+          <span className="grow" />
           <button
             type="button"
             className="ghost"

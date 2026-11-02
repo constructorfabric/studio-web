@@ -115,6 +115,30 @@ product or ✗ not. The product's gears that no screen calls are listed with
 the packages that could show them. Until phase 2 the pick is kept in
 `project.config.frontend.mfes`.
 
+Above it, the steps a build of the frontend takes, each marked with what the
+constructor found, because assembling one by hand showed where each goes
+wrong:
+
+1. **Take the shell.** A shell is a workspace that carries FrontX packages
+   of its own (`template-shell/packages/framework`, …). The scan records
+   their versions (`carries`), whether the shell signs users in
+   (`src-app/app/auth/`, `shell_signin`), and whether it reads the
+   product's addresses at start (`public/env.js`, `shell_runtime_env`).
+   The shell is chosen here and kept in `project.config.frontend.shell`.
+2. **Mount the micro-frontends.**
+3. **Align FrontX versions.** A mounted micro-frontend gets the shell's
+   versions whatever it pinned (`deps_versions`). A pin that differs builds
+   only if the package uses nothing the shell's version lacks. Studio's own
+   screens fail on the stock template for exactly this reason: they import
+   names that exist only in Studio's portal.
+4. **Sign users in.** A product with a sign-in gear needs a shell that signs
+   in.
+5. **Reach the backend.** `/cf` goes to the product's gateway.
+6. **Gears behind the screens.** A screen that calls a gear the product
+   lacks gets 404.
+7. **Build.**
+8. **Ship.** These last two are by hand until phase 2.
+
 ### 6. A gear's TypeScript SDK comes from its OpenAPI
 
 The gateway already serves one OpenAPI document that Studio groups by gear.

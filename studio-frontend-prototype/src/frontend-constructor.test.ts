@@ -4,13 +4,23 @@ import type { CatalogNode, CatalogRepoSource } from "./api";
 import {
   FRONTX_NODE_TYPE,
   SUGGESTED_FRONTX_SOURCE,
+  assemblySteps,
+  chosenShell,
+  compareVersions,
   coverage,
+  fitOf,
   frontxSuggestion,
   gearKey,
   mfesFrom,
   offersFor,
+  ownerRepo,
+  parseShellRef,
   placementLabel,
+  productIdp,
   projectRepos,
+  satisfies,
+  shellRefOf,
+  shellsFrom,
   splitTemplates,
   withFrontxSource,
   withSuggestedFrontx,
@@ -218,5 +228,136 @@ describe("the repository to read micro-frontends from", () => {
       { tenant: "00000000-0000-0000-0000-000000000000", connection_id: null, repo: "constructorfabric/studio-web", git_ref: "main", mode: "frontx" },
     ]);
     expect(withFrontxSource([src("constructorfabric/studio-web")], "constructorfabric/studio-web")).toBeNull();
+  });
+});
+
+describe("how the frontend gets built", () => {
+  const profile = (auto: Record<string, unknown>) => ({ auto });
+  // The two shells a hand assembly met: the stock template, which carries
+  // newer FrontX and does not sign in, and Studio's portal, a fork of it that
+  // does.
+  const nodes = [
+    node("@gears-frontx/frontx-template-shell", {
+      component_kind: "template",
+      repository: "https://github.com/constructorfabric/gears-frontx-templates",
+      max_version: "0.1.0-alpha.6",
+    }),
+    node("@cs/studio-portal", {
+      repository: "constructorfabric/studio-web",
+      max_version: "0.1.0-alpha.2",
+    }),
+    node("@cs/people-mfe", { component_kind: "micro-frontend" }),
+  ];
+  const profiles = {
+    "@gears-frontx/frontx-template-shell": profile({
+      path: { v: "template-shell", b: "template-shell" },
+      carries: { "@gears-frontx/framework": "0.2.0-alpha.16", "@gears-frontx/react": "0.2.0-alpha.15" },
+      deps_versions: { "@gears-frontx/mfes": "0.4.0", "@gears-frontx/frontx-template-shell": "file:." },
+      shell_signin: false,
+      shell_runtime_env: false,
+    }),
+    "@cs/studio-portal": profile({
+      path: { v: "studio-frontend", b: "studio-frontend" },
+      carries: { "@gears-frontx/framework": "0.2.0-alpha.0", "@gears-frontx/react": "0.2.0-alpha.0" },
+      shell_signin: true,
+      shell_runtime_env: true,
+    }),
+    "@cs/people-mfe": profile({
+      mfe_extensions: [{ id: "p", domain: "screen", label: "People" }],
+      mfe_calls: ["studio-user"],
+      deps_versions: {
+        "@gears-frontx/react": "0.2.0-alpha.0",
+        "@gears-frontx/framework": "0.2.0-alpha.0",
+        "@gears-frontx/ui-kit": "0.4.10",
+        react: "19.0.0",
+      },
+    }),
+  };
+  const shells = shellsFrom(nodes, profiles);
+  const [template, portal] = shells;
+  const peopleMfe = mfesFrom(nodes, profiles).find((m) => m.name === "@cs/people-mfe")!;
+
+  it("finds the shells: packages whose workspace carries FrontX of its own", () => {
+    expect(shells.map((s) => s.name)).toEqual(["@gears-frontx/frontx-template-shell", "@cs/studio-portal"]);
+    expect(template.carries).toEqual({
+      "@gears-frontx/framework": "0.2.0-alpha.16",
+      "@gears-frontx/react": "0.2.0-alpha.15",
+      "@gears-frontx/mfes": "0.4.0",
+      "@gears-frontx/frontx-template-shell": "0.1.0-alpha.6",
+    });
+    expect(template.signsIn).toBe(false);
+    expect(portal.signsIn).toBe(true);
+  });
+
+  it("reads a micro-frontend's FrontX pins and nothing else", () => {
+    expect(peopleMfe.wants).toEqual({
+      "@gears-frontx/react": "0.2.0-alpha.0",
+      "@gears-frontx/framework": "0.2.0-alpha.0",
+      "@gears-frontx/ui-kit": "0.4.10",
+    });
+  });
+
+  it("names the shell a stored reference points at", () => {
+    expect(parseShellRef("github:constructorfabric/gears-frontx-templates//template-shell@main")).toEqual({
+      repo: "constructorfabric/gears-frontx-templates",
+      path: "template-shell",
+      ref: "main",
+    });
+    expect(chosenShell(shells, "github:constructorfabric/gears-frontx-templates//template-shell@main")).toBe(template);
+    expect(chosenShell(shells, "github:constructorfabric/studio-web//studio-frontend")).toBe(portal);
+    expect(chosenShell(shells, "github:o/r//nowhere@main")).toBeNull();
+    expect(shellRefOf(portal)).toBe("github:constructorfabric/studio-web//studio-frontend@main");
+    expect(ownerRepo("https://github.com/o/r.git")).toBe("o/r");
+  });
+
+  it("orders versions as semver does, prereleases included", () => {
+    expect(compareVersions("0.2.0-alpha.16", "0.2.0-alpha.2")).toBeGreaterThan(0);
+    expect(compareVersions("0.2.0", "0.2.0-alpha.16")).toBeGreaterThan(0);
+    expect(satisfies("0.2.0-alpha.0", "0.2.0-alpha.0")).toBe(true);
+    expect(satisfies("0.2.0-alpha.0", "0.2.0-alpha.16")).toBe(false);
+    expect(satisfies("^0.4.0", "0.4.7")).toBe(true);
+    expect(satisfies("^0.4.0", "0.5.0")).toBe(false);
+    expect(satisfies(">=0.2.0-0", "0.3.0-alpha.3")).toBe(true);
+    expect(satisfies("*", "anything")).toBe(true);
+  });
+
+  it("holds the pins against the shell: Studio's screens fit the portal, not the template", () => {
+    expect(fitOf(peopleMfe, portal).map((f) => f.verdict)).toEqual(["fits", "fits", "outside"]);
+    expect(fitOf(peopleMfe, template)).toEqual([
+      { pkg: "@gears-frontx/framework", wants: "0.2.0-alpha.0", has: "0.2.0-alpha.16", verdict: "differs" },
+      { pkg: "@gears-frontx/react", wants: "0.2.0-alpha.0", has: "0.2.0-alpha.15", verdict: "differs" },
+      { pkg: "@gears-frontx/ui-kit", wants: "0.4.10", has: null, verdict: "outside" },
+    ]);
+  });
+
+  it("walks the steps, and says which a sign-in product's shell fails", () => {
+    const gears = ["cf-gears-api-gateway", "cf-gears-oidc-authn-plugin"];
+    expect(productIdp(gears)).toBe("oidc-authn-plugin");
+    const onTemplate = assemblySteps({
+      shellRef: "github:constructorfabric/gears-frontx-templates//template-shell@main",
+      shell: template,
+      picked: [peopleMfe],
+      productGears: gears,
+    });
+    const state = Object.fromEntries(onTemplate.map((s) => [s.id, s.state]));
+    expect(onTemplate.map((s) => s.id)).toEqual(["shell", "mount", "versions", "signin", "backend", "gears", "build", "ship"]);
+    expect(state).toMatchObject({ shell: "ok", versions: "warn", signin: "bad", backend: "warn", gears: "bad", build: "todo" });
+    expect(onTemplate.find((s) => s.id === "gears")?.detail).toContain("studio-user");
+
+    const onPortal = assemblySteps({ shellRef: null, shell: portal, picked: [peopleMfe], productGears: [...gears, "studio-user"] });
+    expect(Object.fromEntries(onPortal.map((s) => [s.id, s.state]))).toMatchObject({
+      versions: "ok",
+      signin: "ok",
+      backend: "ok",
+      gears: "ok",
+    });
+  });
+
+  it("says when the shell is not in the catalogue, and when nothing is picked", () => {
+    const steps = assemblySteps({ shellRef: "github:o/r//shell@main", shell: null, picked: [], productGears: [] });
+    expect(steps[0]).toMatchObject({ id: "shell", state: "warn" });
+    expect(steps[0].detail).toContain("o/r");
+    expect(steps.find((s) => s.id === "mount")?.state).toBe("todo");
+    expect(steps.find((s) => s.id === "signin")?.state).toBe("info");
   });
 });
