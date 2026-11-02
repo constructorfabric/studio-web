@@ -5,9 +5,13 @@
 // a heartbeat to the desktop backend, which renews the workspace's desktop
 // session, and a last word when the window closes. The window drives it
 // because only the window knows whether it is still showing the workspace.
+//
+// And runs what the portal asks of it (ADR-0027 §5): the backend hears the
+// commands on `studio-events`, and this window, showing their workspace, takes
+// them with a long poll, runs each and says how it went.
 
 import { inject, injectable } from '@theia/core/shared/inversify';
-import { FrontendApplicationContribution } from '@theia/core/lib/browser';
+import { FrontendApplicationContribution, OpenerService, open } from '@theia/core/lib/browser';
 import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
@@ -15,6 +19,8 @@ import { DESKTOP_STUDIO_WIDGET_ID, DesktopStudioWidget } from './desktop-studio-
 import { desktopStatus, desktopUrl } from './desktop-studio-client';
 import { remoteGearCatalogueRefused, remoteGearCatalogueSignedIn } from './gearbox-remote-catalogue';
 import { STUDIO_VIEW } from './studio-mode-layout';
+import type { EditorOpenerOptions } from '@theia/editor/lib/browser/editor-manager';
+import { WindowCommand, planCommand } from '../common/desktop-commands';
 
 /** How often a window renews; the server's `heartbeat_secs`, and a third of its lease. */
 export const DESKTOP_HEARTBEAT_MS = 30_000;
@@ -27,7 +33,11 @@ export class DesktopStudioContribution extends AbstractViewContribution<DesktopS
     @inject(WorkspaceService)
     protected readonly workspaceService: WorkspaceService;
 
+    @inject(OpenerService)
+    protected readonly openers: OpenerService;
+
     protected heartbeat: ReturnType<typeof setInterval> | undefined;
+    protected listening = false;
 
     constructor() {
         super({
@@ -60,6 +70,7 @@ export class DesktopStudioContribution extends AbstractViewContribution<DesktopS
         }
         clearInterval(this.heartbeat);
         this.heartbeat = undefined;
+        this.listening = false;
         const root = this.root();
         if (root) {
             // The page is going away: a beacon is the one request it still sends.
@@ -73,6 +84,67 @@ export class DesktopStudioContribution extends AbstractViewContribution<DesktopS
         }
         void this.beat();
         this.heartbeat = setInterval(() => void this.beat(), DESKTOP_HEARTBEAT_MS);
+        void this.listen();
+    }
+
+    /** Take the portal's commands for this window's workspace while it beats. */
+    protected async listen(): Promise<void> {
+        if (this.listening) {
+            return;
+        }
+        this.listening = true;
+        while (this.listening) {
+            const root = this.root();
+            let commands: WindowCommand[] = [];
+            let answered = false;
+            if (root) {
+                try {
+                    const answer = await fetch(`${desktopUrl('commands')}?root=${encodeURIComponent(root)}`);
+                    answered = answer.ok;
+                    if (answer.ok) {
+                        commands = ((await answer.json()) as { commands?: WindowCommand[] }).commands ?? [];
+                    }
+                } catch {
+                    // The backend is restarting.
+                }
+            }
+            for (const command of commands) {
+                await this.run(root!, command);
+            }
+            // The poll itself waits for a command; only a folder Studio did
+            // not open, or a backend that did not answer, waits here.
+            if (!answered) {
+                await new Promise(resolve => setTimeout(resolve, DESKTOP_HEARTBEAT_MS));
+            }
+        }
+    }
+
+    /** Run one command and tell the backend how it went. */
+    protected async run(root: string, command: WindowCommand): Promise<void> {
+        const plan = planCommand(command);
+        let ok = false;
+        let detail: string | undefined;
+        if (plan.kind === 'open') {
+            try {
+                const uri = this.workspaceService.tryGetRoots()[0].resource.resolve(plan.relativePath);
+                const options: EditorOpenerOptions = { mode: 'activate', preview: plan.preview };
+                await open(this.openers, uri, options);
+                ok = true;
+            } catch (error) {
+                detail = error instanceof Error ? error.message : String(error);
+            }
+        } else {
+            detail = plan.detail;
+        }
+        try {
+            await fetch(desktopUrl('commands/outcome'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ root, commandId: command.commandId, command: command.command, ok, detail }),
+            });
+        } catch {
+            // The outcome is lost; the command ran or did not all the same.
+        }
     }
 
     /** One renewal. Not signed in, or a folder Studio did not open, is an

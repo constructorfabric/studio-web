@@ -827,6 +827,8 @@ export interface DeployEnvironmentsSource {
   ): Promise<{ readonly registry: string; readonly prefix: string; readonly token: string; readonly expires_in?: number | null }>;
   /** A deployed release's workloads and hosts, read from its cluster now; rejects with the server's words. */
   status?(organizationId: string, deploymentId: string): Promise<import("./deploy-product").DeploymentStatus>;
+  /** The end of each container's log of a deployed release, read from its cluster now. */
+  logs?(organizationId: string, deploymentId: string): Promise<readonly import("./deploy-product").ContainerLog[]>;
   /** Propose the product's CI build workflow to the project's repository as a pull request (ADR-0048 §5). */
   proposeBuildWorkflow?(
     projectId: string,

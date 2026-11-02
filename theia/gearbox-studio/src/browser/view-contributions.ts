@@ -34,6 +34,7 @@ import { GearAuthorWidget } from "./gear/gear-author-widget";
 import { EngineConnectionService } from "./shell/engine-connection-service";
 import { ProductSessionService } from "./shell/product-session-service";
 import {
+  ADD_DEBUG_CONFIGURATIONS,
   ADD_GEAR,
   ADD_PROFILE,
   BROWSE_CATALOGUE,
@@ -1145,6 +1146,15 @@ export class GenerateViewContribution extends ScopedViewContribution<GenerateWid
         await (await this.widget).generateAndBuild();
       },
     });
+    // Run & Deploy shown, so the member sees the Run the configurations copy.
+    commands.registerCommand(ADD_DEBUG_CONFIGURATIONS, explained({
+      execute: async () => {
+        await commands.executeCommand(SHOW_PRODUCT.id, "deploy");
+        await (await this.widget).addDebugConfigurations();
+      },
+      isEnabled: () => this.availableHere() && this.engine.isConnected,
+      disabledReason: () => (!this.availableHere() ? NO_PRODUCT : this.engine.isConnected ? undefined : ENGINE_DOWN),
+    }));
   }
 
   override registerMenus(menus: MenuModelRegistry): void {

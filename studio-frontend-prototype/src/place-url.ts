@@ -37,11 +37,8 @@ export interface UrlPlace {
 
 /** The shell's sections and the path each has. `projects` is the portfolio of workspaces. */
 export const VIEW_PATHS = {
-  home: "home",
   projects: "workspaces",
   people: "people",
-  chats: "chats",
-  files: "files",
   connectors: "connections",
   environments: "environments",
   costs: "costs",

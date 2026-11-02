@@ -35,6 +35,17 @@ describe('a desktop\'s leases', () => {
         expect(leases.open).toEqual(['ws-1']);
     });
 
+    it('names the lease it holds on a workspace, and the workspace a lease holds', async () => {
+        const { leases } = studio([lease('lease-1')]);
+        await leases.renew(TARGET, 'ws-1');
+        expect(leases.leaseOf('ws-1')).toBe('lease-1');
+        expect(leases.workspaceOf('lease-1')).toBe('ws-1');
+        expect(leases.leaseOf('ws-2')).toBeUndefined();
+        expect(leases.workspaceOf('lease-2')).toBeUndefined();
+        leases.forget();
+        expect(leases.workspaceOf('lease-1')).toBeUndefined();
+    });
+
     it('ends the lease Studio named, and only once', async () => {
         const { leases, calls } = studio([lease('lease-1')]);
         await leases.renew(TARGET, 'ws-1');

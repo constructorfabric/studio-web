@@ -160,13 +160,34 @@ describe('the organization\'s environments, for the desktop\'s Deploy', () => {
         let asked = '';
         const source = new DeployEnvironments(async () => undefined, async path => {
             asked = path;
-            return json(200, { deployment: {}, workloads: [{ name: 'shop-api', ready: 1, desired: 2, images: ['r/shop-api:1'] }], hosts: ['shop.example.com'] });
+            return json(200, { deployment: {}, workloads: [{ name: 'shop-api', ready: 1, desired: 2, images: ['r/shop-api:1'] }], hosts: ['shop.example.com'], problems: ['pod shop-api-1 container api: ImagePullBackOff', 7] });
         });
         await expect(source.status('org-1', 'd-1')).resolves.toEqual({
             workloads: [{ name: 'shop-api', ready: 1, desired: 2, images: ['r/shop-api:1'] }],
             hosts: ['shop.example.com'],
+            problems: ['pod shop-api-1 container api: ImagePullBackOff'],
         });
         expect(asked).toBe('/studio-environments/v1/deployments/d-1/status?organization_id=org-1');
+    });
+
+    it("read a release's container logs, keeping only what the server said of each", async () => {
+        let asked = '';
+        const source = new DeployEnvironments(async () => undefined, async path => {
+            asked = path;
+            return json(200, { containers: [{ pod: 'shop-api-1', container: 'api', previous: true, text: 'boom\n' }, { pod: 7 }] });
+        });
+        await expect(source.logs('org-1', 'd-1')).resolves.toEqual([
+            { pod: 'shop-api-1', container: 'api', previous: true, text: 'boom\n' },
+            { pod: '', container: '', previous: false, text: '' },
+        ]);
+        expect(asked).toBe('/studio-environments/v1/deployments/d-1/logs?organization_id=org-1');
+        const refused = new DeployEnvironments(async () => undefined, async () => json(412, { detail: 'Constructor Research keeps its logs' }));
+        await expect(refused.logs('org-1', 'd-1')).rejects.toThrow('Constructor Research keeps its logs');
+    });
+
+    it('read a status from a server that does not say what is wrong as nothing wrong', async () => {
+        const source = new DeployEnvironments(async () => undefined, async () => json(200, { workloads: [], hosts: [] }));
+        await expect(source.status('org-1', 'd-1')).resolves.toMatchObject({ problems: [] });
     });
 
     it('propose the CI build workflow as a pull request', async () => {

@@ -37,6 +37,21 @@ export class DesktopLeases {
         return [...this.held.keys()];
     }
 
+    /** The lease this desktop holds on a workspace. */
+    leaseOf(workspaceId: string): string | undefined {
+        return this.held.get(workspaceId);
+    }
+
+    /** The workspace a lease of this desktop holds open. */
+    workspaceOf(leaseId: string): string | undefined {
+        for (const [workspaceId, id] of this.held) {
+            if (id === leaseId) {
+                return workspaceId;
+            }
+        }
+        return undefined;
+    }
+
     /** Open or renew the lease for a workspace. `false` when Studio refused it. */
     async renew(target: LeaseTarget, workspaceId: string): Promise<boolean> {
         const answer = await this.doFetch(`${target.studioUrl}${target.gatewayPrefix}${DESKTOP_SESSIONS_PATH}`, {

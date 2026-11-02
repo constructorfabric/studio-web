@@ -45,6 +45,19 @@ describe("what runs where", () => {
     expect(running[0]).toMatchObject({ environment: "stage", commit: "222", productionLike: false });
   });
 
+  it("leaves out a preview beside the environment and a release taken out", () => {
+    const running = runningNow(
+      [
+        deploy("p", { requested_at: "2026-10-12T09:00:00Z", commit: "pre", preview: { name: "pr-1" } as Deployment["preview"] }),
+        deploy("d1", { requested_at: "2026-10-10T09:00:00Z", commit: "111" }),
+        deploy("u", { environment_id: "prod", environment_name: "prod", action: "uninstall", requested_at: "2026-10-12T09:00:00Z" }),
+        deploy("d0", { environment_id: "prod", environment_name: "prod", requested_at: "2026-10-09T09:00:00Z" }),
+      ],
+      ENVS,
+    );
+    expect(running.map((r) => r.commit)).toEqual(["111"]);
+  });
+
   it("dates a run by its decision when there was one", () => {
     const [r] = runningNow(
       [deploy("d1", { environment_id: "prod", environment_name: "prod", decided_at: "2026-10-11T08:00:00Z" })],

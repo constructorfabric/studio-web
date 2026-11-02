@@ -9,6 +9,59 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## 0.3.0-beta.14
+
+Run & Deploy as its own stage, a deploy that says why it failed, a sign-in
+kept between starts, and the portal's commands. Everything merged since
+`desktop-v0.3.0-beta.13`.
+
+### Run & Deploy
+
+- **A stage of its own after Generate.** Generate shows the plan and the
+  files and applies them. Run & Deploy has two steps: **Build** (in Studio, or
+  on this computer once the code is applied, then Publish) and **Deploy** the
+  newest published build. Everything older is under *History*. (#954)
+- **A failed deploy says why in one line.** It shows its run's `Error:` line
+  rather than helm's progress line, and the same failure repeated is one row
+  with ×N. A pod that cannot start shows while helm still waits, and *Logs*
+  opens each container's log in place. (#954, needs the backend from the same
+  PR)
+- **Publish is judged by its exit code.** A push the registry refuses is
+  shown, and no build is recorded as published. (#954)
+- **Debug configurations and tests.** F5 starts an application under
+  CodeLLDB, from configurations merged into `.vscode/launch.json` without
+  touching your own entries. *Tests* runs each gear's `cargo test` and names
+  the failing tests. (#954)
+
+### Studio
+
+- **The sign-in is kept between starts** in the system keychain, one per
+  Studio. An expired one signs out and says so, instead of failing every call.
+  (#954)
+- **The open project card** shows each checkout's branch, changes and sync,
+  and the project's last deploy. Organizations show their logos, and your
+  photo is beside your name. (#954)
+- **The portal can open a file in your desktop** when the project is open
+  there. Orca agents are offered from what Orca finds on the machine. (#954)
+
+### Building
+
+- **A project an earlier desktop left on its product branch builds today's
+  code.** Desktops up to 0.3.0-beta.12 switched the clone itself onto the
+  `product/…` branch, whose code is as old as the save; beta.13 then took
+  the description from that branch but kept the clone on it, so Build images
+  compiled the old code (for Studio's own product: `events-catalog.md` not
+  found). Opening the product now moves such a clone back onto the
+  repository's main branch, up to date, and lays only `product.gdl` from the
+  product branch over it. A clone with a changed tracked file stays where it
+  is. (#945)
+
+### Known not to work
+
+- **Not run in a built app** before this release.
+- **Build here fails in a folder whose path has spaces**: Gearbox's
+  Dockerfile template does not quote the path. (#954)
+
 ## 0.3.0-beta.13
 
 The product's description is kept by Studio, and the photo is where a member

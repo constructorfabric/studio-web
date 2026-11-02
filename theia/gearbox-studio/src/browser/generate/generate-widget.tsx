@@ -9,12 +9,15 @@
 import { codicon, ConfirmDialog, ReactWidget } from "@theia/core/lib/browser";
 import { WindowService } from "@theia/core/lib/browser/window/window-service";
 import { CommandService } from "@theia/core/lib/common/command";
+import { FileUri } from "@theia/core/lib/common/file-uri";
 import { Disposable, DisposableCollection } from "@theia/core/lib/common/disposable";
 import { MessageService } from "@theia/core/lib/common/message-service";
 import type { Message } from "@theia/core/shared/@lumino/messaging";
 import { inject, injectable, optional, postConstruct } from "@theia/core/shared/inversify";
 import React from "@theia/core/shared/react";
 import * as monaco from "@theia/monaco-editor-core";
+import { FileService } from "@theia/filesystem/lib/browser/file-service";
+import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
 
 import type { FileAction } from "../../common/generated/FileAction";
 import type { FileKind } from "../../common/generated/FileKind";
@@ -43,12 +46,27 @@ import {
   type BuildToolchain,
   type RunTarget,
 } from "../../common/run-product";
-import { ProductTerminals } from "./product-terminals";
+import { ProductTerminals, testTerminalName } from "./product-terminals";
+import { debugConfigurationsFor, debugNamePrefix, folderFromLaunch, type DebugTarget } from "../../common/debug-configurations";
+import { mergeLaunchJson } from "../../common/launch-json";
+import {
+  TEST_WAIT_MS,
+  TestSummaryReader,
+  gearTestTargetsOf,
+  testCommand,
+  testStateOf,
+  type GearTestState,
+  type GearTestTarget,
+} from "../../common/gear-tests";
+import { GearTestsPanel } from "./gear-tests-panel";
+import { PUBLISH_WAIT_MS } from "./publish-outcome";
 import { RunPanel, type PostgresState } from "./run-panel";
-import { DeployPanel, type DeployStatusView } from "./deploy-panel";
+import { DeployPanel, type DeployLogsView, type DeployStatusView } from "./deploy-panel";
 import { ProductDescriptionSync } from "../shell/product-description-sync";
 import {
-  defaultTarget,
+  flowToFollow,
+  nextTarget,
+  shouldAskFlow,
   deployAnswer,
   deployBuildRequest,
   deployCommands,
@@ -156,6 +174,9 @@ export class GenerateWidget extends ReactWidget {
   @inject(ProductTerminals) protected readonly terminals!: ProductTerminals;
   @inject(WindowService) protected readonly windows!: WindowService;
   @inject(MessageService) protected readonly messages!: MessageService;
+  // Constructor Studio: debug configurations go into the workspace's launch.json.
+  @inject(FileService) protected readonly files!: FileService;
+  @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
   // Constructor Studio: the organization's environments (ADR-0043); absent
   // in Gearbox Studio proper, where Deploy offers the kube contexts alone.
   @inject(DeployEnvironmentsSource) @optional() protected readonly environments?: DeployEnvironmentsSource;
@@ -203,6 +224,10 @@ export class GenerateWidget extends ReactWidget {
    * read for. Followed every few seconds while a build runs.
    */
   protected flowFor: string | undefined;
+  /** When the environments were last asked for `flowFor`, and whether that placed the project. */
+  protected flowAsked: { at?: number; placed: boolean } = { placed: false };
+  /** Whether the member picked the deploy target, rather than it being the default. */
+  protected targetChosen = false;
   protected flowBuilds: readonly ProductBuild[] = [];
   protected flowDeployments: readonly ProductDeployment[] = [];
   protected flowError: string | undefined;
@@ -211,11 +236,16 @@ export class GenerateWidget extends ReactWidget {
   protected binding = false;
   /** Each deploy's live status, as last read from its cluster. */
   protected statuses: Record<string, DeployStatusView> = {};
+  protected logs: Record<string, DeployLogsView> = {};
   /** The CI build workflow proposed, by environment. */
   protected workflows: Record<string, BuildWorkflow> = {};
   protected proposingWorkflow = false;
   protected savingSecret = false;
   protected fetchingProtoc = false;
+  protected addingDebugConfigurations = false;
+  /** How each gear's tests went, by gear id: what the Tests section shows. */
+  protected testStates: Record<string, GearTestState> = {};
+  protected testingAll = false;
 
   protected selected: string | undefined;
   protected preview: GenerateFileResult | undefined;
@@ -312,6 +342,30 @@ export class GenerateWidget extends ReactWidget {
         ? { [LOCAL_POSTGRES.passwordEnv]: LOCAL_POSTGRES_PASSWORD }
         : {};
     return { ...(this.toolchain?.env ?? {}), ...pg };
+  }
+
+  /**
+   * Constructor Studio: which half of the product's way out the product view
+   * shows here. `generate` is the code -- the plan, its files, Apply;
+   * `deploy` is what comes after Apply -- build and run it on this machine, or
+   * build, publish and deploy it to an environment, with how that went. One
+   * screen held both, and the tree a person came to Generate for sat under a
+   * page of builds, deploys and secrets.
+   */
+  protected view: "generate" | "deploy" = "generate";
+
+  setView(view: "generate" | "deploy"): void {
+    if (this.view === view) return;
+    this.view = view;
+    this.update();
+  }
+
+  /** Whether the generated tree is on disk: applied, or nothing left to write. */
+  protected isGenerated(plans: readonly FilePlan[]): boolean {
+    return (
+      this.generate.current.written !== undefined ||
+      (plans.length > 0 && plans.every((plan) => plan.action === "unchanged" || plan.action === "kept"))
+    );
   }
 
   /**
@@ -468,6 +522,136 @@ export class GenerateWidget extends ReactWidget {
     await this.terminals.send("build", context.product, context.cwd, linkedGearsCommand(target), this.terminalEnv(target));
   }
 
+  /**
+   * Constructor Studio: write a CodeLLDB configuration per application into
+   * the launch.json of the workspace folder the generated tree is in -- the
+   * file F5 reads -- so the debugger starts what Run starts
+   * (`common/debug-configurations.ts`). The run configuration is written
+   * first, as Run writes it, so the file the configuration names is there.
+   * Studio's earlier configurations for this product are replaced; the
+   * member's own are left as they are (`common/launch-json.ts`).
+   */
+  async addDebugConfigurations(): Promise<void> {
+    if (this.addingDebugConfigurations) return;
+    const context = this.runContext();
+    const targets = this.runTargets();
+    if (context === undefined || targets.length === 0) {
+      this.messages.warn("No debug configuration was added: the product has no generated application Run can start.");
+      return;
+    }
+    this.addingDebugConfigurations = true;
+    this.update();
+    try {
+      await this.toolchainKnown();
+      const outRoot = FileUri.create(context.cwd);
+      const folder = this.workspace.getWorkspaceRootUri(outRoot) ?? outRoot;
+      const cwd = folderFromLaunch(folder.path.fsPath(), context.cwd);
+      const applications = this.product.current.resolution?.product?.applications ?? [];
+      const configurations: Record<string, unknown>[] = [];
+      for (const target of targets) {
+        const written = await this.service.writeRunConfig(context.cwd, target.app, [...target.dbGears]);
+        const debug: DebugTarget = {
+          app: target.app,
+          bin: target.bin,
+          // The generated crate's package; the binary's name when the resolution does not say.
+          pkg: applications.find((app) => app.name === target.app)?.crate_name ?? target.bin,
+          config: written.config,
+        };
+        configurations.push(...debugConfigurationsFor(context.product, [debug], cwd, this.terminalEnv(target)));
+      }
+      const file = folder.resolve(".vscode/launch.json");
+      // Read only when it is there: a read that fails for another reason must not be taken for "no file" and overwritten.
+      const existing = (await this.files.exists(file)) ? (await this.files.read(file)).value : undefined;
+      const prefix = debugNamePrefix(context.product);
+      const merged = mergeLaunchJson(existing, configurations, (name) => name.startsWith(prefix));
+      if (!merged.ok) {
+        this.messages.error(`No debug configuration was added: ${merged.why}. Fix the file, then press Debug configurations again.`);
+        return;
+      }
+      if (merged.text !== existing) await this.files.write(file, merged.text);
+      this.messages.info(
+        `${configurations.length === 1 ? "A debug configuration" : `${configurations.length} debug configurations`} for ${context.product} ` +
+          `${merged.removed > 0 ? "updated" : "added"} in ${this.workspace.getWorkspaceRootUri(outRoot) !== undefined ? ".vscode/launch.json" : file.path.fsPath()}. ` +
+          "F5 builds and starts it under the debugger; it needs the CodeLLDB extension (vadimcn.vscode-lldb).",
+      );
+    } catch (error) {
+      this.messages.error(`The debug configurations could not be written: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.addingDebugConfigurations = false;
+      this.update();
+    }
+  }
+
+  /** The product's gears whose tests can be run, with their crates where this machine has their source. */
+  protected testTargets(): GearTestTarget[] {
+    const product = this.product.current.resolution?.product;
+    if (product === undefined || product === null) return [];
+    return gearTestTargetsOf(product, (source, crateDir) => this.catalogue.absolutePath(source, crateDir));
+  }
+
+  /**
+   * Constructor Studio: one gear's tests, in a terminal of their own, and how
+   * they went -- by the exit code, with libtest's counts read off the output
+   * (`common/gear-tests.ts`). Answers whether they passed.
+   */
+  protected async runGearTests(target: GearTestTarget): Promise<boolean> {
+    const context = this.runContext();
+    if (context === undefined) return false;
+    this.testStates = { ...this.testStates, [target.gear]: { status: "running" } };
+    this.update();
+    let state: GearTestState;
+    try {
+      await this.toolchainKnown();
+      const name = testTerminalName(context.product, target.gear);
+      const run = await this.terminals.run("test", name, context.cwd, testCommand(target), { ...(this.toolchain?.env ?? {}) }, TEST_WAIT_MS);
+      const reader = new TestSummaryReader();
+      const reading = run.terminal.onOutput((chunk) => reader.feed(chunk));
+      const end = await run.ended;
+      reading.dispose();
+      state = testStateOf(end, reader.summary());
+    } catch (error) {
+      state = { status: "failed", why: `the tests did not start: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    this.testStates = { ...this.testStates, [target.gear]: state };
+    this.update();
+    return state.status === "passed";
+  }
+
+  /** Every gear's tests, one gear after another; a gear that passed closes its terminal, one that failed keeps it open to read. */
+  protected async runAllGearTests(): Promise<void> {
+    if (this.testingAll) return;
+    const context = this.runContext();
+    if (context === undefined) return;
+    this.testingAll = true;
+    this.testStates = {};
+    this.update();
+    try {
+      for (const target of this.testTargets()) {
+        if (await this.runGearTests(target)) this.terminals.close("test", testTerminalName(context.product, target.gear));
+      }
+    } finally {
+      this.testingAll = false;
+      this.update();
+    }
+  }
+
+  protected renderTests(generated: boolean): React.ReactNode {
+    // Tests build with cargo, as Build does: offered once the tree is there and cargo is.
+    if (!generated || this.toolchain === undefined || !toolchainVerdict(this.toolchain).ready) return undefined;
+    return (
+      <GearTestsPanel
+        targets={this.testTargets()}
+        states={this.testStates}
+        runningAll={this.testingAll}
+        onRun={(gear) => {
+          const target = this.testTargets().find((t) => t.gear === gear);
+          if (target !== undefined) void this.runGearTests(target);
+        }}
+        onRunAll={() => void this.runAllGearTests()}
+      />
+    );
+  }
+
   protected async run(target: RunTarget): Promise<void> {
     const context = this.runContext();
     if (context === undefined) return;
@@ -555,7 +739,7 @@ export class GenerateWidget extends ReactWidget {
         this.deployTargets = undefined;
       }
     }
-    this.deployTarget ??= defaultTarget(this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
+    this.deployTarget = nextTarget(this.deployTarget, this.targetChosen, this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
     this.update();
   }
 
@@ -660,19 +844,28 @@ export class GenerateWidget extends ReactWidget {
         ...stamp,
         configDir,
       });
-      await this.sendDeploy(plan.commands);
-      this.published = {
-        environmentId: environment.id,
-        buildId: newBuildId(),
-        startedAt: new Date().toISOString(),
-        ...(commit !== undefined ? { commit } : {}),
-        images: plan.images,
-        chartRef: plan.chartRef,
-        chartVersion: plan.chartVersion,
-      };
-      this.deployNote =
-        `Publishing ${plan.chartVersion} to ${environment.registry} in the Deploy terminal. ` +
-        `When it has finished, Deploy asks the Studio server to install that build into ${environment.name}.`;
+      // Published only once every push went through, by the commands' exit
+      // code: a build recorded as published with a chart the registry
+      // refused sent every Deploy after it to "not found".
+      const run = await this.terminals.run("publish", context.product, context.cwd, plan.commands.join(" && "), { DOCKER_BUILDKIT: "1" }, PUBLISH_WAIT_MS);
+      this.deployNote = `Publishing ${plan.chartVersion} to ${environment.registry} in the Publish terminal…`;
+      this.update();
+      const ended = await run.ended;
+      if (ended.ok) {
+        this.published = {
+          environmentId: environment.id,
+          buildId: newBuildId(),
+          startedAt: new Date().toISOString(),
+          ...(commit !== undefined ? { commit } : {}),
+          images: plan.images,
+          chartRef: plan.chartRef,
+          chartVersion: plan.chartVersion,
+        };
+        this.deployNote = `Published ${plan.chartVersion} to ${environment.registry}. Deploy asks the Studio server to install it into ${environment.name}.`;
+      } else {
+        this.deployNote = `Publish failed${ended.why ? `: ${ended.why}` : ""}. Nothing was recorded as published; see the Publish terminal.`;
+        this.messages.error(`Publish to ${environment.registry} failed${ended.why ? `: ${ended.why}` : ""}`);
+      }
     } catch (error) {
       this.messages.error(`Publish did not start: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -907,15 +1100,24 @@ export class GenerateWidget extends ReactWidget {
    * has not asked yet.
    */
   protected async askFlow(file: string): Promise<void> {
-    if (this.flowFor === file || this.environments?.builds === undefined) return;
+    if (this.environments?.builds === undefined) return;
+    const asked = this.flowFor === file ? this.flowAsked : { placed: false };
+    if (!shouldAskFlow({ file: this.flowFor, ...asked }, file, Date.now())) return;
     this.flowFor = file;
+    this.flowAsked = { at: Date.now(), placed: false };
     if (this.deployTargets === undefined) {
       try {
         this.deployTargets = await this.environments.targets(file);
       } catch {
         this.deployTargets = undefined;
       }
-      this.deployTarget ??= defaultTarget(this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
+      this.deployTarget = nextTarget(this.deployTarget, this.targetChosen, this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
+    }
+    if (this.flowFor !== file) return;
+    this.flowAsked = { at: this.flowAsked.at, placed: this.deployTargets !== undefined };
+    if (this.deployTargets === undefined) {
+      this.update();
+      return;
     }
     await this.refreshFlow();
   }
@@ -937,7 +1139,11 @@ export class GenerateWidget extends ReactWidget {
     } catch (error) {
       this.flowError = error instanceof Error ? error.message : String(error);
     }
-    if (this.flowBuilds.some((b) => b.status === "running") && !this.isDisposed) {
+    const follow = flowToFollow(this.flowBuilds, this.flowDeployments);
+    // A deploy that is installing is read from its cluster on each look, so a
+    // pod that cannot start shows here while helm still waits for it.
+    for (const id of follow.statuses) void this.readStatus(id, true);
+    if (follow.again && !this.isDisposed) {
       if (!this.flowFollowing) {
         this.flowFollowing = true;
         this.toDispose.push({ dispose: () => this.flowTimer !== undefined && clearTimeout(this.flowTimer) });
@@ -969,17 +1175,42 @@ export class GenerateWidget extends ReactWidget {
   }
 
   /** Read a deploy's release from its cluster now, in the project's organization. */
-  protected async readStatus(deploymentId: string): Promise<void> {
+  protected async readStatus(deploymentId: string, quietly = false): Promise<void> {
     const source = this.environments;
     const organization = this.deployTargets?.organizationId;
     if (source?.status === undefined || organization === undefined) return;
-    this.statuses = { ...this.statuses, [deploymentId]: { kind: "loading" } };
-    this.update();
+    // Following a deploy keeps what it last read on screen instead of "Reading…".
+    if (!quietly || this.statuses[deploymentId] === undefined) {
+      this.statuses = { ...this.statuses, [deploymentId]: { kind: "loading" } };
+      this.update();
+    }
     try {
       const status = await source.status(organization, deploymentId);
       this.statuses = { ...this.statuses, [deploymentId]: { kind: "status", status } };
     } catch (error) {
       this.statuses = { ...this.statuses, [deploymentId]: { kind: "error", error: error instanceof Error ? error.message : String(error) } };
+    }
+    this.update();
+  }
+
+  /** Read the end of each container's log of a deploy's release, or hide it when it shows. */
+  protected async readLogs(deploymentId: string): Promise<void> {
+    const source = this.environments;
+    const organization = this.deployTargets?.organizationId;
+    if (source?.logs === undefined || organization === undefined) return;
+    if (this.logs[deploymentId]?.kind === "logs") {
+      const { [deploymentId]: _shown, ...rest } = this.logs;
+      this.logs = rest;
+      this.update();
+      return;
+    }
+    this.logs = { ...this.logs, [deploymentId]: { kind: "loading" } };
+    this.update();
+    try {
+      const logs = await source.logs(organization, deploymentId);
+      this.logs = { ...this.logs, [deploymentId]: { kind: "logs", logs } };
+    } catch (error) {
+      this.logs = { ...this.logs, [deploymentId]: { kind: "error", error: error instanceof Error ? error.message : String(error) } };
     }
     this.update();
   }
@@ -1067,6 +1298,7 @@ export class GenerateWidget extends ReactWidget {
     const deploy = this.deploy;
     return (
       <DeployPanel
+        onShowGenerate={() => void this.commands.executeCommand(SHOW_PRODUCT.id, "generate")}
         generated={generated}
         ready={deploy === undefined ? undefined : true}
         images={deploy?.script?.images ?? []}
@@ -1080,6 +1312,7 @@ export class GenerateWidget extends ReactWidget {
         target={this.deployTarget}
         onTarget={(next) => {
           this.deployTarget = next;
+          this.targetChosen = true;
           this.deployNote = undefined;
           this.update();
         }}
@@ -1105,6 +1338,8 @@ export class GenerateWidget extends ReactWidget {
         onDeployBuild={(buildId) => void this.requestStudioBuildDeploy(buildId)}
         onBind={(environmentId) => void this.bindProfile(environmentId)}
         statuses={this.statuses}
+        logs={this.logs}
+        {...(this.environments?.logs !== undefined ? { onLogs: (id: string) => void this.readLogs(id) } : {})}
         {...(this.environments?.status !== undefined && this.deployTargets?.organizationId !== undefined
           ? { onStatus: (id: string) => void this.readStatus(id) }
           : {})}
@@ -1124,37 +1359,47 @@ export class GenerateWidget extends ReactWidget {
   }
 
   protected renderRun(plans: readonly FilePlan[]): React.ReactNode {
-    const gen = this.generate.current;
-    const generated =
-      gen.written !== undefined || (plans.length > 0 && plans.every((plan) => plan.action === "unchanged" || plan.action === "kept"));
+    const generated = this.isGenerated(plans);
     // A kubernetes profile runs in a cluster, not on this machine.
-    if (this.kubernetes() !== undefined) return this.renderDeploy(generated);
+    if (this.kubernetes() !== undefined) {
+      return (
+        <>
+          {this.renderDeploy(generated)}
+          {this.renderTests(generated)}
+        </>
+      );
+    }
     if (generated && this.toolchain === undefined) void this.askToolchain();
     const targets = this.runTargets();
     const chosen = this.chosenTarget(targets);
     return (
-      <RunPanel
-        generated={generated}
-        verdict={this.toolchain === undefined ? undefined : toolchainVerdict(this.toolchain)}
-        targets={targets}
-        chosen={chosen}
-        postgres={this.postgres}
-        docker={this.toolchain?.docker === true}
-        startingPostgres={this.startingPostgres}
-        onChoose={(app) => {
-          this.runApp = app;
-          void this.probePostgres().then(() => this.update());
-        }}
-        onBuild={() => chosen !== undefined && void this.build(chosen)}
-        onRun={() => chosen !== undefined && void this.run(chosen)}
-        onLinkedGears={() => chosen !== undefined && void this.linkedGears(chosen)}
-        onStartPostgres={() => chosen !== undefined && void this.startPostgres(chosen)}
-        onOpen={(url) => this.windows.openNewWindow(url, { external: true })}
-        onFetchProtoc={() => void this.fetchProtoc()}
-        fetchingProtoc={this.fetchingProtoc}
-        onCreateDatabases={() => chosen !== undefined && void this.createDatabases(chosen)}
-        creatingDatabases={this.creatingDatabases}
-      />
+      <>
+        <RunPanel
+          generated={generated}
+          verdict={this.toolchain === undefined ? undefined : toolchainVerdict(this.toolchain)}
+          targets={targets}
+          chosen={chosen}
+          postgres={this.postgres}
+          docker={this.toolchain?.docker === true}
+          startingPostgres={this.startingPostgres}
+          onChoose={(app) => {
+            this.runApp = app;
+            void this.probePostgres().then(() => this.update());
+          }}
+          onBuild={() => chosen !== undefined && void this.build(chosen)}
+          onRun={() => chosen !== undefined && void this.run(chosen)}
+          onLinkedGears={() => chosen !== undefined && void this.linkedGears(chosen)}
+          onStartPostgres={() => chosen !== undefined && void this.startPostgres(chosen)}
+          onOpen={(url) => this.windows.openNewWindow(url, { external: true })}
+          onFetchProtoc={() => void this.fetchProtoc()}
+          fetchingProtoc={this.fetchingProtoc}
+          onCreateDatabases={() => chosen !== undefined && void this.createDatabases(chosen)}
+          creatingDatabases={this.creatingDatabases}
+          onAddDebugConfigurations={() => void this.addDebugConfigurations()}
+          addingDebugConfigurations={this.addingDebugConfigurations}
+        />
+        {this.renderTests(generated)}
+      </>
     );
   }
 
@@ -1219,6 +1464,28 @@ export class GenerateWidget extends ReactWidget {
       // end. The errors are already in the store, because the resolution is what
       // this screen draws from, so the reasons cost nothing to show.
       const errors = (state.resolution?.diagnostics ?? []).filter((d) => d.severity === "error");
+      if (this.view === "deploy") {
+        // Run & Deploy works on generated code: one line on why there is none,
+        // and the way to the errors -- not a second copy of the list.
+        return (
+          <div className="gbx-generate" data-generate-view="deploy">
+            {this.renderProfile()}
+            <div className="gbx-generate-actions" data-deploy-state="resolution-errors">
+              <span className="gbx-inline-error">
+                Nothing to build or deploy yet: the product has {errors.length === 1 ? "an error" : `${errors.length} errors`}, so no code
+                was generated.
+              </span>
+              <button
+                type="button"
+                className="gbx-choice"
+                onClick={() => void this.commands.executeCommand(SHOW_PRODUCT.id, "checks")}
+              >
+                Show them in Checks
+              </button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="gbx-generate">
           {this.renderProfile()}
@@ -1272,6 +1539,16 @@ export class GenerateWidget extends ReactWidget {
       ? [...this.generate.blocks, { id: "draft", reason: "the product has unapplied changes: apply or discard them first" }]
       : this.generate.blocks;
     const selectedPlan = plans.find((p) => p.path === this.selected);
+
+    if (this.view === "deploy") {
+      return (
+        <div className="gbx-generate" data-generate-view="deploy">
+          {this.renderProfile()}
+          {this.renderRun(plans)}
+        </div>
+      );
+    }
+    const generated = this.isGenerated(plans);
 
     return (
       <div className="gbx-generate" data-out-root={gen.plan.out_root} data-written={gen.written ?? ""}>
@@ -1350,8 +1627,21 @@ export class GenerateWidget extends ReactWidget {
             </ul>
           )}
         </div>
-        {/* Constructor Studio: what comes after Apply -- see `run-panel.tsx`. */}
-        {this.renderRun(plans)}
+        {/* Constructor Studio: what comes after Apply is the Run & Deploy
+            stage of the product view (`setView`); here, only the way there. */}
+        {generated && (
+          <div className="gbx-generate-actions" data-generate-next>
+            <span className="gbx-waiting">The code is on disk.</span>
+            <button
+              type="button"
+              className="gbx-choice"
+              data-generate-to-deploy
+              onClick={() => void this.commands.executeCommand(SHOW_PRODUCT.id, "deploy")}
+            >
+              {this.kubernetes() !== undefined ? "Build and deploy it" : "Build and run it"} →
+            </button>
+          </div>
+        )}
         <div className="gbx-generate-body">
           <div className="gbx-generate-tree" role="tree">
             {treeOf(plans).map((node) => this.renderNode(node, 0))}

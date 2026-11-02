@@ -116,7 +116,9 @@ export async function organizationOnboarding(): Promise<OrganizationOnboarding |
 }
 
 export async function openedProject(root: string): Promise<string | undefined> {
-    return fakeStudio.opened[root];
+    // The tests name folders the POSIX way; on Windows `fsPath()` hands back
+    // the same folder with backslashes.
+    return fakeStudio.opened[root] ?? fakeStudio.opened[root.replace(/\\/g, '/')];
 }
 
 export async function openStudioProject(workspaceId: string, folder: string | undefined, onProgress: (progress: OpenProgress) => void): Promise<string> {

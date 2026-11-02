@@ -61,8 +61,6 @@ export type ConfiguredProduct = {
   toggle: (name: string) => void;
   /** Start from these picks, completed by the engine into a set that resolves. */
   seed: (picks: string[]) => Promise<void>;
-  /** Complete the current picks. */
-  complete: () => Promise<void>;
 };
 
 type Catalogue = { index: CatalogueIndex } | { error: string } | null;
@@ -223,7 +221,6 @@ export function ProductConfigurator({
   preview,
   stale,
   busy,
-  onBuild,
   onOpen,
   kept,
   running,
@@ -246,7 +243,6 @@ export function ProductConfigurator({
   /** The answer is about a product that has changed since. */
   stale: boolean;
   busy: boolean;
-  onBuild: () => void;
   /** Open a gear's catalogue page, when the portal can. */
   onOpen?: (name: string) => void;
 }) {
@@ -308,17 +304,11 @@ export function ProductConfigurator({
             <span>
               {errors} problem{errors === 1 ? "" : "s"}, listed under Engine details.
             </span>
-            <button type="button" className="ghost" disabled={busy} onClick={() => void product.complete()}>
-              Fix it for me
-            </button>
           </>
         ) : preview && !stale && preview.ok ? (
-          <>
-            <span className="pm-pill ok">✓ Ready to build</span>
-            <button type="button" className="primary" disabled={busy} onClick={onBuild}>
-              Build it
-            </button>
-          </>
+          // Built from the desktop app, which the card's own "Open in the desktop app"
+          // opens; a second button here opened the same thing (#955).
+          <span className="pm-pill ok">✓ Ready to build</span>
         ) : (
           <span className="pm-pill">{busy ? "Checking…" : "Not checked yet"}</span>
         )}
