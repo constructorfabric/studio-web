@@ -2212,6 +2212,20 @@
     },
     {
       "method": "GET",
+      "path": "/studio-mcp/v1/oauth-protected-resource",
+      "operation_id": "studio_mcp.get_protected_resource",
+      "tag": "StudioMcp",
+      "summary": "Where an agent signs in for the MCP endpoint (RFC 9728)",
+      "authenticated": false,
+      "responses": [
+        "ProtectedResourceDto"
+      ],
+      "errors": [
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/access-catalogue",
       "operation_id": "studio_organizations.get_access_catalogue",
       "tag": "StudioOrganizations",
@@ -4983,7 +4997,7 @@
       "operation_id": "studio_mcp.send_message",
       "tag": "StudioMcp",
       "summary": "Send an MCP message: the handshake, the tool list or a tool call",
-      "authenticated": true,
+      "authenticated": false,
       "responses": [
         "JsonRpcResponseDto"
       ],

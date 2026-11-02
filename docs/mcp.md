@@ -10,42 +10,65 @@ Every call acts as you. The server sends each tool's requests to Studio's own
 REST API with your token, so a tool can do exactly what you can do in the
 portal and nothing more.
 
+Most tools read or check. The few that change the domain model are marked so
+your agent asks you first, and every change they make is a model version
+`domain_model_revert` undoes.
+
 | | |
 | --- | --- |
 | Endpoint (dev) | `https://studio-dev.cfabric.org/cf/studio-mcp/v1/messages` |
 | Transport | Streamable HTTP, JSON answers only (no stream) |
 | Protocol | 2025-06-18, also 2025-03-26 and 2024-11-05 |
-| Sign-in | `Authorization: Bearer <your Studio access token>` |
+| Sign-in | OAuth through Studio's Keycloak, or `Authorization: Bearer <token>` |
+| Resource metadata | `https://studio-dev.cfabric.org/cf/studio-mcp/v1/oauth-protected-resource` |
 | Server | `studio-backend/src/mcp/` (gear `studio-mcp`) |
 
-## 1. Get a token
+## 1. Sign in
 
-The server takes the same access token the portal uses. Tokens of the `studio`
-realm last one hour.
+**By the agent itself (OAuth).** An agent that supports MCP's authorization
+needs nothing but the URL. Without a token the endpoint answers `401` with
+`WWW-Authenticate: Bearer resource_metadata="…/oauth-protected-resource"`; the
+metadata names Studio's Keycloak realm, and the agent opens your browser there
+and keeps the token itself. In Claude Code that is `/mcp`, then *Authenticate*.
 
-**From the portal.** Sign in at `https://studio-dev.cfabric.org`, open the
-browser's developer tools, *Network*, pick any request to `/cf/…`, and copy the
-value after `Bearer ` in its `Authorization` header.
+The agent needs a client in the realm:
 
-**With a password**, if your account signs in with one (not GitHub, Google or
-Microsoft):
+- an agent that takes a client id is given `studio-mcp`, a public client with
+  PKCE and a loopback redirect (`keycloak/realm-studio.json`);
+- an agent that registers itself (dynamic client registration) needs the realm
+  to allow it: *Clients → Client registration → Anonymous access policies*.
 
-```sh
-export STUDIO_TOKEN=$(curl -s https://studio-dev.cfabric.org/auth/realms/studio/protocol/openid-connect/token \
-  -d grant_type=password -d client_id=studio-portal \
-  --data-urlencode username=you@example.com --data-urlencode password='…' | jq -r .access_token)
-```
+**By hand**, when the agent cannot sign in or the realm does not have the
+client yet. The server takes the same access token the portal uses; tokens of
+the `studio` realm last one hour.
+
+- *From the portal.* Sign in at `https://studio-dev.cfabric.org`, open the
+  browser's developer tools, *Network*, pick any request to `/cf/…`, and copy
+  the value after `Bearer ` in its `Authorization` header.
+- *With a password*, if your account signs in with one (not GitHub, Google or
+  Microsoft):
+
+  ```sh
+  export STUDIO_TOKEN=$(curl -s https://studio-dev.cfabric.org/auth/realms/studio/protocol/openid-connect/token \
+    -d grant_type=password -d client_id=studio-portal \
+    --data-urlencode username=you@example.com --data-urlencode password='…' | jq -r .access_token)
+  ```
 
 Keep it in an environment variable, `STUDIO_TOKEN` below, never in a file you
 commit. When it expires, tool calls answer `401`: take a new one and restart
 the agent's MCP connection.
 
-Signing in from the agent itself (OAuth, no token to copy) is the next step;
-see *Not yet* below.
-
 ## 2. Register the server
 
 ### Claude Code
+
+With OAuth:
+
+```sh
+claude mcp add --transport http studio https://studio-dev.cfabric.org/cf/studio-mcp/v1/messages
+```
+
+then `/mcp`, *studio*, *Authenticate*. With a token by hand:
 
 ```sh
 claude mcp add --transport http studio \
@@ -125,6 +148,26 @@ project.
 | `project_findings` | where the documents and the code disagree |
 | `spec_check` | a detector's verdict on the text you send |
 | `spec_check_result` | the verdict of a check that took longer than the wait |
+| `domain_model_versions` | the model's change history, with version numbers |
+| `domain_type_add_field` | *changes the model:* adds a field to a type |
+| `domain_type_edit_field` | *changes the model:* renames or retypes a field |
+| `domain_type_remove_field` | *changes the model:* removes a field from a type |
+| `domain_model_revert` | *changes the model:* restores an earlier version |
+
+**Changes.** The four tools that change the model are annotated for your agent
+(`readOnlyHint: false`, and `destructiveHint` for the three that change or
+remove), so it asks you before calling them, and are marked experimental. Each
+change is a model version with its inverse: `domain_model_versions` shows it
+and `domain_model_revert` undoes it. Objects, relations and documents are not
+offered for writing: nothing records a version of them, and a specification
+changes through your own commit, which people review.
+
+**Experimental** tools say so first in their description. They may change
+shape or go away without notice.
+
+**Limits.** `spec_check` is limited to 60 calls an hour per person (setting
+`spec_checks_per_hour`), against an agent that checks in a loop. Past it the
+tool says when to try again.
 
 The agent reads each tool's own description from `tools/list`; that text is
 the reference, and this table only orients you.
@@ -152,22 +195,33 @@ Things to ask:
 | a tool answers `Studio answered 403: …` | you may not do that in the portal either |
 | `Studio answered 503: … is not part of this deployment` | the gear the tool needs is not running here |
 | `spec_check` fails with `upstream not configured` | the spec-quality service has no key on this deployment |
+| `you have reached the limit of 60 spec_check calls an hour` | the per-person limit; wait the minutes it names |
+| the agent's sign-in page says the client is unknown | the realm has no `studio-mcp` client and allows no registration; see *Sign in* |
 
-## Not yet
+## Setting it up on a deployment
 
-- **Sign-in from the agent (OAuth).** MCP clients can sign in by themselves
-  through the authorization server; Studio's Keycloak is not set up for it
-  yet, so a token is copied by hand.
-- **Writes.** Every tool reads or checks. Changing the domain model or
-  recording requirements comes once a change made by an agent is a proposal a
-  person accepts.
+| Setting (`gears.studio-mcp.config`) | Variable | Default |
+| --- | --- | --- |
+| `api_url`: where tools send requests | `STUDIO_MCP_API_URL` | `http://127.0.0.1:8090/cf` |
+| `authorization_server`: the issuer in the metadata | `STUDIO_OIDC_ISSUER` | the OIDC plugin's issuer |
+| `public_url`: the endpoint's base as seen from outside | `STUDIO_MCP_PUBLIC_URL` | the request's forwarded host and scheme |
+| `spec_checks_per_hour` | | `60` (0: no limit) |
+
+A realm imported before this change has no `studio-mcp` client: create it as
+in `keycloak/realm-studio.json` (public, standard flow, PKCE S256, redirects
+`http://127.0.0.1/*` and `http://localhost/*`, the `tenant-id` mapper).
+
+Every tool call is logged as `studio-mcp: tool call` with the tool, the
+caller's subject id, whether it answered and how long it took; the requests a
+tool made appear in the metrics of the routes they reached.
 
 ## Adding a tool
 
 A tool lives with the gear whose routes it calls, in that gear's `mcp.rs`
 (`src/domain_model/mcp.rs` is the pattern), and is listed in
 `crate::mcp::tools()`. It is a route and a description: `Run::Get` and
-`Run::Post` send the arguments to one route; `Run::Custom` is for more than one
+`Run::Post`, `Run::Patch` and `Run::Delete` send the arguments to one route; `Run::Custom` is for more than one
 request, as `spec_check` submits and then waits. Write the description for the
 agent: what the tool answers, when to call it, what it does not do. That text
-is all the agent knows about it.
+is all the agent knows about it. Set `effect` to what the call does to Studio,
+and mark a tool that changes anything `experimental` (a test holds that).

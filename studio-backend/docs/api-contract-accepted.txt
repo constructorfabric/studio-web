@@ -2798,6 +2798,11 @@ response	GET /studio-llm/v1/workspaces/{}/client-config	developer_message_settin
 response	GET /studio-llm/v1/workspaces/{}/client-config	model	String	optional
 response	GET /studio-llm/v1/workspaces/{}/client-config	provider	String	optional
 response	GET /studio-llm/v1/workspaces/{}/client-config	reason	String	optional
+response	GET /studio-mcp/v1/oauth-protected-resource	authorization_servers	Vec<String>	optional
+response	GET /studio-mcp/v1/oauth-protected-resource	bearer_methods_supported	Vec<String>	always
+response	GET /studio-mcp/v1/oauth-protected-resource	resource	String	always
+response	GET /studio-mcp/v1/oauth-protected-resource	resource_name	String	always
+response	GET /studio-mcp/v1/oauth-protected-resource	scopes_supported	Vec<String>	always
 response	GET /studio-organizations/v1/access-catalogue	default_roles	Value	always
 response	GET /studio-organizations/v1/access-catalogue	privileges	Vec<String>	always
 response	GET /studio-organizations/v1/capabilities	decides_requests	bool	always
@@ -5828,6 +5833,7 @@ route	GET /studio-llm/v1/providers/{}/{}
 route	GET /studio-llm/v1/workspaces/{}/client-config
 route	GET /studio-llm/v1/workspaces/{}/models
 route	GET /studio-llm/v1/workspaces/{}/providers/{}/{}
+route	GET /studio-mcp/v1/oauth-protected-resource
 route	GET /studio-organizations/v1/access-catalogue
 route	GET /studio-organizations/v1/capabilities
 route	GET /studio-organizations/v1/logo

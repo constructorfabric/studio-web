@@ -106,10 +106,16 @@ fn list(tools: &[Tool]) -> Vec<Value> {
     tools
         .iter()
         .map(|t| {
+            let description = if t.experimental {
+                format!("[experimental: may change or go away] {}", t.description)
+            } else {
+                t.description.to_owned()
+            };
             json!({
                 "name": t.name,
-                "description": t.description,
+                "description": description,
                 "inputSchema": (t.input_schema)(),
+                "annotations": t.effect.annotations(),
             })
         })
         .collect()
@@ -132,7 +138,18 @@ async fn call(params: &Value, tools: &[Tool], api: &Api) -> Result<Value, String
         Some(Value::Object(args)) => args.clone(),
         Some(_) => return Err("`arguments` is an object".to_owned()),
     };
-    Ok(match sdk::call(tool, api.clone(), args).await {
+    let started = std::time::Instant::now();
+    let outcome = sdk::call(tool, api.clone(), args).await;
+    // One line per call: who used which tool, and whether it answered. The
+    // requests it made are in the route metrics of the routes they reached.
+    tracing::info!(
+        tool = tool.name,
+        who = api.who(),
+        ok = outcome.is_ok(),
+        ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "studio-mcp: tool call"
+    );
+    Ok(match outcome {
         Ok(answer) => json!({
             "content": [{ "type": "text", "text": text(&answer) }],
             "isError": false,
@@ -163,7 +180,7 @@ fn error(id: Value, code: i64, message: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::super::sdk::{Run, ToolError, ToolFuture, object};
+    use super::super::sdk::{Effect, Run, ToolError, ToolFuture, object};
     use super::*;
 
     fn echo(_api: Api, args: Map<String, Value>) -> ToolFuture {
@@ -180,6 +197,8 @@ mod tests {
             name: "echo",
             description: "Answers with its arguments.",
             input_schema: || object(json!({}), &[]),
+            effect: Effect::Read,
+            experimental: true,
             run: Run::Custom(echo),
         }]
     }
@@ -229,6 +248,16 @@ mod tests {
         assert_eq!(
             answer["result"]["tools"][0]["inputSchema"]["type"],
             "object"
+        );
+        assert_eq!(
+            answer["result"]["tools"][0]["annotations"]["readOnlyHint"],
+            true
+        );
+        assert!(
+            answer["result"]["tools"][0]["description"]
+                .as_str()
+                .unwrap()
+                .starts_with("[experimental")
         );
     }
 

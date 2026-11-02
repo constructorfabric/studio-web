@@ -4,7 +4,15 @@
 //! One route, `POST /studio-mcp/v1/messages`, speaks MCP's Streamable HTTP
 //! transport in its simplest form: every request is answered with one JSON
 //! body, and there is no stream to open (`GET` answers 405, which the
-//! transport allows). The caller signs in with their ordinary Studio token.
+//! transport allows).
+//!
+//! **Sign-in** is MCP's authorization: the route checks the bearer token
+//! itself, through the same resolver as the gateway, so that a request without
+//! one is answered 401 with a `WWW-Authenticate` challenge naming this
+//! resource's metadata (RFC 9728, `GET /studio-mcp/v1/oauth-protected-resource`).
+//! The metadata names Studio's Keycloak realm, where the agent signs its person
+//! in. The gateway's own 401 carries no such challenge, which is why the route
+//! is not left to it.
 //!
 //! The tools are not written here. The gear that owns the routes a tool uses
 //! declares it beside them, in its own `mcp.rs`, so a feature and its tool land
@@ -23,6 +31,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use authn_resolver_sdk::AuthNResolverClient;
 use axum::Router;
 use serde::Deserialize;
 use toolkit::api::OpenApiRegistry;
@@ -38,56 +47,81 @@ pub fn tools() -> Vec<sdk::Tool> {
     all
 }
 
-/// `gears.studio-mcp.config`.
+/// `gears.studio-mcp.config`. Every setting has a default that works in every
+/// profile, and the ones a deployment differs on also read a variable.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct McpConfig {
     /// Where the tools send their requests: this backend's own gateway, with
     /// its prefix. The variable named by `api_url_env` wins.
-    #[serde(default = "default_api_url")]
     pub api_url: String,
-    #[serde(default = "default_api_url_env")]
     pub api_url_env: String,
+    /// The issuer agents sign in at, named in the resource metadata. The
+    /// variable named by `authorization_server_env` wins; the default variable
+    /// is the one the OIDC plugin already trusts.
+    pub authorization_server: String,
+    pub authorization_server_env: String,
+    /// How the endpoint is reached from outside (`https://host/cf`), for the
+    /// metadata and the challenge. Empty: read from the request's forwarded
+    /// host and scheme.
+    pub public_url: String,
+    pub public_url_env: String,
+    /// `spec_check` calls one person may make in an hour; 0 for no limit.
+    pub spec_checks_per_hour: u32,
 }
 
 impl Default for McpConfig {
     fn default() -> Self {
         Self {
-            api_url: default_api_url(),
-            api_url_env: default_api_url_env(),
+            // The gateway as every profile binds it (port 8090, prefix `/cf`).
+            api_url: "http://127.0.0.1:8090/cf".to_owned(),
+            api_url_env: "STUDIO_MCP_API_URL".to_owned(),
+            authorization_server: String::new(),
+            authorization_server_env: "STUDIO_OIDC_ISSUER".to_owned(),
+            public_url: String::new(),
+            public_url_env: "STUDIO_MCP_PUBLIC_URL".to_owned(),
+            spec_checks_per_hour: 60,
         }
     }
 }
 
-/// The gateway as every profile binds it (`bind_addr` port 8090, prefix
-/// `/cf`), reached over loopback.
-fn default_api_url() -> String {
-    "http://127.0.0.1:8090/cf".to_owned()
-}
-
-fn default_api_url_env() -> String {
-    "STUDIO_MCP_API_URL".to_owned()
+/// The variable when it is set and not blank, the configured value otherwise,
+/// without a trailing slash.
+fn resolve(value: &str, env: &str) -> String {
+    std::env::var(env)
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| value.to_owned())
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 impl McpConfig {
     fn resolve_api_url(&self) -> String {
-        std::env::var(&self.api_url_env)
-            .ok()
-            .map(|v| v.trim().to_owned())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| self.api_url.clone())
-            .trim_end_matches('/')
-            .to_owned()
+        resolve(&self.api_url, &self.api_url_env)
     }
 }
 
-/// What the route needs: the tools and a client to call Studio with.
+/// What the routes need.
 pub(crate) struct McpState {
     pub tools: Vec<sdk::Tool>,
     pub client: reqwest::Client,
     pub api_url: String,
+    /// The issuer, or empty when none is known: the metadata then names none
+    /// and an agent can only be given a token by hand.
+    pub authorization_server: String,
+    /// Empty: taken from each request.
+    pub public_url: String,
+    pub authn: Arc<dyn AuthNResolverClient>,
+    pub limits: Arc<sdk::Limits>,
 }
 
-#[toolkit::gear(name = "studio-mcp", capabilities = [rest])]
+#[toolkit::gear(
+    name = "studio-mcp",
+    deps = [authn_resolver],
+    capabilities = [rest]
+)]
 #[derive(Default)]
 pub struct McpGear {
     state: OnceLock<Arc<McpState>>,
@@ -97,6 +131,9 @@ pub struct McpGear {
 impl Gear for McpGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: McpConfig = ctx.config_or_default()?;
+        // Without the resolver nobody can be signed in, so the gear fails the
+        // boot rather than answering 500s.
+        let authn = ctx.client_hub().get::<dyn AuthNResolverClient>()?;
         // A tool waits on a spec check for minutes, but each request it makes
         // is a short read or a submit.
         let client = reqwest::Client::builder()
@@ -107,8 +144,17 @@ impl Gear for McpGear {
             tools: tools(),
             client,
             api_url: cfg.resolve_api_url(),
+            authorization_server: resolve(&cfg.authorization_server, &cfg.authorization_server_env),
+            public_url: resolve(&cfg.public_url, &cfg.public_url_env),
+            authn,
+            limits: Arc::new(sdk::Limits::new([("spec_check", cfg.spec_checks_per_hour)])),
         });
-        tracing::info!(api_url = %state.api_url, tools = state.tools.len(), "studio-mcp: serving");
+        tracing::info!(
+            api_url = %state.api_url,
+            authorization_server = %state.authorization_server,
+            tools = state.tools.len(),
+            "studio-mcp: serving"
+        );
         self.state
             .set(state)
             .map_err(|_| anyhow::anyhow!("studio-mcp gear already initialized"))?;
@@ -153,6 +199,14 @@ mod tests {
             );
             assert!(t.description.len() > 40, "{} says too little", t.name);
             assert_eq!((t.input_schema)()["type"], "object", "{}", t.name);
+            // A change to what Studio holds is new enough to be allowed to move.
+            if t.effect != sdk::Effect::Read {
+                assert!(
+                    t.experimental,
+                    "{} writes and is not marked experimental",
+                    t.name
+                );
+            }
         }
     }
 
@@ -162,6 +216,8 @@ mod tests {
             api_url_env: "STUDIO_MCP_API_URL_TEST".to_owned(),
             ..McpConfig::default()
         };
+        assert_eq!(cfg.spec_checks_per_hour, 60);
+        assert_eq!(cfg.authorization_server_env, "STUDIO_OIDC_ISSUER");
         assert_eq!(cfg.resolve_api_url(), "http://127.0.0.1:8090/cf");
         let from_env =
             crate::test_env::with_var("STUDIO_MCP_API_URL_TEST", "http://backend:9000/cf/", || {

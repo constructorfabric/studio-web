@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
-use crate::mcp::sdk::{Api, Run, Tool, ToolError, ToolFuture, object, pause};
+use crate::mcp::sdk::{Api, Effect, Run, Tool, ToolError, ToolFuture, object, pause};
 
 const DETECTORS: [&str; 4] = ["purpose", "leak", "bloat", "traceability"];
 
@@ -52,6 +52,8 @@ pub fn tools() -> Vec<Tool> {
                     &["detector", "documents"],
                 )
             },
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Custom(spec_check),
         },
         Tool {
@@ -70,6 +72,8 @@ pub fn tools() -> Vec<Tool> {
                     &["run_id", "task_id", "detector"],
                 )
             },
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Custom(spec_check_result),
         },
     ]
@@ -169,6 +173,7 @@ fn single(detector: &str) -> bool {
 fn spec_check(api: Api, args: Map<String, Value>) -> ToolFuture {
     Box::pin(async move {
         let check = Check::read(&args)?;
+        api.take("spec_check")?;
         let created = api
             .post(
                 &format!("/studio-spec-quality/v1/analyze/{}", check.detector),

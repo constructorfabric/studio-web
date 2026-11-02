@@ -5,7 +5,7 @@
 
 use serde_json::{Value, json};
 
-use crate::mcp::sdk::{Run, Tool, object};
+use crate::mcp::sdk::{Effect, Run, Tool, object};
 
 fn project_only() -> Value {
     object(
@@ -35,6 +35,8 @@ pub fn tools() -> Vec<Tool> {
                 the documents that ask for it. Read from the documents Studio holds for the \
                 project (its repositories as last synced), not from your working copy.",
             input_schema: project_only,
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Get("/studio-spec-mapping/v1/capabilities"),
         },
         Tool {
@@ -43,6 +45,8 @@ pub fn tools() -> Vec<Tool> {
                 project's documents make, line by line, with the document each comes from. \
                 These are what the deployment profile answers, not what gears answer.",
             input_schema: project_only,
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Get("/studio-spec-mapping/v1/requirements"),
         },
         Tool {
@@ -53,6 +57,8 @@ pub fn tools() -> Vec<Tool> {
                 the passage it cites. Decisions members recorded rank a gear first (confirmed) \
                 or last (rejected). Also the deployment profile the documents point to.",
             input_schema: project_in_organization,
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Get("/studio-spec-mapping/v1/plan"),
         },
         Tool {
@@ -63,6 +69,8 @@ pub fn tools() -> Vec<Tool> {
                 on (`product.decided_not_built`). Each finding names the document and the \
                 requirement that asks. Empty when the project has no code to compare.",
             input_schema: project_in_organization,
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Get("/studio-spec-mapping/v1/findings"),
         },
     ]

@@ -8,9 +8,11 @@
 //! to the portal. An agent cannot do more through MCP than its person can do
 //! in the browser, and a route that changes its rules changes them for both.
 
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::http::HeaderValue;
 use serde_json::{Map, Value, json};
@@ -25,7 +27,36 @@ pub struct Tool {
     pub description: &'static str,
     /// The JSON Schema of the arguments.
     pub input_schema: fn() -> Value,
+    /// What a call does to Studio, told to the agent as MCP's annotations so
+    /// it can ask its person before a change.
+    pub effect: Effect,
+    /// May still change shape or go away; said first in the description.
+    pub experimental: bool,
     pub run: Run,
+}
+
+/// What a tool call does to what Studio holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    /// Reads or checks; changes nothing a person sees.
+    Read,
+    /// Adds to what is there, and can be undone.
+    Write,
+    /// Changes or removes what is there. Still undoable where the owner
+    /// records a version, but the agent should say what it will do first.
+    Destructive,
+}
+
+impl Effect {
+    /// MCP's tool annotations (`readOnlyHint` and the rest).
+    pub fn annotations(self) -> Value {
+        json!({
+            "readOnlyHint": self == Effect::Read,
+            "destructiveHint": self == Effect::Destructive,
+            "idempotentHint": self == Effect::Read,
+            "openWorldHint": false,
+        })
+    }
 }
 
 /// How a call becomes REST requests.
@@ -39,6 +70,10 @@ pub enum Run {
         path: &'static str,
         query: &'static [&'static str],
     },
+    /// `PATCH path`, `{name}`s from the arguments, the rest as the JSON body.
+    Patch(&'static str),
+    /// `DELETE path`, `{name}`s from the arguments; nothing else is sent.
+    Delete(&'static str),
     /// Anything that is more than one request (a submit and its wait).
     Custom(fn(Api, Map<String, Value>) -> ToolFuture),
 }
@@ -64,6 +99,9 @@ pub struct Api {
     base: String,
     /// The caller's own `Authorization` header, sent on unchanged.
     auth: Option<HeaderValue>,
+    /// Who is calling, for the limits; and the limits.
+    who: String,
+    limits: Option<Arc<Limits>>,
 }
 
 /// How much of a failed answer is passed to the agent.
@@ -75,7 +113,35 @@ impl Api {
             client,
             base: base.trim_end_matches('/').to_owned(),
             auth,
+            who: String::new(),
+            limits: None,
         }
+    }
+
+    /// The same API, counting `who`'s calls against `limits`.
+    pub fn acting_for(mut self, who: String, limits: Arc<Limits>) -> Self {
+        self.who = who;
+        self.limits = Some(limits);
+        self
+    }
+
+    /// Who is calling: the subject id, for the record of each call.
+    pub fn who(&self) -> &str {
+        &self.who
+    }
+
+    /// Count one `what` for the caller, or say when it may be tried again.
+    pub fn take(&self, what: &'static str) -> Result<(), ToolError> {
+        let Some(limits) = &self.limits else {
+            return Ok(());
+        };
+        limits.take(&self.who, what, Instant::now()).map_err(|wait| {
+            ToolError::new(format!(
+                "you have reached the limit of {} `{what}` calls an hour; try again in {} minutes",
+                limits.per_hour(what),
+                wait.as_secs().div_ceil(60).max(1)
+            ))
+        })
     }
 
     pub async fn get(&self, path: &str, query: &[(String, String)]) -> Result<Value, ToolError> {
@@ -91,6 +157,15 @@ impl Api {
     ) -> Result<Value, ToolError> {
         self.send(self.client.post(self.url(path)).query(query).json(body))
             .await
+    }
+
+    pub async fn patch(&self, path: &str, body: &Value) -> Result<Value, ToolError> {
+        self.send(self.client.patch(self.url(path)).json(body))
+            .await
+    }
+
+    pub async fn delete(&self, path: &str) -> Result<Value, ToolError> {
+        self.send(self.client.delete(self.url(path))).await
     }
 
     fn url(&self, path: &str) -> String {
@@ -163,7 +238,62 @@ pub async fn call(tool: &Tool, api: Api, args: Map<String, Value>) -> Result<Val
             api.post(&path, &query_pairs(&q), &Value::Object(rest))
                 .await
         }
+        Run::Patch(path) => {
+            let (path, rest) = fill_path(path, args)?;
+            api.patch(&path, &Value::Object(rest)).await
+        }
+        Run::Delete(path) => {
+            let (path, _) = fill_path(path, args)?;
+            api.delete(&path).await
+        }
         Run::Custom(run) => run(api, args).await,
+    }
+}
+
+/// How many of a kind of call one person may make in an hour, counted per
+/// replica: a guard against an agent calling in a loop, not a quota.
+pub struct Limits {
+    per_hour: HashMap<&'static str, u32>,
+    seen: Mutex<HashMap<(String, &'static str), VecDeque<Instant>>>,
+}
+
+const HOUR: Duration = Duration::from_secs(3600);
+
+impl Limits {
+    /// `0` means no limit for that kind.
+    pub fn new(per_hour: impl IntoIterator<Item = (&'static str, u32)>) -> Self {
+        Self {
+            per_hour: per_hour.into_iter().filter(|(_, n)| *n > 0).collect(),
+            seen: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn per_hour(&self, what: &str) -> u32 {
+        self.per_hour.get(what).copied().unwrap_or(0)
+    }
+
+    /// Count one call at `now`, or answer how long until one is allowed.
+    pub fn take(&self, who: &str, what: &'static str, now: Instant) -> Result<(), Duration> {
+        let Some(&limit) = self.per_hour.get(what) else {
+            return Ok(());
+        };
+        let mut seen = self
+            .seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let calls = seen.entry((who.to_owned(), what)).or_default();
+        while calls
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= HOUR)
+        {
+            calls.pop_front();
+        }
+        if calls.len() >= limit as usize {
+            let oldest = calls.front().copied().unwrap_or(now);
+            return Err(HOUR.saturating_sub(now.saturating_duration_since(oldest)));
+        }
+        calls.push_back(now);
+        Ok(())
     }
 }
 
@@ -287,6 +417,29 @@ mod tests {
                 ("path".to_owned(), "b".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn a_limit_counts_per_person_and_frees_up_after_an_hour() {
+        let limits = Limits::new([("spec_check", 2), ("free", 0)]);
+        let t0 = Instant::now();
+        assert!(limits.take("ann", "spec_check", t0).is_ok());
+        assert!(limits.take("ann", "spec_check", t0).is_ok());
+        let wait = limits.take("ann", "spec_check", t0 + Duration::from_secs(600));
+        assert_eq!(wait, Err(Duration::from_secs(3000)));
+        assert!(limits.take("bob", "spec_check", t0).is_ok());
+        assert!(limits.take("ann", "spec_check", t0 + HOUR).is_ok());
+        for _ in 0..10 {
+            assert!(limits.take("ann", "free", t0).is_ok());
+        }
+    }
+
+    #[test]
+    fn only_a_read_is_read_only_and_only_a_change_is_destructive() {
+        assert_eq!(Effect::Read.annotations()["readOnlyHint"], true);
+        assert_eq!(Effect::Write.annotations()["readOnlyHint"], false);
+        assert_eq!(Effect::Write.annotations()["destructiveHint"], false);
+        assert_eq!(Effect::Destructive.annotations()["destructiveHint"], true);
     }
 
     #[test]

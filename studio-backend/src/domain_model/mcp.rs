@@ -1,9 +1,13 @@
-//! The domain model as MCP tools (`crate::mcp`). Reads only: a write through
-//! an agent waits for the model's changes to be proposals a person accepts.
+//! The domain model as MCP tools (`crate::mcp`).
+//!
+//! Reads, and the model edits the gear records as versions: a field added,
+//! changed or removed is one version with its inverse, so whatever an agent
+//! does to the model, `domain_model_revert` undoes. Objects and relations are
+//! not offered for writing, because nothing records a version of them.
 
 use serde_json::json;
 
-use crate::mcp::sdk::{Run, Tool, object};
+use crate::mcp::sdk::{Effect, Run, Tool, object};
 
 pub fn tools() -> Vec<Tool> {
     vec![
@@ -14,6 +18,8 @@ pub fn tools() -> Vec<Tool> {
                 names what it `extends`. To see one type with everything it inherits, call \
                 `domain_type`. Large: call it once and keep the answer.",
             input_schema: || object(json!({}), &[]),
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Get("/studio-domain-model/v1/types"),
         },
         Tool {
@@ -29,6 +35,8 @@ pub fn tools() -> Vec<Tool> {
                     &["id"],
                 )
             },
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Get("/studio-domain-model/v1/types/{id}"),
         },
         Tool {
@@ -43,6 +51,8 @@ pub fn tools() -> Vec<Tool> {
                     &["id"],
                 )
             },
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Get("/studio-domain-model/v1/types/{id}/conformance"),
         },
         Tool {
@@ -71,6 +81,8 @@ pub fn tools() -> Vec<Tool> {
                     &["type"],
                 )
             },
+            effect: Effect::Read,
+            experimental: true,
             run: Run::Post {
                 path: "/studio-domain-model/v1/query",
                 query: &[],
@@ -82,7 +94,94 @@ pub fn tools() -> Vec<Tool> {
                 types and their inherits/declares edges. For how the types connect; the \
                 fields themselves are in `domain_type`.",
             input_schema: || object(json!({}), &[]),
+            effect: Effect::Read,
+            experimental: false,
             run: Run::Get("/studio-domain-model/v1/model/graph"),
+        },
+        Tool {
+            name: "domain_model_versions",
+            description: "The model's change history, newest first: each version's number,                 who made it and when, a one-line summary, and the patch with its inverse.                 The number is what `domain_model_revert` takes.",
+            input_schema: || object(json!({}), &[]),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-domain-model/v1/model/versions"),
+        },
+        Tool {
+            name: "domain_type_add_field",
+            description: "Add a field to a domain type the model defines. Recorded as a model                 version, so `domain_model_revert` undoes it. Tell your person what you are                 adding before you call it: the model is shared by everyone in the organization.",
+            input_schema: || {
+                object(
+                    json!({
+                        "id": { "type": "string", "description": "The type, as for `domain_type`." },
+                        "name": { "type": "string", "description": "The new field's name." },
+                        "type": { "type": "string",
+                            "description": "A domain-model type expression: `string`, `integer`, `EntityId`, …" },
+                        "description": { "type": "string" },
+                        "required": { "type": "boolean" }
+                    }),
+                    &["id", "name", "type"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-domain-model/v1/types/{id}/fields",
+                query: &[],
+            },
+        },
+        Tool {
+            name: "domain_type_edit_field",
+            description: "Rename a field a type declares, change its type, its description, or                 whether it is required. A rename also moves the stored objects onto the new                 name unless `migrate` is false. Only the type's own fields: an inherited one                 is edited on the base that declares it (`domain_type` says which). Recorded                 as a model version; ask your person first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "id": { "type": "string", "description": "The type, as for `domain_type`." },
+                        "name": { "type": "string", "description": "The field to change." },
+                        "rename_to": { "type": "string" },
+                        "type": { "type": "string" },
+                        "description": { "type": "string" },
+                        "required": { "type": "boolean" },
+                        "migrate": { "type": "boolean", "description": "Move stored objects on a rename. Default true." }
+                    }),
+                    &["id", "name"],
+                )
+            },
+            effect: Effect::Destructive,
+            experimental: true,
+            run: Run::Patch("/studio-domain-model/v1/types/{id}/fields/{name}"),
+        },
+        Tool {
+            name: "domain_type_remove_field",
+            description: "Remove a field from a type's definition. Stored objects keep what                 they hold under it; `domain_type_conformance` then reports it as undeclared.                 Recorded as a model version; ask your person first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "id": { "type": "string", "description": "The type, as for `domain_type`." },
+                        "name": { "type": "string", "description": "The field to remove." }
+                    }),
+                    &["id", "name"],
+                )
+            },
+            effect: Effect::Destructive,
+            experimental: true,
+            run: Run::Delete("/studio-domain-model/v1/types/{id}/fields/{name}"),
+        },
+        Tool {
+            name: "domain_model_revert",
+            description: "Restore the model to an earlier version from `domain_model_versions`,                 by applying the inverse of every change since. The revert is a new version                 itself, so it can be reverted too. Refused when a change in the range has no                 inverse (an import of a whole model). Ask your person first.",
+            input_schema: || {
+                object(
+                    json!({ "to": { "type": "integer", "minimum": 0,
+                        "description": "The version to restore." } }),
+                    &["to"],
+                )
+            },
+            effect: Effect::Destructive,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-domain-model/v1/model/revert",
+                query: &[],
+            },
         },
     ]
 }
