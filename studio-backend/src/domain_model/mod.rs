@@ -53,9 +53,12 @@ use ontology::Ontology;
 use service::DomainModelService;
 use store::{DomainStore, InMemoryDomainStore};
 
+// authz-resolver: objects are authorized through the PDP (ADR-0035), so the
+// resolver starts first. Gearbox reads ClientHub lookups per crate, and this
+// is the one Studio gear that resolves `AuthZResolverApi` (GBX0215).
 #[toolkit::gear(
     name = "studio-domain-model",
-    deps = [types_registry],
+    deps = [types_registry, authz_resolver],
     capabilities = [rest]
 )]
 #[derive(Default)]
