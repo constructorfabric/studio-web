@@ -4838,6 +4838,10 @@ response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	scope	Strin
 response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	source	String	always
 response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	status	String	always
 response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	version	String	always
+response	POST /studio-mcp/v1/messages	error	Value	optional
+response	POST /studio-mcp/v1/messages	id	Value	always
+response	POST /studio-mcp/v1/messages	jsonrpc	String	always
+response	POST /studio-mcp/v1/messages	result	Value	optional
 response	POST /studio-notify/v1/messages	poll	String	always
 response	POST /studio-notify/v1/messages	run_id	Uuid	always
 response	POST /studio-organizations/v1/organization-requests	created_at_ms	i64	always
@@ -5991,6 +5995,7 @@ route	POST /studio-llm/v1/chat/completions
 route	POST /studio-llm/v1/providers/{}/{}
 route	POST /studio-llm/v1/workspaces/{}/chat/completions
 route	POST /studio-llm/v1/workspaces/{}/providers/{}/{}
+route	POST /studio-mcp/v1/messages
 route	POST /studio-notify/v1/messages
 route	POST /studio-organizations/v1/organization-requests
 route	POST /studio-organizations/v1/organization-requests/{}/cancel

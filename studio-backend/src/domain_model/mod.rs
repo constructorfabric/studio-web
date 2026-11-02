@@ -29,6 +29,8 @@
 
 mod access;
 pub(crate) mod gts;
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 pub(crate) mod ontology;
 pub mod port;
 mod query;

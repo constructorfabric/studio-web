@@ -4979,6 +4979,22 @@
     },
     {
       "method": "POST",
+      "path": "/studio-mcp/v1/messages",
+      "operation_id": "studio_mcp.send_message",
+      "tag": "StudioMcp",
+      "summary": "Send an MCP message: the handshake, the tool list or a tool call",
+      "authenticated": true,
+      "responses": [
+        "JsonRpcResponseDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-notify/v1/messages",
       "operation_id": "studio_notify.send",
       "tag": "StudioNotify",
