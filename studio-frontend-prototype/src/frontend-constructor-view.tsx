@@ -79,6 +79,10 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   const [err, setErr] = useState<string | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
   const [saved, setSaved] = useState<string[]>([]);
+  /** Whether the product record keeps the frontend, which is what its
+   *  product.gdl is written from; a pick from before is only in the
+   *  project configuration. */
+  const [inProduct, setInProduct] = useState(false);
   /** The shell it is assembled on, as `github:owner/repo//dir@ref`. */
   const [shellRef, setShellRef] = useState<string>(FRONTX_SHELL_TEMPLATE);
   const [savedShell, setSavedShell] = useState<string>(FRONTX_SHELL_TEMPLATE);
@@ -135,6 +139,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
         // The product's own record first; a project that picked before it
         // kept one has its picks in the project configuration.
         const kept = product?.frontend ? picksOf(product.frontend, all) : null;
+        setInProduct(!!kept);
         const own = kept?.picks ?? cfg?.frontend?.mfes ?? [];
         setPicks(own);
         setSaved(own);
@@ -197,7 +202,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     setPicks((p) => p.filter((x) => x !== name));
     if (selected === name) setSelected(null);
   };
-  const dirty = JSON.stringify(picks) !== JSON.stringify(saved) || shellRef !== savedShell;
+  const dirty = !inProduct || JSON.stringify(picks) !== JSON.stringify(saved) || shellRef !== savedShell;
   async function save() {
     setBusy(true);
     setErr(null);
@@ -212,6 +217,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
       await api.saveProjectProduct(token, projectId, { frontend: pick });
       setSaved(picks);
       setSavedShell(shellRef);
+      setInProduct(true);
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -265,9 +271,22 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           </button>
         )}
         <button type="button" className="primary" disabled={!dirty || busy} onClick={save}>
-          {busy ? "Saving…" : dirty ? "Save" : "Saved"}
+          {busy ? "Saving…" : !inProduct ? "Save to the product" : dirty ? "Save" : "Saved"}
         </button>
       </div>
+      <p className="muted" style={{ margin: 0, fontSize: 12 }} data-frontend-gdl-note>
+        {inProduct ? (
+          <>
+            Kept with the product. Its <code>product.gdl</code> says it as <code>frontend = frontx_product(...)</code> from
+            the next description: Backend › Preview shows the block, Save keeps it as a new revision.
+          </>
+        ) : (
+          <>
+            Picked before the product kept its frontend, so <code>product.gdl</code> does not say it yet. Save to the
+            product, then Backend › Preview shows <code>frontend = frontx_product(...)</code>.
+          </>
+        )}
+      </p>
       {showUnseen && cover.unseen.length > 0 && (
         <div className="pm-box" data-unseen-list>
           {cover.unseen.map((g) => {
