@@ -132,7 +132,7 @@ import { gearParentDir, gearSlug } from "./scaffold";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
-import { OrgEnvironments } from "./environments-screen";
+import { OrgInfrastructure } from "./environments-screen";
 import { ProjectReleases } from "./releases-tab";
 import { currentProjectTab } from "./product-sections";
 import { KubeconfigField } from "./kubeconfig-field";
@@ -784,8 +784,11 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "people", icon: "users", label: "People" },
     // Owned by the organization and inherited by every project in it.
     { id: "connectors", icon: "plug", label: "Connections" },
-    // Where its products run: clusters, registries, approvals (ADR-0043).
-    { id: "environments", icon: "layers", label: "Environments" },
+    // Where its products run (ADR-0056 §2): the places it holds, the
+    // environments it defines on them, what runs where. It was Environments;
+    // the id stays, so stored places and pins still open it, and so does the
+    // old address (place-url.ts).
+    { id: "environments", icon: "layers", label: "Infrastructure" },
     // What its model calls and IDE sessions cost, and the prices (issue #781).
     { id: "costs", icon: "coins", label: "Costs" },
     // What its projects build: the registry, the catalogue, and the gear
@@ -2861,7 +2864,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "environments" && orgAsSpace && (
-          <OrgEnvironments
+          <OrgInfrastructure
             key={orgAsSpace.id}
             token={token}
             org={{ id: orgAsSpace.id, name: orgAsSpace.name }}

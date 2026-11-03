@@ -40,7 +40,7 @@ export const VIEW_PATHS = {
   projects: "workspaces",
   people: "people",
   connectors: "connections",
-  environments: "environments",
+  environments: "infrastructure",
   costs: "costs",
   gears: "components",
   platform: "platform",
@@ -57,6 +57,10 @@ export const VIEW_PATHS = {
 /** Sections that moved into administration, by their old path. A link
  *  someone kept still lands on the same screen, now under `/admin/`. */
 const MOVED_TO_ADMIN: Record<string, string> = { objects: "objects", views: "views" };
+
+/** Sections whose path changed, by their old path: Environments is
+ *  Infrastructure now (ADR-0056 §2). */
+const MOVED_VIEWS: Record<string, keyof typeof VIEW_PATHS> = { environments: "environments" };
 
 /** What each part of a path may name; anything else is not an address of ours. */
 export interface KnownPlaces {
@@ -130,7 +134,7 @@ export function pathToPlace(pathname: string, search: string, known: KnownPlaces
   }
   if (rest.length > 0) return undefined;
   if (head in MOVED_TO_ADMIN) return withOrg({ adminOpen: true, adminView: MOVED_TO_ADMIN[head] });
-  const view = (Object.keys(VIEW_PATHS) as (keyof typeof VIEW_PATHS)[]).find((v) => VIEW_PATHS[v] === head);
+  const view = MOVED_VIEWS[head] ?? (Object.keys(VIEW_PATHS) as (keyof typeof VIEW_PATHS)[]).find((v) => VIEW_PATHS[v] === head);
   if (!view) return undefined;
   return withOrg({ view, adminOpen: false, crumb: {} });
 }

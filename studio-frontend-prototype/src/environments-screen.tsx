@@ -1,10 +1,14 @@
 /* Where an organization's products run (ADR-0043).
  *
- * `OrgEnvironments` is the organization's Environments section: its
- * environments (a cluster connection, a registry, a namespace per project,
- * whether a deploy needs approval), the deploys waiting for a decision, and
- * what runs where. `ProjectEnvironments` sits on a project's product card:
- * its kubernetes profiles bound to the environments, and its deployments.
+ * `OrgInfrastructure` is the organization's Infrastructure section (ADR-0056
+ * §2), in three parts: the places it holds (clusters, Constructor Research
+ * projects, registries), each with its test, whether it is open to projects
+ * and the environments on it; the environments, as the ladder a release
+ * climbs, each with its place, database and approval; and what runs where,
+ * with the deploys waiting for a decision. It was the Environments section,
+ * and its old address still opens it. `ProjectEnvironments` sits on a
+ * project's Releases tab: its kubernetes profiles bound to the environments,
+ * and its deployments.
  *
  * A deploy itself is asked for from the desktop, which builds and pushes the
  * images and sends the generated chart; the server installs it with the
@@ -41,6 +45,7 @@ import {
   environmentProblems,
   registryConnections,
   researchConnections,
+  registryHost,
   namespaceFor,
   shortCommit,
   stateTone,
@@ -48,6 +53,7 @@ import {
 import { DataTable } from "./data-table";
 import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
+import { databaseWord, ladderOrder, versionOf, whatRunsWhere, type ProjectRuns } from "./releases";
 import { Tile } from "./view-mode";
 
 const PROJECT_TYPE = /tenant\.project\.v1/;
@@ -780,7 +786,7 @@ export function EnvironmentForm({
 }
 
 /** The organization's Environments section. */
-export function OrgEnvironments({ token, org, workspaceIds }: { token: string; org: { id: string; name: string }; workspaceIds: string[] }) {
+export function OrgInfrastructure({ token, org, workspaceIds }: { token: string; org: { id: string; name: string }; workspaceIds: string[] }) {
   const [environments, setEnvironments] = useState<DeployEnvironment[] | null>(null);
   const [mayManage, setMayManage] = useState(false);
   const [openClusters, setOpenClusters] = useState<string[]>([]);
@@ -788,12 +794,16 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [projects, setProjects] = useState<Tenant[]>([]);
   const [editing, setEditing] = useState<DeployEnvironment | "new" | null>(null);
+  // Where the form opened: a place's own list, or the ladder. It is drawn
+  // there, next to what it changes.
+  const [editingAt, setEditingAt] = useState<"place" | "ladder">("place");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [connectingCluster, setConnectingCluster] = useState(false);
+  const [connectingRegistry, setConnectingRegistry] = useState(false);
   /** The cluster whose environments and deploys are shown below the cards. */
   const [selected, setSelected] = useState<string | null>(null);
   /** Each cluster's answer to a test, asked when the page opens. */
@@ -892,78 +902,88 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
   };
 
   const waiting = awaitingDecision(deployments);
+  const ladder = useMemo(() => ladderOrder(environments ?? []), [environments]);
+  const runsWhere = useMemo(() => whatRunsWhere(deployments), [deployments]);
+  const placeOf = (id: string) => places.find((c) => c.id === id);
+  const envName = (id: string) => environments?.find((e) => e.id === id)?.name ?? id;
+  const usedBy = (registry: string) => (environments ?? []).filter((e) => e.registry_connection_id === registry).map((e) => e.name);
+  const startEditing = (e: DeployEnvironment | "new", at: "place" | "ladder") => {
+    setEditing(e);
+    setEditingAt(at);
+  };
+  // The same actions wherever an environment is listed.
+  const environmentActions = (e: DeployEnvironment, at: "place" | "ladder") =>
+    mayManage
+      ? [
+          { label: busy === e.id ? "Asking…" : "Test", disabled: busy === e.id, onSelect: () => ask(e.id, async () => (await api.testEnvironment(token, org.id, e.id)).message) },
+          { label: "Change", onSelect: () => startEditing(e, at) },
+          {
+            label: "Remove",
+            danger: { title: `Remove ${e.name}?`, body: "What runs in the cluster stays there.", confirmLabel: "Remove" },
+            onSelect: () =>
+              act(e.id, async () => {
+                await api.deleteEnvironment(token, org.id, e.id);
+                return `Removed ${e.name}.`;
+              }),
+          },
+        ]
+      : [];
+  // The form names the place it starts from (§5): a new environment the
+  // place it is added on, a changed one the place it runs on.
+  const form = (place: string) =>
+    editing !== null && (
+      <EnvironmentForm
+        token={token}
+        org={org.id}
+        editing={editing === "new" ? null : editing}
+        others={environments ?? []}
+        clusters={clusters}
+        registries={registries}
+        researches={researches}
+        projects={projects}
+        initialCluster={editing === "new" ? place : editing.connection_id}
+        onCancel={() => setEditing(null)}
+        onDone={() => {
+          setEditing(null);
+          load();
+        }}
+        onClusterAdded={(c) => setConnections((cs) => [...cs, c])}
+      />
+    );
 
   return (
-    <div className="envs" data-org-environments>
+    <div className="envs" data-org-environments data-org-infrastructure>
       <style>{ENV_CSS}</style>
-      <h1>Environments</h1>
+      <h1>Infrastructure</h1>
       <p className="subtitle">
-        Where {org.name}&apos;s products run: a cluster, the registry its images come from, a namespace per project. A project
-        binds its product&apos;s kubernetes profiles to these, and a deploy runs on the server with the environment&apos;s
-        connection -- nobody&apos;s laptop holds the cluster&apos;s credentials.
+        Where {org.name}&apos;s products run: the places it holds -- a cluster, a Constructor Research project, the registry
+        images come from -- the environments it defines on them, dev to prod, and what runs where. A deploy runs on the server
+        with the environment&apos;s connection -- nobody&apos;s laptop holds the cluster&apos;s credentials.
       </p>
       {error && <div className="error">{error}</div>}
       {notice && <div className="hint">{notice}</div>}
-
       {waiting.length > 0 && (
-        <section className="card" data-deploys-awaiting>
-          <h3>Waiting for a decision</h3>
-          <ul className="env-list">
-            {waiting.map((d) => (
-              <li key={d.id}>
-                <DeploymentLine d={d} showProject />
-                {mayManage ? (
-                  <div className="env-actions">
-                    <button
-                      type="button"
-                      className="primary"
-                      disabled={busy === d.id}
-                      data-deploy-approve
-                      onClick={() =>
-                        void act(d.id, async () => {
-                          await api.decideDeployment(token, org.id, d.id, "approve");
-                          return `Approved: ${d.product} goes to ${d.environment_name}.`;
-                        })
-                      }
-                    >
-                      Approve
-                    </button>
-                    <button type="button" disabled={busy === d.id} onClick={() => setDeclining(declining === d.id ? null : d.id)}>
-                      Decline…
-                    </button>
-                    {declining === d.id && (
-                      <>
-                        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="required: why not" aria-label="Reason" />
-                        <button
-                          type="button"
-                          disabled={busy === d.id || !reason.trim()}
-                          onClick={() =>
-                            void act(d.id, async () => {
-                              await api.decideDeployment(token, org.id, d.id, "decline", reason.trim());
-                              setDeclining(null);
-                              setReason("");
-                              return `Declined the deploy of ${d.product} to ${d.environment_name}.`;
-                            })
-                          }
-                        >
-                          Decline
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <p className="hint">An organization administrator decides.</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <div className="hint" data-deploys-awaiting-count>
+          {waiting.length === 1 ? "A deploy waits" : `${waiting.length} deploys wait`} for a decision, under{" "}
+          <button
+            type="button"
+            className="linklike"
+            onClick={() => document.querySelector("[data-what-runs-where]")?.scrollIntoView({ behavior: "smooth" })}
+          >
+            What runs where
+          </button>
+          .
+        </div>
       )}
 
+      <h2 className="env-part" data-infra-places>
+        Places
+      </h2>
+      <p className="hint">The clusters and Constructor Research projects products run on, and the registries their images come from.</p>
       <div className="card" data-clusters>
         <DataTable<ClusterCard>
           list="clusters"
-          title="Clusters"
+          title="Clusters and Research projects"
           rows={environments === null ? null : cards}
           rowKey={(c) => c.id || "unseen"}
           rowLabel={(c) => c.label}
@@ -1095,7 +1115,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                 </button>
               )}
               {mayManage && editing === null && current.id && (
-                <button type="button" className="primary" onClick={() => setEditing("new")} data-environment-add>
+                <button type="button" className="primary" onClick={() => startEditing("new", "place")} data-environment-add>
                   Add an environment here
                 </button>
               )}
@@ -1103,25 +1123,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
           </div>
 
           <h4 className="env-sub">Environments on it</h4>
-          {editing !== null && (
-            <EnvironmentForm
-              token={token}
-              org={org.id}
-              editing={editing === "new" ? null : editing}
-              others={environments ?? []}
-              clusters={clusters}
-              registries={registries}
-              researches={researches}
-              projects={projects}
-              initialCluster={current.id}
-              onCancel={() => setEditing(null)}
-              onDone={() => {
-                setEditing(null);
-                load();
-              }}
-              onClusterAdded={(c) => setConnections((cs) => [...cs, c])}
-            />
-          )}
+          {editingAt === "place" && form(current.id)}
           <DataTable<DeployEnvironment>
             list="cluster-environments"
             rows={environments === null ? null : current.environments}
@@ -1173,23 +1175,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                 },
               },
             ]}
-            actions={(e) =>
-              mayManage
-                ? [
-                    { label: busy === e.id ? "Asking…" : "Test", disabled: busy === e.id, onSelect: () => ask(e.id, async () => (await api.testEnvironment(token, org.id, e.id)).message) },
-                    { label: "Change", onSelect: () => setEditing(e) },
-                    {
-                      label: "Remove",
-                      danger: { title: `Remove ${e.name}?`, body: "What runs in the cluster stays there.", confirmLabel: "Remove" },
-                      onSelect: () =>
-                        act(e.id, async () => {
-                          await api.deleteEnvironment(token, org.id, e.id);
-                          return `Removed ${e.name}.`;
-                        }),
-                    },
-                  ]
-                : []
-            }
+            actions={(e) => environmentActions(e, "place")}
           />
 
           <h4 className="env-sub" data-running-now>
@@ -1222,6 +1208,68 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
           )}
         </section>
       )}
+      <div className="card" data-registries>
+        <DataTable<Connection>
+          list="registries"
+          title="Registries"
+          rows={environments === null ? null : registries}
+          rowKey={(r) => r.id}
+          rowLabel={(r) => r.label}
+          defaultView="table"
+          primary={
+            mayManage ? (
+              <button type="button" onClick={() => setConnectingRegistry(true)} data-registry-add>
+                Connect a registry
+              </button>
+            ) : undefined
+          }
+          empty={{
+            title: "No registry connected yet.",
+            body: "A build in Studio pushes its images and chart to one, and a cluster pulls from it (ADR-0048).",
+          }}
+          columns={[
+            {
+              id: "registry",
+              header: "Registry",
+              compare: (a, b) => a.label.localeCompare(b.label),
+              cell: (r) => (
+                <div>
+                  <div className="pname">{r.label}</div>
+                  <code className="sub">{registryHost(r.base_url ?? "") || r.base_url}</code>
+                  <Answer id={r.id} />
+                </div>
+              ),
+            },
+            {
+              id: "used",
+              header: "Environments that use it",
+              cell: (r) => {
+                const names = usedBy(r.id);
+                return names.length ? names.join(", ") : <span className="sub">none yet</span>;
+              },
+            },
+          ]}
+          actions={(r) => [
+            {
+              label: busy === r.id ? "Asking…" : "Test",
+              disabled: busy === r.id,
+              onSelect: () => ask(r.id, async () => (await api.testConnection(token, r.id, org.id)).account),
+            },
+          ]}
+        />
+        {connectingRegistry && (
+          <AddRegistry
+            token={token}
+            org={org.id}
+            onCancel={() => setConnectingRegistry(false)}
+            onAdded={(c) => {
+              setConnectingRegistry(false);
+              setNotice(`Connected ${c.label}.`);
+              setConnections((cs) => [...cs, c]);
+            }}
+          />
+        )}
+      </div>
       {clusters.length > 0 && (
         <OpenClusters
           key={openClusters.join(",")}
@@ -1233,6 +1281,181 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
           onSaved={(ids) => setOpenClusters(ids)}
         />
       )}
+
+      <h2 className="env-part" data-infra-environments>
+        Environments
+      </h2>
+      <p className="hint">
+        The stages of a release, in the order it goes through them: each environment after the one it takes from. An
+        environment is added from the place it runs on, under Places.
+      </p>
+      <div className="card" data-environment-ladder>
+        {editingAt === "ladder" && form("")}
+        <DataTable<DeployEnvironment>
+          list="environment-ladder"
+          rows={environments === null ? null : ladder}
+          rowKey={(e) => e.id}
+          rowLabel={(e) => e.name}
+          defaultView="table"
+          empty={{
+            title: "No environment yet.",
+            body: mayManage ? "Open a place under Places and add dev, stage or prod there." : "An organization administrator adds them.",
+          }}
+          columns={[
+            {
+              id: "name",
+              header: "Environment",
+              cell: (e) => (
+                <div data-ladder-environment={e.name}>
+                  <div className="env-head">
+                    <b>{e.name}</b>
+                    {e.project_id && <span className="badge">a project&apos;s own</span>}
+                  </div>
+                  <div className="sub">{e.promote_from ? `takes from ${envName(e.promote_from)}` : "takes from nobody"}</div>
+                  <Answer id={e.id} />
+                </div>
+              ),
+            },
+            {
+              id: "place",
+              header: "Place",
+              cell: (e) => {
+                const place = placeOf(e.connection_id);
+                return place ? (
+                  <button type="button" className="linklike" onClick={() => setSelected(place.id)}>
+                    {place.label}
+                  </button>
+                ) : (
+                  <span className="sub">a place this page cannot see</span>
+                );
+              },
+            },
+            { id: "database", header: "Database", cell: (e) => databaseWord(e) },
+            {
+              id: "approval",
+              header: "Approval",
+              cell: (e) => (e.protected ? <span className="badge">an administrator approves</span> : <span className="sub">none</span>),
+            },
+            {
+              id: "projects",
+              header: "Projects",
+              cell: (e) =>
+                e.project_id
+                  ? projectName(e.project_id)
+                  : e.projects
+                    ? e.projects.length
+                      ? e.projects.map(projectName).join(", ")
+                      : "none yet"
+                    : "every project",
+            },
+          ]}
+          actions={(e) => environmentActions(e, "ladder")}
+        />
+      </div>
+
+      <h2 className="env-part" data-what-runs-where>
+        What runs where
+      </h2>
+      <p className="hint">
+        Each project in each environment: the version it runs and how its newest deploy went. A project deploys from its
+        Releases tab.
+      </p>
+      {waiting.length > 0 && (
+        <section className="card" data-deploys-awaiting>
+          <h3>Waiting for a decision</h3>
+          <ul className="env-list">
+            {waiting.map((d) => (
+              <li key={d.id}>
+                <DeploymentLine d={d} showProject />
+                {mayManage ? (
+                  <div className="env-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={busy === d.id}
+                      data-deploy-approve
+                      onClick={() =>
+                        void act(d.id, async () => {
+                          await api.decideDeployment(token, org.id, d.id, "approve");
+                          return `Approved: ${d.product} goes to ${d.environment_name}.`;
+                        })
+                      }
+                    >
+                      Approve
+                    </button>
+                    <button type="button" disabled={busy === d.id} onClick={() => setDeclining(declining === d.id ? null : d.id)}>
+                      Decline…
+                    </button>
+                    {declining === d.id && (
+                      <>
+                        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="required: why not" aria-label="Reason" />
+                        <button
+                          type="button"
+                          disabled={busy === d.id || !reason.trim()}
+                          onClick={() =>
+                            void act(d.id, async () => {
+                              await api.decideDeployment(token, org.id, d.id, "decline", reason.trim());
+                              setDeclining(null);
+                              setReason("");
+                              return `Declined the deploy of ${d.product} to ${d.environment_name}.`;
+                            })
+                          }
+                        >
+                          Decline
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <p className="hint">An organization administrator decides.</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <div className="card" data-runs-where>
+        <DataTable<ProjectRuns>
+          list="what-runs-where"
+          rows={environments === null ? null : runsWhere}
+          rowKey={(r) => r.projectId}
+          rowLabel={(r) => r.projectName}
+          defaultView="table"
+          empty={{ title: "Nothing deployed yet.", body: "A project deploys from its Releases tab, or from the desktop after Generate." }}
+          columns={[
+            {
+              id: "project",
+              header: "Project",
+              compare: (a, b) => a.projectName.localeCompare(b.projectName),
+              cell: (r) => <b>{r.projectName}</b>,
+            },
+            ...ladder.map((e) => ({
+              id: `env-${e.id}`,
+              header: e.name,
+              cell: (r: ProjectRuns) => {
+                const cell = r.cells.get(e.id);
+                if (!cell) return <span className="sub">—</span>;
+                const runs = cell.runs ? versionOf(cell.runs) : null;
+                const asked = versionOf(cell.latest);
+                return (
+                  <div data-runs-cell={`${r.projectName}/${e.name}`}>
+                    {runs ? <code>{runs}</code> : <span className="sub">nothing runs</span>}
+                    {/* The newest deploy, when it is not what runs: waiting,
+                        running, failed, or the uninstall that took it out. */}
+                    {cell.latest.id !== cell.runs?.id && (
+                      <div>
+                        <StateBadge d={cell.latest} /> {asked && <code>{asked}</code>}
+                      </div>
+                    )}
+                    <div className="sub">{relTime(cell.latest.requested_at)}</div>
+                  </div>
+                );
+              },
+            })),
+          ]}
+        />
+      </div>
     </div>
   );
 }
@@ -1504,4 +1727,5 @@ const ENV_CSS = `
 .envs .env-advanced summary { cursor:pointer; font-size:13px; }
 .envs .env-advanced[open] summary { margin-bottom:8px; }
 .env-project { margin-top:12px; }
+.envs .env-part { margin:24px 0 4px; }
 `;

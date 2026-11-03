@@ -762,9 +762,9 @@ export const SURFACES: Surface[] = [
   {
     id: "environments",
     area: "organization",
-    title: "Environments",
-    does: "Declare where the organization's products run -- a cluster connection, a registry, a namespace per project, or a Constructor Research project and its hardware; approval for protected ones -- approve deploys, and see what runs where.",
-    components: ["OrgEnvironments", "EnvironmentForm", "ResearchFields", "AddCluster", "AddRegistry", "OpenClusters"],
+    title: "Infrastructure",
+    does: "Lay out where the organization's products run (ADR-0056 §2): the places it holds -- its clusters and Constructor Research projects, each with its test, whether it is open to projects and the environments on it, and its registries; the environments as the ladder a release climbs, in promote_from order, each with its place, database and approval, added from the place it runs on; and what runs where, projects by environments with the version and state, with the deploys waiting for an administrator to approve or decline.",
+    components: ["OrgInfrastructure", "EnvironmentForm", "ResearchFields", "AddCluster", "AddRegistry", "OpenClusters"],
     gears: ["account-management", "studio-connector", "studio-environments"],
   },
   {

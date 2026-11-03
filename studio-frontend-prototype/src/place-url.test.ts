@@ -58,6 +58,12 @@ describe("the portal's address", () => {
     });
   });
 
+  it("opens Environments' old address on Infrastructure, and writes the new one", () => {
+    expect(pathToPlace("/environments", "", KNOWN)).toMatchObject({ view: "environments", adminOpen: false });
+    expect(pathToPlace("/infrastructure", "", KNOWN)).toMatchObject({ view: "environments" });
+    expect(placeToPath({ ...base, view: "environments" })).toBe("/infrastructure");
+  });
+
   it("opens the Builds and Deploys tabs' old addresses on Releases", () => {
     const known = { ...KNOWN, projectTabs: [...KNOWN.projectTabs, "releases"] };
     for (const tab of ["builds", "deploys"]) {

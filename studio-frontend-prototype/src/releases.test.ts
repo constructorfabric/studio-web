@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Deployment, DeployEnvironment } from "./api";
 import type { IdeBuild } from "./builds";
-import { ladderOrder, ladderSteps, newestRelease, stepStatus, versionOf } from "./releases";
+import { databaseWord, ladderOrder, ladderSteps, newestRelease, stepStatus, versionOf, whatRunsWhere } from "./releases";
 
 const env = (id: string, over: Partial<DeployEnvironment> = {}): DeployEnvironment => ({
   id,
@@ -167,5 +167,30 @@ describe("a step of the ladder", () => {
       [build("b-0.3.0"), build("b-0.3.1", { finishedAt: "2026-11-02T09:00:00Z" }), build("b-0.4.0", { status: "failed" })],
     );
     expect(newestRelease(steps)?.buildId).toBe("b-0.3.1");
+  });
+});
+
+describe("what runs where in the organization", () => {
+  it("rows the projects by name, each with what runs in each environment and its newest deploy", () => {
+    const rows = whatRunsWhere([
+      dep("dev", "b-0.3.0", "succeeded"),
+      dep("dev", "b-0.1.0", "succeeded", { project_id: "p2", project_name: "Analytics" }),
+      dep("dev", "b-0.3.1", "failed"),
+      dep("prod", "b-0.2.0", "awaiting_approval"),
+      dep("stage", "b-0.3.0", "succeeded", { preview: { name: "x" } as Deployment["preview"] }),
+    ]);
+    expect(rows.map((r) => r.projectName)).toEqual(["Analytics", "Web"]);
+    const web = rows[1].cells;
+    expect(web.get("dev")?.runs?.build).toBe("b-0.3.0");
+    expect(web.get("dev")?.latest.state).toBe("failed");
+    expect(web.get("prod")?.runs).toBeNull();
+    expect(web.get("prod")?.latest.state).toBe("awaiting_approval");
+    expect(web.has("stage")).toBe(false);
+  });
+
+  it("says how an environment gives the database", () => {
+    expect(databaseWord({ database: "shared" })).toBe("a shared Postgres");
+    expect(databaseWord({ database: "none" })).toBe("its own, in the namespace");
+    expect(databaseWord({ database: "none", kind: "research" })).toBe("its own, in the application");
   });
 });

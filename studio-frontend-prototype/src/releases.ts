@@ -154,3 +154,32 @@ export function newestRelease(steps: readonly LadderStep[]): IdeBuild | null {
   const at = (b: IdeBuild) => b.finishedAt ?? b.startedAt ?? "";
   return all.sort((a, b) => at(b).localeCompare(at(a)))[0] ?? null;
 }
+
+/** One project's row of the organization's What runs where (ADR-0056 §2):
+ *  per environment, what runs there and the newest deploy, as on a step. */
+export interface ProjectRuns {
+  projectId: string;
+  projectName: string;
+  cells: Map<string, { runs: Deployment | null; latest: Deployment }>;
+}
+
+/** Projects by environments, from the organization's deploys: every project
+ *  that deployed anywhere, by name. Previews are left out, as on the ladder. */
+export function whatRunsWhere(deployments: readonly Deployment[]): ProjectRuns[] {
+  const sorted = deployments.filter((d) => !d.preview).sort(newestFirst);
+  const rows = new Map<string, ProjectRuns>();
+  for (const d of sorted) {
+    let row = rows.get(d.project_id);
+    if (!row) rows.set(d.project_id, (row = { projectId: d.project_id, projectName: d.project_name, cells: new Map() }));
+    if (row.cells.has(d.environment_id)) continue;
+    const own = sorted.filter((x) => x.project_id === d.project_id && x.environment_id === d.environment_id);
+    row.cells.set(d.environment_id, { runs: runsIn(own), latest: d });
+  }
+  return [...rows.values()].sort((a, b) => a.projectName.localeCompare(b.projectName));
+}
+
+/** How an environment gives a product its database, in a few words. */
+export function databaseWord(e: Pick<DeployEnvironment, "database" | "kind">): string {
+  if (e.database === "shared") return "a shared Postgres";
+  return e.kind === "research" ? "its own, in the application" : "its own, in the namespace";
+}

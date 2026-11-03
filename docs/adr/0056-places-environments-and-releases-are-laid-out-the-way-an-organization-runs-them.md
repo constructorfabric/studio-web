@@ -127,7 +127,7 @@ This replaces the Builds and Deploys tabs.
 - **This is done in steps:**
   1. The form follows its place (§5), and the Product strip (§3) is done.
   2. Releases (§4) is done. Previews still sit with an environment's step, not beside the build they preview.
-  3. Infrastructure (§2).
+  3. Infrastructure (§2) is done.
 
 ## More Information
 
@@ -144,4 +144,5 @@ This replaces the Builds and Deploys tabs.
 - `studio-frontend-prototype/src/environments-screen.tsx`: `EnvironmentForm` names the place it was added from (§5).
 - `studio-frontend-prototype/src/releases.ts`, `releases-tab.tsx`: Project › Releases (§4). `releases.ts` orders the ladder by `promote_from` and says what each step runs, whether a deploy waits for approval, and what it can promote. `releases-tab.tsx` draws the ladder, the builds (`builds-tab.tsx`), the deploy history, and the folded *Environments of this project*.
 - `studio-frontend-prototype/src/product-sections.ts`: `MOVED_PROJECT_TABS` opens the old `builds` and `deploys` addresses, pins and project types on Releases.
-- Infrastructure: not yet implemented.
+- `studio-frontend-prototype/src/environments-screen.tsx`: `OrgInfrastructure` is Organization › Infrastructure (§2): Places, the Environments ladder, and What runs where. The ladder and the projects-by-environments table come from `releases.ts` (`ladderOrder`, `whatRunsWhere`).
+- `studio-frontend-prototype/src/place-url.ts`: the section's address is `/infrastructure`. The old `/environments` still opens it.
