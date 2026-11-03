@@ -6054,6 +6054,18 @@ export const api = {
   /** The project's product description as Studio keeps it (ADR-0053). */
   productDescription: (token: string, projectId: string) =>
     request<ProductDescription>(`/studio-product/v1/product-description?project_id=${encodeURIComponent(projectId)}`, token),
+  /** The description's revisions, newest first, without their text (at most 200). */
+  productDescriptionRevisions: (token: string, projectId: string) =>
+    request<{ items: Omit<ProductDescriptionRevision, "text">[]; total: number }>(
+      `/studio-product/v1/product-description-revisions?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** One revision, with its text. */
+  productDescriptionRevision: (token: string, projectId: string, revision: number) =>
+    request<ProductDescriptionRevision>(
+      `/studio-product/v1/product-description-revisions/${revision}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
   /** Save a new revision against `base_revision`; a 409 (`descriptionConflictOf`) when it is not the latest. */
   saveProductDescription: (
     token: string,

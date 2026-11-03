@@ -9,12 +9,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { api, type ArtifactNode, type Deployment, type ProductPreview, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
+import { api, type ArtifactNode, type Deployment, type ProductDescriptionRevision, type ProductPreview, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
 import { buildsOf, ideBuildsOf, productBuildsOf, repoPathsOf, type BuildRun, type IdeBuild } from "./builds";
 import { buildableEnvironments } from "./deploy-actions";
 import { buildsHint, deploysHint, type PipelineTab } from "./pipeline";
 import { errText } from "./problem";
-import { lineDiff, productFlow, type FlowState, type FlowStep } from "./product-flow";
+import { lineDiff, productFlow, type DiffLine, type FlowState, type FlowStep } from "./product-flow";
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
 import { deployableBuilds } from "./project-deploys";
 
@@ -286,22 +286,138 @@ function SaveStep({
                   draft.ok ? "" : "; the engine does not resolve it yet (Backend says why)"
                 }.`}
           </div>
-          <pre style={{ fontSize: 11, maxHeight: 320, overflow: "auto", margin: 0 }}>
-            {diff.map((l, i) => (
-              <div
-                key={i}
-                style={{
-                  background:
-                    l.kind === "add" ? "var(--success-soft)" : l.kind === "del" ? "var(--destructive-soft)" : undefined,
-                }}
-              >
-                {l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  "}
-                {l.text}
-              </div>
-            ))}
-          </pre>
+          <Diff lines={diff} />
         </div>
       )}
+      {kept && <Revisions token={token} projectId={projectId} latest={kept} onRestored={onSaved} />}
     </div>
+  );
+}
+
+/** A line diff, `-` for what goes and `+` for what comes. */
+function Diff({ lines }: { lines: DiffLine[] }) {
+  return (
+    <pre style={{ fontSize: 11, maxHeight: 320, overflow: "auto", margin: 0 }}>
+      {lines.map((l, i) => (
+        <div
+          key={i}
+          style={{
+            background: l.kind === "add" ? "var(--success-soft)" : l.kind === "del" ? "var(--destructive-soft)" : undefined,
+          }}
+        >
+          {l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  "}
+          {l.text}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+const SOURCE_WORDS: Record<string, string> = {
+  studio: "saved in Studio",
+  repository: "read back from the repository",
+  migrated: "taken from where the project last saved it",
+};
+
+/** The description's history (ADR-0053): every save is a revision. One opens
+ *  as what changed from it to the latest; restoring it saves its text as the
+ *  next revision, so nothing kept is lost. The product as configured is not
+ *  changed by a restore: the next save composes from it again. */
+function Revisions({
+  token,
+  projectId,
+  latest,
+  onRestored,
+}: {
+  token: string;
+  projectId: string;
+  latest: { revision: number; text: string };
+  onRestored: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<Omit<ProductDescriptionRevision, "text">[] | null>(null);
+  const [shown, setShown] = useState<ProductDescriptionRevision | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    api
+      .productDescriptionRevisions(token, projectId)
+      .then((r) => live && setItems(r.items))
+      .catch((e) => live && setErr(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [open, token, projectId, latest.revision]);
+
+  async function show(revision: number) {
+    setErr(null);
+    try {
+      setShown(revision === latest.revision ? null : await api.productDescriptionRevision(token, projectId, revision));
+    } catch (e) {
+      setErr(errText(e));
+    }
+  }
+
+  async function restore(r: ProductDescriptionRevision) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.saveProductDescription(token, projectId, { base_revision: latest.revision, text: r.text });
+      setShown(null);
+      onRestored();
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)} data-flow-history>
+      <summary style={{ cursor: "pointer", fontSize: 12 }}>
+        History: {latest.revision} revision{latest.revision === 1 ? "" : "s"}
+      </summary>
+      {err && <div className="error">{err}</div>}
+      {open && !items && !err && <p className="muted">Reading the revisions…</p>}
+      {items && (
+        <ul className="rows" style={{ margin: "6px 0" }}>
+          {items.map((r) => (
+            <li key={r.revision} data-flow-revision={r.revision}>
+              <div className="grow">
+                <div className="name">
+                  Revision {r.revision}
+                  {r.revision === latest.revision && <span className="badge ok" style={{ marginLeft: 6 }}>current</span>}
+                </div>
+                <div className="sub">
+                  {new Date(r.created_at).toLocaleString()} · {r.author === "studio" ? "Studio" : r.author.slice(0, 8)} ·{" "}
+                  {SOURCE_WORDS[r.source] ?? r.source}
+                </div>
+              </div>
+              {r.revision !== latest.revision && (
+                <button type="button" className="ghost" onClick={() => void show(r.revision)}>
+                  {shown?.revision === r.revision ? "Shown below" : "Compare with current"}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {shown && (
+        <div style={{ display: "grid", gap: 6 }} data-flow-revision-diff={shown.revision}>
+          <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
+            <span className="grow muted" style={{ fontSize: 12 }}>
+              From revision {shown.revision} to the current one, {latest.revision}.
+            </span>
+            <button type="button" className="ghost" disabled={busy} onClick={() => void restore(shown)}>
+              {busy ? "Restoring…" : `Restore as revision ${latest.revision + 1}`}
+            </button>
+          </div>
+          <Diff lines={lineDiff(shown.text, latest.text)} />
+        </div>
+      )}
+    </details>
   );
 }
