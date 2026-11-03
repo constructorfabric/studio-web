@@ -50,6 +50,7 @@ import {
   syncedSources,
 } from "./component-kinds";
 import type { KindChip } from "./component-kinds";
+import { useFrontxDefaults } from "./frontend-constructor-view";
 import { OrgSources } from "./platform-sources";
 
 /* ============================================================================
@@ -1119,6 +1120,7 @@ export function ComponentsCatalog({
               catalogueSettings={
                 <>
                   <SourcesPanel
+                    token={token}
                     sources={sources}
                     setSrc={setSrc}
                     setRepo={setRepo}
@@ -1501,18 +1503,21 @@ export function PlatformSourcesPanel({ token, onSynced }: { token: string; onSyn
 }
 
 function SourcesPanel({
+  token,
   sources,
   setSrc,
   setRepo,
   connections,
   tenantId,
 }: {
+  token: string;
   sources: Sources;
   setSrc: (patch: Partial<Sources>) => void;
   setRepo: (which: "gears" | "frontx" | "kits" | "kitsPm", patch: Partial<RepoSel>) => void;
   connections: Connection[];
   tenantId: string | undefined;
 }) {
+  const frontx = useFrontxDefaults(token);
   return (
     <div className="sources">
       <RepoSourceEditor
@@ -1525,7 +1530,7 @@ function SourcesPanel({
       />
       <RepoSourceEditor
         title="FrontX (micro-frontends)"
-        note="Every package in a FrontX repository, wherever it sits, and every micro-frontend under src-app/mfe_packages/ with its mfe.json screens. gears-frontx holds the libraries; the micro-frontends the frontend constructor offers come from constructorfabric/gears-frontx-templates (main) or your own FrontX app."
+        note={`Every package in a FrontX repository, wherever it sits, and every micro-frontend under src-app/mfe_packages/ with its mfe.json screens. gears-frontx holds the libraries; the micro-frontends the frontend constructor offers come from ${frontx.source.repo} (${frontx.source.git_ref}) or your own FrontX app.`}
         sel={sources.frontx}
         onChange={(p) => setRepo("frontx", p)}
         connections={connections}

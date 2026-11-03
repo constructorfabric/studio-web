@@ -12,7 +12,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { PRODUCT_CHANGED_EVENT, api, type FrontendPick, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
-import { FrontendConstructor } from "./frontend-constructor-view";
+import { FrontendConstructor, useFrontxDefaults } from "./frontend-constructor-view";
 import type { PipelineTab } from "./pipeline";
 import { ProductFlow } from "./product-flow-view";
 import {
@@ -356,6 +356,8 @@ function ProductFrontend({
   const [product, setProduct] = useState<ProjectProduct | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The deployment's shell template (STUDIO_FRONTX_SHELL_TEMPLATE).
+  const starter = newFrontend(useFrontxDefaults(token).shellTemplate);
 
   useEffect(() => {
     let alive = true;
@@ -429,14 +431,14 @@ function ProductFrontend({
         <div style={{ display: "grid", gap: 8 }} data-add-frontend>
           <p style={{ margin: 0 }}>
             No frontend: the product is its gears and their APIs, which is a whole product. Add one when it needs screens:
-            a FrontX shell from <code>template-shell</code> in{" "}
-            <a href="https://github.com/constructorfabric/gears-frontx-templates" target="_blank" rel="noreferrer">
-              constructorfabric/gears-frontx-templates
+            a FrontX shell from <code>{starter.shell.path}</code> in{" "}
+            <a href={`https://github.com/${starter.shell.repo}`} target="_blank" rel="noreferrer">
+              {starter.shell.repo}
             </a>
             , with micro-frontends mounted in it.
           </p>
           <span>
-            <button type="button" className="primary" disabled={busy} onClick={() => void change(newFrontend())}>
+            <button type="button" className="primary" disabled={busy} onClick={() => void change(starter)}>
               {busy ? "Adding…" : "Add a frontend"}
             </button>
           </span>

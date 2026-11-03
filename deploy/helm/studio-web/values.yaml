@@ -212,6 +212,13 @@ backend:
       size: 4Gi
       # Empty leaves it to the cluster default.
       storageClass: ""
+  # Where a product's frontend starts (product/frontx.rs), served with the
+  # Gearbox status whether or not Gearbox is on. `shellTemplate` is
+  # `github:<owner>/<repo>//<dir>@<ref>`, `source` `<owner>/<repo>[@<ref>]`;
+  # empty is FrontX's own templates (constructorfabric/gears-frontx-templates).
+  frontx:
+    shellTemplate: ""
+    source: ""
   # OpenTelemetry push to the cluster's collector (deploy/observability).
   #
   # The instruments already exist in the binary — the api-gateway gear installs

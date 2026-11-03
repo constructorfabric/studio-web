@@ -542,6 +542,8 @@ profile but `dev.yaml`; otherwise the gear is configured by environment.
 | `STUDIO_GEARBOX_CORPUS_REF` | `main` | Its ref |
 | `STUDIO_GEARBOX_CORPUS_ID` | the corpus URL's repository name, kebab-case; `gears-rust` without a URL | The source id descriptions name the corpus by |
 | `STUDIO_GEARBOX_REFRESH_SECS` | `600` | How often the checkout is refreshed |
+| `STUDIO_FRONTX_SHELL_TEMPLATE` | `github:constructorfabric/gears-frontx-templates//template-shell@main` | The shell a new frontend is assembled on (`product/frontx.rs`); served with the Gearbox status |
+| `STUDIO_FRONTX_SOURCE` | `constructorfabric/gears-frontx-templates@main` | The FrontX repository the frontend constructor suggests for micro-frontends |
 
 On start, with Gearbox configured, the corpus is checked out and the engine run
 once, so the first preview or components reference does not pay for a clone.

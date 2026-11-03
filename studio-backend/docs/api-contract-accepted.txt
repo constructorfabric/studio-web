@@ -2969,6 +2969,10 @@ response	GET /studio-product/v1/gearbox	corpus_ref	String	optional
 response	GET /studio-product/v1/gearbox	corpus_url	String	optional
 response	GET /studio-product/v1/gearbox	enabled	bool	always
 response	GET /studio-product/v1/gearbox	engine_version	String	optional
+response	GET /studio-product/v1/gearbox	frontx	{}	always
+response	GET /studio-product/v1/gearbox	frontx.shell_template	String	always
+response	GET /studio-product/v1/gearbox	frontx.source_ref	String	always
+response	GET /studio-product/v1/gearbox	frontx.source_repo	String	always
 response	GET /studio-product/v1/gearbox	problem	String	optional
 response	GET /studio-product/v1/gearbox	profiles	Vec<String>	always
 response	GET /studio-product/v1/gearbox	shadowed	Vec<String>	always

@@ -11,7 +11,7 @@
  * Pure, so it is tested without a backend.
  */
 
-import type { CatalogNode, CatalogRepoSource, FrontendPick, FrontxPlace } from "./api";
+import type { CatalogNode, CatalogRepoSource, FrontendPick, FrontxPlace, GearboxStatus } from "./api";
 
 export const FRONTX_NODE_TYPE = "gts.cf.studio.catalog.frontx.v1~";
 
@@ -27,6 +27,33 @@ export const SUGGESTED_FRONTX_SOURCE = {
   mode: "frontx",
 } as const;
 
+/** The FrontX template a new frontend's shell comes from, spelled as FrontX's
+ *  provenance spells a source. The same repository the constructor suggests
+ *  as the catalogue's first micro-frontend source. */
+export const FRONTX_SHELL_TEMPLATE = "github:constructorfabric/gears-frontx-templates//template-shell@main";
+
+/** Where a product's frontend starts in this deployment: the shell template
+ *  and the suggested micro-frontend source. */
+export interface FrontxDefaults {
+  shellTemplate: string;
+  source: { repo: string; git_ref: string };
+}
+
+/** What the deployment says (`frontx` of `GET /studio-product/v1/gearbox`,
+ *  `STUDIO_FRONTX_*`), else the built-in FrontX templates -- for a backend
+ *  from before it said, or a value that does not read. */
+export function frontxDefaultsOf(status: Pick<GearboxStatus, "frontx"> | null | undefined): FrontxDefaults {
+  const f = status?.frontx;
+  const shell = f?.shell_template?.trim();
+  const repo = f?.source_repo?.trim();
+  return {
+    shellTemplate: shell && parseShellRef(shell) ? shell : FRONTX_SHELL_TEMPLATE,
+    source: repo
+      ? { repo, git_ref: f?.source_ref?.trim() || "main" }
+      : { repo: SUGGESTED_FRONTX_SOURCE.repo, git_ref: SUGGESTED_FRONTX_SOURCE.git_ref },
+  };
+}
+
 /** The nil tenant: in an organization's source it stands for the
  *  organization itself, whose GitHub connection the sync reads through. */
 const ORG_TENANT = "00000000-0000-0000-0000-000000000000";
@@ -40,8 +67,11 @@ const repoKey = (repo: string) =>
 /** The organization's catalogue sources with the suggested FrontX one added
  *  at the end, or `null` when it already reads that repository as FrontX
  *  (at any ref): then there is nothing to add, only to sync. */
-export function withSuggestedFrontx(items: readonly CatalogRepoSource[]): CatalogRepoSource[] | null {
-  return withFrontxSource(items, SUGGESTED_FRONTX_SOURCE.repo, SUGGESTED_FRONTX_SOURCE.git_ref);
+export function withSuggestedFrontx(
+  items: readonly CatalogRepoSource[],
+  source: FrontxDefaults["source"] = SUGGESTED_FRONTX_SOURCE,
+): CatalogRepoSource[] | null {
+  return withFrontxSource(items, source.repo, source.git_ref);
 }
 
 /** The organization's catalogue sources with `repo` added as a FrontX source
@@ -106,15 +136,22 @@ export function projectRepos(of: {
 const TEMPLATE_KINDS = new Set(["template", "example"]);
 
 /** A template or example micro-frontend: where a new one starts, not a screen
- *  to add. */
-export function isTemplateMfe(m: Pick<Mfe, "kind" | "repo">): boolean {
-  return TEMPLATE_KINDS.has(m.kind ?? "") || repoKey(m.repo ?? "").includes(repoKey(SUGGESTED_FRONTX_SOURCE.repo));
+ *  to add. Everything in the deployment's template repository is one. */
+export function isTemplateMfe(
+  m: Pick<Mfe, "kind" | "repo">,
+  templateRepo: string = SUGGESTED_FRONTX_SOURCE.repo,
+): boolean {
+  return TEMPLATE_KINDS.has(m.kind ?? "") || repoKey(m.repo ?? "").includes(repoKey(templateRepo));
 }
 
 /** The micro-frontends a product can add, and the templates to start a new
  *  one from. */
-export function splitTemplates(mfes: readonly Mfe[]): { addable: Mfe[]; templates: Mfe[] } {
-  return { addable: mfes.filter((m) => !isTemplateMfe(m)), templates: mfes.filter(isTemplateMfe) };
+export function splitTemplates(
+  mfes: readonly Mfe[],
+  templateRepo: string = SUGGESTED_FRONTX_SOURCE.repo,
+): { addable: Mfe[]; templates: Mfe[] } {
+  const template = (m: Mfe) => isTemplateMfe(m, templateRepo);
+  return { addable: mfes.filter((m) => !template(m)), templates: mfes.filter(template) };
 }
 
 /** One place a micro-frontend takes in the shell. */

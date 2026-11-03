@@ -21,12 +21,13 @@ import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { api } from "./api";
 import { repoPathsOf } from "./builds";
 import {
-  SUGGESTED_FRONTX_SOURCE,
+  FRONTX_SHELL_TEMPLATE,
   assemblySteps,
   chosenShell,
   coverage,
   fitOf,
   frontendPick,
+  frontxDefaultsOf,
   frontxSuggestion,
   librariesFrom,
   mfesFrom,
@@ -39,13 +40,13 @@ import {
   splitTemplates,
   withFrontxSource,
   zonesOf,
+  type FrontxDefaults,
   type Library,
   type Mfe,
   type Placement,
   type Shell,
   type Step,
 } from "./frontend-constructor";
-import { FRONTX_SHELL_TEMPLATE } from "./product-sections";
 import { errText } from "./problem";
 
 type Loaded = {
@@ -74,6 +75,35 @@ function Glyph({ icon, label }: { icon: string | null; label: string }) {
   );
 }
 
+/** The deployment's FrontX starting points, asked once per page load. */
+let frontxAsked: Promise<FrontxDefaults> | null = null;
+let frontxKnown: FrontxDefaults | null = null;
+
+export function loadFrontxDefaults(token: string): Promise<FrontxDefaults> {
+  frontxAsked ??= api.gearboxStatus(token).then(
+    (st) => (frontxKnown = frontxDefaultsOf(st)),
+    () => {
+      // Asked again next time; the built-in templates meanwhile.
+      frontxAsked = null;
+      return frontxDefaultsOf(null);
+    },
+  );
+  return frontxAsked;
+}
+
+/** [`loadFrontxDefaults`] for a view: the built-in templates until it answers. */
+export function useFrontxDefaults(token: string): FrontxDefaults {
+  const [d, setD] = useState<FrontxDefaults>(() => frontxKnown ?? frontxDefaultsOf(null));
+  useEffect(() => {
+    let alive = true;
+    void loadFrontxDefaults(token).then((x) => alive && setD(x));
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+  return d;
+}
+
 export function FrontendConstructor({ token, projectId }: { token: string; projectId: string }) {
   const [data, setData] = useState<Loaded | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -99,6 +129,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   const [suggesting, setSuggesting] = useState<string | null>(null);
   /** The product's gears no picked screen calls, listed on demand. */
   const [showUnseen, setShowUnseen] = useState(false);
+  const frontx = useFrontxDefaults(token);
 
   useEffect(() => {
     let alive = true;
@@ -110,8 +141,9 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
       api.listArtifactNodes(token, "repo", projectId, undefined, 50).catch(() => ({ nodes: [] })),
       api.catalogSources(token).catch(() => ({ items: [] })),
       api.getProjectGearRepo(token, projectId).catch(() => ({ nodes: [] })),
+      loadFrontxDefaults(token),
     ])
-      .then(([components, profiles, product, cfg, repos, sources, gearRepo]) => {
+      .then(([components, profiles, product, cfg, repos, sources, gearRepo, defaults]) => {
         if (!alive) return;
         const byName: Record<string, Record<string, unknown>> = {};
         for (const n of profiles.nodes ?? []) {
@@ -119,7 +151,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           if (name) byName[name] = n.value as Record<string, unknown>;
         }
         const all = mfesFrom(components.nodes ?? [], byName);
-        const { addable, templates } = splitTemplates(all);
+        const { addable, templates } = splitTemplates(all, defaults.source.repo);
         setData({
           mfes: addable,
           templates,
@@ -143,7 +175,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
         const own = kept?.picks ?? cfg?.frontend?.mfes ?? [];
         setPicks(own);
         setSaved(own);
-        const shell = kept?.shellRef ?? cfg?.frontend?.shell ?? FRONTX_SHELL_TEMPLATE;
+        const shell = kept?.shellRef ?? cfg?.frontend?.shell ?? defaults.shellTemplate;
         setShellRef(shell);
         setSavedShell(shell);
       })
@@ -411,11 +443,11 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
               <div style={{ fontSize: 12.5 }}>
                 The templates are in{" "}
                 <a
-                  href={`https://github.com/${SUGGESTED_FRONTX_SOURCE.repo}/tree/${SUGGESTED_FRONTX_SOURCE.git_ref}/template-mfe/src-app/mfe_packages`}
+                  href={`https://github.com/${frontx.source.repo}/tree/${frontx.source.git_ref}/template-mfe/src-app/mfe_packages`}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  <code>{SUGGESTED_FRONTX_SOURCE.repo}</code>
+                  <code>{frontx.source.repo}</code>
                 </a>
                 : a blank one, a demo, two widgets.
               </div>

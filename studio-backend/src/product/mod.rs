@@ -16,6 +16,7 @@
 
 mod descriptions;
 mod explanations;
+mod frontx;
 mod gear_roots;
 mod gearbox;
 mod migrations;

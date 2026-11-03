@@ -233,6 +233,16 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            # Where a product's frontend starts (product/frontx.rs); unset is
+            # FrontX's own templates.
+            {{- with .Values.backend.frontx.shellTemplate }}
+            - name: STUDIO_FRONTX_SHELL_TEMPLATE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.backend.frontx.source }}
+            - name: STUDIO_FRONTX_SOURCE
+              value: {{ . | quote }}
+            {{- end }}
             {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
             # Where ingest looks FIRST: the checkout the IDE shares. It reads
             # `{root}/{workspace_id}/{repo_dir}`, which is this mount plus the

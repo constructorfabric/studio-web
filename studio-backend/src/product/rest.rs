@@ -287,6 +287,34 @@ pub struct GearboxStatusDto {
     /// The organization's repositories left out because a platform
     /// repository has the same source id, by source id.
     pub shadowed: Vec<String>,
+    /// Where a product's frontend starts in this deployment
+    /// (`STUDIO_FRONTX_*`); filled whether or not Gearbox is.
+    pub frontx: FrontxDefaultsDto,
+}
+
+/// The deployment's FrontX starting points (`product/frontx.rs`).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct FrontxDefaultsDto {
+    /// The shell template a new frontend is assembled on, as
+    /// `github:<owner>/<repo>//<dir>@<ref>`.
+    pub shell_template: String,
+    /// The FrontX repository the frontend constructor suggests as a
+    /// micro-frontend source, `owner/repo`.
+    pub source_repo: String,
+    /// Its ref.
+    pub source_ref: String,
+}
+
+impl FrontxDefaultsDto {
+    fn from_env() -> Self {
+        let d = super::frontx::FrontxDefaults::from_env();
+        Self {
+            shell_template: d.shell_template,
+            source_repo: d.source_repo,
+            source_ref: d.source_ref,
+        }
+    }
 }
 
 /// One gear repository as the engine last read it.
@@ -1624,6 +1652,7 @@ async fn gearbox_status(
             problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
             sources: Vec::new(),
             shadowed: Vec::new(),
+            frontx: FrontxDefaultsDto::from_env(),
         }));
     };
     let scope = product
@@ -1644,6 +1673,7 @@ async fn gearbox_status(
         profiles,
         problem: status.problem,
         shadowed: status.shadowed,
+        frontx: FrontxDefaultsDto::from_env(),
         sources: status
             .sources
             .into_iter()
