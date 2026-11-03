@@ -19,7 +19,7 @@ use sea_orm::{ActiveValue, ColumnTrait, Condition, EntityTrait, Order};
 use serde_json::Value;
 use time::OffsetDateTime;
 use toolkit_db::Db;
-use toolkit_db::outbox::{Outbox, Record};
+use toolkit_db::outbox::{Outbox, Record, Wake};
 use toolkit_db::secure::{SecureEntityExt, SecureInsertExt, SecureUpdateExt};
 use toolkit_security::{AccessScope, SecurityContext};
 use uuid::Uuid;
@@ -214,7 +214,7 @@ impl TaskService {
         let stored = row.clone();
         let inserted = self
             .db
-            .transaction_ref_mapped::<_, (), anyhow::Error>(move |tx| {
+            .transaction_ref_mapped::<_, Wake, anyhow::Error>(move |tx| {
                 Box::pin(async move {
                     entity::Entity::insert(active(stored))
                         .secure()
@@ -227,26 +227,28 @@ impl TaskService {
                     let record = Record::to(QUEUE, partition)
                         .payload(payload, PAYLOAD_TYPE)
                         .build()?;
-                    outbox.enqueue(tx, record).await?;
-                    Ok(())
+                    Ok(outbox.enqueue(tx, record).await?)
                 })
             })
             .await;
-        if let Err(e) = inserted {
-            // Two requests with one new key, both past the lookup above (a
-            // retry sent while the first was still running): the unique index
-            // on (tenant_id, idempotency_key) refuses the second insert. The
-            // winner's run is the answer the key promises, not a 500.
-            if let Some(k) = row.idempotency_key.as_deref()
-                && let Some(winner) = self.find_by_idempotency_key(row.tenant_id, k).await?
-            {
-                return Ok(winner);
+        let wake = match inserted {
+            Ok(wake) => wake,
+            Err(e) => {
+                // Two requests with one new key, both past the lookup above (a
+                // retry sent while the first was still running): the unique index
+                // on (tenant_id, idempotency_key) refuses the second insert. The
+                // winner's run is the answer the key promises, not a 500.
+                if let Some(k) = row.idempotency_key.as_deref()
+                    && let Some(winner) = self.find_by_idempotency_key(row.tenant_id, k).await?
+                {
+                    return Ok(winner);
+                }
+                return Err(e);
             }
-            return Err(e);
-        }
+        };
         // Wake the sequencer rather than letting a quiet queue wait out its
         // idle interval.
-        self.outbox.flush();
+        wake.fire();
         Ok(row)
     }
 
@@ -328,8 +330,9 @@ impl TaskService {
             row.partition_key.as_deref().unwrap_or(&id.to_string()),
         );
         let payload = encode_payload(tenant, id);
-        self.db
-            .transaction_ref_mapped::<_, (), anyhow::Error>(move |tx| {
+        let wake = self
+            .db
+            .transaction_ref_mapped::<_, Wake, anyhow::Error>(move |tx| {
                 Box::pin(async move {
                     entity::Entity::update_many()
                         .secure()
@@ -359,12 +362,11 @@ impl TaskService {
                     let record = Record::to(QUEUE, partition)
                         .payload(payload, PAYLOAD_TYPE)
                         .build()?;
-                    outbox.enqueue(tx, record).await?;
-                    Ok(())
+                    Ok(outbox.enqueue(tx, record).await?)
                 })
             })
             .await?;
-        self.outbox.flush();
+        wake.fire();
         self.get(ctx, tenant, id)
             .await?
             .ok_or_else(|| anyhow!("run {id} disappeared while being re-queued"))

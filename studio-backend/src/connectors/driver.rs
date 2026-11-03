@@ -23,6 +23,14 @@ use super::references::{NumberRef, ReferenceSyntax};
 use super::url_guard::HostRule;
 use async_trait::async_trait;
 
+pub const OPTION_PLATFORM_AUTH: &str = "platform_auth";
+
+pub fn platform_auth(options: &std::collections::BTreeMap<String, String>) -> bool {
+    options
+        .get(OPTION_PLATFORM_AUTH)
+        .is_some_and(|v| v == "true")
+}
+
 /// Everything a driver needs to reach an installation. Assembled per call by
 /// the service from the stored connection plus the credstore secret; drivers
 /// never see the catalogue and never cache credentials.

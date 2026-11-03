@@ -750,7 +750,10 @@ gears:
         acquire_timeout: "10s"
         idle_timeout: "5m"
         max_lifetime: "30m"
-    config: {}
+    config:
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "${STUDIO_OIDC_S2S_CLIENT_SECRET:-mini-chat-dev-secret}"
 
   # ── studio-scheduler (cron/interval schedules) ──
   # Owns schedules and nothing else: each tick it enqueues due runs into

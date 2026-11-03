@@ -67,3 +67,6 @@ use mini_chat as _;
 // during boot, so a deployment without that server must not link it.
 #[cfg(feature = "graph")]
 use graph_storage as _;
+
+#[cfg(feature = "github-mirror")]
+use github_mirror as _;

@@ -38,6 +38,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::Router;
 use credstore_sdk::CredStoreClientV1;
+use serde::Deserialize;
 use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
 use toolkit::contracts::{DatabaseCapability, RestApiCapability};
@@ -149,6 +150,37 @@ fn resolve_dir(env: &str) -> Option<PathBuf> {
     Some(PathBuf::from(raw))
 }
 
+#[derive(Default, Deserialize)]
+struct IngestGearConfig {
+    #[serde(default)]
+    client_credentials: ClientCredentialsConfig,
+}
+
+#[derive(Default, Deserialize)]
+struct ClientCredentialsConfig {
+    #[serde(default)]
+    client_id: String,
+    #[serde(default)]
+    client_secret: String,
+}
+
+fn platform_client(ctx: &GearCtx) -> anyhow::Result<Option<service::PlatformClient>> {
+    let cfg: IngestGearConfig = ctx.config_or_default()?;
+    let creds = cfg.client_credentials;
+    if creds.client_id.trim().is_empty() {
+        return Ok(None);
+    }
+    let authn = ctx
+        .client_hub()
+        .get::<dyn authn_resolver_sdk::AuthNResolverClient>()?;
+    info!(client_id = %creds.client_id, "studio-artifact-ingest: a connection with platform_auth reads with this client's token");
+    Ok(Some(service::PlatformClient {
+        authn,
+        client_id: creds.client_id,
+        client_secret: creds.client_secret,
+    }))
+}
+
 /// `$HOME/<rel>`, or `None` when `$HOME` is unset.
 fn resolve_home_relative(rel: &str) -> Option<PathBuf> {
     std::env::var("HOME")
@@ -258,7 +290,8 @@ impl RestApiCapability for StudioArtifactIngestGear {
                     work_root,
                 )
                 .with_work_root_failure(work_root_failure)
-                .with_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub())),
+                .with_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub()))
+                .with_platform(platform_client(ctx)?),
             ))
         };
 

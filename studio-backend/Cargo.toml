@@ -70,6 +70,7 @@ graph = [
     "graph_storage/onnx",
     "graph_storage/remote",
 ]
+github-mirror = ["dep:github_mirror"]
 
 [dependencies]
 # gears-rust crates come from crates.io at the versions release-plz published
@@ -112,13 +113,14 @@ toolkit-macros = { package = "cf-gears-toolkit-macros", version = "0.6.6" }
 credstore-sdk = { package = "cf-gears-credstore-sdk", version = "0.2.17" }
 # studio-git authenticates Git's Basic credentials itself (the gateway reads only Bearer).
 authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37" }
+secrecy = "0.10"
 # Strict ${VAR} pre-expansion of the config file (#65): the toolkit loader
 # reads the YAML verbatim, so placeholders outside DSNs reached the runtime
 # as literals. Same expansion the toolkit itself applies to DSNs.
 toolkit-utils = { package = "cf-gears-toolkit-utils", version = "0.7.2" }
 # studio-connector: GtsTypeId on the account-management metadata boundary.
 # Same version gears-rust pins in its workspace manifest.
-gts = "0.12"
+gts = "0.16.1"
 
 # ── keycloak-idp-plugin (in-crate; real user provisioning, ADR-0004) ──
 # "stream" is for the llm-proxy gear (SSE passthrough to the LLM upstream).
@@ -252,6 +254,7 @@ credstore = { package = "cf-gears-credstore", version = "0.5.2" }
 static_credstore_plugin = { package = "cf-gears-static-credstore-plugin", version = "0.2.15" }
 simple_user_settings = { package = "cf-gears-simple-user-settings", version = "0.2.5" }
 file_storage = { package = "cf-gears-file-storage", version = "0.2.8" }
+github_mirror = { package = "cf-gears-github-mirror", version = "0.1.0", path = "../../gears-rust-fork/gears/github-mirror/github-mirror", optional = true }
 kube = { version = "4.2.0", default-features = false, features = ["client", "runtime", "rustls-tls"] }
 k8s-openapi = { version = "0.28.0", features = ["v1_32"] }
 rustls = "0.23.43"
@@ -278,3 +281,69 @@ testcontainers-modules = { version = "0.11", features = ["postgres"] }
 # see `src/test_pg.rs`. An exit hook is the one place left to stop it, and the
 # C runtime's is the only exit hook there is.
 libc = "0.2"
+
+[patch.crates-io]
+cf-gears-account-management = { path = "../../gears-rust-fork/gears/system/account-management/account-management" }
+cf-gears-account-management-sdk = { path = "../../gears-rust-fork/gears/system/account-management/account-management-sdk" }
+cf-gears-api-gateway = { path = "../../gears-rust-fork/gears/system/api-gateway" }
+cf-gears-authn-resolver = { path = "../../gears-rust-fork/gears/system/authn-resolver/authn-resolver" }
+cf-gears-authn-resolver-sdk = { path = "../../gears-rust-fork/gears/system/authn-resolver/authn-resolver-sdk" }
+cf-gears-authz-resolver = { path = "../../gears-rust-fork/gears/system/authz-resolver/authz-resolver" }
+cf-gears-authz-resolver-sdk = { path = "../../gears-rust-fork/gears/system/authz-resolver/authz-resolver-sdk" }
+cf-gears-credstore = { path = "../../gears-rust-fork/gears/credstore/credstore" }
+cf-gears-credstore-sdk = { path = "../../gears-rust-fork/gears/credstore/credstore-sdk" }
+cf-gears-event-broker-sdk = { path = "../../gears-rust-fork/gears/system/event-broker/event-broker-sdk" }
+cf-gears-file-storage = { path = "../../gears-rust-fork/gears/file-storage/file-storage" }
+cf-gears-file-storage-sdk = { path = "../../gears-rust-fork/gears/file-storage/file-storage-sdk" }
+cf-gears-graph-storage = { path = "../../gears-rust-fork/gears/graph-storage/graph-storage" }
+cf-gears-graph-storage-onnx-embedding-plugin = { path = "../../gears-rust-fork/gears/graph-storage/onnx-embedding-plugin" }
+cf-gears-graph-storage-remote-embedding-plugin = { path = "../../gears-rust-fork/gears/graph-storage/remote-embedding-plugin" }
+cf-gears-graph-storage-sdk = { path = "../../gears-rust-fork/gears/graph-storage/graph-storage-sdk" }
+cf-gears-grpc-hub = { path = "../../gears-rust-fork/gears/system/grpc-hub" }
+cf-gears-keycloak-idp-plugin = { path = "../../gears-rust-fork/gears/system/account-management/plugins/keycloak-idp-plugin" }
+cf-gears-mini-chat = { path = "../../gears-rust-fork/gears/mini-chat/mini-chat" }
+cf-gears-mini-chat-sdk = { path = "../../gears-rust-fork/gears/mini-chat/mini-chat-sdk" }
+cf-gears-nodes-registry = { path = "../../gears-rust-fork/gears/system/nodes-registry/nodes-registry" }
+cf-gears-nodes-registry-sdk = { path = "../../gears-rust-fork/gears/system/nodes-registry/nodes-registry-sdk" }
+cf-gears-oagw = { path = "../../gears-rust-fork/gears/system/oagw/oagw" }
+cf-gears-oagw-sdk = { path = "../../gears-rust-fork/gears/system/oagw/oagw-sdk" }
+cf-gears-oidc-authn-plugin = { path = "../../gears-rust-fork/gears/system/authn-resolver/plugins/oidc-authn-plugin" }
+cf-gears-resource-group = { path = "../../gears-rust-fork/gears/system/resource-group/resource-group" }
+cf-gears-resource-group-sdk = { path = "../../gears-rust-fork/gears/system/resource-group/resource-group-sdk" }
+cf-gears-simple-user-settings = { path = "../../gears-rust-fork/gears/simple-user-settings/simple-user-settings" }
+cf-gears-simple-user-settings-sdk = { path = "../../gears-rust-fork/gears/simple-user-settings/simple-user-settings-sdk" }
+cf-gears-static-authn-plugin = { path = "../../gears-rust-fork/gears/system/authn-resolver/plugins/static-authn-plugin" }
+cf-gears-static-authz-plugin = { path = "../../gears-rust-fork/gears/system/authz-resolver/plugins/static-authz-plugin" }
+cf-gears-static-credstore-plugin = { path = "../../gears-rust-fork/gears/credstore/plugins/static-credstore-plugin" }
+cf-gears-static-idp-plugin = { path = "../../gears-rust-fork/gears/system/account-management/plugins/static-idp-plugin" }
+cf-gears-system-sdk-directory = { path = "../../gears-rust-fork/libs/system-sdks/sdks/directory" }
+cf-gears-system-sdks = { path = "../../gears-rust-fork/libs/system-sdks" }
+cf-gears-tenant-resolver = { path = "../../gears-rust-fork/gears/system/tenant-resolver/tenant-resolver" }
+cf-gears-tenant-resolver-sdk = { path = "../../gears-rust-fork/gears/system/tenant-resolver/tenant-resolver-sdk" }
+cf-gears-toolkit = { path = "../../gears-rust-fork/libs/toolkit" }
+cf-gears-toolkit-canonical-errors = { path = "../../gears-rust-fork/libs/toolkit-canonical-errors" }
+cf-gears-toolkit-canonical-errors-macro = { path = "../../gears-rust-fork/libs/toolkit-canonical-errors-macro" }
+cf-gears-toolkit-contract = { path = "../../gears-rust-fork/libs/toolkit-contract" }
+cf-gears-toolkit-contract-macros = { path = "../../gears-rust-fork/libs/toolkit-contract-macros" }
+cf-gears-toolkit-db = { path = "../../gears-rust-fork/libs/toolkit-db" }
+cf-gears-toolkit-db-macros = { path = "../../gears-rust-fork/libs/toolkit-db-macros" }
+cf-gears-toolkit-gateway = { path = "../../gears-rust-fork/libs/toolkit-gateway" }
+cf-gears-toolkit-gts = { path = "../../gears-rust-fork/libs/toolkit-gts" }
+cf-gears-toolkit-gts-macros = { path = "../../gears-rust-fork/libs/toolkit-gts-macros" }
+cf-gears-toolkit-http = { path = "../../gears-rust-fork/libs/toolkit-http" }
+cf-gears-toolkit-http-middleware = { path = "../../gears-rust-fork/libs/toolkit-http-middleware" }
+cf-gears-toolkit-macros = { path = "../../gears-rust-fork/libs/toolkit-macros" }
+cf-gears-toolkit-node-info = { path = "../../gears-rust-fork/libs/toolkit-node-info" }
+cf-gears-toolkit-odata = { path = "../../gears-rust-fork/libs/toolkit-odata" }
+cf-gears-toolkit-odata-macros = { path = "../../gears-rust-fork/libs/toolkit-odata-macros" }
+cf-gears-toolkit-onnx-runtime = { path = "../../gears-rust-fork/libs/ai/toolkit-onnx-runtime" }
+cf-gears-toolkit-sdk = { path = "../../gears-rust-fork/libs/toolkit-sdk" }
+cf-gears-toolkit-sea-orm-pgq = { path = "../../gears-rust-fork/libs/toolkit-sea-orm-pgq" }
+cf-gears-toolkit-security = { path = "../../gears-rust-fork/libs/toolkit-security" }
+cf-gears-toolkit-stable-hash = { path = "../../gears-rust-fork/libs/toolkit-stable-hash" }
+cf-gears-toolkit-transport-grpc = { path = "../../gears-rust-fork/libs/toolkit-transport-grpc" }
+cf-gears-toolkit-utils = { path = "../../gears-rust-fork/libs/toolkit-utils" }
+cf-gears-types-registry = { path = "../../gears-rust-fork/gears/system/types-registry/types-registry" }
+cf-gears-types-registry-sdk = { path = "../../gears-rust-fork/gears/system/types-registry/types-registry-sdk" }
+cf-gears-usage-collector = { path = "../../gears-rust-fork/gears/system/usage-collector/usage-collector" }
+cf-gears-usage-collector-sdk = { path = "../../gears-rust-fork/gears/system/usage-collector/usage-collector-sdk" }
