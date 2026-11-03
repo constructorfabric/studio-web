@@ -457,10 +457,9 @@ impl ResearchApi {
                 Body::Json(v) => req.json(v),
                 Body::Bytes(b) => req.body(b.to_vec()),
             };
-            let res = req
-                .send()
-                .await
-                .map_err(|e| anyhow!("Constructor Research did not answer {what}: {e}"))?;
+            let res = req.send().await.map_err(|e| {
+                super::oauth::not_reached(&format!("Constructor Research ({what})"), url, &e)
+            })?;
             if res.status() != reqwest::StatusCode::UNAUTHORIZED {
                 return Ok(res);
             }
