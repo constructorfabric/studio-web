@@ -556,7 +556,9 @@ pub fn project_product_instance_id(project_id: &str) -> String {
 }
 
 /// The product one project is composing. `value` carries `project_id` plus
-/// `{product_id, name, gears, profile, last_preview?, written?}`.
+/// `{product_id, name, gears, profile?, checks?, last_preview?, written?}`:
+/// `checks` the engine's verdict per profile (ADR-0057), `last_preview` the
+/// latest of them.
 pub fn project_product_node(project_id: &str, value: Value) -> GtsNode {
     GtsNode {
         type_id: PROJECT_PRODUCT_TYPE,

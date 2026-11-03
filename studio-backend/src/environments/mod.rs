@@ -3,7 +3,8 @@
 //! An organization lists its **environments**: a Kubernetes cluster reached
 //! through a `kubernetes` connection it holds, an image registry, a namespace
 //! pattern, whether a deploy needs approval, and which projects may deploy
-//! there. A project binds its product's `kubernetes` profiles to them. A
+//! there. A project binds each of them to the `kubernetes` profile of its
+//! product it runs there, one profile to any number of them (ADR-0057). A
 //! **deploy** is a request to this gear: the server installs the generated
 //! chart as a background run (ADR-0038) with the environment's connection, so
 //! a member's machine never holds a cluster credential (ADR-0027). Every deploy

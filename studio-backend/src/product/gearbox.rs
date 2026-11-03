@@ -78,6 +78,11 @@ const EVALUATION_TTL: Duration = Duration::from_secs(600);
 /// the preview resolves the one asked for.
 pub const PROFILES: [&str; 3] = ["dev", "local", "prod"];
 
+/// The `default_profile` every generated description names, whichever
+/// profile is being checked (ADR-0057): what runs where is the bindings'
+/// say, so checking another profile must not make a new revision.
+pub const DEFAULT_PROFILE: &str = "dev";
+
 #[derive(Debug, Clone)]
 pub struct GearboxConfig {
     pub bin: PathBuf,
@@ -1683,7 +1688,7 @@ pub struct SourcePin<'a> {
 }
 
 /// The `product.gdl` for a composition, to be saved at `product_path` in the
-/// project's repository. `default_profile` must be one of [`PROFILES`].
+/// project's repository. Its `default_profile` is always [`DEFAULT_PROFILE`].
 ///
 /// With a `pin`, the corpus is a git source at the commit the composition was
 /// checked against, so the description says by itself what it was built from
@@ -1696,7 +1701,6 @@ pub fn render_product_gdl(
     product_path: &str,
     name: &str,
     composition: &Composition,
-    default_profile: &str,
     pin: Option<CorpusPin<'_>>,
     config: &BTreeMap<String, serde_json::Map<String, Value>>,
 ) -> String {
@@ -1711,7 +1715,6 @@ pub fn render_product_gdl(
         product_path,
         name,
         composition,
-        default_profile,
         &[source],
         &BTreeMap::new(),
         config,
@@ -1729,7 +1732,6 @@ pub fn render_product_gdl_from(
     product_path: &str,
     name: &str,
     composition: &Composition,
-    default_profile: &str,
     sources: &[SourcePin<'_>],
     gear_source: &BTreeMap<String, String>,
     config: &BTreeMap<String, serde_json::Map<String, Value>>,
@@ -1876,7 +1878,7 @@ pub fn render_product_gdl_from(
          \x20   ],\n\
          )\n",
         name = gdl_string(name),
-        profile = gdl_string(default_profile),
+        profile = gdl_string(DEFAULT_PROFILE),
         local_db = PROFILE_DATABASE,
     )
 }
@@ -3795,7 +3797,6 @@ impl Gearbox {
             &input.product_path,
             &input.name,
             &composition,
-            &input.profile,
             &pins,
             &gear_source,
             &by_id,
@@ -4871,7 +4872,6 @@ mod tests {
             "products/my-shop/product.gdl",
             "My Shop",
             &c,
-            "dev",
             Some(CorpusPin {
                 url: "https://github.com/MikeFalcon77/gears-rust.git",
                 rev: "a0a42cec5e68b313c31e3ceb00254b0df89cd8b8",
@@ -4896,7 +4896,6 @@ mod tests {
             &product_gdl_path("my-shop"),
             "My Shop",
             &c,
-            "dev",
             None,
             &BTreeMap::new(),
         );
@@ -4936,7 +4935,6 @@ mod tests {
             "product.gdl",
             "My \"Shop\"",
             &c,
-            "local",
             None,
             &BTreeMap::new(),
         );
@@ -4955,7 +4953,8 @@ mod tests {
         assert_eq!(gdl.matches("database = postgres(").count(), 3, "{gdl}");
         assert!(gdl.contains("password = \"${GEARS_PG_PASSWORD}\""));
         assert!(gdl.contains("existing_secret = \"my-shop-db\""));
-        assert!(gdl.contains("default_profile = \"local\""));
+        // Pinned whichever profile is checked (ADR-0057).
+        assert!(gdl.contains("default_profile = \"dev\""));
         assert!(gdl.contains("use_gear(\"api-gateway\", source = \"gears-rust\"),"));
         assert!(gdl.contains(
             "use_gear(\"authn-resolver\", source = \"gears-rust\", plugins = [plugin(\"static-authn-plugin\")]),"
@@ -5244,7 +5243,7 @@ mod tests {
             "account-management".to_string(),
             json!({"strict": true}).as_object().expect("object").clone(),
         );
-        let gdl = render_product_gdl("p", "product.gdl", "P", &composition, "dev", None, &config);
+        let gdl = render_product_gdl("p", "product.gdl", "P", &composition, None, &config);
         assert!(
             gdl.contains(r#"use_gear("account-management", source = "gears-rust", config = {"strict": True}, plugins = [plugin("static-idp-plugin", config = {"priority": 100, "vendor": "constructorfabric"})])"#),
             "{gdl}"
@@ -5433,7 +5432,6 @@ mod tests {
             "products/studio-web/product.gdl",
             "Studio",
             &c,
-            "dev",
             &[],
             &BTreeMap::new(),
             &BTreeMap::new(),
@@ -5467,7 +5465,6 @@ mod tests {
             "products/studio-web/product.gdl",
             "Studio",
             &c,
-            "dev",
             &[],
             &BTreeMap::new(),
             &BTreeMap::new(),
@@ -5506,7 +5503,6 @@ mod tests {
             "product.gdl",
             "Studio",
             &c,
-            "dev",
             &pins,
             &BTreeMap::new(),
             &BTreeMap::new(),
@@ -5521,7 +5517,6 @@ mod tests {
             "products/studio-web/product.gdl",
             "Studio",
             &c,
-            "dev",
             &pins,
             &BTreeMap::new(),
             &BTreeMap::new(),
@@ -5543,7 +5538,6 @@ mod tests {
             "products/my-shop/product.gdl",
             "My Shop",
             &c,
-            "dev",
             &[
                 SourcePin {
                     id: "gears-core",
@@ -5794,7 +5788,6 @@ mod tests {
                 "product.gdl",
                 "My Shop",
                 &composition,
-                profile,
                 None,
                 &BTreeMap::new(),
             );

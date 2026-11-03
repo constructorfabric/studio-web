@@ -497,7 +497,9 @@ pub struct ProductPreviewRequest {
     /// Gears by crate name (`cf-gears-api-gateway`) or engine id (`api-gateway`).
     /// Empty only with `write`: the description a product project starts from.
     pub gears: Vec<String>,
-    /// `dev` (embedded), `local` (self-hosted) or `prod` (kubernetes). Default `dev`.
+    /// The profile to check: `dev` (embedded), `local` (self-hosted) or
+    /// `prod` (kubernetes). Default `dev`. The description names `dev` as its
+    /// default whichever is checked (ADR-0057).
     pub profile: Option<String>,
     /// Save the composed `product.gdl` as the project's next description
     /// revision, which Studio keeps (ADR-0053 §1). Nothing goes to the
@@ -607,6 +609,9 @@ pub struct ProductPreviewRevisionDto {
 pub struct ProductPreviewDto {
     /// The description, exactly as it would be committed.
     pub product_gdl: String,
+    /// Hex SHA-256 of `product_gdl`: a profile's kept check (`checks` on the
+    /// product) is about this description while its hash is this one.
+    pub gdl_sha256: String,
     pub profile: String,
     /// No error diagnostics: the product resolves for this profile.
     pub ok: bool,
@@ -1897,20 +1902,29 @@ async fn preview_product(
         "config".into(),
         serde_json::to_value(&config).unwrap_or(Value::Null),
     );
-    record.insert("profile".into(), profile.clone().into());
-    record.insert(
-        "last_preview".into(),
-        serde_json::json!({
-            "profile": profile,
-            "ok": errors == 0,
-            "errors": errors,
-            "warnings": warnings,
-            "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
-            "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
-            "corpus_commit": preview.corpus_commit,
-            "infrastructure": preview.infrastructure,
-        }),
-    );
+    // The verdict is kept per profile (ADR-0057): checking `local` leaves
+    // `prod`'s standing, and the description's hash says whether it is still
+    // about the product as it is now. `last_preview` stays for older readers
+    // and says which check ran last.
+    let gdl_sha256 = super::descriptions::digest(&preview.product_gdl);
+    let check = serde_json::json!({
+        "ok": errors == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
+        "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
+        "infrastructure": preview.infrastructure,
+        "corpus_commit": preview.corpus_commit,
+        "gdl_sha256": gdl_sha256,
+    });
+    let mut last = check.clone();
+    if let Some(o) = last.as_object_mut() {
+        o.insert("profile".into(), profile.clone().into());
+    }
+    record.insert("last_preview".into(), last);
+    let mut checks = serde_json::Map::new();
+    checks.insert(profile.clone(), check);
+    record.insert("checks".into(), Value::Object(checks));
     if let Some(w) = &written {
         record.insert(
             "written".into(),
@@ -1935,6 +1949,7 @@ async fn preview_product(
         ProductPreviewDto {
             ok: !r.diagnostics.iter().any(|d| d.is_error()),
             product_gdl: preview.product_gdl,
+            gdl_sha256,
             profile,
             diagnostics: r
                 .diagnostics
@@ -2148,9 +2163,9 @@ pub fn register_routes(
         .operation_id("studio_product.get_project_product")
         .summary("The product a project is composing out of gears")
         .description(
-            "The gears picked for the project's product, its deployment \
-                 profile, and what the Gearbox engine said at the last preview. \
-                 Empty until something is picked.",
+            "The gears picked for the project's product, and what the Gearbox \
+                 engine said of it per deployment profile (`checks`, ADR-0057) and \
+                 at the last preview. Empty until something is picked.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -2494,7 +2509,9 @@ pub fn register_routes(
          database commits it onto a branch instead, as before. `write` with no \
          gears saves the description a new product project starts from, without \
          resolving it. A write through a connection the organization does not \
-         own is a 400 `CONNECTION_NOT_OWNED`.",
+         own is a 400 `CONNECTION_NOT_OWNED`. The verdict is kept on the \
+         product under `checks.<profile>` with the description's hash, beside \
+         the other profiles' (ADR-0057).",
         )
         .tag("StudioProduct")
         .authenticated()

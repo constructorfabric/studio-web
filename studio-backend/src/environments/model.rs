@@ -532,7 +532,10 @@ impl DeploymentAction {
     }
 }
 
-/// One of a project's product profiles bound to an environment.
+/// An environment of the project and the product profile it runs
+/// (ADR-0057): each environment bound once, a profile to any number of them,
+/// so stage and prod may both run `prod`. Rows written when a profile could
+/// be bound only once have the same shape and still load.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Binding {
     /// The `kubernetes` profile's id in `product.gdl` (`prod`).
@@ -756,8 +759,9 @@ pub fn deploy_values(
     values
 }
 
-/// Bindings as written: each profile once, each a profile id, values an
-/// object of a sane size.
+/// Bindings as written: each environment once (it runs one profile), each a
+/// profile id, values an object of a sane size. A profile may be bound to
+/// many environments (ADR-0057).
 pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
     let mut seen = std::collections::BTreeSet::new();
     for b in &items {
@@ -786,10 +790,10 @@ pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
                 format!("'{}' is not a profile id", b.profile),
             ));
         }
-        if !seen.insert(b.profile.clone()) {
+        if !seen.insert(b.environment_id) {
             return Err(invalid(
-                "profile",
-                format!("profile '{}' is bound twice", b.profile),
+                "environment_id",
+                format!("environment {} is bound twice", b.environment_id),
             ));
         }
     }
@@ -1739,15 +1743,35 @@ mod tests {
     }
 
     #[test]
-    fn a_profile_is_bound_once() {
-        let b = |p: &str| Binding {
+    fn an_environment_is_bound_once_and_a_profile_to_many() {
+        let b = |p: &str, env: u128| Binding {
             profile: p.into(),
-            environment_id: Uuid::nil(),
+            environment_id: Uuid::from_u128(env),
             values: None,
         };
-        assert!(checked_bindings(vec![b("prod"), b("stage")]).is_ok());
-        assert!(checked_bindings(vec![b("prod"), b("prod")]).is_err());
-        assert!(checked_bindings(vec![b("pr od")]).is_err());
+        // Stage and prod both run `prod`.
+        assert!(checked_bindings(vec![b("prod", 1), b("prod", 2)]).is_ok());
+        assert_eq!(
+            checked_bindings(vec![b("prod", 1), b("stage", 1)])
+                .unwrap_err()
+                .field,
+            "environment_id"
+        );
+        assert!(checked_bindings(vec![b("pr od", 1)]).is_err());
+    }
+
+    #[test]
+    fn bindings_written_one_per_profile_still_load() {
+        let row = serde_json::json!({
+            "items": [
+                {"profile": "prod", "environment_id": Uuid::from_u128(1)},
+                {"profile": "stage", "environment_id": Uuid::from_u128(2), "values": {"a": 1}}
+            ]
+        });
+        let list: BindingList = serde_json::from_value(row).unwrap();
+        assert_eq!(list.items.len(), 2);
+        assert_eq!(list.items[1].profile, "stage");
+        assert!(checked_bindings(list.items).is_ok());
     }
 
     fn deployment(n: u128, project: u128, state: DeploymentState) -> Deployment {
