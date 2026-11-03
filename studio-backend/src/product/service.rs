@@ -228,7 +228,7 @@ impl ProductService {
     ) -> anyhow::Result<Option<GtsNode>> {
         let want = gts::project_product_instance_id(project_id);
         let nodes = self.sink.list(ctx, Some("project_product")).await?;
-        Ok(nodes.into_iter().find(|n| n.instance_id == want))
+        Ok(latest_record(nodes, &want))
     }
 
     /// Merge `patch` into the project's product record and persist it. A merge,
@@ -753,6 +753,48 @@ fn scope_of(ctx: &SecurityContext, project_id: &str) -> Uuid {
 #[cfg(test)]
 #[path = "service_ownership_tests.rs"]
 mod ownership_tests;
+
+/// The newest of the records under `key`. A project's record can be found
+/// twice: one written before writes were scoped to the organization sits in
+/// the platform root, beside the organization's, under the same key -- and
+/// the first one listed was the old one, so a save looked lost. The newest
+/// `updated_at` (RFC 3339, so it orders as text) is the record.
+fn latest_record(nodes: Vec<GtsNode>, key: &str) -> Option<GtsNode> {
+    nodes
+        .into_iter()
+        .filter(|n| n.instance_id == key)
+        .max_by(|a, b| {
+            let at = |n: &GtsNode| {
+                n.value
+                    .get("updated_at")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned()
+            };
+            at(a).cmp(&at(b))
+        })
+}
+
+#[cfg(test)]
+mod latest_record_tests {
+    use super::*;
+
+    #[test]
+    fn the_newest_record_under_the_key_is_the_projects() {
+        let node = |key: &str, at: &str, gears: u32| GtsNode {
+            type_id: gts::PROJECT_PRODUCT_TYPE,
+            instance_id: key.to_owned(),
+            value: serde_json::json!({"updated_at": at, "gears": gears}),
+        };
+        let nodes = vec![
+            node("k", "2026-10-19T10:40:05Z", 66),
+            node("other", "2026-12-01T00:00:00Z", 1),
+            node("k", "2026-11-03T14:29:51Z", 71),
+        ];
+        assert_eq!(latest_record(nodes, "k").unwrap().value["gears"], 71);
+        assert!(latest_record(Vec::new(), "k").is_none());
+    }
+}
 
 #[cfg(test)]
 mod tests {
