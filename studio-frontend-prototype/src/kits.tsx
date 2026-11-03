@@ -317,9 +317,9 @@ export function ProjectKits({
             product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
           } else if (action === "builds") {
             if (onOpenTab) onOpenTab("builds");
-            else setPane("build");
+            else setCommand({ kind: "build", at: Date.now() });
           } else {
-            setPane(action === "build" || action === "open" ? "build" : "product");
+            setPane("product");
             setCommand({ kind: action, at: Date.now() });
           }
         }}
@@ -330,7 +330,7 @@ export function ProjectKits({
           {product.gearbox.problem ? ` (${product.gearbox.problem})` : ""}.
         </p>
       )}
-      <ol className="psteps" aria-label="From the specs to a built product">
+      <ol className="psteps" aria-label="From the specs to a product that resolves">
         {steps.map((st, i) => (
           <li key={st.id} className={`pstep ${st.state}${pane === st.id ? " on" : ""}`}>
             <button type="button" aria-current={pane === st.id ? "step" : undefined} disabled={st.state === "off"} onClick={() => setPane(st.id)}>
@@ -357,51 +357,6 @@ export function ProjectKits({
       <p className="hint" hidden={pane !== "needs"} style={{ fontSize: 12 }}>
         The services and applications in the repositories that are not gears, and everything else the project has: Parts.
       </p>
-      {product.composing && (
-        <section className="card pstep-build" hidden={pane !== "build"}>
-          <h2>3 · Save and build</h2>
-          <p className="subtitle">
-            Studio keeps <code>product.gdl</code> as the project&apos;s revision, and every build takes it from there:
-            in Studio or Constructor Research from Builds, or in the desktop app.
-          </p>
-          {verdict.resolves !== true ? (
-            <p>
-              The product has to resolve first.{" "}
-              <button type="button" className="ghost" onClick={() => setPane("product")}>
-                Back to step 2
-              </button>
-            </p>
-          ) : (
-            <div className="dm-actions">
-              {onOpenTab && (
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={!product.record?.description}
-                  title={product.record?.description ? undefined : "Save the product first (step 2)"}
-                  onClick={() => onOpenTab("builds")}
-                >
-                  Build in Studio →
-                </button>
-              )}
-              <button
-                type="button"
-                className={onOpenTab ? "ghost" : "primary"}
-                onClick={() => setCommand({ kind: "build", at: Date.now() })}
-              >
-                Open in the desktop app →
-              </button>
-              {product.record?.description ? (
-                <span className="hint">Saved in Studio as revision {product.record.description.revision}.</span>
-              ) : product.record?.written ? (
-                <span className="hint">
-                  Built on <code>{product.record.written.branch}</code>.
-                </span>
-              ) : null}
-            </div>
-          )}
-        </section>
-      )}
       {product.composing && (
         <div hidden={pane !== "product"}>
         <ProductCard

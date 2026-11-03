@@ -134,13 +134,15 @@ export function ProductFlow({
               type="button"
               className={`fc-step ${TONE[s.state]}${shown?.id === s.id ? " on" : ""}`}
               aria-expanded={shown?.id === s.id}
-              onClick={() => setOpen(s.id)}
+              title={s.tab && onOpenTab ? `${s.status} Opens ${s.id === "build" ? "Builds" : "Deploys"}.` : undefined}
+              onClick={() => (s.tab && onOpenTab ? onOpenTab(s.tab) : setOpen(s.id))}
               data-flow-step={s.id}
               data-flow-state={s.state}
             >
               <span className="fc-step-mark">{MARK[s.state]}</span>
               <span className="fc-step-n">{i + 1}</span>
               {s.title}
+              {s.tab && onOpenTab && <span aria-hidden> →</span>}
             </button>
           </li>
         ))}

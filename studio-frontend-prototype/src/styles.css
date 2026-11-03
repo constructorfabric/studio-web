@@ -2762,7 +2762,7 @@ div.dm-block { padding-left: 0; }
 .gl-doc-def { display: block; white-space: normal; min-width: 280px; max-width: 560px; line-height: 1.4; }
 .gl-doc td .sub { white-space: normal; }
 
-.psteps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; list-style: none; margin: 0 0 12px; padding: 0; counter-reset: none; }
+.psteps { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; list-style: none; margin: 0 0 12px; padding: 0; counter-reset: none; }
 .pstep button { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: inherit; font: inherit; cursor: pointer; }
 .pstep button:disabled { cursor: default; opacity: 0.5; }
 .pstep.on button { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
@@ -2774,7 +2774,7 @@ div.dm-block { padding-left: 0; }
 .psteps-more { margin: 0 0 16px; }
 .psteps-more > summary { cursor: pointer; font-size: 13px; padding: 6px 0; }
 .pstep-build .dm-actions { margin-top: 8px; }
-@media (max-width: 720px) { .psteps { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .psteps { grid-auto-flow: row; grid-template-columns: 1fr; } }
 
 .pcomp-ours { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
 .pcomp-could { background: var(--warning-soft, #fef3c7); }
