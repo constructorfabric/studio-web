@@ -939,12 +939,31 @@ export interface ProjectConfig {
   sources?: import("./project-sources").ProjectSource[];
   /** The CI workflow that builds the product (ADR-0045): Build starts it. */
   build?: { repo: string; workflow: string };
-  /** The product's frontend (ADR-0050): the micro-frontends its shell
-   *  mounts, by package name, until product.gdl has a frontend block.
-   *  Absent: the product has no frontend (it is gears alone). `shell` is the
-   *  FrontX template the shell comes from, as FrontX's provenance spells a
-   *  source (`github:owner/repo//template-shell@ref`). */
+  /** The product's frontend as projects recorded it before the product kept
+   *  it (`ProjectProduct.frontend`): the micro-frontends its shell mounts, by
+   *  package name, and the shell as FrontX's provenance spells a source
+   *  (`github:owner/repo//template-shell@ref`). Read when the product has
+   *  none; the Frontend section writes the product's. */
   frontend?: { mfes?: string[]; shell?: string };
+}
+
+/** Where a FrontX package is: `owner/name`, its directory there, the ref it is
+ *  taken at (`main` when absent), and its npm name as the catalogue knows it. */
+export interface FrontxPlace {
+  repo: string;
+  path: string;
+  ref?: string;
+  package?: string;
+}
+
+/** A product's FrontX frontend (ADR-0050), as the product keeps it and
+ *  product.gdl says it: `frontend = frontx_product(...)` (GDL 1.5). */
+export interface FrontendPick {
+  shell: FrontxPlace;
+  /** Each with the product's gears its screens call, by engine id. */
+  mfes: (FrontxPlace & { requires?: string[] })[];
+  /** Packages the micro-frontends share that the shell does not have. */
+  libraries?: FrontxPlace[];
 }
 
 // Workspace settings live as AM tenant metadata (schema seeded by the backend config).
@@ -3205,6 +3224,8 @@ export interface GearConfigSchema {
 
 export interface ProjectProduct {
   project_id?: string;
+  /** The product's frontend; absent or null when it is gears alone. */
+  frontend?: FrontendPick | null;
   /** The product's configuration of its gears (see GearConfig). */
   config?: GearConfig;
   product_id?: string;
@@ -6037,7 +6058,15 @@ export const api = {
   saveProjectProduct: (
     token: string,
     projectId: string,
-    body: { product_id?: string; name?: string; gears?: string[]; profile?: string; config?: GearConfig },
+    body: {
+      product_id?: string;
+      name?: string;
+      gears?: string[];
+      profile?: string;
+      config?: GearConfig;
+      /** `null` takes the frontend away. */
+      frontend?: FrontendPick | null;
+    },
   ) =>
     request<{ value: ProjectProduct }>(
       `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product`,

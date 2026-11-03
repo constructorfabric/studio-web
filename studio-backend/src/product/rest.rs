@@ -346,6 +346,11 @@ pub struct SaveProjectProductRequest {
     /// How the product configures its gears: gear crate name -> {field: value},
     /// written into `product.gdl` as the gear's or plugin's `config`.
     pub config: Option<Value>,
+    /// The product's `FrontX` frontend as the Frontend section picks it:
+    /// `{shell, mfes, libraries}`, each `{repo, path, ref}`, a micro-frontend
+    /// with the gears it `requires`. Written into `product.gdl` as its
+    /// `frontend` block (GDL 1.5); `null` takes the frontend away.
+    pub frontend: Option<Value>,
 }
 
 /// Picks to complete into a set the engine can resolve.
@@ -1040,6 +1045,16 @@ async fn save_project_product(
             serde_json::to_value(&config).unwrap_or(Value::Null),
         );
     }
+    if let Some(frontend) = body.frontend {
+        let pick = super::gearbox::frontend_pick_from(Some(&frontend))
+            .map_err(|e| invalid(format!("{e:#}")))?;
+        patch.insert(
+            "frontend".into(),
+            pick.map_or(Value::Null, |p| {
+                serde_json::to_value(p).unwrap_or(Value::Null)
+            }),
+        );
+    }
     let node = product
         .service
         .update_project_product(&ctx, &project_id.to_string(), patch)
@@ -1714,6 +1729,15 @@ async fn preview_product(
     );
     let record = record.map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let product_path = product_path_for(record.as_ref().map(|n| &n.value), &body.product_id);
+    // The frontend the Frontend section saved with the product: the
+    // description is the whole product, its screens with its gears, once the
+    // engine reads them.
+    let frontend = if super::gearbox::engine_reads_frontx() {
+        super::gearbox::frontend_pick_from(record.as_ref().and_then(|n| n.value.get("frontend")))
+            .map_err(invalid)?
+    } else {
+        None
+    };
     let preview = gearbox
         .preview(
             scope,
@@ -1726,6 +1750,7 @@ async fn preview_product(
                 config: config.clone(),
                 repo,
                 reuse: !body.write.unwrap_or(false),
+                frontend,
             },
         )
         .await
