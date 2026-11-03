@@ -1795,7 +1795,12 @@ async fn preview_product(
                 profile: profile.clone(),
                 config: config.clone(),
                 repo,
-                reuse: !body.write.unwrap_or(false),
+                // A save may take the answer of an earlier check of the same
+                // text against the same commits (the key holds both): it is
+                // the answer a fresh run gives. Asking afresh put a save of a
+                // large product behind the checks in the queue and past the
+                // gateway's 30 s.
+                reuse: true,
                 frontend,
             },
         )

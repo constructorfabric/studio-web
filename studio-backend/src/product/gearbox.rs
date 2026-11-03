@@ -2346,8 +2346,7 @@ pub struct PreviewInput {
     /// another repository is pinned by its git url instead.
     pub repo: Option<String>,
     /// Whether the engine's answer may come from an earlier preview of the
-    /// same description against the same commits. A preview that is saved
-    /// asks the engine afresh.
+    /// same description against the same commits.
     pub reuse: bool,
     /// The product's `FrontX` frontend, written as its `frontend` block.
     pub frontend: Option<FrontendPick>,

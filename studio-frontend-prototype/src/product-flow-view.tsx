@@ -259,12 +259,13 @@ function SaveStep({
     setBusy(write ? "save" : "check");
     setErr(null);
     try {
+      const ask = { product_id: productId, name: product?.name ?? productId, gears, profile, config: product?.config };
+      // A save is not repeated when the gateway gives up, a check is. Check
+      // first: it waits out the engine's queue, and the save then takes the
+      // engine's answer from that check instead of running it again.
+      if (write) await api.previewProduct(token, projectId, ask);
       const result = await api.previewProduct(token, projectId, {
-        product_id: productId,
-        name: product?.name ?? productId,
-        gears,
-        profile,
-        config: product?.config,
+        ...ask,
         ...(write ? { write: true, ...(kept ? { base_revision: kept.revision } : {}) } : {}),
       });
       setDraft(write ? null : result);
