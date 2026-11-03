@@ -86,6 +86,15 @@ scan reads it from the package's API services — every `/cf/<gear>/v<N>` they
 spell (`mfe_calls`). That is evidence, the way spec mapping's word matches
 are; the declared field replaces it.
 
+The declaration now exists outside `mfe.json`: a package may describe itself
+in a `frontx.gdl` beside its `package.json` (GDL 1.6, `mfe(requires = [...])`,
+`shell(signs_in = …, runtime_env = …)` or `library()`). When it has one that
+reads, the scan takes `mfe_calls`, `shell_signin` and `shell_runtime_env` from
+it instead of the source, files a `library()` as a library rather than a
+screen, and records `frontx_described`; when it has none, or it does not read
+(`frontx_gdl_error`), the guesses here and in "Take the shell" stand. Studio's
+own `studio-frontend` and each of its `mfe_packages` carry one.
+
 ### 3. The UI sits beside the gears, not inside a gear
 
 A gear may name its default micro-frontend in `gear.gdl` (the engine's

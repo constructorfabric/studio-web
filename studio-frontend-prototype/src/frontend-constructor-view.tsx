@@ -438,6 +438,9 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
                 {shell.version ? `@${shell.version}` : ""}
                 {shell.signsIn === false && <span className="fc-tag bad">no sign-in</span>}
                 {shell.signsIn === true && <span className="fc-tag ok">signs in</span>}
+                {shell.runtimeEnv === true && <span className="fc-tag ok">reads /env.js at start</span>}
+                {shell.runtimeEnv === false && <span className="fc-tag">addresses fixed at build</span>}
+                {(shell.signsIn !== null || shell.runtimeEnv !== null) && <SourceMark described={shell.described} />}
               </span>
             )}
           </div>
@@ -572,6 +575,20 @@ function PageCard({
   );
 }
 
+/** Where a package's facts came from: its own `frontx.gdl`, or the scan's
+ *  reading of its files. */
+function SourceMark({ described }: { described?: boolean }) {
+  return described ? (
+    <span className="fc-tag ok" title="The package states this in its frontx.gdl">
+      declared in frontx.gdl
+    </span>
+  ) : (
+    <span className="fc-tag" title="The package has no frontx.gdl that reads; the scan inferred this from its files">
+      guessed from the source
+    </span>
+  );
+}
+
 function Inspector({
   mfe,
   shell,
@@ -620,8 +637,14 @@ function Inspector({
         ))}
       </section>
       <section>
-        <div className="pm-h">Gears it calls</div>
-        {mfe.calls.length === 0 && <span className="muted">Its API services name no /cf/&lt;gear&gt;/v route.</span>}
+        <div className="pm-h">
+          Gears it calls <SourceMark described={mfe.described} />
+        </div>
+        {mfe.calls.length === 0 && (
+          <span className="muted">
+            {mfe.described ? "Its frontx.gdl requires no gear." : "Its API services name no /cf/<gear>/v route."}
+          </span>
+        )}
         {mfe.calls.map((c) => (
           <span
             key={c}

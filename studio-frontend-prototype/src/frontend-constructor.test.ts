@@ -104,6 +104,55 @@ describe("calls through a shared package", () => {
   });
 });
 
+describe("what a package's frontx.gdl declares", () => {
+  const described = (kind: string, more: Record<string, unknown> = {}) => ({
+    auto: { frontx_described: true, frontx_kind: { v: kind, b: kind }, ...more },
+  });
+
+  it("does not offer a declared library as a screen, though the scan filed it as one", () => {
+    // Studio's `shared` sits in `mfe_packages`, which reads as a micro-frontend.
+    const nodes = [
+      node("@cs/mfe-shared", { component_kind: "micro-frontend" }),
+      node("@cs/org-mfe", { component_kind: "micro-frontend" }),
+    ];
+    const profiles = {
+      "@cs/mfe-shared": described("library", { mfe_calls: ["studio-tasks"] }),
+      "@cs/org-mfe": { auto: { mfe_extensions: [] } },
+    };
+    expect(mfesFrom(nodes, profiles).map((m) => m.name)).toEqual(["@cs/org-mfe"]);
+    expect(librariesFrom(nodes, profiles).map((l) => l.name)).toEqual(["@cs/mfe-shared"]);
+  });
+
+  it("takes a declared requires as the whole list, and adds up only a guess", () => {
+    const nodes = [
+      node("@cs/org-mfe", { component_kind: "micro-frontend" }),
+      node("@cs/legacy-mfe", { component_kind: "micro-frontend" }),
+      node("@cs/mfe-shared", { component_kind: "frontend-library" }),
+    ];
+    const deps = ["@cs/mfe-shared"];
+    const [legacy, org] = mfesFrom(nodes, {
+      "@cs/org-mfe": described("mfe", { mfe_calls: ["account-management"], deps_names: deps }),
+      "@cs/legacy-mfe": { auto: { frontx_described: false, mfe_calls: ["studio-documents"], deps_names: deps } },
+      "@cs/mfe-shared": described("library", { mfe_calls: ["studio-tasks"] }),
+    });
+    expect(org).toMatchObject({ calls: ["account-management"], via: {}, described: true });
+    expect(legacy).toMatchObject({
+      calls: ["studio-documents", "studio-tasks"],
+      via: { "studio-tasks": "@cs/mfe-shared" },
+      described: false,
+    });
+  });
+
+  it("makes a declared shell one even when its workspace carries nothing, and says it was declared", () => {
+    const [shell] = shellsFrom([node("@cs/portal")], {
+      "@cs/portal": described("shell", { shell_signin: true, shell_runtime_env: true }),
+    });
+    expect(shell).toMatchObject({ name: "@cs/portal", signsIn: true, runtimeEnv: true, described: true });
+    // A file that did not read is a guess, like no file.
+    expect(shellsFrom([node("@cs/portal")], { "@cs/portal": { auto: { frontx_described: false, frontx_kind: "shell" } } })).toEqual([]);
+  });
+});
+
 describe("the shell", () => {
   it("fills each zone in the shell's order, and keeps a domain it has no name for", () => {
     const zones = zonesOf([people, specs]);
