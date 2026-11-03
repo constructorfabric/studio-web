@@ -9,13 +9,19 @@ import { describe, expect, it } from "vitest";
 import type { GearboxStatus, RepoEntry } from "./api";
 import type { Candidate, PlanRow } from "./api";
 import {
+  KUBERNETES_PROFILES,
+  PRODUCT_PROFILES,
+  checkOf,
   corpusErrors,
   defaultPicks,
   diagnosticsByCode,
   groupDiagnostics,
   isPickable,
   productIdFrom,
+  profilesToCheck,
   sortDiagnostics,
+  verdictOf,
+  verdictText,
   withCorpusSource,
 } from "./product";
 
@@ -196,5 +202,40 @@ describe("corpusErrors", () => {
 
   it("is zero for a product whose problems are its own", () => {
     expect(corpusErrors([d("product.gdl"), d(null)])).toEqual({ errors: 0, files: 0 });
+  });
+});
+
+describe("profiles and their verdicts (ADR-0057)", () => {
+  const check = { ok: true, errors: 0, warnings: 0, applications: [], gears: [], gdl_sha256: "now" };
+
+  it("are labelled shape first, and only kubernetes ones bind", () => {
+    expect(PRODUCT_PROFILES.map((p) => p.label)).toEqual(["Kubernetes · prod", "One host · local", "One process · dev"]);
+    expect(KUBERNETES_PROFILES).toEqual(["prod"]);
+  });
+
+  it("checks the profiles environments run, once each, or prod with none bound", () => {
+    const b = (profile: string, environment_id: string) => ({ profile, environment_id });
+    expect(profilesToCheck([b("prod", "stage"), b("prod", "prod"), b("local", "lab")])).toEqual(["prod", "local"]);
+    expect(profilesToCheck([])).toEqual(["prod"]);
+  });
+
+  it("keeps each profile's verdict, stale once the description changes", () => {
+    const product = {
+      checks: { prod: check, local: { ...check, ok: false, errors: 2 }, dev: { ...check, gdl_sha256: "before" } },
+      last_preview: { ...check, profile: "prod" },
+    };
+    expect(verdictText(verdictOf(product, "prod"))).toBe("✓");
+    expect(verdictText(verdictOf(product, "local"))).toBe("✗ 2 errors");
+    expect(verdictText(verdictOf(product, "dev"))).toBe("stale");
+    expect(verdictText(verdictOf({ checks: {} }, "prod"))).toBe("not checked");
+    // Against a newer description than the record's.
+    expect(verdictOf(product, "prod", "newer").state).toBe("stale");
+  });
+
+  it("reads a record from before checks were kept: its last preview answers for its own profile", () => {
+    const old = { last_preview: { profile: "dev", ok: true, errors: 0, warnings: 0, applications: [], gears: [] } };
+    expect(checkOf(old, "dev")).toBe(old.last_preview);
+    expect(checkOf(old, "prod")).toBeNull();
+    expect(verdictOf(old, "dev").state).toBe("ok");
   });
 });

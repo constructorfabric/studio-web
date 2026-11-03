@@ -52,9 +52,11 @@ describe("where the product runs", () => {
   const env = (id: string, name: string, database: DeployEnvironment["database"], database_image?: string) =>
     ({ id, name, database, database_image }) as DeployEnvironment;
 
-  it("names the profile, and each environment with its binding and database", () => {
+  const check = { ok: true, errors: 0, warnings: 0, applications: ["api-gateway"], gears: [], gdl_sha256: "now" };
+
+  it("names each environment with the profile it runs, that profile's verdict, and its database", () => {
     const infra = infrastructureOf(
-      { profile: "prod" },
+      { checks: { prod: check }, last_preview: { ...check, profile: "prod" } },
       {
         environments: [
           { environment: env("e1", "dev", "shared"), namespace: "shop-dev" },
@@ -64,34 +66,83 @@ describe("where the product runs", () => {
         bindings: [{ profile: "prod", environment_id: "e2" }],
       },
     );
-    expect(infra.profileLabel).toBe("prod · Kubernetes");
+    expect(infra.profileLabel).toBe("Kubernetes · prod");
     expect(infra.runsIn).toEqual([
       {
         environment: "dev",
         namespace: "shop-dev",
         profile: null,
+        profileLabel: null,
+        verdict: null,
+        needs: null,
         database: "none: a shared Postgres is recorded, and deploys get nothing from it",
         missing: [],
-        unchecked: false,
+        unchecked: null,
       },
       {
         environment: "prod",
         namespace: "shop-prod",
         profile: "prod",
+        profileLabel: "Kubernetes · prod",
+        verdict: { state: "ok", errors: 0, check },
+        needs: null,
         database: "its own Postgres, with each deploy (postgres:17)",
         missing: [],
-        unchecked: false,
+        unchecked: null,
       },
-      { environment: "lab", namespace: "shop-lab", profile: null, database: "its own Postgres, with each deploy", missing: [], unchecked: false },
+      {
+        environment: "lab",
+        namespace: "shop-lab",
+        profile: null,
+        profileLabel: null,
+        verdict: null,
+        needs: null,
+        database: "its own Postgres, with each deploy",
+        missing: [],
+        unchecked: null,
+      },
     ]);
     expect(infra.needs).toBeNull();
+  });
+
+  it("lets two environments run one profile, and says a profile not checked yet, or checked before a change", () => {
+    const infra = infrastructureOf(
+      // `local` was checked for an older description; `prod` never.
+      { checks: { dev: check, local: { ...check, gdl_sha256: "before" } }, last_preview: { ...check, profile: "dev" } },
+      {
+        environments: [
+          { environment: env("e1", "stage", "none"), namespace: "shop-stage" },
+          { environment: env("e2", "prod", "none"), namespace: "shop-prod" },
+          { environment: env("e3", "lab", "none"), namespace: "shop-lab" },
+        ],
+        bindings: [
+          { profile: "prod", environment_id: "e1" },
+          { profile: "prod", environment_id: "e2" },
+          { profile: "local", environment_id: "e3" },
+        ],
+      },
+    );
+    expect(infra.runsIn.map((r) => [r.environment, r.profile, r.verdict?.state, r.unchecked])).toEqual([
+      ["stage", "prod", "unchecked", "not checked yet for prod"],
+      ["prod", "prod", "unchecked", "not checked yet for prod"],
+      ["lab", "local", "stale", "not checked yet for local"],
+    ]);
+  });
+
+  it("reads a record from before checks were kept per profile", () => {
+    const old = { profile: "prod", ok: false, errors: 3, warnings: 0, applications: [], gears: [] };
+    const infra = infrastructureOf(
+      { last_preview: old },
+      { environments: [{ environment: env("e2", "prod", "none"), namespace: "shop-prod" }], bindings: [{ profile: "prod", environment_id: "e2" }] },
+    );
+    expect(infra.runsIn[0].verdict?.state).toBe("failed");
+    expect(infra.runsIn[0].unchecked).toBeNull();
   });
 
   it("says what the gears need; every environment but a shared one brings the product its Postgres", () => {
     const postgres = { id: "postgres", name: "PostgreSQL", why: "data", gears: ["cf-gears-file-storage"] };
     const infra = infrastructureOf(
       {
-        profile: "prod",
         last_preview: {
           profile: "prod",
           ok: true,
@@ -120,7 +171,6 @@ describe("where the product runs", () => {
   it("says a product that keeps no data needs no database", () => {
     const infra = infrastructureOf(
       {
-        profile: "prod",
         last_preview: { profile: "prod", ok: true, errors: 0, warnings: 0, applications: [], gears: [], infrastructure: [] },
       },
       { environments: [{ environment: env("e3", "lab", "none"), namespace: "shop-lab" }], bindings: [] },
@@ -134,11 +184,10 @@ describe("where the product runs", () => {
 });
 
 describe("the Product page's header", () => {
-  it("says the product in one line: id, profile, gears, where it was saved, whether it resolved, a frontend", () => {
+  it("says the product in one line: id, gears, where it was saved, whether it resolved, a frontend", () => {
     const s = productSummary(
       {
         product_id: "studio-web",
-        profile: "prod",
         gears: ["a", "b", "c"],
         written: { branch: "product/studio-web-50fdd46f", commit_sha: "abc", pr_url: "https://x/pull/894" },
         last_preview: { profile: "prod", ok: false, errors: 2, warnings: 5, applications: [], gears: [] },
@@ -147,7 +196,6 @@ describe("the Product page's header", () => {
     );
     expect(s).toEqual({
       id: "studio-web",
-      profile: "prod · Kubernetes",
       gears: 3,
       saved: { branch: "product/studio-web-50fdd46f", prUrl: "https://x/pull/894" },
       revision: null,
@@ -159,7 +207,6 @@ describe("the Product page's header", () => {
   it("says nothing it does not know before the product is composed", () => {
     expect(productSummary(null, null)).toEqual({
       id: null,
-      profile: null,
       gears: 0,
       saved: null,
       revision: null,

@@ -29,7 +29,7 @@ import {
   type ProductSummary,
 } from "./product-sections";
 import { errText } from "./problem";
-import { gearLabel } from "./product";
+import { gearLabel, verdictText } from "./product";
 
 /** The section an old address asked for (`/…/frontend`), read once when the
  *  page loaded: the shell rewrites the address to Product's straight after. */
@@ -167,7 +167,6 @@ function SummaryLine({ summary: s, readError }: { summary: ProductSummary | null
   return (
     <p style={{ margin: 0, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }} data-product-summary>
       <b>{s.id ?? "Unnamed product"}</b>
-      {s.profile && <span className="muted">{s.profile}</span>}
       <span className="muted">
         · {s.gears} gear{s.gears === 1 ? "" : "s"}
       </span>
@@ -203,8 +202,8 @@ function SummaryLine({ summary: s, readError }: { summary: ProductSummary | null
   );
 }
 
-/** Where the product runs: its profile, the environments it may run in, and
- *  the database each gives it. */
+/** Where the product runs: the environments it may run in, the profile each
+ *  runs and what the engine said of it, and the database each gives it. */
 function ProductInfrastructure({ token, projectId }: { token: string; projectId: string }) {
   const [infra, setInfra] = useState<Infrastructure | null>(null);
 
@@ -226,14 +225,6 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
           <p className="muted">Reading where the product runs…</p>
         ) : (
           <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
-            <div>
-              Profile:{" "}
-              {infra.profileLabel ? (
-                <b>{infra.profileLabel}</b>
-              ) : (
-                <span className="muted">none yet; it is set when the gears below are composed into a product</span>
-              )}
-            </div>
             <ProductNeeds infra={infra} />
             {infra.runsIn.length === 0 ? (
               <div className="muted">
@@ -247,6 +238,7 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
                     <th>Environment</th>
                     <th>Namespace</th>
                     <th>Profile</th>
+                    <th>Checked</th>
                     <th>Database</th>
                     <th />
                   </tr>
@@ -258,14 +250,23 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
                       <td>
                         <code>{r.namespace}</code>
                       </td>
-                      <td>{r.profile ?? <span className="muted">not bound</span>}</td>
+                      <td>{r.profileLabel ?? <span className="muted">not bound</span>}</td>
+                      <td data-env-verdict={r.verdict?.state ?? "none"}>
+                        {!r.verdict ? null : r.unchecked ? (
+                          <span className="badge warn" title="Check it under Backend, on its profile's chip">
+                            {r.unchecked}
+                          </span>
+                        ) : (
+                          <span className={`badge ${r.verdict.state === "ok" ? "ok" : "danger"}`}>{verdictText(r.verdict)}</span>
+                        )}
+                      </td>
                       <td>{r.database}</td>
                       <td>
                         {r.missing.length > 0 ? (
                           <span className="badge danger" title="The gears that need it cannot start there" data-env-missing>
                             no {r.missing.join(", ")}
                           </span>
-                        ) : infra.needs ? (
+                        ) : r.needs ? (
                           <span className="badge ok">gives what it needs</span>
                         ) : null}
                       </td>
@@ -287,7 +288,8 @@ function ProductNeeds({ infra }: { infra: Infrastructure }) {
   if (infra.needs === null) {
     return (
       <p className="muted" style={{ margin: 0 }}>
-        What the gears need running beside them shows once the product is checked: open Backend.
+        What the gears need running beside them shows once the product is checked for the profile an environment runs:
+        open Backend.
       </p>
     );
   }

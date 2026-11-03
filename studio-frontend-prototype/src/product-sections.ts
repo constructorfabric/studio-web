@@ -7,8 +7,9 @@
  *     organization's components, its own gears, code that could become one,
  *     services that are not gears, and gears the specs ask for that nobody
  *     wrote. It was the Components tab, which read as this page twice;
- *   - Infrastructure: where it runs -- the profile it is composed for, the
- *     environments it is bound to, and the database each gives it;
+ *   - Infrastructure: where it runs -- the environments it may run in, the
+ *     profile each runs and what the engine said of it, and the database
+ *     each gives it;
  *   - Backend: the gears it is composed from (the specs-to-product journey);
  *   - Frontend: a FrontX shell with micro-frontends mounted in it (ADR-0050).
  *     Optional: a product may be gears alone, and then the section offers to
@@ -28,13 +29,13 @@ import type {
   ProjectProduct,
 } from "./api";
 import { parseShellRef } from "./frontend-constructor";
-import { PRODUCT_PROFILES } from "./product";
+import { checkOf, currentDescription, profileLabel, profilesToCheck, verdictOf, type ProfileVerdict } from "./product";
 
 export type ProductSectionId = "parts" | "infrastructure" | "backend" | "frontend";
 
 export const PRODUCT_SECTIONS: readonly { id: ProductSectionId; title: string; hint: string }[] = [
   { id: "parts", title: "Parts", hint: "What the project has to make it from, and what it lacks" },
-  { id: "infrastructure", title: "Infrastructure", hint: "Where it runs: its profile, environments and databases" },
+  { id: "infrastructure", title: "Infrastructure", hint: "Where it runs: its environments, their profiles and databases" },
   { id: "backend", title: "Backend", hint: "The gears it is composed from" },
   { id: "frontend", title: "Frontend", hint: "A FrontX shell with micro-frontends, if it has one" },
 ];
@@ -96,25 +97,35 @@ export interface RunsIn {
   namespace: string;
   /** The profile bound to it; null when none is. */
   profile: string | null;
+  /** That profile as a person reads it: "Kubernetes · prod". */
+  profileLabel: string | null;
+  /** What the engine said of that profile; null when none is bound. */
+  verdict: ProfileVerdict | null;
+  /** What that profile needs running beside it, as its check found; null
+   *  before a check that says. */
+  needs: ProductTechnology[] | null;
   /** What it gives the product for a database, in words. */
   database: string;
   /** What the product needs that it does not give: "PostgreSQL". */
   missing: string[];
-  /** The product was last checked for another profile than the one bound
-   *  here: what it needs there is not known yet. */
-  unchecked: boolean;
+  /** "not checked yet for prod" when the bound profile has no current
+   *  check: what it needs there is not known yet. Null otherwise. */
+  unchecked: string | null;
 }
 
-/** What Infrastructure says: the profile the product is composed for and the
- *  environments it may run in, each with its binding and its database. */
+/** What Infrastructure says: the environments the product may run in, each
+ *  with its binding, its profile's verdict and its database; and what the
+ *  product needs, for the profile the table shows. */
 export interface Infrastructure {
+  /** The profile `needs` and `applications` are for: the first one an
+   *  environment runs, else the one the engine checked last. */
   profile: string | null;
   profileLabel: string | null;
   runsIn: RunsIn[];
-  /** What the gears need running beside them, as the last check found;
+  /** What the gears need running beside them, as that profile's check found;
    *  null before a check that says (an older record, or none yet). */
   needs: ProductTechnology[] | null;
-  /** The applications the product is built into, as the last check found. */
+  /** The applications the product is built into, as that check found. */
   applications: string[];
 }
 
@@ -135,41 +146,55 @@ export function comesWith(technology: string): { deployed: boolean; words: strin
 }
 
 export function infrastructureOf(
-  product: Pick<ProjectProduct, "profile" | "last_preview"> | null,
+  product: Pick<ProjectProduct, "checks" | "last_preview"> | null,
   targets: { environments: { environment: DeployEnvironment; namespace: string }[]; bindings: EnvironmentBinding[] } | null,
 ): Infrastructure {
-  const profile = product?.profile ?? null;
-  const profileLabel = profile ? (PRODUCT_PROFILES.find((p) => p.id === profile)?.label ?? profile) : null;
-  const needs = product?.last_preview?.infrastructure ?? null;
-  const checkedFor = product?.last_preview?.profile ?? null;
-  const postgres = needs?.some((t) => t.id === "postgres") ?? false;
-  const runsIn = (targets?.environments ?? []).map(({ environment, namespace }) => ({
-    environment: environment.name,
-    namespace,
-    profile: targets?.bindings.find((b) => b.environment_id === environment.id)?.profile ?? null,
-    database:
-      needs !== null && !postgres && environment.database !== "shared"
-        ? "none needed"
-        : environment.database !== "shared" && environment.database_image
-          ? `${DATABASE_WORDS[environment.database]} (${environment.database_image})`
-          : (DATABASE_WORDS[environment.database] ?? environment.database),
-    // A shared server is recorded, not handed to the chart: nothing serves
-    // the host it names. Any other mode brings the product's own.
-    missing: postgres && environment.database === "shared" ? ["PostgreSQL"] : [],
-    unchecked: (() => {
-      const bound = targets?.bindings.find((b) => b.environment_id === environment.id)?.profile ?? null;
-      return !!bound && !!checkedFor && bound !== checkedFor;
-    })(),
-  }));
-  return { profile, profileLabel, runsIn, needs, applications: product?.last_preview?.applications ?? [] };
+  const bindings = targets?.bindings ?? [];
+  const current = currentDescription(product);
+  const profile = bindings.length > 0 ? profilesToCheck(bindings)[0] : (product?.last_preview?.profile ?? null);
+  const shown = profile ? checkOf(product, profile) : null;
+  const needs = shown?.infrastructure ?? null;
+  const runsIn = (targets?.environments ?? []).map(({ environment, namespace }): RunsIn => {
+    const bound = bindings.find((b) => b.environment_id === environment.id)?.profile ?? null;
+    const verdict = bound ? verdictOf(product, bound, current) : null;
+    // What runs here needs what its own profile's check found; an
+    // environment nothing is bound to is read with the shown profile's.
+    const here = bound ? (checkOf(product, bound)?.infrastructure ?? null) : needs;
+    const postgres = here?.some((t) => t.id === "postgres") ?? false;
+    return {
+      environment: environment.name,
+      namespace,
+      profile: bound,
+      profileLabel: bound ? profileLabel(bound) : null,
+      verdict,
+      needs: here,
+      database:
+        here !== null && !postgres && environment.database !== "shared"
+          ? "none needed"
+          : environment.database !== "shared" && environment.database_image
+            ? `${DATABASE_WORDS[environment.database]} (${environment.database_image})`
+            : (DATABASE_WORDS[environment.database] ?? environment.database),
+      // A shared server is recorded, not handed to the chart: nothing serves
+      // the host it names. Any other mode brings the product's own.
+      missing: postgres && environment.database === "shared" ? ["PostgreSQL"] : [],
+      unchecked:
+        verdict && (verdict.state === "unchecked" || verdict.state === "stale") ? `not checked yet for ${bound}` : null,
+    };
+  });
+  return {
+    profile,
+    profileLabel: profile ? profileLabel(profile) : null,
+    runsIn,
+    needs,
+    applications: shown?.applications ?? [],
+  };
 }
 
-/** The Product page's header: the product in one line -- what it is, for
- *  which profile, from how many gears, where it was last saved, whether it
+/** The Product page's header: the product in one line -- what it is, from
+ *  how many gears, where it was last saved, whether it
  *  resolved, and whether it has a frontend. */
 export interface ProductSummary {
   id: string | null;
-  profile: string | null;
   gears: number;
   saved: { branch: string | null; prUrl: string | null } | null;
   /** The description revision Studio keeps (ADR-0053), when it keeps one. */
@@ -182,14 +207,12 @@ export interface ProductSummary {
 export function productSummary(
   product: Pick<
     ProjectProduct,
-    "product_id" | "profile" | "gears" | "written" | "description" | "last_preview" | "frontend"
+    "product_id" | "gears" | "written" | "description" | "last_preview" | "frontend"
   > | null,
   cfg: ProjectConfig | null | undefined,
 ): ProductSummary {
-  const profile = product?.profile ?? null;
   return {
     id: product?.product_id ?? null,
-    profile: profile ? (PRODUCT_PROFILES.find((p) => p.id === profile)?.label ?? profile) : null,
     gears: product?.gears?.length ?? 0,
     saved: product?.written ? { branch: product.written.branch || null, prUrl: product.written.pr_url ?? null } : null,
     revision: product?.description?.revision ?? null,

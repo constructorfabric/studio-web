@@ -8,6 +8,7 @@ import {
   type ProductDescriptionConflict,
   type Candidate,
   type DeclaredCapability,
+  type EnvironmentBinding,
   type GearConfig,
   type GearboxStatus,
   type KitInstallation,
@@ -27,7 +28,14 @@ import { GearConfigForm } from "./gear-config-form";
 import { ProductConfigurator, useGearCatalogue, useKeptEntities, useRunning } from "./product-configurator-view";
 import {
   PRODUCT_PROFILES,
+  checkOf,
+  currentDescription,
   defaultPicks,
+  environmentsRunning,
+  profileLabel,
+  profilesToCheck,
+  verdictOf,
+  verdictText,
   gearLabel,
   isPickable,
   productIdFrom,
@@ -790,10 +798,10 @@ function SuggestedComponents({
                   The documents say where it runs: <code>{advice.profile}</code> ({advice.kind}) — “
                   {plainText(advice.because[0] ?? "")}”{advice.because.length > 1 && ` and ${advice.because.length - 1} more`}.
                 </span>
-                {composing && product.profile !== advice.profile && (
-                  <button className="ghost" onClick={() => product.setProfile(advice.profile)}>
-                    Use {advice.profile}
-                  </button>
+                {composing && advice.kind === "kubernetes" && (
+                  <span className="hint" data-advice-bind>
+                    the documents say it runs on kubernetes: bind it in Releases
+                  </span>
                 )}
               </p>
             )}
@@ -1215,8 +1223,6 @@ type ProductState = {
   config: GearConfig;
   /** Set one field of one gear; `undefined` removes it. */
   setField: (gear: string, field: string, value: unknown) => void;
-  profile: string;
-  setProfile: (profile: string) => void;
   /** Re-read the record, after a preview wrote its verdict into it. */
   refresh: () => Promise<void>;
   /** What completion last changed, with its reasons; empty when nothing did. */
@@ -1229,7 +1235,7 @@ type ProductState = {
 };
 
 /** The project's product as the server keeps it: read on mount, and written
- *  back as picks and profile change, so leaving the tab keeps what was chosen
+ *  back as picks and settings change, so leaving the tab keeps what was chosen
  *  and every screen that asks sees the same product. */
 function useProjectProduct(token: string, projectId: string, projectName: string): ProductState {
   const [gearbox, setGearbox] = useState<GearboxStatus | null>(null);
@@ -1237,7 +1243,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
   const [loaded, setLoaded] = useState(false);
   const [picks, setPicksState] = useState<string[]>([]);
   const [config, setConfigState] = useState<GearConfig>({});
-  const [profile, setProfileState] = useState("dev");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [adjustments, setAdjustments] = useState<ProductChange[]>([]);
   const [completedAt, setCompletedAt] = useState(0);
@@ -1257,7 +1262,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
       setRecord(saved);
       setPicksState(saved?.gears ?? []);
       setConfigState(saved?.config ?? {});
-      setProfileState(saved?.profile ?? "dev");
       setLoaded(true);
     });
     return () => {
@@ -1274,7 +1278,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
           product_id: productIdFrom(projectName),
           name: projectName,
           gears: picks,
-          profile,
           config,
         })
         .then((saved) => {
@@ -1284,7 +1287,7 @@ function useProjectProduct(token: string, projectId: string, projectName: string
         .catch((cause) => setSaveError(errText(cause)));
     }, 400);
     return () => clearTimeout(timer);
-  }, [picks, profile, config, loaded, token, projectId, projectName]);
+  }, [picks, config, loaded, token, projectId, projectName]);
 
   const setPicks = useCallback((update: (current: string[]) => string[]) => {
     dirty.current = true;
@@ -1338,11 +1341,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
         return next;
       });
     },
-    profile,
-    setProfile: (next) => {
-      dirty.current = true;
-      setProfileState(next);
-    },
     refresh: async () => {
       const saved = await api.projectProduct(token, projectId).catch(() => null);
       if (saved) setRecord(saved);
@@ -1392,6 +1390,107 @@ function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: stri
   );
 }
 
+/** The project's bindings and the names of its environments, read once;
+ *  `undefined` while they are read, `null` when they cannot be. */
+function useBindings(
+  token: string,
+  projectId: string,
+): { bindings: EnvironmentBinding[]; environments: { id: string; name: string }[] } | null | undefined {
+  const [targets, setTargets] = useState<
+    { bindings: EnvironmentBinding[]; environments: { id: string; name: string }[] } | null | undefined
+  >(undefined);
+  useEffect(() => {
+    let live = true;
+    setTargets(undefined);
+    api
+      .projectTargets(token, projectId)
+      .then(
+        (t) =>
+          live &&
+          setTargets({
+            bindings: t.bindings,
+            environments: t.environments.map((e) => ({ id: e.environment.id, name: e.environment.name })),
+          }),
+      )
+      .catch(() => live && setTargets(null));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+  return targets;
+}
+
+/** One chip per profile (ADR-0057): where it runs, what the engine last said
+ *  of it, and a Check. The chip picked is the profile the card shows. */
+function ProfileVerdicts({
+  record,
+  current,
+  bindings,
+  environments,
+  shown,
+  checking,
+  disabled,
+  onShow,
+  onCheck,
+}: {
+  record: ProjectProduct | null;
+  /** The hash of the description as it is now, when known. */
+  current: string | null;
+  bindings: EnvironmentBinding[];
+  environments: { id: string; name: string }[];
+  shown: string;
+  checking: string | null;
+  disabled: boolean;
+  onShow: (profile: string) => void;
+  onCheck: (profile: string) => void;
+}) {
+  const nameOf = (id: string) => environments.find((e) => e.id === id)?.name ?? id.slice(0, 8);
+  return (
+    <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }} role="group" aria-label="Profiles" data-profile-verdicts>
+      {PRODUCT_PROFILES.map((p) => {
+        const v = verdictOf(record, p.id, current);
+        const envs = environmentsRunning(bindings, p.id).map(nameOf);
+        const on = p.id === shown;
+        const tone = checking === p.id ? "" : v.state === "ok" ? "ok" : v.state === "failed" ? "failed" : v.state === "stale" ? "warn" : "";
+        const check = checkOf(record, p.id);
+        return (
+          <span
+            key={p.id}
+            style={{ ...chipStyle(on), fontSize: 12, gap: 6, cursor: "pointer" }}
+            onClick={() => onShow(p.id)}
+            title={
+              check
+                ? `${check.errors} error(s), ${check.warnings} warning(s); ${check.applications.length} application(s)`
+                : "Not checked by the engine yet"
+            }
+            data-profile-chip={p.id}
+            aria-pressed={on}
+          >
+            <b>{p.label}</b>
+            <span className="muted">{envs.length > 0 ? `runs in ${envs.join(", ")}` : "not bound"}</span>
+            <span className={`badge ${tone}`} data-profile-verdict={v.state}>
+              {checking === p.id ? "checking…" : verdictText(v)}
+            </span>
+            <button
+              type="button"
+              className="link"
+              disabled={disabled}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCheck(p.id);
+              }}
+              style={{ border: "none", background: "transparent", color: "var(--primary)", cursor: "pointer", fontSize: 12, padding: 0 }}
+              data-profile-check={p.id}
+            >
+              Check
+            </button>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 /** The product this project is made of: the gears in it, each leading to its
  *  catalogue page; the engine's verdict on them; and the two ways onward — into
  *  the project's repository, and into the IDE where the language server keeps
@@ -1426,18 +1525,36 @@ function ProductCard({
   const [fromCode, setFromCode] = useState(false);
   /** A fix was applied: preview again once the product has changed. */
   const recheck = useRef(false);
-  const { gearbox, picks, profile, record } = product;
+  const { gearbox, picks, record } = product;
   const [busy, setBusy] = useState<"preview" | "save" | null>(null);
+  /** The profile a running check is for. */
+  const [checking, setChecking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<ProductPreview | null>(null);
+  // Which environment runs which profile (ADR-0057): the bound profiles are
+  // checked on every change, the others when asked. `undefined` while read.
+  const targets = useBindings(token, projectId);
+  const bindings = targets?.bindings ?? [];
+  const autoProfiles = profilesToCheck(bindings);
+  /** The profile whose diagnostics, fixes and map the card shows: picked on
+   *  its chip, else the first one checked by itself. */
+  const [viewing, setViewing] = useState<string | null>(null);
+  const shown = viewing ?? autoProfiles[0];
   // Where a save lands is the repository's: the backend follows its source's
   // share mode (Sources tab) -- straight onto the branch the desktop checks
   // out, or onto a `product/…` branch with a pull request.
-  // The picks and profile the shown preview answers. Anything else and the
-  // preview is about a different product, which the screen has to say.
-  const [asked, setAsked] = useState<string | null>(null);
-  const question = JSON.stringify([profile, [...picks].sort(), product.config]);
-  const stale = preview !== null && asked !== question;
+  // Each profile's last preview here, with the picks and settings it
+  // answers. Anything else and the preview is about a different product,
+  // which the screen has to say. The profile is not part of the question:
+  // the description is the same whichever is checked.
+  const [previews, setPreviews] = useState<Record<string, { preview: ProductPreview; asked: string }>>({});
+  const question = JSON.stringify([[...picks].sort(), product.config]);
+  const preview = previews[shown]?.preview ?? null;
+  const stale = preview !== null && previews[shown]?.asked !== question;
+  // The description as it is now: any preview of the current product says
+  // its hash; before one, the record's last check does.
+  const current =
+    Object.values(previews).find((p) => p.asked === question && p.preview.gdl_sha256)?.preview.gdl_sha256 ??
+    currentDescription(record);
   const productId = productIdFrom(projectName);
   // The crate behind an engine id, for linking a resolved gear to its page.
   const crateOf = (id: string) => preview?.gears.find((g) => g.id === id)?.crate_name ?? `cf-gears-${id}`;
@@ -1462,8 +1579,9 @@ function ProductCard({
    *  which Studio keeps (ADR-0053); `publish` also writes it to the
    *  repository. `base` overrides the revision the save is made against --
    *  "keep mine" after a conflict. */
-  const run = async (write: boolean, publish = false, base?: number): Promise<ProductPreview | null> => {
+  const run = async (write: boolean, publish = false, base?: number, profile = shown): Promise<ProductPreview | null> => {
     setBusy(write ? "save" : "preview");
+    setChecking(profile);
     setError(null);
     try {
       const baseRevision = base ?? record?.description?.revision;
@@ -1476,8 +1594,7 @@ function ProductCard({
         ...(write ? { write: true, ...(baseRevision !== undefined ? { base_revision: baseRevision } : {}) } : {}),
         ...(write && publish ? { publish: true } : {}),
       });
-      setPreview(result);
-      setAsked(question);
+      setPreviews((all) => ({ ...all, [profile]: { preview: result, asked: question } }));
       setConflict(null);
       if (write && result.description_revision) setKeptText(result.product_gdl);
       await product.refresh();
@@ -1489,6 +1606,18 @@ function ProductCard({
       return null;
     } finally {
       setBusy(null);
+      setChecking(null);
+    }
+  };
+
+  /** Check every profile an environment runs, one after another: the engine
+   *  takes one product at a time. A newer round makes an older one stop. */
+  const rounds = useRef(0);
+  const checkBound = async () => {
+    const mine = ++rounds.current;
+    for (const p of autoProfiles) {
+      if (rounds.current !== mine) return;
+      await run(false, false, undefined, p);
     }
   };
 
@@ -1512,26 +1641,28 @@ function ProductCard({
 
   // Completion replaced the picks: show at once what the engine makes of them.
   useEffect(() => {
-    if (product.completedAt > 0 && picks.length > 0) void run(false);
+    if (product.completedAt > 0 && picks.length > 0) void checkBound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.completedAt]);
 
-  // Ask the engine on arrival, so the verdict and its fixes are on screen
-  // without a click; a product with nothing in it has nothing to ask.
+  // Ask the engine on arrival, so the verdicts and their fixes are on screen
+  // without a click; a product with nothing in it has nothing to ask. Once
+  // the bindings are read: they say which profiles to ask for.
   const asked0 = useRef(false);
   useEffect(() => {
-    if (!product.loaded || asked0.current || picks.length === 0) return;
+    if (!product.loaded || targets === undefined || asked0.current || picks.length === 0) return;
     asked0.current = true;
-    void run(false);
+    void checkBound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [product.loaded, picks.length]);
+  }, [product.loaded, targets, picks.length]);
 
-  // The product changed -- a pick, a setting, a fix, the profile: check it
-  // again. There is no button for it; the verdict is always the current one.
+  // The product changed -- a pick, a setting, a fix: check the profiles the
+  // environments run again. There is no button for it; their verdicts are
+  // always the current ones. Any other profile is checked on its chip.
   useEffect(() => {
     if (!product.loaded || !asked0.current || picks.length === 0) return;
     recheck.current = false;
-    const timer = setTimeout(() => void run(false), 600);
+    const timer = setTimeout(() => void checkBound(), 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [question]);
@@ -1702,19 +1833,26 @@ function ProductCard({
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-        <select value={profile} onChange={(e) => product.setProfile(e.target.value)} aria-label="Deployment profile">
-          {PRODUCT_PROFILES.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        <ProfileVerdicts
+          record={record}
+          current={current}
+          bindings={bindings}
+          environments={targets?.environments ?? []}
+          shown={shown}
+          checking={busy === "preview" ? checking : null}
+          disabled={busy !== null || picks.length === 0}
+          onShow={(p) => setViewing(p)}
+          onCheck={(p) => {
+            setViewing(p);
+            void run(false, false, undefined, p);
+          }}
+        />
         <span style={{ fontSize: 12 }} data-product-verdict>
-          {busy === "preview" ? (
+          {busy === "preview" && checking === shown ? (
             <span className="badge">checking…</span>
           ) : preview && !stale ? (
             <span className={`badge ${preview.ok ? "ok" : "failed"}`}>
-              {preview.ok ? `resolves for ${preview.profile}` : `${errors} error${errors === 1 ? "" : "s"}`}
+              {preview.ok ? `resolves for ${profileLabel(preview.profile)}` : `${errors} error${errors === 1 ? "" : "s"}`}
             </span>
           ) : null}
         </span>
@@ -2250,6 +2388,3 @@ function DescriptionInRepository({
     </div>
   );
 }
-
-/** The product's kubernetes profiles: the ones an environment can take. */
-export const KUBERNETES_PROFILES: readonly string[] = PRODUCT_PROFILES.filter((p) => p.label.includes("Kubernetes")).map((p) => p.id);

@@ -15,6 +15,7 @@ import { buildableEnvironments } from "./deploy-actions";
 import { buildsHint, deploysHint, type PipelineTab } from "./pipeline";
 import { errText } from "./problem";
 import { lineDiff, productFlow, type DiffLine, type FlowState, type FlowStep } from "./product-flow";
+import { profilesToCheck } from "./product";
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
 import { deployableBuilds } from "./project-deploys";
 
@@ -190,6 +191,7 @@ export function ProductFlow({
               projectId={projectId}
               status={shown.status}
               product={read.product}
+              profile={profilesToCheck(read.targets?.bindings ?? [])[0]}
               kept={read.kept}
               onSaved={() => {
                 setMine((n) => n + 1);
@@ -219,6 +221,7 @@ function SaveStep({
   projectId,
   status,
   product,
+  profile,
   kept,
   onSaved,
 }: {
@@ -226,6 +229,9 @@ function SaveStep({
   projectId: string;
   status: string;
   product: ProjectProduct | null;
+  /** The profile the save checks too: the first an environment runs. The
+   *  description is the same for any (ADR-0057). */
+  profile: string;
   kept: { revision: number; text: string } | null | undefined;
   onSaved: () => void;
 }) {
@@ -244,7 +250,7 @@ function SaveStep({
         product_id: productId,
         name: product?.name ?? productId,
         gears,
-        profile: product?.profile,
+        profile,
         config: product?.config,
         ...(write ? { write: true, ...(kept ? { base_revision: kept.revision } : {}) } : {}),
       });

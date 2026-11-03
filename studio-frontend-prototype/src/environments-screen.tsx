@@ -16,6 +16,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { profileLabel } from "./product";
+import { oneEach } from "./project-deploys";
 import {
   ApiError,
   api,
@@ -1563,7 +1565,7 @@ export function ProjectEnvironments({
       .then(([t, d]) => {
         if (!live) return;
         setTargets(t);
-        setBindings(t.bindings);
+        setBindings(oneEach(t.bindings));
         setDeployments(d.items);
       })
       .catch((e) => {
@@ -1577,14 +1579,17 @@ export function ProjectEnvironments({
   }, [token, projectId]);
 
   if (unavailable) return null;
-  const bound = (profile: string) => bindings.find((b) => b.profile === profile)?.environment_id ?? "";
-  const bind = (profile: string, environment: string) => {
+  // Each environment runs one profile; one profile may run in several
+  // (ADR-0057).
+  const bound = (environment: string) => bindings.find((b) => b.environment_id === environment)?.profile ?? "";
+  const bind = (environment: string, profile: string) => {
     setSaved(false);
-    // Values belong to a profile in one environment: kept while it stays there.
+    // Values belong to the release in that environment: kept while it stays
+    // bound, whichever profile it runs.
     setBindings((all) => {
-      const was = all.find((b) => b.profile === profile);
-      const next = was?.environment_id === environment ? was : { profile, environment_id: environment };
-      return [...all.filter((b) => b.profile !== profile), ...(environment ? [next] : [])];
+      const was = all.find((b) => b.environment_id === environment);
+      const next = was ? { ...was, profile } : { profile, environment_id: environment };
+      return [...all.filter((b) => b.environment_id !== environment), ...(profile ? [next] : [])];
     });
   };
   const save = async () => {
@@ -1616,35 +1621,34 @@ export function ProjectEnvironments({
       ) : (
         <>
           <p className="hint">
-            Bind each kubernetes profile of the product to an environment: Deploy on the desktop takes the namespace and the image
-            registry from it.
+            Pick the kubernetes profile of the product each environment runs; one profile may run in several. Deploy takes the
+            namespace and the image registry from the environment.
           </p>
           <ul className="env-list">
-            {profiles.map((profile) => {
-              const env = targets.environments.find((t) => t.environment.id === bound(profile));
+            {targets.environments.map((t) => {
+              const env = t.environment;
               return (
-                <li key={profile} className="env-binding">
-                  <code>{profile}</code> →{" "}
-                  <select value={bound(profile)} onChange={(e) => bind(profile, e.target.value)} aria-label={`Environment for ${profile}`}>
-                    <option value="">not bound</option>
-                    {targets.environments.map((t) => (
-                      <option key={t.environment.id} value={t.environment.id}>
-                        {t.environment.name}
-                        {t.environment.protected ? " (protected)" : ""}
+                <li key={env.id} className="env-binding" data-binding-environment={env.name}>
+                  <b>{env.name}</b>
+                  {env.protected ? " (protected)" : ""} runs{" "}
+                  <select value={bound(env.id)} onChange={(e) => bind(env.id, e.target.value)} aria-label={`Profile for ${env.name}`}>
+                    <option value="">nothing: not bound</option>
+                    {/* A profile bound before that this list does not offer stays shown. */}
+                    {[...profiles, ...(bound(env.id) && !profiles.includes(bound(env.id)) ? [bound(env.id)] : [])].map((p) => (
+                      <option key={p} value={p}>
+                        {profileLabel(p)}
                       </option>
                     ))}
                   </select>
-                  {env && (
-                    <span className="sub">
-                      {" "}
-                      namespace <code>{env.namespace}</code>
-                      {env.environment.registry && (
-                        <>
-                          , images from <code>{env.environment.registry}</code>
-                        </>
-                      )}
-                    </span>
-                  )}
+                  <span className="sub">
+                    {" "}
+                    namespace <code>{t.namespace}</code>
+                    {env.registry && (
+                      <>
+                        , images from <code>{env.registry}</code>
+                      </>
+                    )}
+                  </span>
                 </li>
               );
             })}
@@ -1673,7 +1677,7 @@ export function ProjectEnvironments({
 }
 
 function sortBindings(b: EnvironmentBinding[]): EnvironmentBinding[] {
-  return [...b].sort((x, y) => x.profile.localeCompare(y.profile));
+  return [...b].sort((x, y) => x.environment_id.localeCompare(y.environment_id));
 }
 
 const ENV_CSS = `
