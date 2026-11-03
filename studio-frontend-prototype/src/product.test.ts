@@ -13,6 +13,7 @@ import {
   defaultPicks,
   diagnosticsByCode,
   groupDiagnostics,
+  productPathOf,
   isPickable,
   productIdFrom,
   sortDiagnostics,
@@ -196,5 +197,19 @@ describe("corpusErrors", () => {
 
   it("is zero for a product whose problems are its own", () => {
     expect(corpusErrors([d("product.gdl"), d(null)])).toEqual({ errors: 0, files: 0 });
+  });
+});
+
+describe("productPathOf", () => {
+  it("is the recorded path, else the product's own, never the root's", () => {
+    expect(productPathOf({ product_id: "shop", written: { branch: "b", commit_sha: "c", path: "product.gdl" } })).toBe(
+      "product.gdl",
+    );
+    expect(productPathOf({ product_id: "shop", description: { revision: 1, path: "products/x/product.gdl" } })).toBe(
+      "products/x/product.gdl",
+    );
+    expect(productPathOf({ product_id: "shop" })).toBe("products/shop/product.gdl");
+    expect(productPathOf({})).toBeNull();
+    expect(productPathOf(null)).toBeNull();
   });
 });

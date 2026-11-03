@@ -33,6 +33,7 @@ import {
   productIdFrom,
   corpusErrors,
   diagnosticsByCode,
+  productPathOf,
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
 import { ScaffoldModal } from "./documents";
@@ -1499,7 +1500,7 @@ function ProductCard({
    *  A web session cannot take this on: Gearbox is the desktop's. A product
    *  already saved and unchanged is opened as it is. */
   const desktop = useDesktopLauncher();
-  const savedPath = record?.description?.path ?? record?.written?.path ?? "product.gdl";
+  const savedPath = productPathOf(record) ?? undefined;
   const isSaved = !!(record?.description || record?.written);
   const openOnDesktop = () => desktop.launch(desktopLink({ id: projectId, name: projectName, product: savedPath }));
   const buildInTheia = async () => {

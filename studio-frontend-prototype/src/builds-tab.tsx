@@ -58,6 +58,7 @@ import { errText } from "./format";
 import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
 import { buildsHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
+import { productPathOf } from "./product";
 import { HowItBuilds } from "./project-build-card";
 
 /** At most this many runs are read: the sync keeps the newest few hundred
@@ -165,12 +166,13 @@ export function ProjectBuilds({
     api
       .projectProduct(token, projectId)
       .then((p) => {
-        if (!live || !(p?.written || p?.description)) return;
+        const path = productPathOf(p);
+        if (!live || !(p?.written || p?.description) || !path) return;
         // A description Studio keeps is built with the code of the
         // repository's own branch (ADR-0053 §2); a branch is named only for
         // one that was never kept.
         setSaved({
-          path: p.description?.path ?? p.written?.path ?? "product.gdl",
+          path,
           branch: p.description ? null : p.written?.branch || null,
           prUrl: p.published?.pr_url ?? p.written?.pr_url ?? null,
           profile: p.profile ?? null,
@@ -325,8 +327,9 @@ function OnMyMachine({
       desktopLink({
         id: projectId,
         name: projectName,
-        // The desktop builds only a product it has open, so one is always named.
-        product: saved?.path ?? "product.gdl",
+        // The desktop builds only a product it has open, so one is always
+        // named: without a saved product the button is off.
+        product: saved?.path,
         branch: saved?.branch ?? undefined,
         build: true,
       }),
@@ -344,7 +347,12 @@ function OnMyMachine({
           type="button"
           className="primary"
           onClick={open}
-          title="Open this project in the Constructor Studio app on your machine and build it"
+          disabled={!saved}
+          title={
+            saved
+              ? "Open this project in the Constructor Studio app on your machine and build it"
+              : "Save the product in the Product step first"
+          }
           data-builds-open-ide
         >
           Build in the IDE

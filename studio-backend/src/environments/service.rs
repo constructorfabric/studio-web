@@ -154,6 +154,16 @@ pub struct EnvironmentService {
     http: reqwest::Client,
 }
 
+/// A build or deploy that names no description, of a project whose product
+/// was never saved: there is nothing to say which `product.gdl` it means.
+fn no_saved_product() -> Refusal {
+    Refusal::Precondition(
+        "PRODUCT_NOT_SAVED",
+        "the project has no product yet: save one in the Product step first, or name its          product.gdl"
+            .into(),
+    )
+}
+
 fn now() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -1552,15 +1562,36 @@ impl EnvironmentService {
     /// Propose the build workflow to the project's repository, as a pull
     /// request: it builds `profile` and publishes under `environment`'s
     /// registry prefix (ADR-0048 §5).
+    /// Where the project's product description is, as its product record
+    /// says: the recorded path, else `products/<product_id>/product.gdl`.
+    /// Refused when the project has no product.
+    async fn saved_product_file(&self, ctx: &SecurityContext, project: Uuid) -> Result<String> {
+        let products = self
+            .hub
+            .get::<dyn crate::product::port::ProjectProducts>()
+            .map_err(|_| {
+                Refusal::Unavailable("products are not available in this deployment".into())
+            })?;
+        products
+            .saved_description(ctx, &project.to_string())
+            .await
+            .map_err(|e| Refusal::Internal(format!("{e:#}")))?
+            .map(|s| s.path)
+            .ok_or_else(no_saved_product)
+    }
+
     pub async fn propose_workflow(
         &self,
         ctx: &SecurityContext,
         project: Uuid,
         environment: Uuid,
         profile: &str,
-        product_file: &str,
+        product_file: Option<&str>,
     ) -> Result<WorkflowProposal> {
-        let product_file = product_file.trim().trim_start_matches("./").to_owned();
+        let product_file = match product_file.map(str::trim).filter(|f| !f.is_empty()) {
+            Some(f) => f.trim_start_matches("./").to_owned(),
+            None => self.saved_product_file(ctx, project).await?,
+        };
         if !workflow::is_product_file(&product_file) {
             return Err(Refusal::Invalid(format!(
                 "'{product_file}' is not a product description in the repository"
@@ -1667,7 +1698,7 @@ impl EnvironmentService {
                 }),
             None => None,
         };
-        let saved = match (&products, product_file.is_none() && git_ref.is_none()) {
+        let saved = match (&products, product_file.is_none()) {
             (Some(products), true) => products
                 .saved_description(ctx, &project.to_string())
                 .await
@@ -1679,7 +1710,7 @@ impl EnvironmentService {
             .map(str::to_owned)
             .or_else(|| description.as_ref().and_then(|d| d.path.clone()))
             .or_else(|| saved.as_ref().map(|s| s.path.clone()))
-            .unwrap_or_else(|| "product.gdl".to_owned());
+            .ok_or_else(no_saved_product)?;
         let git_ref = match &description {
             Some(_) => git_ref,
             None => git_ref.or_else(|| saved.and_then(|s| s.branch)),
@@ -2070,16 +2101,14 @@ impl EnvironmentService {
             repo: target_repo.repo,
             branch: target_repo.base_branch,
         };
-        let product_file = match self.hub.get::<dyn crate::product::port::ProjectProducts>() {
-            Ok(products) => products
-                .saved_description(ctx, &project.to_string())
-                .await
-                .ok()
-                .flatten()
-                .map(|s| s.path),
-            Err(_) => None,
-        }
-        .unwrap_or_else(|| "product.gdl".to_owned());
+        let product_file = match self.saved_product_file(ctx, project).await {
+            Ok(f) => f,
+            // An uninstall reads no description: the product's own path does.
+            Err(_) if req.action == DeploymentAction::Uninstall => {
+                crate::product::port::product_gdl_path(req.product.trim())
+            }
+            Err(e) => return Err(e),
+        };
 
         let mut images = Vec::new();
         let mut product = req.product.trim().to_owned();

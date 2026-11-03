@@ -6,7 +6,7 @@
 // they land, what cannot work. This module only decides what can be offered
 // for picking and how the picks and the session are spelled.
 
-import type { GearboxDiagnostic, GearboxStatus, RepoEntry } from "./api";
+import type { GearboxDiagnostic, GearboxStatus, ProjectProduct, RepoEntry } from "./api";
 import type { Candidate, PlanRow } from "./api";
 
 /** The deployment profiles a generated product.gdl declares, in the order they
@@ -123,6 +123,19 @@ export function diagnosticsByCode(ds: readonly GearboxDiagnostic[]): DiagnosticG
     else groups.push({ code: d.code, severity: d.severity, items: [d] });
   }
   return groups;
+}
+
+/** Where a project's product.gdl is in its repository, by the rule the
+ *  backend keeps (`description_path`): the path its record gives, else the
+ *  product's own `products/<id>/product.gdl`. `null` for a project with no
+ *  product, which has nothing to build -- never the repository root's file. */
+export function productPathOf(
+  record: Pick<ProjectProduct, "product_id" | "written" | "description" | "published"> | null | undefined,
+): string | null {
+  const recorded = record?.published?.path || record?.written?.path || record?.description?.path;
+  if (recorded) return recorded;
+  const id = record?.product_id?.trim();
+  return id ? `products/${id}/product.gdl` : null;
 }
 
 /** The errors that are not about this product at all: a corpus `gear.gdl`

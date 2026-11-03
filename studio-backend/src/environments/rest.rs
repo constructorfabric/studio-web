@@ -439,7 +439,8 @@ pub struct StudioBuildRequest {
     /// The `kubernetes` profile it builds; default `prod`.
     #[serde(default)]
     pub profile: Option<String>,
-    /// The product's description in the repository; default `product.gdl`.
+    /// The product's description in the repository; default where the
+    /// project's product record says it is (`products/<id>/product.gdl`).
     #[serde(default)]
     pub product_file: Option<String>,
     /// A branch, tag or commit; the repository's branch when absent.
@@ -489,7 +490,8 @@ pub struct BuildWorkflowRequest {
     /// The `kubernetes` profile it builds; default `prod`.
     #[serde(default)]
     pub profile: Option<String>,
-    /// The product's description in the repository; default `product.gdl`.
+    /// The product's description in the repository; default where the
+    /// project's product record says it is (`products/<id>/product.gdl`).
     #[serde(default)]
     pub product_file: Option<String>,
 }
@@ -1237,9 +1239,6 @@ async fn scaffold_build_workflow(
     Json(body): Json<BuildWorkflowRequest>,
 ) -> ApiResult<JsonBody<BuildWorkflowDto>> {
     let profile = body.profile.unwrap_or_else(|| "prod".to_owned());
-    let product_file = body
-        .product_file
-        .unwrap_or_else(|| "product.gdl".to_owned());
     let w = envs
         .0
         .propose_workflow(
@@ -1247,7 +1246,7 @@ async fn scaffold_build_workflow(
             q.project_id,
             body.environment_id,
             &profile,
-            &product_file,
+            body.product_file.as_deref(),
         )
         .await
         .map_err(problem)?;
@@ -1913,7 +1912,7 @@ pub fn register_routes(
         .description(
             "For `?project_id=`: a pull request to the project's repository adding \
              `.github/workflows/studio-build-<product>.yml` for `product_file` (default \
-             `product.gdl`; ADR-0048 §5). It generates the profile with \
+             the path the product record gives; ADR-0048 §5). It generates the profile with \
              the Gearbox engine this Studio runs, pushes the images and the chart under the \
              environment's registry prefix, and uploads `studio-build.json`, which the sync \
              records as the run's build. Answers with the pull request.",
