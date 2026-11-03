@@ -1970,11 +1970,17 @@ function ProductCard({
               if (c.errors === 0) return null;
               return (
                 <p className="error" style={{ fontSize: 12 }} data-corpus-errors>
-                  {c.errors === errors ? "Every error here is" : `${c.errors} of these errors are`} in the gear
-                  corpus&apos;s own descriptions ({c.files} <code>gear.gdl</code> file{c.files === 1 ? "" : "s"} in{" "}
-                  <code>{gearbox?.corpus_ref ?? "the corpus"}</code>), not in this product. The Gearbox engine (
-                  {gearbox?.engine_version ?? "its version"}) cannot read them, so the engine and the corpus disagree
-                  — nothing picked here can fix that; the deployment has to move the engine or pin the corpus.
+                  {c.errors === errors ? "Every error here is" : `${c.errors} of these errors are`} in the
+                  gears&apos; own descriptions ({c.files} <code>gear.gdl</code> file{c.files === 1 ? "" : "s"}
+                  {gearbox?.corpus_ref ? (
+                    <>
+                      {" "}in <code>{gearbox.corpus_ref}</code>
+                    </>
+                  ) : null}
+                  ), not in this product: a gear&apos;s <code>gear.gdl</code> disagrees with its code or with the
+                  Gearbox engine{gearbox?.engine_version ? ` (${gearbox.engine_version})` : ""}. Nothing picked here
+                  can fix that: the gear&apos;s repository fixes its <code>gear.gdl</code>, or the deployment moves
+                  the engine or pins the corpus.
                 </p>
               );
             })()}
