@@ -14,7 +14,9 @@ import { gearKey } from "./frontend-constructor";
 import type { PipelineHint, PipelineTab } from "./pipeline";
 import type { Infrastructure, ProductSectionId } from "./product-sections";
 
-export type FlowState = "done" | "todo" | "failed" | "unknown";
+/** `none`: a part the product may go without and does (no frontend): neither
+ *  done nor waiting. */
+export type FlowState = "done" | "todo" | "failed" | "unknown" | "none";
 
 /** One of the parts the Configure step is made of: a section of the page. */
 export interface FlowPart {
@@ -77,7 +79,7 @@ function frontendPart(product: ProductFacts, cfg: ProjectConfig | null | undefin
   if (cfg?.frontend && typeof cfg.frontend === "object") {
     return { ...base, state: "todo", status: "Picked before the product kept it: save it to the product in Frontend." };
   }
-  return { ...base, state: "done", status: "None: the product is its gears and their APIs." };
+  return { ...base, state: "none", status: "None: the product is its gears and their APIs. Add one when it needs screens." };
 }
 
 /** The Configure step's parts, in the order the page lists its sections. */

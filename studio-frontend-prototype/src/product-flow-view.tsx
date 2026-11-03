@@ -18,8 +18,8 @@ import { lineDiff, productFlow, type FlowState, type FlowStep } from "./product-
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
 import { deployableBuilds } from "./project-deploys";
 
-const MARK: Record<FlowState, string> = { done: "✓", todo: "!", failed: "✗", unknown: "…" };
-const TONE: Record<FlowState, string> = { done: "ok", todo: "warn", failed: "bad", unknown: "" };
+const MARK: Record<FlowState, string> = { done: "✓", todo: "!", failed: "✗", unknown: "…", none: "–" };
+const TONE: Record<FlowState, string> = { done: "ok", todo: "warn", failed: "bad", unknown: "", none: "" };
 
 type Read = {
   product: ProjectProduct | null;

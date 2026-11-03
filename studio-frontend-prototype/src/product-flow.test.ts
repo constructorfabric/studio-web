@@ -48,6 +48,12 @@ describe("configuring the product", () => {
     expect(f.status).toBe("1 micro-frontend on studio-frontend.");
   });
 
+  it("marks no frontend as neither done nor waiting, and the step as configured", () => {
+    const [, , f] = configureParts({ gears: [], frontend: null }, {}, infra());
+    expect(f.state).toBe("none");
+    expect(productFlow(facts())[0].state).toBe("done");
+  });
+
   it("asks to save a frontend picked before the product kept it", () => {
     const [, , f] = configureParts({ gears: [], frontend: null }, { frontend: { mfes: ["@x/a"] } }, infra());
     expect(f.state).toBe("todo");
