@@ -100,7 +100,18 @@ function DeploymentLine({ d, showProject }: { d: Deployment; showProject: boolea
 }
 
 /** The rollout read back from the cluster, on demand. */
-function StatusButton({ token, org, d }: { token: string; org: string; d: Deployment }) {
+function StatusButton({
+  token,
+  org,
+  d,
+  place = "the cluster",
+}: {
+  token: string;
+  org: string;
+  d: Deployment;
+  /** Where the product runs, as the button names it: "Research" for a Research environment. */
+  place?: string;
+}) {
   const [status, setStatus] = useState<DeploymentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -135,7 +146,7 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
   return (
     <div className="env-status">
       <button type="button" className="ghost" disabled={busy} onClick={() => void read()} data-deployment-status>
-        {busy ? "Asking the cluster…" : status ? "Ask again" : "Status in the cluster"}
+        {busy ? `Asking ${place}…` : status ? "Ask again" : `Status in ${place}`}
       </button>{" "}
       <button type="button" className="ghost" disabled={readingLogs} onClick={() => void readLogs()} data-deployment-logs>
         {readingLogs ? "Reading the logs…" : logs ? "Hide logs" : "Logs"}
@@ -186,7 +197,7 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
   );
 }
 
-/** A Research environment's place: the organization's Research connection,
+/** A Research environment's place: the member's own Research sign-in that lists the projects,
  *  one of its projects and, optionally, a hardware configuration, as the
  *  integration service lists them (ADR-0049 §2). Typed by hand when Research
  *  cannot be asked. */
@@ -255,7 +266,8 @@ function ResearchFields({
           ))}
         </select>
         <span className="sub">
-          Your own sign-in to Research (Connections): builds and deploys run there with it, in your Research.
+          Your own sign-in to Research (Connections), to pick the project. Every member builds and deploys with
+          their own sign-in; the project's owner adds them to it in Research.
         </span>
         {shown("connection_id") && <span className="env-field-error">{shown("connection_id")}</span>}
       </label>
@@ -360,7 +372,7 @@ export function EnvironmentForm({
   clusters: Connection[];
   /** The organization's registry connections (ADR-0048). */
   registries: Connection[];
-  /** The organization's Constructor Research connections (ADR-0049). */
+  /** The caller's own Constructor Research sign-ins (ADR-0049). */
   researches: Connection[];
   projects: Tenant[];
   onDone: () => void;
@@ -1190,7 +1202,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
               {current.running.map((d) => (
                 <li key={d.id}>
                   <DeploymentLine d={d} showProject />
-                  <StatusButton token={token} org={org.id} d={d} />
+                  <StatusButton token={token} org={org.id} d={d} place={current.environments.some((e) => e.kind === "research") ? "Research" : "the cluster"} />
                 </li>
               ))}
             </ul>

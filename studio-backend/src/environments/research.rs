@@ -72,6 +72,15 @@ impl Requester {
     }
 }
 
+/// The Research sign-in a run uses: the requester's own connection and the
+/// tenant it is found from (ADR-0049 §1). Each member builds and deploys with
+/// their own, so it is chosen when they ask, not kept on the environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignIn {
+    pub tenant: Uuid,
+    pub connection_id: Uuid,
+}
+
 /// The access token of connection `connection_id`, read as `ctx`: each read
 /// trades the stored refresh token for a fresh one.
 async fn token(
@@ -411,8 +420,12 @@ pub struct ResearchBuildPayload {
     pub build_id: String,
     pub organization_id: Uuid,
     pub project_id: Uuid,
-    /// The environment's `research` connection.
+    /// The environment's `research` connection: used only by a run queued
+    /// before `sign_in` was recorded.
     pub connection_id: Uuid,
+    /// The requester's own sign-in, which the build uses.
+    #[serde(default)]
+    pub sign_in: Option<SignIn>,
     /// The Research project the images are built in.
     pub research_project: String,
     pub profile: String,
@@ -492,11 +505,15 @@ impl ResearchBuildTask {
             let step = step.to_owned();
             move |e: anyhow::Error| (step, format!("{e:#}"))
         };
+        let sign_in = p.sign_in.unwrap_or(SignIn {
+            tenant: p.organization_id,
+            connection_id: p.connection_id,
+        });
         let api = api(
             &self.hub,
             &ctx.security,
-            p.organization_id,
-            p.connection_id,
+            sign_in.tenant,
+            sign_in.connection_id,
             p.requested_by.as_ref(),
         )
         .await
@@ -646,6 +663,10 @@ pub struct ResearchDeploy {
     /// Whose Research sign-in the deploy uses.
     #[serde(default)]
     pub requested_by: Option<Requester>,
+    /// Their own connection; absent in a deploy queued before it was kept,
+    /// which uses the environment's.
+    #[serde(default)]
+    pub sign_in: Option<SignIn>,
 }
 
 /// The credstore reference of a database server's password: kept, since the
@@ -784,11 +805,15 @@ pub async fn deploy(
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
 ) -> anyhow::Result<String> {
+    let sign_in = r.sign_in.unwrap_or(SignIn {
+        tenant: p.organization_id,
+        connection_id: p.connection_id,
+    });
     let api = api(
         hub,
         &ctx.security,
-        p.organization_id,
-        p.connection_id,
+        sign_in.tenant,
+        sign_in.connection_id,
         r.requested_by.as_ref(),
     )
     .await?;
@@ -948,6 +973,34 @@ pub async fn rollout(
             })
             .collect(),
     })
+}
+
+/// The end of each service's log of the environment's application, read with
+/// the caller's sign-in. A service Research has no log for yet says so rather
+/// than being left out, so the reader sees every service.
+pub async fn logs(
+    api: &ResearchApi,
+    project: &str,
+    application: &str,
+    lines: usize,
+) -> anyhow::Result<Vec<super::deploy::ContainerLog>> {
+    let Some(app) = api.application_named(project, application).await? else {
+        bail!("Constructor Research has no application {application} in this project");
+    };
+    let mut out = Vec::with_capacity(app.services.len());
+    for s in app.services {
+        let text = api
+            .service_log_tail(&s.id, lines)
+            .await
+            .unwrap_or_else(|| format!("(Constructor Research has no log of {} now)", s.name));
+        out.push(super::deploy::ContainerLog {
+            pod: s.name,
+            container: "main".to_owned(),
+            previous: false,
+            text,
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

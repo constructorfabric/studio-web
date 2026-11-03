@@ -206,7 +206,7 @@ describe("a Constructor Research environment (ADR-0049)", () => {
   it("names its connection and project, and nothing of a cluster", () => {
     expect(environmentProblem(research, [])).toBeNull();
     expect(environmentProblems({ ...research, research_project: " " }, []).research_project).toMatch(/Research project/);
-    expect(environmentProblems({ ...research, connection_id: "" }, []).connection_id).toMatch(/Research connection/);
+    expect(environmentProblems({ ...research, connection_id: "" }, []).connection_id).toMatch(/Research sign-in/);
     expect(environmentProblem({ ...research, namespace_pattern: "fixed" }, [])).toBeNull();
   });
 

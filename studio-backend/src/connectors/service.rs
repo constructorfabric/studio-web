@@ -1734,6 +1734,32 @@ pub async fn connection_by_id(
     nearest_in(am, ctx, from, |c| c.id == id).await
 }
 
+/// The caller's own `provider` connection: a personal one they created,
+/// looked for from each of `from` (nearest tenant first, then its ancestors),
+/// the most recent if they have several. For a provider signed in to per
+/// person (Constructor Research, ADR-0049 §1), whose credential nobody else
+/// may read.
+pub async fn own_connection(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    from: &[Uuid],
+    provider: &str,
+) -> Option<(Uuid, Connection)> {
+    let me = ctx.subject_id().to_string();
+    for &tenant in from {
+        let mine = reachable_connections(am, ctx, tenant)
+            .await
+            .into_iter()
+            .filter(|c| c.provider == provider && c.scope == "personal" && c.created_by == me)
+            .max_by_key(|c| c.created_at_epoch_secs);
+        if let Some(c) = mine {
+            let holder = holder_of_row(&c, tenant);
+            return Some((holder, c));
+        }
+    }
+    None
+}
+
 /// The tenant whose catalogue row holds `c`, found from `located` (the
 /// tenant whose -- possibly inherited -- catalogue listed it): its
 /// `owner_tenant_id`, or `located` for a row without one.

@@ -46,6 +46,7 @@ pub mod research {
 pub use super::repository::{Repository, create_repository};
 pub use super::service::{
     ConnectorService, GearRepositorySource, check_owned, connection_by_id, holder_of_row,
+    own_connection,
 };
 
 /// Whose connection a tenant may use: an organization, and anything under

@@ -772,6 +772,24 @@ impl ResearchApi {
             self.base,
             seg(image)
         );
+        self.stream_tail(url, lines).await
+    }
+
+    /// The last lines of a running service's log: what its newest pod has
+    /// written. Research serves it only as a live stream with no tail of its
+    /// own, so the stream is read for a few seconds and its end kept.
+    pub async fn service_log_tail(&self, service: &str, lines: usize) -> Option<String> {
+        let url = format!(
+            "{}/api/platform-keeper/services/{}/logs",
+            self.base,
+            seg(service)
+        );
+        self.stream_tail(url, lines).await
+    }
+
+    /// An event stream read for up to ten seconds, its last `lines` data
+    /// lines kept. `None` when it cannot be opened or says nothing.
+    async fn stream_tail(&self, url: String, lines: usize) -> Option<String> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let res = tokio::time::timeout_at(
             deadline,
