@@ -32,6 +32,8 @@ pub mod batch_task;
 pub mod config;
 pub mod findings;
 pub mod gear;
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 pub mod record;
 pub mod rest;
 pub mod sdk;

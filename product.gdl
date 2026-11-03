@@ -60,6 +60,7 @@ product(
         use_gear("studio-insight", source = "studio-backend"),
         use_gear("studio-kits", source = "studio-backend"),
         use_gear("studio-llm-proxy", source = "studio-backend"),
+        use_gear("studio-mcp", source = "studio-backend"),
         use_gear("studio-notify", source = "studio-backend"),
         use_gear("studio-organizations", source = "studio-backend"),
         use_gear("studio-presence", source = "studio-backend"),
