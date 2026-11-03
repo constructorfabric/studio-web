@@ -189,6 +189,9 @@ export interface Mfe {
   path?: string | null;
   /** The packages it depends on, by name: the libraries it shares among them. */
   deps?: string[];
+  /** Whether `calls` is what its `frontx.gdl` declares (`mfe(requires = …)`)
+   *  rather than what the scan guessed from its API services. */
+  described?: boolean;
 }
 
 /** A FrontX package that is neither a micro-frontend nor a shell: a library
@@ -226,8 +229,15 @@ function placementOf(raw: unknown): Placement | null {
   };
 }
 
+/** What a package's own `frontx.gdl` says it is (`shell`, `mfe`, `library`),
+ *  or `null` when it has none that reads. */
+export function frontxKindOf(auto: Record<string, unknown>): string | null {
+  return auto.frontx_described === true ? textOf(auto.frontx_kind) : null;
+}
+
 /** The micro-frontends in the catalogue, with what their profiles say. A
- *  package the scan did not find to be a micro-frontend is not one here. */
+ *  package the scan did not find to be a micro-frontend is not one here, nor
+ *  is one whose `frontx.gdl` says it is a library or a shell. */
 export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<string, unknown>>): Mfe[] {
   const out: Mfe[] = [];
   const autoOf = (name: string) => (profiles[name]?.auto ?? {}) as Record<string, unknown>;
@@ -246,9 +256,12 @@ export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<s
     const name = str(v.name) ?? n.instance_id;
     const auto = (profiles[name]?.auto ?? {}) as Record<string, unknown>;
     const kind = str(v.component_kind);
+    const declared = frontxKindOf(auto);
+    if (declared === "library" || declared === "shell") continue;
     // A template or example counts when it is a micro-frontend's template:
     // it declares extensions, or names itself one (`_blank-mfe`).
     const isMfe =
+      declared === "mfe" ||
       kind === "micro-frontend" ||
       Array.isArray(auto.mfe_extensions) ||
       (TEMPLATE_KINDS.has(kind ?? "") && /mfe/i.test(name));
@@ -258,7 +271,10 @@ export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<s
       .filter((p): p is Placement => p !== null);
     const calls = new Set(strings(auto.mfe_calls));
     const via: Record<string, string> = {};
-    for (const dep of strings(auto.deps_names)) {
+    // A declared `requires` is the whole list, the gears it reaches through a
+    // shared package included; only a guess is added up through its deps.
+    const described = declared === "mfe";
+    for (const dep of described ? [] : strings(auto.deps_names)) {
       for (const c of own.get(dep) ?? []) {
         if (!calls.has(c)) {
           calls.add(c);
@@ -278,6 +294,7 @@ export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<s
       wants: frontxPins(auto.deps_versions),
       path: textOf(auto.path),
       deps: strings(auto.deps_names),
+      described,
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -294,7 +311,13 @@ export function librariesFrom(nodes: CatalogNode[], profiles: Record<string, Rec
     const auto = (profiles[name]?.auto ?? {}) as Record<string, unknown>;
     const kind = str(v.component_kind);
     const carries = auto.carries && typeof auto.carries === "object" && Object.keys(auto.carries).length > 0;
+    const declared = frontxKindOf(auto);
+    if (declared === "library") {
+      out.push({ name, repo: str(v.repository) ?? str(v.synced_from), path: textOf(auto.path) });
+      continue;
+    }
     if (
+      declared !== null ||
       kind === "micro-frontend" ||
       TEMPLATE_KINDS.has(kind ?? "") ||
       Array.isArray(auto.mfe_extensions) ||
@@ -410,6 +433,9 @@ export interface Shell {
   signsIn: boolean | null;
   /** Whether it reads the product's addresses at start (`/env.js`). */
   runtimeEnv: boolean | null;
+  /** Whether `signsIn` and `runtimeEnv` are what its `frontx.gdl` declares
+   *  rather than what the scan guessed from its files. */
+  described?: boolean;
 }
 
 const FRONTX_SCOPE = "@gears-frontx/";
@@ -438,10 +464,12 @@ export function shellsFrom(nodes: CatalogNode[], profiles: Record<string, Record
     const name = str(v.name) ?? n.instance_id;
     const auto = (profiles[name]?.auto ?? {}) as Record<string, unknown>;
     const own = auto.carries && typeof auto.carries === "object" ? (auto.carries as Record<string, unknown>) : null;
-    if (!own || Object.keys(own).length === 0) continue;
+    // A package whose frontx.gdl says `shell(...)` is one, carried packages or not.
+    const described = frontxKindOf(auto) === "shell";
+    if (!described && (!own || Object.keys(own).length === 0)) continue;
     const version = str(v.max_version) ?? str(v.newest_version) ?? textOf(auto.version);
     const carries: Record<string, string> = { ...frontxPins(auto.deps_versions) };
-    for (const [k, ver] of Object.entries(own)) if (typeof ver === "string") carries[k] = ver;
+    for (const [k, ver] of Object.entries(own ?? {})) if (typeof ver === "string") carries[k] = ver;
     if (version) carries[name] = version;
     out.push({
       name,
@@ -451,6 +479,7 @@ export function shellsFrom(nodes: CatalogNode[], profiles: Record<string, Record
       carries,
       signsIn: typeof auto.shell_signin === "boolean" ? auto.shell_signin : null,
       runtimeEnv: typeof auto.shell_runtime_env === "boolean" ? auto.shell_runtime_env : null,
+      described,
     });
   }
   return out.sort(

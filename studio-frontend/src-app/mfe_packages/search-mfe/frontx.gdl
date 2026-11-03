@@ -1,0 +1,10 @@
+# What this micro-frontend needs from a product's backend, for the tools that
+# assemble one (Gearbox, Constructor Studio). Its screens and extensions stay
+# in mfe.json.
+gdl_version = "1.5"
+
+mfe(
+    # The backend gears its screens call, by gear id. None yet: its only API
+    # service is the scaffold's _BlankApiService (`/api/blank`), which is mocked.
+    requires = [],
+)

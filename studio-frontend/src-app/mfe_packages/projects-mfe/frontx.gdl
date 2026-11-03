@@ -1,0 +1,21 @@
+# What this micro-frontend needs from a product's backend, for the tools that
+# assemble one (Gearbox, Constructor Studio). Its screens and extensions stay
+# in mfe.json.
+gdl_version = "1.5"
+
+mfe(
+    # The backend gears its screens call, by gear id (the `<gear>` of a
+    # `/cf/<gear>/v1` base URL). Its own services: ArtifactIngestApiService,
+    # DocumentsApiService, SpecQualityApiService. Through
+    # @constructor-studio/mfe-shared: AccountsApiService (project config),
+    # ConnectorsApiService, StudioEventsApiService and StudioTasksApiService.
+    requires = [
+        "account-management",
+        "studio-artifact-ingest",
+        "studio-connector",
+        "studio-documents",
+        "studio-events",
+        "studio-spec-quality",
+        "studio-tasks",
+    ],
+)

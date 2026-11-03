@@ -1,0 +1,8 @@
+# What this package is, for the tools that assemble a product (Gearbox,
+# Constructor Studio): a library the micro-frontends share, not one itself.
+# It holds the API services several screens call (accounts, connectors, tasks,
+# events); each micro-frontend's own frontx.gdl names the gears it reaches
+# through them.
+gdl_version = "1.5"
+
+library()

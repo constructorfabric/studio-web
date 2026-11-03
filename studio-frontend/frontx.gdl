@@ -1,0 +1,17 @@
+# What Studio's portal does for a product beyond mounting screens, for the
+# tools that assemble one (Gearbox, Constructor Studio). Only what package.json
+# cannot say: what the shell carries is read from its workspace and
+# package.json, and each micro-frontend describes itself in its own frontx.gdl
+# under src-app/mfe_packages/.
+gdl_version = "1.5"
+
+shell(
+    # It signs users in before it mounts a screen: OIDC through Keycloak
+    # (src-app/app/auth/: AuthGate, keycloakOidcProvider), with the session's
+    # token on every request, event streams included (src/api/plugins/SseAuthPlugin.ts).
+    signs_in = True,
+    # It reads the product's addresses at start, so one image serves every
+    # environment: index.html loads /env.js, which the container writes
+    # (docker/10-runtime-env.sh) and src-app/app/config/env.ts reads.
+    runtime_env = "public/env.js",
+)
