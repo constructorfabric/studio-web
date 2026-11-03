@@ -898,6 +898,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ env.SOURCE_SHA }}
+      # A dispatch's source_ref may be a branch, and `sha-<branch>` is not an
+      # image tag: the build failed with "invalid reference format". From
+      # here on SOURCE_SHA is the commit that was checked out, so the tags
+      # are `sha-<40 hex>`, the same the deploy resolves the branch to.
+      # Overwritten rather than given a second name, as IMAGE_PREFIX below.
+      - name: Name the source commit
+        run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v7
         if: needs.build-require-ci.outputs.backend == 'true'
         with:
