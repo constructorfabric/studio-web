@@ -63,7 +63,7 @@ const postgres: ProductTechnology = {
 const infra = (over: Partial<Infrastructure> = {}): Infrastructure => ({
   profile: "prod",
   profileLabel: "Kubernetes",
-  runsIn: [{ environment: "dev", namespace: "studio", profile: "prod", database: "its own Postgres", missing: [], unchecked: false }],
+  runsIn: [{ environment: "dev", namespace: "studio", profile: "prod", database: "its own Postgres", missing: [], unchecked: null, profileLabel: null, verdict: null, needs: null }],
   needs: [postgres],
   applications: [],
   ...over,
@@ -197,7 +197,7 @@ describe("the map's problems", () => {
     const m = productMap(
       facts({
         infra: infra({
-          runsIn: [{ environment: "test", namespace: "t", profile: "prod", database: "none", missing: ["PostgreSQL"], unchecked: false }],
+          runsIn: [{ environment: "test", namespace: "t", profile: "prod", database: "none", missing: ["PostgreSQL"], unchecked: null, profileLabel: null, verdict: null, needs: null }],
         }),
       }),
     );

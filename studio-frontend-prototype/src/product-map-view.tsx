@@ -41,6 +41,7 @@ import {
   type MapNode,
   type MapOverlay,
 } from "./product-map";
+import { profilesToCheck } from "./product";
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
 
 type Read = {
@@ -92,6 +93,10 @@ export function ProductMap({
   overlay?: MapOverlay;
 }) {
   const [read, setRead] = useState<Read | null>(null);
+  // The map checks and composes for the profile the product runs as: the
+  // first one bound to an environment (ADR-0057), or the deploy shape when
+  // none is bound -- the same one the strip's Save sends.
+  const checkProfile = profilesToCheck(read?.targets?.bindings ?? [])[0];
   const [readErr, setReadErr] = useState<string | null>(null);
   const [round, setRound] = useState(0);
   /** The product as shown: the record, or an add not yet saved. */
@@ -195,7 +200,7 @@ export function ProductMap({
   function recheck(p: ProjectProduct) {
     if (!p.product_id || !(p.gears ?? []).length) return;
     void api
-      .previewProduct(token, projectId, { product_id: p.product_id, name: p.name ?? p.product_id, gears: p.gears ?? [], profile: p.profile, config: p.config })
+      .previewProduct(token, projectId, { product_id: p.product_id, name: p.name ?? p.product_id, gears: p.gears ?? [], profile: checkProfile, config: p.config })
       .catch(() => undefined);
   }
 
@@ -374,7 +379,7 @@ export function ProductMap({
             onDropGear={addGear}
           />
         ) : (
-          <GdlView token={token} projectId={projectId} product={product} nodeIds={map.nodes.map((n) => n.id)} selected={selected} onSelect={select} />
+          <GdlView token={token} projectId={projectId} product={product} profile={checkProfile} nodeIds={map.nodes.map((n) => n.id)} selected={selected} onSelect={select} />
         )}
         <Detail
           map={map}
@@ -942,6 +947,7 @@ function GdlView({
   token,
   projectId,
   product,
+  profile,
   nodeIds,
   selected,
   onSelect,
@@ -949,6 +955,8 @@ function GdlView({
   token: string;
   projectId: string;
   product: ProjectProduct | null;
+  /** The profile the draft is composed for. */
+  profile: string;
   nodeIds: string[];
   selected: string | null;
   onSelect: (id: string | null) => void;
@@ -959,7 +967,7 @@ function GdlView({
   // What the next save would compose from; a check of the same writes the
   // same record, so it is asked again only when this changes.
   const inputs = product?.product_id
-    ? JSON.stringify({ id: product.product_id, name: product.name, gears: product.gears ?? [], profile: product.profile, config: product.config, frontend: product.frontend })
+    ? JSON.stringify({ id: product.product_id, name: product.name, gears: product.gears ?? [], profile, config: product.config, frontend: product.frontend })
     : null;
 
   useEffect(() => {
