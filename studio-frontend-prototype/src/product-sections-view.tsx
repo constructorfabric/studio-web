@@ -13,6 +13,8 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { api, type FrontendPick, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
 import { FrontendConstructor } from "./frontend-constructor-view";
+import type { PipelineTab } from "./pipeline";
+import { ProductFlow } from "./product-flow-view";
 import {
   PRODUCT_SECTIONS,
   hasFrontend,
@@ -58,10 +60,13 @@ export function ProductPage({
   projectId,
   backend,
   parts,
+  onOpenTab,
 }: {
   token: string;
   projectId: string;
   backend: ReactNode;
+  /** Opens Builds or Deploys, for the strip's last two steps. */
+  onOpenTab?: (tab: PipelineTab) => void;
   /** The project's inventory (Parts); a section only when given. */
   parts?: (openBackend: () => void) => ReactNode;
 }) {
@@ -129,6 +134,14 @@ export function ProductPage({
           </span>
         </div>
       </section>
+      <ProductFlow
+        token={token}
+        projectId={projectId}
+        round={round}
+        onSection={pick}
+        onOpenTab={onOpenTab}
+        onSaved={() => setRound((r) => r + 1)}
+      />
       {section === "parts" && parts?.(() => pick("backend"))}
       {section === "infrastructure" && <ProductInfrastructure token={token} projectId={projectId} />}
       <div hidden={section !== "backend"} data-product-section="backend">

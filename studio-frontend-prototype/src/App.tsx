@@ -5770,6 +5770,7 @@ function ProjectScreen({
           <ProductPage
             token={token}
             projectId={proj.id}
+            onOpenTab={setTab}
             backend={
               <ProjectKits
                 token={token}

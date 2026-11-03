@@ -278,12 +278,12 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
         {inProduct ? (
           <>
             Kept with the product. Its <code>product.gdl</code> says it as <code>frontend = frontx_product(...)</code> from
-            the next description: Backend › Preview shows the block, Save keeps it as a new revision.
+            the next revision: step 2 above, Save to product.gdl, shows the block and saves it.
           </>
         ) : (
           <>
             Picked before the product kept its frontend, so <code>product.gdl</code> does not say it yet. Save to the
-            product, then Backend › Preview shows <code>frontend = frontx_product(...)</code>.
+            product, then step 2 above, Save to product.gdl, writes <code>frontend = frontx_product(...)</code>.
           </>
         )}
       </p>
