@@ -2935,6 +2935,22 @@ div.dm-block { padding-left: 0; }
 .pmap-group-h.bad { color: var(--destructive); }
 .pmap-group-h.linked { color: var(--primary); }
 .pmap-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+/* Backend and infrastructure: their groups side by side in one row, each as
+   wide as the row allows, so a line from one lane to the next never runs
+   under a group; a row too wide scrolls. */
+.pmap-canvas { grid-template-columns: minmax(0, 1fr); }
+.pmap-lane { min-width: 0; }
+.pmap-lane-body.row { flex-wrap: nowrap; overflow-x: auto; align-items: stretch; padding-bottom: 2px; }
+.pmap-lane-body.row > .pmap-group { flex: 1 1 0; min-width: 130px; }
+.pmap-lane-body.row .pmap-node { max-width: 100%; min-width: 0; }
+.pmap-lane-body.row .pmap-node-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmap-lane-body.row > .pmap-group.folded { flex: 0 0 auto; min-width: 0; }
+/* Subsystems: each group a column of cards that say what each part does. */
+.pmap-canvas.subsystems .pmap-lane-body.row > .pmap-group { min-width: 190px; }
+.pmap-canvas.subsystems .pmap-lane-body.row .pmap-chips { flex-direction: column; flex-wrap: nowrap; gap: 6px; }
+.pmap-canvas.subsystems .pmap-lane-body.row .pmap-node { display: flex; flex-direction: column; align-items: flex-start; text-align: left; width: 100%; max-width: none; padding: 6px 8px; white-space: normal; }
+.pmap-canvas.subsystems .pmap-group-h { font-weight: 600; }
+.pmap-node-what { font-size: 11px; font-weight: 400; color: var(--muted-foreground); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 .pmap-node { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; max-width: 190px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font-size: 12px; line-height: 1.25; text-align: left; cursor: pointer; }
 .pmap-node-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

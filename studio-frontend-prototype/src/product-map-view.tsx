@@ -77,6 +77,8 @@ const STATE_WORDS: Record<MapNode["state"], string> = {
 };
 
 const DRAG_MFE = "application/x-pmap-mfe";
+const LOOK_KEY = "studio.productMap.look";
+type MapLook = "subsystems" | "compact";
 const DRAG_GEAR = "application/x-pmap-gear";
 
 /** The product map: lanes, links, palette and detail, or product.gdl. */
@@ -103,6 +105,23 @@ export function ProductMap({
   /** The product as shown: the record, or an add not yet saved. */
   const [product, setProduct] = useState<ProjectProduct | null>(null);
   const [view, setView] = useState<"map" | "gdl">("map");
+  /** `subsystems`: each subsystem a column of cards that say what each part
+   *  does, as an architecture diagram draws services; `compact`: names only. */
+  const [look, setLook] = useState<MapLook>(() => {
+    try {
+      return localStorage.getItem(LOOK_KEY) === "compact" ? "compact" : "subsystems";
+    } catch {
+      return "subsystems";
+    }
+  });
+  const pickLook = (l: MapLook) => {
+    setLook(l);
+    try {
+      localStorage.setItem(LOOK_KEY, l);
+    } catch {
+      /* a viewer convenience only */
+    }
+  };
   const [layers, setLayers] = useState<Set<MapLayer>>(() => new Set(MAP_LAYERS.map((l) => l.id)));
   const [selected, setSelected] = useState<string | null>(null);
   const [link, setLink] = useState<MapLink | null>(null);
@@ -290,10 +309,35 @@ export function ProductMap({
             ))}
           </div>
         )}
+        {view === "map" && (
+          <div className="doc-views" role="tablist" aria-label="Look">
+            {(["subsystems", "compact"] as const).map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="tab"
+                aria-selected={look === l}
+                className={`doc-view${look === l ? " on" : ""}`}
+                onClick={() => pickLook(l)}
+                data-pmap-look={l}
+                title={l === "subsystems" ? "Each subsystem a column of cards saying what each part does" : "Names only: the whole product at a glance"}
+              >
+                {l === "subsystems" ? "Subsystems" : "Compact"}
+              </button>
+            ))}
+          </div>
+        )}
         <span className="grow" />
         {busy && <span className="muted">{busy}</span>}
+        {/* The engine's verdict is the product's, not a node's: the map names
+            it and the Backend section lists it. */}
+        {(product?.last_preview?.errors ?? 0) > 0 && (
+          <button type="button" className="badge danger" onClick={() => onSection("backend")} data-pmap-engine-errors={product?.last_preview?.errors}>
+            {product?.last_preview?.errors} engine error{product?.last_preview?.errors === 1 ? "" : "s"} · Backend
+          </button>
+        )}
         <span className={`badge ${problems.some((p) => p.node.state !== "unused") ? "danger" : "ok"}`} data-pmap-problems={problems.length}>
-          {problems.length === 0 ? "no problems on the map" : `${problems.length} problem${problems.length === 1 ? "" : "s"} on the map`}
+          {problems.length === 0 ? "nothing wrong between the parts" : `${problems.length} problem${problems.length === 1 ? "" : "s"} between the parts`}
         </span>
       </div>
       {err && <div className="error">{err}</div>}
@@ -352,6 +396,7 @@ export function ProductMap({
         />
         {view === "map" ? (
           <Canvas
+            look={look}
             map={map}
             nodeById={nodeById}
             layers={layers}
@@ -438,6 +483,7 @@ function laneOrder(
 }
 
 function Canvas({
+  look,
   map,
   nodeById,
   layers,
@@ -452,6 +498,7 @@ function Canvas({
   onDropScreen,
   onDropGear,
 }: {
+  look: MapLook;
   map: ReturnType<typeof productMap>;
   nodeById: Map<string, MapNode>;
   layers: Set<MapLayer>;
@@ -566,7 +613,7 @@ function Canvas({
     }
     setPaths(out);
     setSize({ w: el.scrollWidth, h: el.scrollHeight });
-  }, [map, nodeById, layers, collapsed]);
+  }, [map, nodeById, layers, collapsed, look]);
 
   useLayoutEffect(() => {
     measure();
@@ -618,6 +665,7 @@ function Canvas({
       >
         <span className="pmap-node-label">{n.label}</span>
         {n.state !== "ok" && <span className="pmap-node-state">{STATE_WORDS[n.state]}</span>}
+        {look === "subsystems" && n.detail.kind !== "mfe" && <span className="pmap-node-what">{n.detail.what}</span>}
         {(n.badges ?? []).map((b) => (
           <span key={b.text} className={`pmap-badge ${b.tone}`}>
             {b.text}
@@ -633,7 +681,7 @@ function Canvas({
   };
 
   return (
-    <div className="pmap-canvas" ref={box} onClick={() => onSelect(null)} data-pmap-canvas>
+    <div className={`pmap-canvas ${look}`} ref={box} onClick={() => onSelect(null)} data-pmap-canvas>
       <svg className="pmap-links" width={size.w} height={size.h} aria-hidden>
         {paths.map((p) => {
           // Gear-to-gear links show only for what is selected: the lane would
@@ -689,7 +737,7 @@ function Canvas({
             <div className="pmap-lane-h" title={lane.hint}>
               {lane.title}
             </div>
-            <div className="pmap-lane-body">
+            <div className={`pmap-lane-body${lane.id === "frontend" ? "" : " row"}`} onScroll={measure}>
               {lane.id === "frontend" ? (
                 shell ? (
                   <div
