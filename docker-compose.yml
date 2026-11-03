@@ -240,6 +240,16 @@ services:
       STUDIO_GEARBOX_WORKDIR: /var/lib/studio/gearbox
       STUDIO_GEARBOX_CORPUS_URL: ${STUDIO_GEARBOX_CORPUS_URL:-https://github.com/MikeFalcon77/gears-rust.git}
       STUDIO_GEARBOX_CORPUS_REF: ${STUDIO_GEARBOX_CORPUS_REF:-feature/gearbox}
+      # The source id descriptions name the corpus by; unset takes the corpus
+      # repository's name (gears-rust here).
+      # STUDIO_GEARBOX_CORPUS_ID: gears-rust
+      # Where a product's frontend starts (product/frontx.rs); unset is
+      # FrontX's own templates.
+      # STUDIO_FRONTX_SHELL_TEMPLATE: github:constructorfabric/gears-frontx-templates//template-shell@main
+      # STUDIO_FRONTX_SOURCE: constructorfabric/gears-frontx-templates@main
+      # The kit catalogue (kit_registry/README.md), a JSON array of kits; unset
+      # is Constructor's own kits.
+      # STUDIO_KIT_CATALOGUE: '[{"slug":"sdlc","name":"SDLC","repository_url":"https://github.com/acme/kit-sdlc","default_version":"main"}]'
     volumes:
       # studio-session gear: launches sibling Theia containers via the host
       # Docker daemon. The workspaces path must be IDENTICAL on host and in

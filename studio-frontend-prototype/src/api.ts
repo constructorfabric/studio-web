@@ -3147,6 +3147,9 @@ export interface GearboxStatus {
   /** The organization's repositories left out: a platform repository has
    *  the same source id. */
   shadowed?: string[];
+  /** Where a product's frontend starts in this deployment (`STUDIO_FRONTX_*`);
+   *  absent from a backend from before it said (`frontxDefaultsOf`). */
+  frontx?: { shell_template: string; source_repo: string; source_ref: string } | null;
 }
 
 /** One gear repository as the engine last read it. */

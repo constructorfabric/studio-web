@@ -216,8 +216,10 @@ impl ConnectorDriver for GearRepositoryDriver {
         "Gear repository"
     }
 
+    /// None: the connection is one repository, and which one only the person
+    /// adding it knows. A default would quietly connect someone else's.
     fn default_base_url(&self) -> &'static str {
-        "https://github.com/constructorfabric/gears-rust"
+        ""
     }
 
     fn base_url_rule(&self) -> HostRule {

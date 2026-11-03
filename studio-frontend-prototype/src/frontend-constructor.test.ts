@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CatalogNode, CatalogRepoSource } from "./api";
 import {
   FRONTX_NODE_TYPE,
+  FRONTX_SHELL_TEMPLATE,
   SUGGESTED_FRONTX_SOURCE,
   assemblySteps,
   chosenShell,
@@ -10,6 +11,7 @@ import {
   coverage,
   fitOf,
   frontendPick,
+  frontxDefaultsOf,
   frontxSuggestion,
   gearKey,
   librariesFrom,
@@ -442,5 +444,29 @@ describe("what the product keeps of its frontend", () => {
     // One saved without its npm name is found by where it is.
     const { package: _, ...anonymous } = pick!.mfes[0];
     expect(picksOf({ ...pick!, mfes: [anonymous] }, [org]).picks).toEqual(["@cs/org-mfe"]);
+  });
+});
+
+describe("the deployment's FrontX starting points", () => {
+  it("are what the Gearbox status says, else FrontX's own templates", () => {
+    const own = frontxDefaultsOf({
+      frontx: { shell_template: "github:acme/ui//shell@v2", source_repo: "acme/ui", source_ref: "v2" },
+    });
+    expect(own).toEqual({ shellTemplate: "github:acme/ui//shell@v2", source: { repo: "acme/ui", git_ref: "v2" } });
+    const builtIn = { shellTemplate: FRONTX_SHELL_TEMPLATE, source: { repo: SUGGESTED_FRONTX_SOURCE.repo, git_ref: "main" } };
+    expect(frontxDefaultsOf(null)).toEqual(builtIn);
+    expect(frontxDefaultsOf({})).toEqual(builtIn);
+    // A shell that does not read is not offered.
+    expect(
+      frontxDefaultsOf({ frontx: { shell_template: "acme/ui", source_repo: "", source_ref: "" } }),
+    ).toEqual(builtIn);
+  });
+
+  it("make the deployment's template repository the templates, and suggest it", () => {
+    const mfe = (repo: string) => ({ name: "x", repo, kind: "mfe" }) as unknown as Parameters<typeof splitTemplates>[0][number];
+    const { templates, addable } = splitTemplates([mfe("acme/ui"), mfe("acme/shop")], "acme/ui");
+    expect(templates.map((m) => m.repo)).toEqual(["acme/ui"]);
+    expect(addable.map((m) => m.repo)).toEqual(["acme/shop"]);
+    expect(withSuggestedFrontx([], { repo: "acme/ui", git_ref: "v2" })?.[0]).toMatchObject({ repo: "acme/ui", git_ref: "v2" });
   });
 });

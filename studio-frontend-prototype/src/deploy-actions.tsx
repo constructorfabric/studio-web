@@ -573,7 +573,7 @@ export function BuildInStudio({
   }
   // The Product step's answer unless the member changed it.
   const env = choices.find((e) => e.id === envId) ?? choices[0];
-  const file = productFile ?? saved?.path ?? "product.gdl";
+  const file = productFile ?? saved?.path ?? "";
   const branch = gitRef ?? saved?.branch ?? "";
   const bound = profileFor(bindings, env.id);
   const options = [...new Set([bound, ...bindings.map((b) => b.profile)])];
@@ -634,7 +634,7 @@ export function BuildInStudio({
             onChange={(e) => setProductFile(e.target.value)}
             aria-label="Product description"
             title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
-            placeholder="product.gdl"
+            placeholder="products/<product>/product.gdl"
           />
           )}
           <input
@@ -665,7 +665,8 @@ export function BuildInStudio({
               const b = await api.startBuild(token, projectId, {
                 environment_id: env.id,
                 profile: prof,
-                product_file: file.trim() || "product.gdl",
+                // None named: the server takes the product record's path.
+                ...(file.trim() ? { product_file: file.trim() } : {}),
                 ...(branch.trim() ? { ref: branch.trim() } : {}),
               });
               onChanged?.(`Build ${b.build_id} started in ${b.namespace}; it shows below as it goes.`);
@@ -716,7 +717,7 @@ export function ProposeBuildWorkflow({
   }
   const env = choices.find((e) => e.id === envId) ?? choices[0];
   const profile = profileFor(bindings, env.id);
-  const file = saved?.path ?? "product.gdl";
+  const file = saved?.path;
   return (
     <div data-propose-workflow>
       <div className="row">
@@ -730,7 +731,7 @@ export function ProposeBuildWorkflow({
           </select>
         )}
         <span className="grow hint">
-          A workflow that builds <code>{file}</code> for profile <code>{profile}</code> and publishes to{" "}
+          A workflow that builds {file ? <code>{file}</code> : "the project's product"} for profile <code>{profile}</code> and publishes to{" "}
           <code>{env.registry}</code>, proposed to the repository as a pull request.
         </span>
         <button
@@ -744,7 +745,7 @@ export function ProposeBuildWorkflow({
                 await api.proposeBuildWorkflow(token, projectId, {
                   environment_id: env.id,
                   profile,
-                  product_file: file,
+                  ...(file ? { product_file: file } : {}),
                 }),
               );
             } catch (e) {

@@ -16,6 +16,7 @@ import {
   defaultPicks,
   diagnosticsByCode,
   groupDiagnostics,
+  productPathOf,
   isPickable,
   productIdFrom,
   profilesToCheck,
@@ -237,5 +238,19 @@ describe("profiles and their verdicts (ADR-0057)", () => {
     expect(checkOf(old, "dev")).toBe(old.last_preview);
     expect(checkOf(old, "prod")).toBeNull();
     expect(verdictOf(old, "dev").state).toBe("ok");
+  });
+});
+
+describe("productPathOf", () => {
+  it("is the recorded path, else the product's own, never the root's", () => {
+    expect(productPathOf({ product_id: "shop", written: { branch: "b", commit_sha: "c", path: "product.gdl" } })).toBe(
+      "product.gdl",
+    );
+    expect(productPathOf({ product_id: "shop", description: { revision: 1, path: "products/x/product.gdl" } })).toBe(
+      "products/x/product.gdl",
+    );
+    expect(productPathOf({ product_id: "shop" })).toBe("products/shop/product.gdl");
+    expect(productPathOf({})).toBeNull();
+    expect(productPathOf(null)).toBeNull();
   });
 });

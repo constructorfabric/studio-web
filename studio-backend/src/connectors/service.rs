@@ -309,7 +309,8 @@ pub struct ConnectorService {
 /// a credential before it is stored.
 ///
 /// The driver's own default is checked too. It is ours and it passes, so the
-/// check costs nothing and means the rule has no exception to remember.
+/// check costs nothing and means the rule has no exception to remember. A
+/// driver without one (a gear repository) is refused an empty address.
 fn resolve_base_url(
     driver: &dyn ConnectorDriver,
     supplied: Option<&str>,
@@ -318,6 +319,12 @@ fn resolve_base_url(
         .map(str::trim)
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| driver.default_base_url());
+    if raw.is_empty() {
+        anyhow::bail!(
+            "a {} connection needs its Server URL: there is no default to connect to",
+            driver.display_name().to_lowercase()
+        );
+    }
     let url = check_url(raw, "Server URL", driver.base_url_rule())?;
     // Parsed and re-rendered rather than passed through: `Url` has already
     // normalised the host, and what the driver joins paths onto should be what
@@ -2381,6 +2388,19 @@ mod base_url_rule_tests {
                 .unwrap_or_else(|e| panic!("{} rejects its own default: {e}", driver.provider()));
             assert_eq!(resolved, driver.default_base_url());
         }
+    }
+
+    /// A gear repository is one repository; none is assumed for it.
+    #[test]
+    fn a_gear_repository_names_its_repository() {
+        let driver = crate::connectors::gear_repository::GearRepositoryDriver::new(http());
+        let err = resolve_base_url(&driver, None).expect_err("no default repository");
+        assert!(err.to_string().contains("needs its Server URL"), "{err}");
+        assert!(resolve_base_url(&driver, Some("  ")).is_err());
+        assert_eq!(
+            resolve_base_url(&driver, Some("https://github.com/acme/our-gears")).unwrap(),
+            "https://github.com/acme/our-gears"
+        );
     }
 
     /// Source hosts are self-hostable, so a deployment's own installation is

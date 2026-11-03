@@ -28,7 +28,7 @@ import type {
   ProjectConfig,
   ProjectProduct,
 } from "./api";
-import { parseShellRef } from "./frontend-constructor";
+import { FRONTX_SHELL_TEMPLATE, parseShellRef } from "./frontend-constructor";
 import { checkOf, currentDescription, profileLabel, profilesToCheck, verdictOf, type ProfileVerdict } from "./product";
 
 export type ProductSectionId = "map" | "parts" | "infrastructure" | "backend" | "frontend";
@@ -40,10 +40,8 @@ export const PRODUCT_SECTIONS: readonly { id: ProductSectionId; title: string; h
   { id: "frontend", title: "Frontend", hint: "A FrontX shell with micro-frontends, if it has one" },
 ];
 
-/** The FrontX template a new frontend's shell comes from, spelled as FrontX's
- *  provenance spells a source. The same repository the constructor suggests
- *  as the catalogue's first micro-frontend source. */
-export const FRONTX_SHELL_TEMPLATE = "github:constructorfabric/gears-frontx-templates//template-shell@main";
+/** The built-in shell template; the deployment's is `frontxDefaultsOf`'s. */
+export { FRONTX_SHELL_TEMPLATE } from "./frontend-constructor";
 
 /** Project tabs that moved, by their old id: Frontend became a section of
  *  Product, and Builds and Deploys became Releases (ADR-0056 §4). */
@@ -69,10 +67,10 @@ export function hasFrontend(
   return !!product?.frontend || (!!cfg?.frontend && typeof cfg.frontend === "object");
 }
 
-/** The frontend a product starts with: the FrontX shell template, nothing
- *  mounted yet. */
-export function newFrontend(): FrontendPick {
-  const { repo, path, ref } = parseShellRef(FRONTX_SHELL_TEMPLATE)!;
+/** The frontend a product starts with: the deployment's FrontX shell
+ *  template, nothing mounted yet. */
+export function newFrontend(shellTemplate: string = FRONTX_SHELL_TEMPLATE): FrontendPick {
+  const { repo, path, ref } = parseShellRef(shellTemplate) ?? parseShellRef(FRONTX_SHELL_TEMPLATE)!;
   return { shell: { repo, path, ref }, mfes: [] };
 }
 

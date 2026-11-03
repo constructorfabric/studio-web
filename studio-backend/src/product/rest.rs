@@ -21,7 +21,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::gearbox::{CORPUS_SOURCE_ID, GearRoot, Gearbox, PROFILES, PreviewInput, Scope};
+use super::gearbox::{GearRoot, Gearbox, PROFILES, PreviewInput, Scope};
 use super::service::ProductService;
 use crate::catalog_graph::gts::GtsNode;
 use crate::org_scope::OrgCtx;
@@ -287,6 +287,34 @@ pub struct GearboxStatusDto {
     /// The organization's repositories left out because a platform
     /// repository has the same source id, by source id.
     pub shadowed: Vec<String>,
+    /// Where a product's frontend starts in this deployment
+    /// (`STUDIO_FRONTX_*`); filled whether or not Gearbox is.
+    pub frontx: FrontxDefaultsDto,
+}
+
+/// The deployment's FrontX starting points (`product/frontx.rs`).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct FrontxDefaultsDto {
+    /// The shell template a new frontend is assembled on, as
+    /// `github:<owner>/<repo>//<dir>@<ref>`.
+    pub shell_template: String,
+    /// The FrontX repository the frontend constructor suggests as a
+    /// micro-frontend source, `owner/repo`.
+    pub source_repo: String,
+    /// Its ref.
+    pub source_ref: String,
+}
+
+impl FrontxDefaultsDto {
+    fn from_env() -> Self {
+        let d = super::frontx::FrontxDefaults::from_env();
+        Self {
+            shell_template: d.shell_template,
+            source_repo: d.source_repo,
+            source_ref: d.source_ref,
+        }
+    }
 }
 
 /// One gear repository as the engine last read it.
@@ -688,7 +716,8 @@ pub struct SetProjectRepoRequest {
     pub connection_id: Option<Uuid>,
     /// `owner/name` of the repository.
     pub repo: String,
-    /// Branch scaffolded gears are written to (default `main`).
+    /// Branch scaffolded gears are written to (default the repository's
+    /// default branch, `main` when it cannot be read).
     pub branch: Option<String>,
 }
 
@@ -716,25 +745,35 @@ async fn set_project_repo(
 ) -> ApiResult<JsonBody<ProductRecordDto>> {
     // Every write to it would go through this connection: refuse one the
     // organization does not own before it is recorded.
+    let target = super::port::RepositoryTarget {
+        tenant: body.tenant,
+        connection_id: body.connection_id,
+        repo: body.repo.clone(),
+        base_branch: String::new(),
+    };
     product
         .service
-        .ensure_owned(
-            &ctx,
-            project_id,
-            &super::port::RepositoryTarget {
-                tenant: body.tenant,
-                connection_id: body.connection_id,
-                repo: body.repo.clone(),
-                base_branch: String::new(),
-            },
-        )
+        .ensure_owned(&ctx, project_id, &target)
         .await
         .map_err(|e| write_problem("invalid gear repo", &e))?;
+    // Not every repository's branch is `main`: ask the host which it is.
+    let branch = match body
+        .branch
+        .map(|b| b.trim().to_owned())
+        .filter(|b| !b.is_empty())
+    {
+        Some(b) => b,
+        None => product
+            .service
+            .default_branch_of(&ctx, &target)
+            .await
+            .unwrap_or_else(|| "main".to_string()),
+    };
     let repo = serde_json::json!({
         "tenant": body.tenant,
         "connection_id": body.connection_id,
         "repo": body.repo,
-        "branch": body.branch.unwrap_or_else(|| "main".to_string()),
+        "branch": branch,
     });
     let node = product
         .service
@@ -1624,11 +1663,12 @@ async fn gearbox_status(
             corpus_url: None,
             corpus_ref: None,
             corpus_commit: None,
-            source_id: CORPUS_SOURCE_ID.to_string(),
+            source_id: super::gearbox::corpus_source_id().to_string(),
             profiles,
             problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
             sources: Vec::new(),
             shadowed: Vec::new(),
+            frontx: FrontxDefaultsDto::from_env(),
         }));
     };
     let scope = product
@@ -1649,6 +1689,7 @@ async fn gearbox_status(
         profiles,
         problem: status.problem,
         shadowed: status.shadowed,
+        frontx: FrontxDefaultsDto::from_env(),
         sources: status
             .sources
             .into_iter()

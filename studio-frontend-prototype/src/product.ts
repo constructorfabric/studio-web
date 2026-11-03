@@ -213,6 +213,19 @@ export function diagnosticsByCode(ds: readonly GearboxDiagnostic[]): DiagnosticG
   return groups;
 }
 
+/** Where a project's product.gdl is in its repository, by the rule the
+ *  backend keeps (`description_path`): the path its record gives, else the
+ *  product's own `products/<id>/product.gdl`. `null` for a project with no
+ *  product, which has nothing to build -- never the repository root's file. */
+export function productPathOf(
+  record: Pick<ProjectProduct, "product_id" | "written" | "description" | "published"> | null | undefined,
+): string | null {
+  const recorded = record?.published?.path || record?.written?.path || record?.description?.path;
+  if (recorded) return recorded;
+  const id = record?.product_id?.trim();
+  return id ? `products/${id}/product.gdl` : null;
+}
+
 /** The errors that are not about this product at all: a corpus `gear.gdl`
  *  the engine could not read. They block the resolve, and no change to the
  *  gears picked here can clear them -- they mean the engine and the gear

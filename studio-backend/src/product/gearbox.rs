@@ -22,6 +22,7 @@
 //! | `STUDIO_GEARBOX_BIN` | `gearbox` |
 //! | `STUDIO_GEARBOX_CORPUS_URL` | unset: no corpus until the platform has a gear repository |
 //! | `STUDIO_GEARBOX_CORPUS_REF` | `main` |
+//! | `STUDIO_GEARBOX_CORPUS_ID` | the corpus URL's repository name, kebab-case (`gears-rust` without a URL) |
 //! | `STUDIO_GEARBOX_REFRESH_SECS` | `600` |
 //!
 //! The corpus is the platform's gears (ADR-0042), read from the platform's
@@ -31,7 +32,9 @@
 //! id. They are read together, because a gear in one may need a gear in
 //! another. While the platform has none, the deployment's corpus
 //! (`STUDIO_GEARBOX_CORPUS_URL` / `_REF`) is the one root, under the source id
-//! `gears-rust`. No organization's settings or sync can change either.
+//! [`corpus_source_id`]: its repository's name (`gears-rust` for
+//! `.../gears-rust.git`), or `STUDIO_GEARBOX_CORPUS_ID`. No organization's
+//! settings or sync can change either.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Read as _;
@@ -47,10 +50,60 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 use tracing::warn;
 
-/// The source id every generated `product.gdl` names its gears from. It is
-/// also the directory the gear corpus is checked out under in a session
-/// workspace, which is what makes `path("../gears-rust")` resolve there.
-pub const CORPUS_SOURCE_ID: &str = "gears-rust";
+/// The deployment corpus's source id when nothing names another: the
+/// repository the corpus has always been, so its descriptions stay as they
+/// were written.
+const DEFAULT_CORPUS_SOURCE_ID: &str = "gears-rust";
+
+/// The source id a generated `product.gdl` names the deployment corpus's
+/// gears from. It is also the directory the corpus is checked out under in a
+/// session workspace, which is what makes `path("../<id>")` resolve there.
+/// Read once from the environment, by [`deployment_source_id`].
+pub fn corpus_source_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        let var = |name: &str| std::env::var(name).ok();
+        deployment_source_id(
+            var("STUDIO_GEARBOX_CORPUS_ID").as_deref(),
+            var("STUDIO_GEARBOX_CORPUS_URL").as_deref().unwrap_or(""),
+        )
+    })
+}
+
+/// The deployment corpus's source id: `explicit` when it is one, else the
+/// corpus URL's repository name in kebab-case (`acme/Our_Gears.git` gives
+/// `our-gears`), else `gears-rust`. A gear repository connection derives its
+/// id the same way (the gear repository connector's `normalize_options`).
+pub fn deployment_source_id(explicit: Option<&str>, corpus_url: &str) -> String {
+    use crate::connectors::sdk::is_source_id;
+    if let Some(id) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
+        if is_source_id(id) {
+            return id.to_owned();
+        }
+        warn!(
+            id,
+            "STUDIO_GEARBOX_CORPUS_ID is not a source id; the corpus URL names it"
+        );
+    }
+    let name = corpus_url
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or_default();
+    let kebab = name
+        .to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if is_source_id(&kebab) {
+        kebab
+    } else {
+        DEFAULT_CORPUS_SOURCE_ID.to_owned()
+    }
+}
 
 const DEFAULT_CORPUS_REF: &str = "main";
 
@@ -89,6 +142,8 @@ pub struct GearboxConfig {
     pub workdir: PathBuf,
     pub corpus_url: String,
     pub corpus_ref: String,
+    /// The corpus's source id ([`corpus_source_id`]).
+    pub corpus_id: String,
     pub refresh: Duration,
 }
 
@@ -111,6 +166,7 @@ impl GearboxConfig {
             corpus_url,
             corpus_ref: var("STUDIO_GEARBOX_CORPUS_REF")
                 .unwrap_or_else(|| DEFAULT_CORPUS_REF.into()),
+            corpus_id: corpus_source_id().to_owned(),
             refresh: var("STUDIO_GEARBOX_REFRESH_SECS")
                 .and_then(|s| s.parse().ok())
                 .map(Duration::from_secs)
@@ -1398,7 +1454,7 @@ pub fn host_points(catalogue: &EngineCatalogue) -> Vec<HostPoint> {
                     source: g
                         .source
                         .clone()
-                        .unwrap_or_else(|| CORPUS_SOURCE_ID.to_string()),
+                        .unwrap_or_else(|| corpus_source_id().to_string()),
                 })
             })
         })
@@ -1705,7 +1761,7 @@ pub fn render_product_gdl(
     config: &BTreeMap<String, serde_json::Map<String, Value>>,
 ) -> String {
     let source = SourcePin {
-        id: CORPUS_SOURCE_ID,
+        id: corpus_source_id(),
         url: pin.as_ref().map_or("", |p| p.url),
         rev: pin.as_ref().map(|p| p.rev),
         within: None,
@@ -1745,7 +1801,7 @@ pub fn render_product_gdl_from(
             .map(|c| format!(", config = {}", gdl_map(c)))
             .unwrap_or_default()
     };
-    let first = sources.first().map_or(CORPUS_SOURCE_ID, |s| s.id);
+    let first = sources.first().map_or(corpus_source_id(), |s| s.id);
     let source_of = |id: &str| -> String {
         gear_source
             .get(id)
@@ -3004,7 +3060,7 @@ fn deployment_roots(cfg: &GearboxConfig) -> Vec<GearRoot> {
         return Vec::new();
     }
     vec![GearRoot {
-        id: CORPUS_SOURCE_ID.to_string(),
+        id: cfg.corpus_id.clone(),
         source: CorpusSource {
             label: format!(
                 "{}@{}",
@@ -3014,7 +3070,7 @@ fn deployment_roots(cfg: &GearboxConfig) -> Vec<GearRoot> {
                 cfg.corpus_ref
             ),
             key: "gearbox".to_string(),
-            repo: CORPUS_SOURCE_ID.to_string(),
+            repo: cfg.corpus_id.clone(),
             url: cfg.corpus_url.clone(),
             username: "x-access-token".to_string(),
             token: String::new(),
@@ -3343,7 +3399,7 @@ impl Gearbox {
         self.roots_in(scope)
             .into_iter()
             .next()
-            .map_or_else(|| CORPUS_SOURCE_ID.to_string(), |r| r.id)
+            .map_or_else(|| corpus_source_id().to_string(), |r| r.id)
     }
 
     /// What the corpus Git relay sends upstream for root `source_id` of
@@ -3695,7 +3751,7 @@ impl Gearbox {
             // `--source-id`; the RPC has no such parameter. Nor does the
             // scaffold read the corpus: the host's spec, trait and SDK arrive
             // in the params, taken from the catalogue.
-            let root = scratch.join(CORPUS_SOURCE_ID);
+            let root = scratch.join(corpus_source_id());
             std::fs::create_dir_all(&root)?;
             let params = serde_json::json!({
                 "id": spec.crate_name,
@@ -5256,8 +5312,43 @@ mod tests {
             workdir: std::env::temp_dir(),
             corpus_url: corpus_url.into(),
             corpus_ref: "main".into(),
+            corpus_id: deployment_source_id(None, corpus_url),
             refresh: DEFAULT_REFRESH,
         }
+    }
+
+    #[test]
+    fn the_corpus_source_id_is_its_repositorys_name_unless_one_is_named() {
+        // The corpus it always was keeps its id, so its descriptions stay.
+        let id = |explicit, url| deployment_source_id(explicit, url);
+        assert_eq!(
+            id(None, "https://github.com/MikeFalcon77/gears-rust.git"),
+            "gears-rust"
+        );
+        assert_eq!(
+            id(None, "https://github.com/acme/our-gears.git"),
+            "our-gears"
+        );
+        assert_eq!(id(None, "https://github.com/acme/Our_Gears/"), "our-gears");
+        assert_eq!(
+            id(None, "git@github.com:acme/platform.gears.git"),
+            "platform-gears"
+        );
+        assert_eq!(id(None, ""), "gears-rust");
+        // Not a source id when kebab-cased (starts with a digit): the default.
+        assert_eq!(id(None, "https://github.com/acme/42"), "gears-rust");
+        assert_eq!(
+            id(Some("core"), "https://github.com/acme/our-gears"),
+            "core"
+        );
+        assert_eq!(
+            id(Some(" Bad Id "), "https://github.com/acme/our-gears"),
+            "our-gears"
+        );
+        let cfg = config("https://github.com/acme/our-gears.git");
+        let roots = deployment_roots(&cfg);
+        assert_eq!(roots[0].id, "our-gears");
+        assert_eq!(roots[0].source.repo, "our-gears");
     }
 
     fn repo_root(id: &str, url: &str) -> GearRoot {
@@ -5745,7 +5836,7 @@ mod tests {
         let var = |k: &str| PathBuf::from(std::env::var(k).unwrap_or_else(|_| panic!("{k}")));
         let bin = var("GEARBOX_E2E_BIN");
         let corpus = var("GEARBOX_E2E_CORPUS");
-        let roots = vec![(CORPUS_SOURCE_ID.to_string(), corpus.clone())];
+        let roots = vec![(corpus_source_id().to_string(), corpus.clone())];
 
         let args: Vec<String> = vec![
             "catalogue".into(),
@@ -5771,7 +5862,7 @@ mod tests {
         );
         let gateway = &catalogue.gears["api-gateway"];
         assert!(!gateway.package.crate_name.is_empty());
-        assert_eq!(gateway.source.as_deref(), Some(CORPUS_SOURCE_ID));
+        assert_eq!(gateway.source.as_deref(), Some(corpus_source_id()));
         let plugin = &catalogue.gears["static-tr-plugin"];
         assert_eq!(
             catalogue.host_of(plugin).map(|g| g.id.as_str()),
@@ -5823,7 +5914,7 @@ mod tests {
         }
 
         let scratch = std::env::temp_dir().join(format!("gearbox-e2e-{}", uuid::Uuid::new_v4()));
-        let root = scratch.join(CORPUS_SOURCE_ID);
+        let root = scratch.join(corpus_source_id());
         std::fs::create_dir_all(&root).expect("scratch");
         let params = json!({
             "id": "my-gear",

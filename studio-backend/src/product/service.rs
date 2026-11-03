@@ -445,6 +445,39 @@ impl ProductService {
         Ok(sha)
     }
 
+    /// `target`'s default branch, as its host says. `None` when it cannot be
+    /// read -- no connectors, no such connection, the host refused -- and the
+    /// caller picks its own.
+    pub async fn default_branch_of(
+        &self,
+        ctx: &SecurityContext,
+        target: &super::port::RepositoryTarget,
+    ) -> Option<String> {
+        let connectors = self.connector_service()?;
+        let read = async {
+            Repository::open(
+                &connectors,
+                ctx,
+                target.tenant,
+                target.connection_id,
+                "github",
+                &target.repo,
+                None,
+            )
+            .await?
+            .default_branch()
+            .await
+        };
+        match read.await {
+            Ok(b) if !b.trim().is_empty() => Some(b.trim().to_owned()),
+            Ok(_) => None,
+            Err(e) => {
+                tracing::warn!(repo = %target.repo, error = %format!("{e:#}"), "studio-product: the repository's default branch could not be read");
+                None
+            }
+        }
+    }
+
     /// The target's repository, opened only when `ctx` may write through
     /// its connection.
     async fn open_owned(
