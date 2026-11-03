@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Deployment, DeployEnvironment } from "./api";
 import type { IdeBuild } from "./builds";
-import { databaseWord, ladderOrder, ladderSteps, newestRelease, stepStatus, versionOf, whatRunsWhere } from "./releases";
+import { databaseWord, ladderOrder, ladderSteps, newestRelease, releaseStatus, stepStatus, versionOf, whatRunsWhere } from "./releases";
 
 const env = (id: string, over: Partial<DeployEnvironment> = {}): DeployEnvironment => ({
   id,
@@ -167,6 +167,35 @@ describe("a step of the ladder", () => {
       [build("b-0.3.0"), build("b-0.3.1", { finishedAt: "2026-11-02T09:00:00Z" }), build("b-0.4.0", { status: "failed" })],
     );
     expect(newestRelease(steps)?.buildId).toBe("b-0.3.1");
+  });
+});
+
+describe("the Releases header's status", () => {
+  const targets = [dev, stage, prod].map(target);
+
+  it("says nothing is published when there is no build", () => {
+    expect(releaseStatus(ladderSteps(targets, [], []), 0)).toEqual([{ text: "nothing published yet", tone: "neutral" }]);
+  });
+
+  it("says a build is ready while nothing is deployed", () => {
+    expect(releaseStatus(ladderSteps(targets, [], [build("b-0.3.0")]), 1)).toEqual([
+      { text: "1 build ready · nothing deployed yet", tone: "info" },
+    ]);
+  });
+
+  it("names what runs where, and what waits or failed", () => {
+    const deployments = [
+      dep("dev", "b-0.3.1", "succeeded"),
+      dep("stage", "b-0.3.0", "succeeded"),
+      dep("stage", "b-0.3.1", "failed"),
+      dep("prod", "b-0.3.0", "awaiting_approval"),
+    ];
+    expect(releaseStatus(ladderSteps(targets, deployments, [build("b-0.3.1")]), 1)).toEqual([
+      { text: "0.3.1 runs in dev", tone: "ok" },
+      { text: "0.3.0 runs in stage", tone: "ok" },
+      { text: "the last deploy to stage failed", tone: "danger" },
+      { text: "0.3.0 waits for approval in prod", tone: "warn" },
+    ]);
   });
 });
 

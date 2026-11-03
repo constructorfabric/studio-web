@@ -1,22 +1,25 @@
 /* A project's Releases tab (ADR-0056 §4): how its product goes out. It was
  * two tabs, Builds and Deploys, with nothing leading from one to the next.
  *
- *   - On top, the ladder: the environments the project may deploy to in
+ *   - The header (ui-standard.tsx) says where the product stands, read from
+ *     the ladder (releaseStatus); the explanation is behind its "?".
+ *   - Then the three steps, as a StepFlow of cards: 1 Build (builds-tab.tsx),
+ *     2 Deploy, 3 History (folded until opened).
+ *   - In Deploy, the ladder: the environments the project may deploy to in
  *     `promote_from` order (releases.ts), each with what runs there, how its
  *     newest deploy went, whether one waits for approval, and the action that
  *     applies -- Promote what the environment before it runs, or Deploy a
  *     published build. A step opened below the ladder has the rest of what
  *     the Deploys tab had on an environment's row: roll back, uninstall,
  *     previews, the release's values and secrets.
- *   - Below it, the builds (builds-tab.tsx) and the deploy history.
- *   - Folded at the bottom, Environments of this project: the bindings of
+ *   - Folded under it, Environments of this project: the bindings of
  *     the product's profiles and the project's own environments (ADR-0054).
  *     It is the only place a project adds one.
  *
  * A build is published in Studio, the IDE or CI; a deploy names it and the
  * server installs it with the environment's connection (ADR-0048). */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, api, type Connection, type DeployEnvironment, type Deployment, type ProjectTargets } from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
@@ -29,7 +32,8 @@ import { KUBERNETES_PROFILES } from "./product";
 import { deployableBuilds, productUrls, profilesBoundTo } from "./project-deploys";
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
-import { ladderSteps, newestRelease, stepStatus, versionOf, type LadderStep } from "./releases";
+import { ladderSteps, newestRelease, releaseStatus, stepStatus, versionOf, type LadderStep } from "./releases";
+import { PageHeader, StatusChip, StepFlow, type Tone } from "./ui-standard";
 
 export function ProjectReleases({
   token,
@@ -119,19 +123,46 @@ export function ProjectReleases({
   const ownEnvironments = targets?.environments.filter((t) => !!t.environment.project_id).map((t) => t.environment) ?? [];
   const noEnvironment = !!targets && targets.environments.length === 0;
 
+  const published = deployableBuilds(builds).length;
+  const status = targets ? releaseStatus(steps, published) : null;
+
   return (
     <div className="project-deploys" data-project-releases>
       <style>{RELEASES_CSS}</style>
-      <h1>Releases</h1>
-      <p className="subtitle">
-        Build the product, deploy it to the first environment, then let the release climb the environments in order.
-      </p>
-      {targets && deployableBuilds(builds).length > 0 && (
+      <PageHeader
+        title="Releases"
+        status={
+          status ? (
+            status.map((c) => (
+              <StatusChip key={c.text} tone={c.tone}>
+                {c.text}
+              </StatusChip>
+            ))
+          ) : unavailable ? (
+            <StatusChip tone="neutral">no environments in this Studio</StatusChip>
+          ) : (
+            !error && <span>Reading…</span>
+          )
+        }
+        info={
+          <>
+            <p>
+              Build the product, deploy it to the first environment, then let the release climb the environments in
+              order: each environment takes from the one before it.
+            </p>
+            <p>
+              A build is published in Studio, the IDE or CI; a deploy names it and the server installs it with the
+              environment&apos;s connection. A protected environment waits for an administrator to approve.
+            </p>
+          </>
+        }
+      />
+      {targets && published > 0 && (
         <PipelineLine
           hint={deploysHint({
             environments: targets.environments.length,
             bound: targets.bindings.length,
-            deployable: deployableBuilds(builds).length,
+            deployable: published,
             deployments,
           })}
           onOpenTab={onOpenTab}
@@ -144,45 +175,78 @@ export function ProjectReleases({
           {notice}
         </div>
       )}
-      <ReleaseStep
-        n={1}
-        title="Build"
-        done={deployableBuilds(builds).length > 0}
-        status={
-          deployableBuilds(builds).length > 0
-            ? `${deployableBuilds(builds).length} published build${deployableBuilds(builds).length === 1 ? "" : "s"}; the newest is ready to deploy.`
-            : "Nothing published yet: build the product first."
-        }
-        step="build"
-      >
-        <ProjectBuilds
-          token={token}
-          projectId={projectId}
-          projectName={projectName}
-          onOpenTab={onOpenTab}
-          round={shared}
-          onChanged={buildsChanged}
-          embedded
-        />
-      </ReleaseStep>
+      <StepFlow
+        label="How the product goes out"
+        steps={[
+          {
+            id: "build",
+            title: "Build",
+            state: published > 0 ? "done" : "current",
+            status:
+              published > 0
+                ? `${published} published build${published === 1 ? "" : "s"}; the newest is ready to deploy.`
+                : "Nothing published yet: build the product first.",
+            body: (
+              <ProjectBuilds
+                token={token}
+                projectId={projectId}
+                projectName={projectName}
+                onOpenTab={onOpenTab}
+                round={shared}
+                onChanged={buildsChanged}
+                embedded
+              />
+            ),
+          },
+          {
+            id: "deploy",
+            title: "Deploy",
+            state: steps.some((s) => !!s.runs) ? "done" : published === 0 ? "later" : "current",
+            keepOpen: true,
+            status: noEnvironment
+              ? "No environment to deploy to yet."
+              : steps.some((s) => !!s.runs)
+                ? "Running; a release climbs the environments in order."
+                : published === 0
+                  ? "Once a build is published, deploy it to the first environment."
+                  : "Deploy the newest build to the first environment.",
+            body: deployBody(),
+          },
+          ...(unavailable
+            ? []
+            : [
+                {
+                  id: "history",
+                  title: "History",
+                  state: "todo" as const,
+                  quiet: true,
+                  status: deployments.length
+                    ? `${deployments.length} deploy${deployments.length === 1 ? "" : "s"} so far.`
+                    : "Nothing deployed yet.",
+                  body: (
+                    <div data-deploy-history>
+                      <ProjectEnvironments
+                        key={round}
+                        token={token}
+                        projectId={projectId}
+                        profiles={KUBERNETES_PROFILES}
+                        title="Deploy history"
+                        show="history"
+                      />
+                    </div>
+                  ),
+                },
+              ]),
+        ]}
+      />
+    </div>
+  );
 
-      <ReleaseStep
-        n={2}
-        title="Deploy"
-        done={steps.some((s) => !!s.runs)}
-        later={deployableBuilds(builds).length === 0}
-        status={
-          noEnvironment
-            ? "No environment to deploy to yet."
-            : steps.some((s) => !!s.runs)
-              ? "Running; a release climbs the environments in order."
-              : deployableBuilds(builds).length === 0
-                ? "Once a build is published, deploy it to the first environment."
-                : "Deploy the newest build to the first environment."
-        }
-        step="deploy"
-        keepOpen
-      >
+  /** Step 2: the ladder, the environment opened under it, and the
+   *  environments of this project, folded. */
+  function deployBody() {
+    return (
+      <>
       {unavailable ? (
         <p className="empty">This Studio has no environments yet (the backend predates them).</p>
       ) : targets === null ? (
@@ -322,78 +386,9 @@ export function ProjectReleases({
           )}
         </details>
       )}
-      </ReleaseStep>
-
-      {!unavailable && (
-        <ReleaseStep
-          n={3}
-          title="History"
-          done={false}
-          quiet
-          status={deployments.length ? `${deployments.length} deploy${deployments.length === 1 ? "" : "s"} so far.` : "Nothing deployed yet."}
-          step="history"
-        >
-          <div data-deploy-history>
-            <ProjectEnvironments
-              key={round}
-              token={token}
-              projectId={projectId}
-              profiles={KUBERNETES_PROFILES}
-              title="Deploy history"
-              show="history"
-            />
-          </div>
-        </ReleaseStep>
-      )}
-    </div>
-  );
-}
-
-/** One step of the release, in the order it is done: a number (a tick once
- *  done), what it is and where it stands. A done step folds to that line
- *  until opened; `keepOpen` never folds; `quiet` starts folded (the
- *  history, read when wanted); `later` is a step that waits on the one
- *  before. */
-function ReleaseStep({
-  n,
-  title,
-  status,
-  done,
-  later = false,
-  keepOpen = false,
-  quiet = false,
-  step,
-  children,
-}: {
-  n: number;
-  title: string;
-  status: string;
-  done: boolean;
-  later?: boolean;
-  keepOpen?: boolean;
-  quiet?: boolean;
-  step: string;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState<boolean | null>(null);
-  const shown = keepOpen || (open ?? !(done || quiet));
-  return (
-    <section className={`card release-step${done ? " done" : later ? " later" : " current"}`} data-release-flow-step={step}>
-      <button
-        type="button"
-        className="release-step-head"
-        aria-expanded={shown}
-        disabled={keepOpen}
-        onClick={() => setOpen(!shown)}
-      >
-        <span className="release-step-n">{done ? "✓" : n}</span>
-        <span className="release-step-title">{title}</span>
-        <span className="release-step-status">{status}</span>
-        {!keepOpen && <span className="release-step-toggle">{shown ? "Hide" : "Show"}</span>}
-      </button>
-      {shown && <div className="release-step-body">{children}</div>}
-    </section>
-  );
+      </>
+    );
+  }
 }
 
 /** The ladder: the newest published build, then each environment in the
@@ -445,17 +440,17 @@ function ReleaseLadder({
             >
               <div className="deploy-env-head">
                 <b>{e.name}</b>
-                {e.protected && <span className="badge">needs approval</span>}
+                {e.protected && <StatusChip tone="info">needs approval</StatusChip>}
                 {e.project_id && (
-                  <span className="badge" data-own-environment>
+                  <StatusChip tone="neutral" data-own-environment>
                     the project&apos;s own
-                  </span>
+                  </StatusChip>
                 )}
               </div>
               <div>
-                <span className={`badge deploy-${status.tone}`} data-ladder-status>
+                <StatusChip tone={s.state === "deploying" ? "running" : LADDER_TONE[status.tone]} data-ladder-status>
                   {status.text}
-                </span>
+                </StatusChip>
               </div>
               <div className="sub">
                 {e.kind === "research" ? (
@@ -503,6 +498,9 @@ function ReleaseLadder({
     </section>
   );
 }
+
+/** A ladder step's tone (releases.ts) as a StatusChip's. */
+const LADDER_TONE: Record<ReturnType<typeof stepStatus>["tone"], Tone> = { ok: "ok", warn: "warn", bad: "danger", idle: "neutral" };
 
 /** Promote: deploy here the build the environment before it runs. */
 function PromoteBuild({
@@ -562,19 +560,6 @@ const RELEASES_CSS = `
 .project-deploys .ladder-build { flex:0 1 140px; background:var(--accent); }
 .project-deploys .ladder-actions { gap:6px; flex-wrap:wrap; margin-top:auto; padding-top:6px; }
 .project-deploys .ladder > li.ladder-build { flex:0 1 160px; }
-.project-deploys .release-step { padding:0; overflow:hidden; margin:0 0 12px; }
-.project-deploys .release-step-head { display:flex; align-items:center; gap:12px; width:100%; padding:12px 16px; background:none; border:0; text-align:left; cursor:pointer; color:inherit; font:inherit; }
-.project-deploys .release-step-head:disabled { cursor:default; opacity:1; }
-.project-deploys .release-step-n { flex:none; display:inline-grid; place-items:center; width:26px; height:26px; border-radius:50%; font-weight:700; font-size:13px; background:var(--accent); color:var(--foreground); }
-.project-deploys .release-step.current .release-step-n { background:var(--primary); color:var(--primary-foreground, #fff); }
-.project-deploys .release-step.done .release-step-n { background:color-mix(in srgb, #16a34a 22%, transparent); color:#15803d; }
-.project-deploys .release-step-title { font-weight:700; font-size:15px; }
-.project-deploys .release-step-status { flex:1; color:var(--muted-foreground); font-size:13px; }
-.project-deploys .release-step-toggle { font-size:12px; color:var(--primary); }
-.project-deploys .release-step.current { border-color:color-mix(in srgb, var(--primary) 45%, var(--border)); }
-.project-deploys .release-step.later .release-step-body { opacity:.75; }
-.project-deploys .release-step-body { padding:0 16px 14px; border-top:1px solid var(--border); padding-top:12px; }
-.project-deploys .release-step-body > .card, .project-deploys .release-step-body section.card { box-shadow:none; }
 .project-deploys .release-own summary { cursor:pointer; }
 .project-deploys .release-own[open] summary { margin-bottom:10px; }
 .project-deploys .release-own-head { margin:16px 0 4px; }

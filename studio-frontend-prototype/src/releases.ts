@@ -125,6 +125,33 @@ export function ladderSteps(
   });
 }
 
+/** The Releases header's status: where the product stands, as a few chips
+ *  read from the ladder -- what runs where, what waits, what failed -- or,
+ *  with nothing deployed, whether there is a build to deploy. */
+export function releaseStatus(
+  steps: readonly LadderStep[],
+  published: number,
+): { text: string; tone: "ok" | "warn" | "danger" | "info" | "neutral" | "running" }[] {
+  const out: ReturnType<typeof releaseStatus> = [];
+  for (const s of steps) {
+    const name = s.environment.name;
+    const runs = s.runs ? versionOf(s.runs) : null;
+    if (runs) out.push({ text: `${runs} runs in ${name}`, tone: "ok" });
+    if (s.state === "waiting") out.push({ text: `${versionOf(s.waiting!) ?? "a deploy"} waits for approval in ${name}`, tone: "warn" });
+    else if (s.state === "deploying") {
+      const v = versionOf(s.latest!);
+      out.push({ text: v ? `deploying ${v} to ${name}` : `deploying to ${name}`, tone: "running" });
+    }
+    else if (s.state === "failed") out.push({ text: `the last deploy to ${name} failed`, tone: "danger" });
+  }
+  if (!steps.some((s) => s.runs)) {
+    if (published > 0)
+      out.unshift({ text: `${published} build${published === 1 ? "" : "s"} ready · nothing deployed yet`, tone: "info" });
+    else out.unshift({ text: "nothing published yet", tone: "neutral" });
+  }
+  return out;
+}
+
 /** A step's state in words, and the badge it is drawn with. */
 export function stepStatus(s: LadderStep): { text: string; tone: "ok" | "warn" | "bad" | "idle" } {
   const running = s.runs ? versionOf(s.runs) : null;

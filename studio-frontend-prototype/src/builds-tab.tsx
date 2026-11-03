@@ -61,6 +61,7 @@ import { buildsHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 import { productPathOf } from "./product";
 import { HowItBuilds } from "./project-build-card";
+import { EmptyState, StatusChip, type Tone } from "./ui-standard";
 
 /** At most this many runs are read: the sync keeps the newest few hundred
  *  per repository. */
@@ -487,9 +488,11 @@ function InCi({
       )}
       {!error && runs === null && <div className="empty">Loading the CI runs…</div>}
       {runs && runs.length === 0 && (
-        <div className="empty" data-builds-empty>
-          No CI runs yet: they arrive with the next sync of the project&apos;s sources, if the connection can read the
-          repository&apos;s Actions.
+        <div data-builds-empty>
+          <EmptyState
+            title="No CI runs yet."
+            body="They arrive with the next sync of the project's sources, if the connection can read the repository's Actions."
+          />
         </div>
       )}
       {runs && runs.length > 0 && (
@@ -566,7 +569,7 @@ function InCi({
                 {shown.map((r) => (
                   <tr key={r.id} data-build-status={r.status}>
                     <td>
-                      <span className={`badge ${statusTone(r.status)}`}>{r.status}</span>
+                      <StatusChip tone={buildTone(r.status)}>{r.status}</StatusChip>
                       {r.externalId && published.get(`ci-run-${r.externalId}`) ? (
                         <span className="sub" data-run-published>
                           {" "}
@@ -895,15 +898,21 @@ const LOG_FOLLOW_MS = 5_000;
 /** The build's status; a lost one says so, in a warning's tone. */
 function StatusBadge({ build: b }: { build: IdeBuild }) {
   return isLost(b) ? (
-    <span className="badge warn" data-build-lost-badge>
+    <StatusChip tone="warn" data-build-lost-badge>
       lost
-    </span>
+    </StatusChip>
   ) : (
-    <span className={`badge ${statusTone(b.status)}`}>{b.status}</span>
+    <StatusChip tone={buildTone(b.status)}>{b.status}</StatusChip>
   );
 }
 
-const STAGE_TONE: Record<StageState, string> = { done: "ok", running: "info", failed: "danger", waiting: "neutral" };
+/** A build's status as a StatusChip's tone: statusTone, with a running build
+ *  drawn as running. */
+function buildTone(status: IdeBuild["status"]): Tone {
+  return status === "running" ? "running" : (statusTone(status) as Tone);
+}
+
+const STAGE_TONE: Record<StageState, Tone> = { done: "ok", running: "running", failed: "danger", waiting: "neutral" };
 const STAGE_MARK: Record<StageState, string> = { done: "✓", running: "…", failed: "✕", waiting: "" };
 
 /** prepare → images → publish, each as a badge in its state. A run of the
@@ -922,9 +931,9 @@ function StageLane({ build: b }: { build: IdeBuild }) {
         return (
           <span key={stage} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
             {i > 0 && <span className="sub">→</span>}
-            <span className={`badge ${STAGE_TONE[state]}`} data-stage={stage} data-stage-state={state}>
+            <StatusChip tone={STAGE_TONE[state]} data-stage={stage} data-stage-state={state}>
               {STAGE_MARK[state]} {stage}
-            </span>
+            </StatusChip>
           </span>
         );
       })}
