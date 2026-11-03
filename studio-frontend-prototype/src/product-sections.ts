@@ -30,7 +30,7 @@ import type {
 import { parseShellRef } from "./frontend-constructor";
 import { PRODUCT_PROFILES } from "./product";
 
-export type ProductSectionId = "parts" | "infrastructure" | "backend" | "frontend";
+export type ProductSectionId = "map" | "parts" | "infrastructure" | "backend" | "frontend";
 
 export const PRODUCT_SECTIONS: readonly { id: ProductSectionId; title: string; hint: string }[] = [
   { id: "parts", title: "Parts", hint: "What the project has to make it from, and what it lacks" },

@@ -151,6 +151,19 @@ export function ProductFlow({
         <div className="fc-step-detail" data-flow-detail={shown.id}>
           {shown.parts ? (
             <div style={{ display: "grid", gap: 4 }}>
+              <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
+                <button
+                  type="button"
+                  className={`fc-step${section === "map" ? " on" : ""}`}
+                  aria-pressed={section === "map"}
+                  onClick={() => onSection("map")}
+                  data-product-section-tab="map"
+                >
+                  Map
+                </button>
+                <span className="grow muted">The whole product in one picture, and where screens and gears are added.</span>
+                {section === "map" && <span className="muted">shown below</span>}
+              </div>
               {shown.parts.map((p) => (
                 <div key={p.id} className="row" style={{ gap: 8, alignItems: "baseline" }} data-flow-part={p.id} data-flow-state={p.state}>
                   <button
