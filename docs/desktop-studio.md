@@ -535,7 +535,7 @@ A mode's own views sit beside the rail, not on it:
 |---|---|---|
 | Development, Full functionality, Agent development | Agents (Orca), on the right | the ribbon's **Agents** (Doc editing has it too) |
 | Building | the Gearbox Catalogue, on the left with no rail tab (`OFF_RAIL`); the Inspector on the right | the ribbon's **Corpus → Catalogue**, **View → Catalogue** |
-| Doc editing | Analyze, in the bottom panel | the ribbon's **Specs → Analyze** |
+| Doc editing | Analyze and Domain model (the desktop's only), in the bottom panel | the ribbon's **Specs → Analyze** and **Specs → Domain model** |
 
 Claude Code and Codex are reached the same way in every mode: the rail's
 Assistants entry, Ctrl+Alt+K and Ctrl+Alt+X (⌥⌘K, ⌥⌘X), and **Studio: Assistants**
@@ -557,6 +557,41 @@ The right panel has no tab bar in the product. Whatever opens there gets a
 readable width: a panel narrower than 300px when a new view comes to the
 front is widened to the assistants' 360px (`settleRightPanelWidth`,
 `theia/product-ext/src/browser/ai-context.js`).
+
+### The domain model in Doc editing
+
+**Specs → Domain model** shows the project's domain model below the editor:
+what its documents say the application is, and where they disagree. It is the
+model of the portal's project tab *Domain model* (`docs/spec-domain-model.md`),
+read through the documents gear's `/studio-documents/v1/spec-model` routes, and
+the desktop's only: it is bound in `studio-electron-frontend-module.ts`, so a
+session registers no command for it and its ribbon leaves the button out.
+
+- **This document**, first: what the model reads in the file in front and the
+  findings with a side in it. *Read this document again* rebuilds the model
+  for that one document.
+- **To resolve**: every finding, undecided first, with ✓ (a real problem) and
+  ✗ (not one). A dismissed finding leaves the files.
+- **Entities**: the model's entities, each with its facts, as the portal folds
+  them (the glossary's names, aliases merged).
+- **Glossary**: the names the project uses, as members decided them. Deciding
+  names, proposing fixes, requirements and the rest stay in the portal.
+- **Build the model** reads every document not read at its revision, on the
+  member's own model key, and the view follows the build until it ends.
+
+Every passage opens in the file on this machine: under the project folder, or
+under a repository's own folder in it. The model reads what is pushed, so a
+passage is found by its quote, nearest the line it was read at, not by its
+line number. A quote no longer in the file is marked *edited since*, and the
+file opens at its top instead of a stale line. Monaco takes the place to open
+at; the product's Markdown editor (Doc editing) drops it, so there the quote is
+looked for in the rendered text and selected (`desktop-domain-model-reveal.ts`). A finding not dismissed is also
+a Problems marker (owner `studio-domain-model`) at its passage in each file it
+names, put back whenever one of those files changes on disk.
+
+The view asks Studio nothing until it is first shown. It finds the project as
+Analyze does (`studio-desktop/opened`); a workspace opened whole has a model
+only when it holds one project.
 
 ### The Explorer and the status bar per mode
 
