@@ -48,11 +48,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # build. The archive is checked against the SHA-256 from the release's
 # SHA256SUMS; the binary is built for glibc 2.35 and runs on the runtime below.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS gearbox
-ARG STUDIO_GEARBOX_REPO=https://github.com/constructorfabric/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-cf63925
-ARG STUDIO_GEARBOX_VERSION=0.1.0-cf63925
-ARG STUDIO_GEARBOX_REF=cf639255c2e63002bfb76764f3e397a5c61877de
-ARG STUDIO_GEARBOX_SHA256=04c21dd6187abc70f401fb34b78717e7c46576b2d847ede6a17dc801df4dd92d
+# Until constructorfabric/gearbox#17 (GDL 1.5, `frontend = frontx_product(...)`)
+# merges, the engine is the snapshot of that PR's branch on its author's fork;
+# move back to a constructorfabric/gearbox release once it does.
+ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
+ARG STUDIO_GEARBOX_RELEASE=snapshot-a0bebdc
+ARG STUDIO_GEARBOX_VERSION=0.1.0-a0bebdc
+ARG STUDIO_GEARBOX_REF=a0bebdc362b0b73a0261f5b5ebdb8e9a9e382073
+ARG STUDIO_GEARBOX_SHA256=f50e5b6266618441dc2db40d1402d92030bd7fede3f6fdf66df422525c0dd364
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \
@@ -87,6 +90,9 @@ COPY --from=onnxruntime /opt/onnxruntime/lib/libonnxruntime.so* /opt/onnxruntime
 COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
 # Its commit, which `gearbox --version` does not say (studio-product reads it).
 COPY --from=gearbox /usr/local/share/gearbox/REVISION /usr/local/share/gearbox/REVISION
+# The engine above reads GDL 1.5, and pipelines install it from the same repository.
+ENV STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox \
+    STUDIO_GEARBOX_FRONTX=1
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 RUN chmod +x /app/studio-backend && chown -R studio:studio /app
