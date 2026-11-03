@@ -22,6 +22,7 @@ import type { ClientFilter, ListState } from "./list-state";
 import { Modal } from "./modal";
 import { PAGE_SIZE, PAGE_SIZES, Pager } from "./pager";
 import type { Paged } from "./pager";
+import { EmptyState } from "./ui-standard";
 import { TileGrid, ViewToggle, usePageSize, useViewMode } from "./view-mode";
 import type { ViewMode } from "./view-mode";
 
@@ -242,6 +243,7 @@ export interface Filter<T> {
   match?: (row: T, value: string) => boolean;
 }
 
+/** What EmptyState (ui-standard.tsx) shows when the list holds nothing. */
 export interface EmptySpec {
   /** "No projects yet." */
   title: string;
@@ -537,18 +539,16 @@ export function DataTable<T>(props: DataTableProps<T>) {
           )}
         </div>
       ) : total === 0 && !filtered ? (
-        <div className="dt-state dt-empty">
-          <div className="dt-empty-title">{props.empty.title}</div>
-          {props.empty.body && <div className="dt-empty-body">{props.empty.body}</div>}
-          {props.empty.action}
-        </div>
+        <EmptyState {...props.empty} />
       ) : total === 0 ? (
-        <div className="dt-state dt-empty">
-          <div className="dt-empty-title">Nothing matches.</div>
-          <button className="ghost" onClick={list.clearFilters}>
-            Clear filters
-          </button>
-        </div>
+        <EmptyState
+          title="Nothing matches."
+          action={
+            <button className="ghost" onClick={list.clearFilters}>
+              Clear filters
+            </button>
+          }
+        />
       ) : mode === "tiles" && props.tile ? (
         <TileGrid>
           {visible.map((row) => (
