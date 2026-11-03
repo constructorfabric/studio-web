@@ -123,8 +123,7 @@ The canonical wire vocabulary is `projects-mfe/src/api/types.ts`
   comment and no entity; `dev.yaml`, `k8s.yaml` and `postgres.yaml` have
   neither. AM runs a GTS tenant-type check, so creating a project tenant is
   refused on those profiles until the two blocks are copied over.
-- ADR-0005 should have its status line changed to
-  `superseded by ADR-0010`. That file is backend-owned; this ADR does not edit it.
+- ADR-0005 is marked `superseded` by this record (2026-11-03).
 - `studio_projects` is still created by `docker/initdb/01-create-databases.sql`
   as a leftover of the retired gear.
 

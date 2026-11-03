@@ -18,7 +18,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0002](0002-projects-as-resource-groups.md) | Projects — Resource Group-backed in v0.1, domain gear later | accepted | 2026-07-28 |
 | [0003](0003-theia-sessions.md) | Per-workspace Theia IDE sessions in containers | accepted | 2026-07-30 |
 | [0004](0004-users-onboarding-roles.md) | User onboarding, provisioning, and roles | accepted | 2026-08-03 |
-| [0005](0005-projects-domain-gear.md) | Projects — a domain gear (supersedes the v0.1 decision in ADR-0002) | accepted | 2026-08-07 |
+| [0005](0005-projects-domain-gear.md) | Projects — a domain gear (supersedes the v0.1 decision in ADR-0002) | superseded by [0010](0010-projects-are-am-tenants.md) | 2026-08-07 |
 | [0006](0006-frontend-rebuild-on-frontx.md) | Rebuild the portal frontend on FrontX | accepted | 2026-08-11 |
 | [0007](0007-shell-tokens-as-whole-colours.md) | Shell theme tokens hold whole colours | accepted | 2026-08-18 |
 | [0008](0008-simplified-navigation-shell.md) | Simplified navigation shell — overlay drawer, top bar, context slot | accepted | 2026-08-18 |
