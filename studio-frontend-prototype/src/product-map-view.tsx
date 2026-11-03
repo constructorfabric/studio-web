@@ -8,7 +8,7 @@
  * Adds and removes write through the product record as the sections do, so
  * the strip and every section read the same product afterwards. */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react";
 
 import {
   PRODUCT_CHANGED_EVENT,
@@ -68,6 +68,24 @@ const KIND_WORDS: Record<MapNode["detail"]["kind"], string> = {
   technology: "Runs on",
 };
 
+/** A node's kind at a glance, before its name. */
+const KIND_GLYPH: Record<MapNode["detail"]["kind"], string> = {
+  shell: "▭",
+  mfe: "▣",
+  gear: "⚙",
+  plugin: "⧉",
+  "missing-gear": "⚠",
+  technology: "⛁",
+};
+
+/** Well-apart hues; a group keeps its own across renders and projects. */
+const HUES = [212, 152, 268, 28, 336, 188, 88, 300, 4, 124, 240, 48];
+export function hueOf(group: string): number {
+  let h = 0;
+  for (const c of group) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return HUES[h % HUES.length];
+}
+
 const STATE_WORDS: Record<MapNode["state"], string> = {
   ok: "",
   missing: "missing",
@@ -126,6 +144,8 @@ export function ProductMap({
   const [selected, setSelected] = useState<string | null>(null);
   const [link, setLink] = useState<MapLink | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  /** Find on the map: matching nodes are lit, the rest dimmed. */
+  const [find, setFind] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [suggest, setSuggest] = useState<{ after: string; changes: ProductChange[] } | null>(null);
@@ -327,6 +347,25 @@ export function ProductMap({
             ))}
           </div>
         )}
+        {view === "map" && (
+          <>
+            <input
+              className="pmap-find"
+              type="search"
+              placeholder="Find on the map"
+              value={find}
+              onChange={(e) => setFind(e.target.value)}
+              aria-label="Find on the map"
+              data-pmap-find
+            />
+            <button type="button" className="iconbtn" onClick={() => setCollapsed(new Set(map.nodes.filter((n) => n.layer !== "frontend").map((n) => `${n.layer}:${n.group}`)))} data-pmap-fold-all>
+              Fold all
+            </button>
+            <button type="button" className="iconbtn" onClick={() => setCollapsed(new Set())} data-pmap-unfold-all>
+              Unfold all
+            </button>
+          </>
+        )}
         <span className="grow" />
         {busy && <span className="muted">{busy}</span>}
         {/* The engine's verdict is the product's, not a node's: the map names
@@ -396,6 +435,7 @@ export function ProductMap({
         />
         {view === "map" ? (
           <Canvas
+            find={find}
             look={look}
             map={map}
             nodeById={nodeById}
@@ -451,11 +491,52 @@ export function ProductMap({
   );
 }
 
+/* ── A micro-frontend's screens, drawn ───────────────────────────────────── */
+
+/** What a micro-frontend puts in the shell, as a small window: its screens
+ *  in the shell's navigation, the first one open. Drawn from what its
+ *  manifest declares (mfe.json); not a picture of the running screen, which
+ *  only a build can take. */
+function ScreenPreview({ name, screens }: { name: string; screens: string[] }) {
+  const shown = screens.slice(0, 8);
+  return (
+    <span className="pmap-preview" role="img" aria-label={`${name}: ${screens.length ? screens.join(", ") : "no screens declared"}`}>
+      <span className="pmap-preview-bar">
+        <span className="pmap-preview-dots" />
+        <span className="pmap-preview-url">/{(shown[0] ?? name).toLowerCase().replace(/[^a-z0-9]+/g, "-")}</span>
+        <span className="pmap-preview-tag">schematic</span>
+      </span>
+      <span className="pmap-preview-body">
+        <span className="pmap-preview-nav">
+          {shown.length === 0 && <span className="pmap-preview-item muted">no screens</span>}
+          {shown.map((s, i) => (
+            <span key={s} className={`pmap-preview-item${i === 0 ? " on" : ""}`}>
+              {s}
+            </span>
+          ))}
+          {screens.length > shown.length && <span className="pmap-preview-item muted">+{screens.length - shown.length} more</span>}
+        </span>
+        <span className="pmap-preview-page">
+          <span className="pmap-preview-title">{shown[0] ?? name}</span>
+          <span className="pmap-preview-line" style={{ width: "80%" }} />
+          <span className="pmap-preview-line" style={{ width: "95%" }} />
+          <span className="pmap-preview-line" style={{ width: "60%" }} />
+          <span className="pmap-preview-cards">
+            <span />
+            <span />
+            <span />
+          </span>
+        </span>
+      </span>
+    </span>
+  );
+}
+
 /* ── The lanes and the links ─────────────────────────────────────────────── */
 
 /** One drawn line: every link between the same two drawn ends (a folded
  *  group draws its nodes' links at its header), `count` of them. */
-type Path = { key: string; d: string; link: MapLink; links: MapLink[]; count: number; mid: { x: number; y: number } };
+type Path = { key: string; d: string; link: MapLink; links: MapLink[]; count: number; mid: { x: number; y: number }; hue: number | null };
 
 /** The groups of a lane in the order that crosses fewest lines: by the mean
  *  place of what links into them from the lane above (a barycentre). The
@@ -483,6 +564,7 @@ function laneOrder(
 }
 
 function Canvas({
+  find,
   look,
   map,
   nodeById,
@@ -498,6 +580,7 @@ function Canvas({
   onDropScreen,
   onDropGear,
 }: {
+  find: string;
   look: MapLook;
   map: ReturnType<typeof productMap>;
   nodeById: Map<string, MapNode>;
@@ -550,9 +633,26 @@ function Canvas({
     const endOf = (id: string) => {
       const n = nodeById.get(id);
       if (!n || !layers.has(n.layer)) return null;
-      const end = collapsed.has(groupKey(n)) ? `group:${groupKey(n)}` : id;
-      const r = refs.current.get(end)?.getBoundingClientRect();
-      return r ? { end, layer: n.layer, x: r.left - at.left, y: r.top - at.top, w: r.width, h: r.height } : null;
+      const end = n.layer !== "frontend" && collapsed.has(groupKey(n)) ? `group:${groupKey(n)}` : id;
+      const el = refs.current.get(end);
+      const r = el?.getBoundingClientRect();
+      if (!r) return null;
+      // A node scrolled out of its row is drawn at the row's edge.
+      const row = el!.closest(".pmap-lane-body.row")?.getBoundingClientRect();
+      let left = r.left;
+      let width = r.width;
+      if (row) {
+        const l = Math.max(left, row.left);
+        const rr = Math.min(left + width, row.right);
+        if (rr - l < 8) {
+          left = left < row.left ? row.left : row.right - 8;
+          width = 8;
+        } else {
+          left = l;
+          width = rr - l;
+        }
+      }
+      return { end, layer: n.layer, x: left - at.left, y: r.top - at.top, w: width, h: r.height };
     };
     type End = NonNullable<ReturnType<typeof endOf>>;
     const bundles = new Map<string, { a: End; b: End; links: MapLink[] }>();
@@ -609,11 +709,13 @@ function Canvas({
       }
       // The line speaks for its worst link: a bad one is never hidden in a bundle.
       const link = links.find((l) => l.state === "bad") ?? links[0];
-      out.push({ key, d, link, links, count: links.length, mid });
+      // Coloured as the subsystem it arrives at, so a bundle reads by colour.
+      const to = nodeById.get(link.to);
+      out.push({ key, d, link, links, count: links.length, mid, hue: to && to.layer !== "frontend" ? hueOf(to.group) : null });
     }
     setPaths(out);
     setSize({ w: el.scrollWidth, h: el.scrollHeight });
-  }, [map, nodeById, layers, collapsed, look]);
+  }, [map, nodeById, layers, collapsed, look, find]);
 
   useLayoutEffect(() => {
     measure();
@@ -640,7 +742,10 @@ function Canvas({
     linked.add(link.from);
     linked.add(link.to);
   }
-  const focus = !!lit || !!link;
+  const q = find.trim().toLowerCase();
+  const found = new Set(q ? map.nodes.filter((n) => n.label.toLowerCase().includes(q) || n.group.toLowerCase().includes(q)).map((n) => n.id) : []);
+  if (!lit && !link) for (const id of found) linked.add(id);
+  const focus = !!lit || !!link || !!q;
 
   const accepts = (layer: MapLayer, e: DragEvent) =>
     (layer === "frontend" && e.dataTransfer.types.includes(DRAG_MFE)) || (layer === "backend" && e.dataTransfer.types.includes(DRAG_GEAR));
@@ -652,10 +757,11 @@ function Canvas({
         key={n.id}
         ref={setRef(n.id)}
         type="button"
-        className={`pmap-node ${n.state} ${n.detail.kind}${selected === n.id ? " on" : ""}${linked.has(n.id) ? " linked" : ""}${focus && !linked.has(n.id) && lit !== n.id ? " dim" : ""}`}
+        className={`pmap-node ${n.state} ${n.detail.kind}${selected === n.id ? " on" : ""}${found.has(n.id) ? " found" : ""}${linked.has(n.id) ? " linked" : ""}${focus && !linked.has(n.id) && lit !== n.id ? " dim" : ""}`}
         onMouseEnter={() => setHover(n.id)}
         onMouseLeave={() => setHover((h) => (h === n.id ? null : h))}
-        title={`${KIND_WORDS[n.detail.kind]}: ${n.label}${STATE_WORDS[n.state] ? ` (${STATE_WORDS[n.state]})` : ""}`}
+        // A screen card shows its own preview; a tooltip would cover it.
+        title={look === "subsystems" && n.detail.kind === "mfe" ? undefined : `${KIND_WORDS[n.detail.kind]}: ${n.label}${STATE_WORDS[n.state] ? ` (${STATE_WORDS[n.state]})` : ""}`}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(selected === n.id ? null : n.id);
@@ -663,9 +769,29 @@ function Canvas({
         data-pmap-node={n.id}
         data-pmap-state={n.state}
       >
-        <span className="pmap-node-label">{n.label}</span>
+        <span className="pmap-node-label">
+          <span className={`pmap-dot ${n.state}`} aria-hidden />
+          <span className="pmap-glyph" aria-hidden>
+            {KIND_GLYPH[n.detail.kind]}
+          </span>
+          {n.label}
+        </span>
         {n.state !== "ok" && <span className="pmap-node-state">{STATE_WORDS[n.state]}</span>}
         {look === "subsystems" && n.detail.kind !== "mfe" && <span className="pmap-node-what">{n.detail.what}</span>}
+        {look === "subsystems" && n.detail.kind === "mfe" && (() => {
+          // A screen card: what it shows and how many gears it calls.
+          const shows = n.detail.facts.find((f) => f.startsWith("Shows "))?.replace(/^Shows /, "").replace(/\.$/, "") ?? "";
+          const calls = map.links.filter((l) => l.from === n.id && l.kind === "calls").length;
+          return (
+            <>
+              <span className="pmap-node-what">{shows || n.detail.what}</span>
+              <span className="pmap-node-meta">
+                {shows ? `${shows.split(", ").length} screen${shows.split(", ").length === 1 ? "" : "s"} · ` : ""}calls {calls} gear{calls === 1 ? "" : "s"}
+              </span>
+              {hover === n.id && <ScreenPreview name={n.label} screens={shows ? shows.split(", ") : []} />}
+            </>
+          );
+        })()}
         {(n.badges ?? []).map((b) => (
           <span key={b.text} className={`pmap-badge ${b.tone}`}>
             {b.text}
@@ -691,7 +817,14 @@ function Canvas({
           const cls = `pmap-link ${p.link.kind} ${p.link.state}${on ? " on" : focus ? " dim" : ""}`;
           return (
             <g key={p.key}>
-              <path className={cls} d={p.d} style={p.count > 1 ? { strokeWidth: `${Math.min(5, 1.2 + Math.log2(p.count))}px` } : undefined} />
+              <path
+                className={cls}
+                d={p.d}
+                style={{
+                  ...(p.count > 1 ? { strokeWidth: `${Math.min(5, 1.2 + Math.log2(p.count))}px` } : {}),
+                  ...(p.hue !== null && p.link.state !== "bad" ? { stroke: `hsl(${p.hue} 62% 52%)` } : {}),
+                }}
+              />
               {p.count > 1 && (on || !focus) && (
                 <text className="pmap-link-count" x={p.mid.x} y={p.mid.y} textAnchor="middle" dominantBaseline="middle">
                   {p.count}
@@ -776,10 +909,15 @@ function Canvas({
               ) : (
                 groups.map((g) => {
                   const key = `${lane.id}:${g.group}`;
-                  const folded = collapsed.has(key);
+                  const folded = collapsed.has(key) && !g.nodes.some((n) => found.has(n.id));
                   const worst = g.nodes.find((n) => n.state === "bad" || n.state === "missing");
                   return (
-                    <div key={key} className={`pmap-group${folded ? " folded" : ""}`} data-pmap-group={g.group}>
+                    <div
+                      key={key}
+                      className={`pmap-group${folded ? " folded" : ""}`}
+                      data-pmap-group={g.group}
+                      style={{ "--g-h": hueOf(g.group) } as CSSProperties}
+                    >
                       <button
                         type="button"
                         ref={setRef(`group:${key}`)}

@@ -2918,6 +2918,59 @@ div.dm-block { padding-left: 0; }
 .pmap-link.depends { stroke-dasharray: 2 3; }
 .pmap-link.dim { opacity: .08; }
 .pmap-link.on { stroke: var(--primary); opacity: 1; stroke-width: 2.2; }
+/* Colour: each lane a band, each subsystem a hue (--g-h, set per group). */
+.pmap-lane { padding: 8px 10px 10px; border-radius: 10px; }
+.pmap-lane[data-pmap-lane="frontend"] { background: color-mix(in oklab, hsl(268 70% 60%) 7%, transparent); }
+.pmap-lane[data-pmap-lane="backend"] { background: color-mix(in oklab, hsl(212 70% 60%) 6%, transparent); }
+.pmap-lane[data-pmap-lane="infrastructure"] { background: color-mix(in oklab, hsl(152 60% 50%) 7%, transparent); }
+.pmap-lane[data-pmap-lane="frontend"] .pmap-lane-h { color: hsl(268 55% 55%); }
+.pmap-lane[data-pmap-lane="backend"] .pmap-lane-h { color: hsl(212 60% 50%); }
+.pmap-lane[data-pmap-lane="infrastructure"] .pmap-lane-h { color: hsl(152 50% 40%); }
+.pmap-group[style] { border-color: hsl(var(--g-h) 55% 60% / .55); background: color-mix(in oklab, hsl(var(--g-h) 70% 60%) 8%, var(--card)); }
+.pmap-group[style] > .pmap-group-h { color: color-mix(in oklab, hsl(var(--g-h) 65% 48%) 80%, var(--foreground)); }
+.pmap-group[style] .pmap-node { border-left: 3px solid hsl(var(--g-h) 62% 55%); }
+.pmap-group[style] .pmap-node:hover { background: color-mix(in oklab, hsl(var(--g-h) 70% 60%) 12%, var(--card)); }
+.pmap-node { transition: opacity .15s, box-shadow .15s, transform .15s; }
+.pmap-node:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgb(0 0 0 / .12); }
+.pmap-node.found { outline: 2px solid hsl(48 95% 50%); outline-offset: 1px; }
+.pmap-glyph { margin-right: 4px; opacity: .7; }
+.pmap-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: hsl(152 60% 45%); }
+.pmap-dot.warn { background: hsl(38 95% 50%); }
+.pmap-dot.bad, .pmap-dot.missing { background: var(--destructive); }
+.pmap-dot.unused { background: var(--muted-foreground); opacity: .5; }
+.pmap-link { transition: opacity .15s, stroke-width .15s; }
+.pmap-link.on { stroke-dasharray: 7 5; animation: pmap-flow .9s linear infinite; }
+@keyframes pmap-flow { to { stroke-dashoffset: -12; } }
+@media (prefers-reduced-motion: reduce) { .pmap-link.on { animation: none; } .pmap-node:hover { transform: none; } }
+.pmap-find { width: 170px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font-size: 12px; }
+/* The shell as a browser window; its screens as cards in a grid. */
+.pmap-canvas.subsystems .pmap-shell { border-color: hsl(268 50% 65% / .6); background: var(--card); padding: 0; overflow: hidden; }
+.pmap-canvas.subsystems .pmap-shell-h { display: block; width: 100%; text-align: left; padding: 6px 10px 6px 52px; position: relative; background: color-mix(in oklab, hsl(268 70% 60%) 12%, var(--card)); border-bottom: 1px solid hsl(268 50% 65% / .4); }
+.pmap-canvas.subsystems .pmap-shell-h::before { content: ""; position: absolute; left: 12px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%; background: hsl(4 80% 62%); box-shadow: 12px 0 0 hsl(40 90% 55%), 24px 0 0 hsl(140 55% 48%); }
+.pmap-canvas.subsystems .pmap-shell > .pmap-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; padding: 10px; }
+.pmap-canvas.subsystems .pmap-shell .pmap-node { max-width: none; width: 100%; padding: 7px 9px; border-left: 3px solid hsl(268 60% 62%); white-space: normal; }
+.pmap-canvas.subsystems .pmap-shell .pmap-node:hover { background: color-mix(in oklab, hsl(268 70% 60%) 10%, var(--card)); }
+.pmap-node-meta { font-size: 10.5px; color: hsl(268 45% 52%); font-weight: 500; margin-top: 2px; }
+/* A screen card's preview: a small window over the card while the pointer is on it. */
+.pmap-canvas.subsystems .pmap-shell .pmap-node { position: relative; }
+.pmap-shell { overflow: visible !important; }
+.pmap-lane:hover { z-index: 3; }
+.pmap-preview { position: absolute; z-index: 5; left: 0; top: calc(100% + 6px); width: 300px; display: flex; flex-direction: column; border: 1px solid hsl(268 40% 70% / .6); border-radius: 8px; background: var(--card); box-shadow: 0 10px 28px rgb(0 0 0 / .18); overflow: hidden; pointer-events: none; animation: pmap-pop .12s ease-out; }
+@keyframes pmap-pop { from { opacity: 0; transform: translateY(-4px); } }
+.pmap-preview-bar { display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: color-mix(in oklab, hsl(268 70% 60%) 10%, var(--card)); border-bottom: 1px solid var(--border); }
+.pmap-preview-dots { width: 6px; height: 6px; border-radius: 50%; background: hsl(4 80% 62%); box-shadow: 9px 0 0 hsl(40 90% 55%), 18px 0 0 hsl(140 55% 48%); margin-right: 18px; }
+.pmap-preview-url { flex: 1; font: 10px ui-monospace, monospace; color: var(--muted-foreground); background: var(--card); border-radius: 4px; padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pmap-preview-tag { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); }
+.pmap-preview-body { display: flex; min-height: 130px; }
+.pmap-preview-nav { width: 100px; display: flex; flex-direction: column; gap: 2px; padding: 6px; border-right: 1px solid var(--border); background: color-mix(in oklab, var(--muted) 50%, var(--card)); }
+.pmap-preview-item { font-size: 10px; padding: 2px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--foreground); }
+.pmap-preview-item.on { background: hsl(268 70% 60% / .18); color: hsl(268 55% 45%); font-weight: 600; }
+.pmap-preview-page { flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; }
+.pmap-preview-title { font-size: 11px; font-weight: 600; }
+.pmap-preview-line { display: block; height: 6px; border-radius: 3px; background: color-mix(in oklab, var(--muted-foreground) 22%, transparent); }
+.pmap-preview-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 4px; }
+.pmap-preview-cards > span { height: 34px; border-radius: 5px; border: 1px solid var(--border); background: color-mix(in oklab, hsl(268 70% 60%) 5%, var(--card)); }
+@media (prefers-reduced-motion: reduce) { .pmap-preview { animation: none; } }
 .pmap-link-count { font-size: 10px; font-weight: 600; fill: var(--muted-foreground); paint-order: stroke; stroke: var(--card); stroke-width: 3px; pointer-events: none; }
 .pmap-link.bad.on { stroke: var(--destructive); }
 .pmap-link-hit { fill: none; stroke: transparent; stroke-width: 10; pointer-events: stroke; cursor: pointer; }
