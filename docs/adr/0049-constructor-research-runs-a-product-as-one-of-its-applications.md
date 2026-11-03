@@ -274,7 +274,8 @@ What Research's API cannot do today, and what Studio does instead:
 - **an upload**: none; the desk's files;
 - **events**: none; polling;
 - **service logs**: a live stream only (`/api/platform-keeper/services/{s}/
-  logs`); Studio does not show them yet.
+  logs`), of the current container, with no history: Studio reads its last
+  lines when a deploy finds a service failed or not answering.
 
 How Research builds, as Research's own deployment MCP
 (`constructor-research-mcp`) found on live runs, and Studio does the same:
@@ -290,7 +291,16 @@ How Research builds, as Research's own deployment MCP
   and Research's UI shows its applications only then: Studio turns it on;
 - Research starts only a stopped or failed service, and its restart of a
   running one stops it and starts it at once, before it has stopped. Studio
-  changes a running service stopped: stop, wait, `PATCH`, start.
+  changes a running service stopped: stop, wait, `PATCH`, start;
+- `running` is not ready: after a deploy Studio asks each public link for a
+  minute (any answer below 500 counts), and follows every service's log for
+  that minute. Research keeps no log of a replaced container, and each
+  connection replays the current one: a connection that begins with another
+  first line, or "Container is waiting to start" after the container's own
+  lines, is a restart. The deploy still succeeds; its result names each
+  service that restarted, with what the container before printed, and each
+  that did not answer, with its last lines or, when it printed nothing, the
+  usual reasons a container exits at once.
 
 Later, for phase two and for images from elsewhere: a service that names an
 image outside Research's registry with a pull credential; an application

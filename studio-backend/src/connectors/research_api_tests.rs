@@ -35,6 +35,10 @@ struct Fake {
     image_blips: bool,
     /// The project's deployments, off in a new Research project.
     deployment_enabled: bool,
+    /// A service started fails instead of running.
+    crashes: bool,
+    /// What each connection to a service's log is sent, in turn.
+    service_logs: Vec<&'static str>,
     apps: Vec<Value>,
     /// Service id -> service.
     services: BTreeMap<String, Value>,
@@ -57,6 +61,8 @@ impl Default for Fake {
             image_ends: "done",
             image_blips: false,
             deployment_enabled: false,
+            crashes: false,
+            service_logs: Vec::new(),
             apps: Vec::new(),
             services: BTreeMap::new(),
             bodies: Vec::new(),
@@ -102,6 +108,12 @@ async fn handle(
         }
     };
     let path = uri.path().to_owned();
+    // A product's public addresses, on the same origin here, take no token.
+    match path.as_str() {
+        "/up" => return "ok".into_response(),
+        "/down" => return StatusCode::BAD_GATEWAY.into_response(),
+        _ => {}
+    }
     f.auth.push(seen);
     f.calls.push(format!("{method} {path}"));
     if auth != format!("Bearer {}", f.token) {
@@ -146,6 +158,19 @@ async fn handle(
             }
             _ => StatusCode::BAD_REQUEST.into_response(),
         };
+    }
+    // A service's log: each connection takes the next of `service_logs`,
+    // the last one again once they run out.
+    if path.starts_with("/api/platform-keeper/services/") {
+        let body = if f.service_logs.len() > 1 {
+            f.service_logs.remove(0)
+        } else {
+            f.service_logs
+                .first()
+                .copied()
+                .unwrap_or("event: log\ndata: listening on 127.0.0.1:8080\n\n")
+        };
+        return body.into_response();
     }
     if path.starts_with("/api/platform-keeper/image-builds/") {
         return "event: log\ndata: Step 3/7 : RUN cargo build\ndata: error[E0425]: cannot find value `x`\n\n"
@@ -290,6 +315,7 @@ async fn handle(
                 // A service started is running at the next look, one
                 // stopped is stopped.
                 let next = match s["status"].as_str() {
+                    Some("starting") if f.crashes => "failed",
                     Some("starting") => "running",
                     Some("stopping") => "stopped",
                     _ => "",
@@ -347,6 +373,7 @@ const FAST: Pace = Pace {
     build_for: Duration::from_secs(5),
     start_for: Duration::from_secs(5),
     settle: Duration::ZERO,
+    ready_for: Duration::ZERO,
 };
 
 fn quiet<'a>(_: String) -> BoxFuture<'a, ()> {
@@ -717,4 +744,104 @@ async fn a_new_application_is_created_and_a_body_research_rejects_is_named() {
         e,
         "Constructor Research refused creating service web: body.image_id: Field required"
     );
+}
+
+#[tokio::test]
+async fn running_is_not_ready_until_the_public_link_answers() {
+    let (url, _) = serve(Fake::default()).await;
+    let origin = url.split(ACCOUNT).next().unwrap().to_owned();
+    let app: Application =
+        serde_json::from_value(json!({ "id": "a1", "name": "shop-dev", "services": [
+            service("s-web", "web", "running", Some(&format!("{origin}/up"))),
+            service("s-api", "api", "running", Some(&format!("{origin}/down"))),
+            service("s-db", "db", "running", None),
+        ]}))
+        .unwrap();
+    let pace = Pace {
+        ready_for: Duration::from_millis(50),
+        ..FAST
+    };
+    let silent = api(&url).unanswered(&app, pace).await;
+    let names: Vec<&str> = silent.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["api"], "a 502 is not an answer, and db has no link");
+    assert!(
+        api(&url).unanswered(&app, FAST).await.is_empty(),
+        "zero skips the check"
+    );
+}
+
+#[tokio::test]
+async fn a_service_that_fails_to_start_says_what_its_log_says() {
+    let (url, _) = serve(Fake {
+        crashes: true,
+        deployment_enabled: true,
+        ..Fake::default()
+    })
+    .await;
+    let web = ServiceBody {
+        name: "web".into(),
+        image_id: "img-1".into(),
+        hardware_configuration_id: "cpu-s".into(),
+        volumes: vec![],
+        ports: vec![],
+        environment_variables: vec![],
+    };
+    let e = api(&url)
+        .put_application("p1", "shop-dev", &[web], FAST, &quiet)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        e,
+        "service web did not start in Constructor Research; its last log lines:\nlistening on 127.0.0.1:8080"
+    );
+}
+
+async fn watched(logs: Vec<&'static str>) -> Watched {
+    let (url, _) = serve(Fake {
+        service_logs: logs,
+        ..Fake::default()
+    })
+    .await;
+    let until = tokio::time::Instant::now() + Duration::from_millis(300);
+    api(&url)
+        .watch_log("s-web", until, Duration::from_millis(20))
+        .await
+}
+
+#[tokio::test]
+async fn a_watched_log_that_replays_the_same_container_is_no_restart() {
+    let w = watched(vec![
+        "data: 10:00 up\ndata: 10:01 ready\n\n",
+        "data: 10:00 up\ndata: 10:01 ready\ndata: 10:02 served /\n\n",
+    ])
+    .await;
+    assert_eq!(w.restarts, 0);
+    assert_eq!(w.lines, ["10:00 up", "10:01 ready", "10:02 served /"]);
+}
+
+#[tokio::test]
+async fn a_new_container_is_a_restart_and_keeps_why_the_old_one_stopped() {
+    let w = watched(vec![
+        "data: 10:00 up\ndata: 10:01 panic: no config\n\n",
+        "data: 10:11 up\n\n",
+    ])
+    .await;
+    assert_eq!(w.restarts, 1);
+    assert_eq!(w.before, ["10:00 up", "10:01 panic: no config"]);
+    assert_eq!(w.lines, ["10:11 up"]);
+}
+
+#[tokio::test]
+async fn the_platform_saying_a_container_waits_to_start_is_a_restart() {
+    let w = watched(vec![
+        "data: Container is waiting to start\ndata: 10:00 up\ndata: 10:01 exit 1\n\
+         data: Container is waiting to start\ndata: 10:11 up\n\n",
+        // A reconnect replays the current container only.
+        "data: Container is waiting to start\ndata: 10:11 up\n\n",
+    ])
+    .await;
+    assert_eq!(w.restarts, 1, "the first wait is the first start");
+    assert_eq!(w.before, ["10:00 up", "10:01 exit 1"]);
+    assert_eq!(w.lines, ["10:11 up"]);
 }
