@@ -15,7 +15,7 @@
 //! stream: a build is a desk's files and an image per Dockerfile, a deploy is
 //! one call per service, and both are polled.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -272,6 +272,9 @@ pub struct Pace {
     pub build_for: Duration,
     /// Every service running.
     pub start_for: Duration,
+    /// Between an upload and the builds: a build started at once does not
+    /// see the files yet.
+    pub settle: Duration,
 }
 
 impl Pace {
@@ -280,6 +283,7 @@ impl Pace {
         desk_for: Duration::from_secs(10 * 60),
         build_for: Duration::from_secs(90 * 60),
         start_for: Duration::from_secs(15 * 60),
+        settle: Duration::from_secs(30),
     };
 }
 
@@ -577,6 +581,31 @@ impl ResearchApi {
     /// `/access-keys` sits on the account API's root, not under `/v1`.
     fn keys_root(&self) -> &str {
         self.account.strip_suffix("/v1").unwrap_or(&self.account)
+    }
+
+    /// Turn on the project's deployments, off in a new project, before its
+    /// applications are changed: Research's UI shows a project's applications
+    /// only with them on.
+    pub async fn enable_deployment(&self, project: &str) -> anyhow::Result<()> {
+        #[derive(Deserialize)]
+        struct Flag {
+            #[serde(default)]
+            deployment_enabled: Option<bool>,
+        }
+        let path = format!("/projects/{}", seg(project));
+        let flag: Flag = self
+            .call(reqwest::Method::GET, &path, Body::Empty, "the project")
+            .await?;
+        if flag.deployment_enabled != Some(false) {
+            return Ok(());
+        }
+        self.act(
+            reqwest::Method::PATCH,
+            &path,
+            Body::Json(&serde_json::json!({ "deployment_enabled": true })),
+            "turning on the project's deployments",
+        )
+        .await
     }
 
     pub async fn projects(&self) -> anyhow::Result<Vec<Project>> {
@@ -933,13 +962,14 @@ impl ResearchApi {
         .await
     }
 
-    /// Stop a running service and start it again; start a stopped one.
-    pub async fn restart_service(&self, service: &str) -> anyhow::Result<Service> {
+    /// Research stops only a running service, and starts only a stopped or
+    /// failed one.
+    pub async fn stop_service(&self, service: &str) -> anyhow::Result<Service> {
         self.call(
             reqwest::Method::POST,
-            &format!("/services/{}/restart", seg(service)),
+            &format!("/services/{}/stop", seg(service)),
             Body::Empty,
-            "restarting the service",
+            "stopping the service",
         )
         .await
     }
@@ -1110,30 +1140,46 @@ impl ResearchApi {
             images.len()
         ))
         .await;
+        if !pace.settle.is_zero() {
+            progress(format!(
+                "waiting {} s for the files to reach the builder",
+                pace.settle.as_secs()
+            ))
+            .await;
+            tokio::time::sleep(pace.settle).await;
+        }
 
+        // Each image's build, its current name and id.
         let mut pending = Vec::new();
         for i in images {
             let image = self
                 .build_image(desk, &i.name, &format!("{folder}/{}", i.dockerfile))
                 .await?;
-            pending.push((i, image.id));
+            pending.push((i, i.name.clone(), image.id));
         }
         let until = tokio::time::Instant::now() + pace.build_for;
         let mut done: BTreeMap<String, Built> = BTreeMap::new();
+        // Research reports `error` for a moment while it retries a build
+        // itself, so an error counts once seen twice for the same image. A
+        // confirmed one is built once more, under a new name, before the build
+        // gives up: the first name each image failed under.
+        let mut erred: BTreeSet<String> = BTreeSet::new();
+        let mut retried: BTreeMap<String, String> = BTreeMap::new();
         loop {
-            for (i, id) in &pending {
+            for n in 0..pending.len() {
+                let (i, name, id) = pending[n].clone();
                 if done.contains_key(&i.key) {
                     continue;
                 }
-                let state = self.image(id).await?;
+                let state = self.image(&id).await?;
                 match state.build_status.as_str() {
                     "done" => {
                         done.insert(
                             i.key.clone(),
                             Built {
                                 key: i.key.clone(),
-                                name: i.name.clone(),
-                                id: id.clone(),
+                                name,
+                                id,
                             },
                         );
                         progress(format!(
@@ -1144,11 +1190,21 @@ impl ResearchApi {
                         ))
                         .await;
                     }
+                    "error" if erred.insert(id.clone()) => {}
+                    "error" if !retried.contains_key(&i.key) => {
+                        let again = retry_name(&i.name);
+                        progress(format!("{name} failed; building it once more as {again}")).await;
+                        let image = self
+                            .build_image(desk, &again, &format!("{folder}/{}", i.dockerfile))
+                            .await?;
+                        retried.insert(i.key.clone(), name);
+                        pending[n] = (i, again, image.id);
+                    }
                     "error" => {
-                        let tail = self.build_log_tail(id, 30).await;
+                        let tail = self.build_log_tail(&id, 30).await;
                         bail!(
-                            "Constructor Research could not build image {} ({}){}",
-                            i.name,
+                            "Constructor Research could not build image {} ({}), nor again as {name}{}",
+                            retried[&i.key],
                             i.dockerfile,
                             tail.map(|t| format!(":\n{t}")).unwrap_or_default()
                         );
@@ -1159,7 +1215,7 @@ impl ResearchApi {
             if done.len() == pending.len() {
                 return Ok(pending
                     .iter()
-                    .filter_map(|(i, _)| done.remove(&i.key))
+                    .filter_map(|(i, _, _)| done.remove(&i.key))
                     .collect());
             }
             if cancelled() {
@@ -1188,6 +1244,7 @@ impl ResearchApi {
         pace: Pace,
         progress: Progress<'_>,
     ) -> anyhow::Result<Application> {
+        self.enable_deployment(project).await?;
         let app = match self.application_named(project, name).await? {
             Some(app) => app,
             None => {
@@ -1203,11 +1260,17 @@ impl ResearchApi {
         let mut ids = Vec::new();
         for body in services {
             match existing.remove(&body.name) {
+                // Changed while stopped, as Research's own deployment MCP
+                // does: a running service would take the change half-way.
                 Some(s) => {
                     progress(format!("changing service {}", body.name)).await;
-                    self.patch_service(&app.id, &s.id, body).await?;
                     self.settled(&s.id, pace).await?;
-                    self.restart_service(&s.id).await?;
+                    if self.service(&s.id).await?.status == "running" {
+                        self.stop_service(&s.id).await?;
+                        self.settled(&s.id, pace).await?;
+                    }
+                    self.patch_service(&app.id, &s.id, body).await?;
+                    self.start_service(&s.id).await?;
                     ids.push((body.name.clone(), s.id));
                 }
                 None => {
@@ -1277,6 +1340,12 @@ impl ResearchApi {
             tokio::time::sleep(pace.poll).await;
         }
     }
+}
+
+/// The name an image is built again under: Research's 30 characters at most.
+fn retry_name(name: &str) -> String {
+    let base: String = name.chars().take(27).collect();
+    format!("{}-r2", base.trim_end_matches('-'))
 }
 
 /// The folders and files under `root`, relative and `/`-separated, parents

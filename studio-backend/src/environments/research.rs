@@ -351,7 +351,8 @@ fn lay_out(
                 write(&context.join(&dir).join(path), &content)?;
             }
         }
-        let dockerfile = context.join(format!("Dockerfile.studio-{}", i.app));
+        // Research takes only `Dockerfile` or `<name>.dockerfile`.
+        let dockerfile = context.join(format!("studio-{}.dockerfile", i.app));
         write(&dockerfile, &text)?;
         // The generated ignore file sits beside the generated Dockerfile; it
         // goes beside this one, and keeps what Studio lays out.
@@ -360,7 +361,7 @@ fn lay_out(
         let ignore = std::fs::read_to_string(&generated).ok();
         if let Some(ignore) = &ignore {
             write(
-                &dockerfile.with_file_name(format!("Dockerfile.studio-{}.dockerignore", i.app)),
+                &dockerfile.with_file_name(format!("studio-{}.dockerfile.dockerignore", i.app)),
                 &format!("{ignore}{keep}"),
             )?;
         }
@@ -1040,7 +1041,7 @@ spec:
         let (builds, bakes) =
             lay_out(&work, &work.join("repo"), &images, &app, "postgres:18").unwrap();
         let read = |p: &str| std::fs::read_to_string(work.join(p)).unwrap();
-        let dockerfile = read("repo/Dockerfile.studio-shop");
+        let dockerfile = read("repo/studio-shop.dockerfile");
         let config = read("repo/studio-research/shop/files/etc/shop/shop.yaml");
         let ignore = read("repo/.dockerignore");
         let _ = std::fs::remove_dir_all(&work);
@@ -1050,7 +1051,7 @@ spec:
             [ImageBuild {
                 key: "shop".into(),
                 name: "gbx-shop".into(),
-                dockerfile: "Dockerfile.studio-shop".into(),
+                dockerfile: "studio-shop.dockerfile".into(),
             }]
         );
         assert_eq!(bakes["shop"], app.services[0].bake());
