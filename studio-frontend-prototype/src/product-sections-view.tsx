@@ -16,7 +16,6 @@ import { FrontendConstructor } from "./frontend-constructor-view";
 import type { PipelineTab } from "./pipeline";
 import { ProductFlow } from "./product-flow-view";
 import {
-  PRODUCT_SECTIONS,
   hasFrontend,
   comesWith,
   infrastructureOf,
@@ -106,38 +105,19 @@ export function ProductPage({
     // The header follows what the sections changed: a save, a frontend added.
     setRound((r) => r + 1);
   };
-  const hint = PRODUCT_SECTIONS.find((s) => s.id === section)?.hint;
-
   return (
     <>
       <section className="card" style={{ marginBottom: 12 }} data-product-header>
         <SummaryLine summary={summary} readError={readError} />
-        <div className="row" style={{ alignItems: "center", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
-          <div className="doc-views" role="tablist" aria-label="The product's parts" style={{ marginBottom: 0 }} data-product-sections>
-            {PRODUCT_SECTIONS.filter((s) => s.id !== "parts" || parts).map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                role="tab"
-                aria-selected={section === s.id}
-                className={`doc-view${section === s.id ? " on" : ""}`}
-                onClick={() => pick(s.id)}
-                data-product-section-tab={s.id}
-              >
-                {s.title}
-                {s.id === "frontend" && summary && !summary.frontend && <span className="muted"> · none</span>}
-              </button>
-            ))}
-          </div>
-          <span className="hint" style={{ fontSize: 12 }}>
-            {hint}
-          </span>
-        </div>
       </section>
+      {/* The strip is the page's navigation: Configure's parts open the
+          sections below, the later steps say what comes after them. */}
       <ProductFlow
         token={token}
         projectId={projectId}
         round={round}
+        section={section}
+        hasParts={!!parts}
         onSection={pick}
         onOpenTab={onOpenTab}
         onSaved={() => setRound((r) => r + 1)}

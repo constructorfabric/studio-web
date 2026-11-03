@@ -34,6 +34,8 @@ export function ProductFlow({
   token,
   projectId,
   round,
+  section,
+  hasParts,
   onSection,
   onOpenTab,
   onSaved,
@@ -42,6 +44,10 @@ export function ProductFlow({
   projectId: string;
   /** Bumped by the page when a section changed the product. */
   round: number;
+  /** The section open below, marked among Configure's parts. */
+  section: ProductSectionId;
+  /** Whether the page has the Parts inventory to open. */
+  hasParts: boolean;
   onSection: (id: ProductSectionId) => void;
   onOpenTab?: (tab: PipelineTab) => void;
   onSaved: () => void;
@@ -109,8 +115,9 @@ export function ProductFlow({
   }, [read]);
 
   if (!steps || !read) return <p className="muted">Reading where the product stands…</p>;
-  const next = steps.find((s) => s.state !== "done");
-  const shown = steps.find((s) => s.id === (open ?? next?.id ?? null));
+  // Configure stays open while one of its sections is below, unless another
+  // step was asked for.
+  const shown = steps.find((s) => s.id === (open ?? "configure"));
 
   return (
     <section className="card fc-steps" style={{ marginBottom: 12 }} data-product-flow>
@@ -144,16 +151,36 @@ export function ProductFlow({
             <div style={{ display: "grid", gap: 4 }}>
               {shown.parts.map((p) => (
                 <div key={p.id} className="row" style={{ gap: 8, alignItems: "baseline" }} data-flow-part={p.id} data-flow-state={p.state}>
-                  <span className={`fc-step ${TONE[p.state]}`} style={{ cursor: "default" }}>
+                  <button
+                    type="button"
+                    className={`fc-step ${TONE[p.state]}${section === p.id ? " on" : ""}`}
+                    aria-pressed={section === p.id}
+                    onClick={() => onSection(p.id)}
+                    data-product-section-tab={p.id}
+                  >
                     <span className="fc-step-mark">{MARK[p.state]}</span>
                     {p.title}
-                  </span>
-                  <span className="grow">{p.status}</span>
-                  <button type="button" className="ghost" onClick={() => onSection(p.id)}>
-                    Open {p.title}
                   </button>
+                  <span className="grow">{p.status}</span>
+                  {section === p.id && <span className="muted">shown below</span>}
                 </div>
               ))}
+              {hasParts && (
+                <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
+                  <button
+                    type="button"
+                    className={`fc-step${section === "parts" ? " on" : ""}`}
+                    aria-pressed={section === "parts"}
+                    onClick={() => onSection("parts")}
+                    data-product-section-tab="parts"
+                  >
+                    Parts
+                  </button>
+                  <span className="grow muted">
+                    Everything else the repositories hold: services and applications that are not gears.
+                  </span>
+                </div>
+              )}
             </div>
           ) : shown.id === "save" ? (
             <SaveStep
