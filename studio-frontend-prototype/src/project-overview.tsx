@@ -15,7 +15,7 @@
  *   pull requests  who each open one is waiting on, from
  *               studio-artifact-ingest's /open-pull-requests
  *               (pull-requests-waiting.tsx).
- *   kits/team/automation — kit installations, tenant users, the trust ramp.
+ *   kits/team   kit installations, tenant users.
  *   studio      the IDE session for this project — launched from here.
  *
  * Nothing on this screen is decoration: every number is a live read, and a
@@ -38,7 +38,6 @@ import type {
   RepoEntry,
   StudioSession,
   User,
-  WorkspaceSettings,
 } from "./api";
 import { findRepoNode } from "./artifact-sync";
 import { projectRepoRows } from "./project-sources";
@@ -60,13 +59,9 @@ import { ProjectPath } from "./project-path-view";
  * the product says "Specs", is a prototype of a different product.
  *
  * Renamed rather than rebuilt, screens unchanged: "kits" is Components,
- * "people" is Team, "documents" is Specs. Two — activity and timeline — have
- * NO screen behind them yet and say so on the page; they are in the list
- * because the list is the thing being matched, and quietly omitting them would
- * make the nav wrong in the one way that is being checked. "automation" has no
- * counterpart in the product's list and is kept after Team rather than dropped,
- * because dropping it would delete a working screen to win a screenshot
- * comparison.
+ * "people" is Team, "documents" is Specs. Timeline had no screen behind it
+ * and Automation stored a trust ramp nothing read, so both were removed
+ * (2026-11-03): a tab is in the list when it does something.
  *
  * SOURCES was ours first and the product has since grown it, in the same place
  * and under the same name — worth knowing before anyone "aligns" it away.
@@ -92,9 +87,7 @@ export type ProjTab =
   | "sources"
   | "connections"
   | "activity"
-  | "timeline"
-  | "people"
-  | "automation";
+  | "people";
 
 /** What the dashboard needs to know about the project it is showing — the
  *  project tenant, plus the organization it hangs under. */
@@ -190,7 +183,6 @@ export function ProjectOverview({
   /** Launch (or attach to) this project's IDE session and open it as a space. */
   onOpenStudio: () => void;
 }) {
-  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
   /** The project's repositories (`project-sources.ts`), as rows. */
   const [repos, setRepos] = useState<RepoEntry[]>([]);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
@@ -236,7 +228,6 @@ export function ProjectOverview({
       if (!quiet) setLoading(true);
       const misses: string[] = [];
       const [
-        s,
         cfg,
         ownRepos,
         typePage,
@@ -253,7 +244,6 @@ export function ProjectOverview({
         who,
       ] =
         await Promise.all([
-          optional("workspace settings", api.workspaceSettings(token, project.id), null, misses),
           optional("project config", api.projectConfig(token, project.id), null, misses),
           optional("repositories", projectRepoRows(token, project.id), [] as RepoEntry[], misses),
           optional("document types", api.docTypes(token, parentWorkspaceId), { items: [] as DocType[] }, misses),
@@ -309,7 +299,6 @@ export function ProjectOverview({
           ),
         ]);
 
-      setSettings(s);
       setRepos(ownRepos);
       setConfig(cfg);
       setTypes(typePage.items ?? []);
@@ -480,7 +469,7 @@ export function ProjectOverview({
           title two lines above ("project · d5e76267…") and the organization is
           the first segment of the bar's PathBar, so this row opened by telling
           the reader twice what they could already see, and buried the part only
-          it knows — kind, status, automation level — behind that. */}
+          it knows — kind, status — behind that. */}
       <div className="dash-context">
         <LevelBadge level="project" />
         <h1 className="level-title">{project.name}</h1>
@@ -493,7 +482,6 @@ export function ProjectOverview({
           </span>
         )}
         {project.self_managed && <span className="badge selfmanaged">self-managed</span>}
-        {settings?.automation_level && <span className="badge">{settings.automation_level}</span>}
         <button className="ghost" disabled={refreshing} onClick={() => void refresh()}>
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
@@ -882,26 +870,15 @@ export function ProjectOverview({
             )}
           </div>
 
-          {/* ── Automation & team: how much the project lets workers do, and
-                who is on it. ── */}
+          {/* ── Team: who is on the project. ── */}
           <div className="card">
             <div className="card-head">
-              <h2>Automation</h2>
-              <button className="ghost" onClick={() => onOpenTab("automation")}>
-                Settings →
+              <h2>Team</h2>
+              <button className="ghost" onClick={() => onOpenTab("people")}>
+                Team →
               </button>
             </div>
             <ul className="rows">
-              <li>
-                <div className="grow">
-                  <div className="name">{settings?.automation_level ?? "not set"}</div>
-                  <div className="sub">
-                    {(settings?.approved_worker_categories ?? []).length
-                      ? `approved: ${(settings?.approved_worker_categories ?? []).join(", ")}`
-                      : "no worker category approved yet"}
-                  </div>
-                </div>
-              </li>
               <li>
                 <div className="grow">
                   <div className="name">

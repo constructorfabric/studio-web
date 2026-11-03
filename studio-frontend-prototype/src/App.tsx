@@ -103,7 +103,6 @@ import {
   type StudioProfile,
   type StudioSession,
   type Tenant,
-  type WorkspaceSettings,
   sessionOrigin,
   setCurrentOrganization,
   waitForStudioSessionReady,
@@ -5356,22 +5355,6 @@ function WorkspaceProjects({
 /** One row of a workspace's project table: the project and what is counted for it. */
 type ProjectListRow = { id: string; name: string; row?: import("./api").RollupRow };
 
-/** A section the product's navigation lists but this prototype has no screen
- *  for. Named honestly on the page, with what it would show and what is
- *  actually missing, so it cannot be mistaken for a working screen with no
- *  data in it. */
-function NotBuiltYet({ title, what, why }: { title: string; what: string; why: string }) {
-  return (
-    <div className="card">
-      <h2>{title}</h2>
-      <p className="empty">
-        Not built yet. This section would show {what}.
-      </p>
-      <p className="hint">Why it is empty: {why}.</p>
-    </div>
-  );
-}
-
 /** The sections of an open project — the type is defined next to the Overview
  *  that links to them; this is the shell rail's rendering of the list (the
  *  active tab is stored on the shell, not inside ProjectScreen). */
@@ -5441,10 +5424,8 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // it inherits. A person's own are on their profile.
   { id: "connections", icon: "plug", label: "Connections" },
   { id: "activity", icon: "activity", label: "Activity" },
-  { id: "timeline", icon: "clock", label: "Timeline" },
   { id: "people", icon: "users", label: "Team" },
   // Ours, kept after the product's list rather than interleaved with it.
-  { id: "automation", icon: "shield", label: "Automation" },
 ];
 
 
@@ -5873,14 +5854,6 @@ function ProjectScreen({
         {tab === "activity" && (
           <ActivityView token={token} projectTenantId={proj.id} workspaceId={workspace.id} />
         )}
-        {tab === "timeline" && (
-          <NotBuiltYet
-            title="Timeline"
-            what="the project's milestones and journey stages on a time axis"
-            why="the stage catalogue is already read on Overview; the time axis is the part that does not exist"
-          />
-        )}
-        {tab === "automation" && <AutomationSettings token={token} ws={proj} />}
         {tab === "people" && (
           <PeopleView
             token={token}
@@ -6026,7 +5999,6 @@ function WorkspacesView({
 
 /* ── Workspace Dashboard (vision journey J2: onboard a project) ── */
 
-const WORKER_CATEGORIES = ["documenting", "coding", "review", "analysis"];
 
 
 // Repository credentials are workspace-scoped (tenant sharing), so the
@@ -6043,103 +6015,6 @@ const PAT_SECRET_TYPE = "gts.cf.core.credstore.secret.v1~cf.core.credstore.api_k
 // under the same reference.
 const PERSONAL_SECRET_TYPE =
   "gts.cf.core.credstore.secret.v1~cf.core.credstore.personal_token.v1~";
-
-/** Automation trust ramp for a project — moved out of the overview into its own
- *  sidebar tab. Loads/saves the workspace settings (automation_level + approved
- *  worker categories) as GTS-validated tenant metadata. */
-function AutomationSettings({ token, ws }: { token: string; ws: Workspace }) {
-  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const s = await api.workspaceSettings(token, ws.id);
-      setSettings(s ?? { automation_level: "recommendations", approved_worker_categories: [] });
-    } catch (e) {
-      setError(errText(e));
-    }
-  }, [token, ws.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (!settings) return;
-    setError(null);
-    setSaved(false);
-    try {
-      await api.putWorkspaceSettings(token, ws.id, settings);
-      setSaved(true);
-    } catch (err) {
-      setError(errText(err));
-    }
-  }
-
-  return (
-    <div className="card">
-      <h2>Automation — trust ramp</h2>
-      <p className="hint">
-        The domain model's trust ramp, per project: <b>manual</b> = read-only insight,{" "}
-        <b>recommendations</b> = prepared actions awaiting approval, <b>autonomous</b> = approved
-        automation for the categories below. Stored as tenant metadata (GTS-validated).
-      </p>
-      {error && <div className="error">{error}</div>}
-      {!settings ? (
-        <p className="empty">Loading…</p>
-      ) : (
-        <form onSubmit={save}>
-          <label className="field" style={{ maxWidth: 320 }}>
-            Automation level
-            <select
-              style={{ display: "block", width: "100%", marginTop: 6 }}
-              value={settings.automation_level ?? "recommendations"}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  automation_level: e.target.value as WorkspaceSettings["automation_level"],
-                })
-              }
-            >
-              <option value="manual">manual — humans do everything</option>
-              <option value="recommendations">recommendations — workers suggest, humans approve</option>
-              <option value="autonomous">autonomous — approved workers act on their own</option>
-            </select>
-          </label>
-          <div className="field">
-            Approved worker categories
-            <div style={{ display: "flex", gap: 14, marginTop: 6, flexWrap: "wrap" }}>
-              {WORKER_CATEGORIES.map((c) => (
-                <label key={c} style={{ fontWeight: 400 }}>
-                  <input
-                    type="checkbox"
-                    checked={settings.approved_worker_categories?.includes(c) ?? false}
-                    onChange={(e) => {
-                      const cur = new Set(settings.approved_worker_categories ?? []);
-                      if (e.target.checked) cur.add(c);
-                      else cur.delete(c);
-                      setSettings({ ...settings, approved_worker_categories: [...cur] });
-                    }}
-                  />{" "}
-                  {c}
-                </label>
-              ))}
-            </div>
-          </div>
-          <button className="primary">Save settings</button>
-          {saved && (
-            <span className="hint" style={{ marginLeft: 10 }}>
-              saved ✓
-            </span>
-          )}
-        </form>
-      )}
-    </div>
-  );
-}
 
 /* ── System (observability across platform gears) ── */
 
