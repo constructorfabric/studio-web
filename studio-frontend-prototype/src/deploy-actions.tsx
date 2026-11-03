@@ -35,7 +35,7 @@ import {
 
 /** Ask the server for a deploy, and say what it answered: queued, or
  *  waiting for an administrator. One for every place a deploy is asked. */
-function useDeployRequest(token: string, projectId: string, onChanged: (message: string) => void) {
+export function useDeployRequest(token: string, projectId: string, onChanged: (message: string) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string): Promise<boolean> => {
@@ -56,7 +56,7 @@ function useDeployRequest(token: string, projectId: string, onChanged: (message:
 }
 
 /** Deploy one published build to an environment the project may deploy to:
- *  the Builds tab's action on a build, beside each environment's own. */
+ *  Releases' action on a build, beside each step of its ladder. */
 export function DeployBuildTo({
   token,
   projectId,
@@ -74,7 +74,7 @@ export function DeployBuildTo({
 }) {
   // Only where this build can go: a Research environment runs only what
   // Research built, the others only a published chart -- the same rule the
-  // Deploys tab picks builds by, so the two never offer different things.
+  // ladder picks builds by, so the two never offer different things.
   const takers = environments.filter((e) => deployableBuilds([build], e).length > 0);
   const [envId, setEnvId] = useState(takers[0]?.id ?? "");
   const { busy, error, ask } = useDeployRequest(token, projectId, onChanged);
@@ -97,7 +97,7 @@ export function DeployBuildTo({
         disabled={busy || !env || !!gap}
         title={gap ?? undefined}
         onClick={() =>
-          env && void ask({ environment_id: env.id, build: build.buildId }, `Deploy ${build.chartVersion} to ${env.name} -- it shows under Deploys`)
+          env && void ask({ environment_id: env.id, build: build.buildId }, `Deploy ${build.chartVersion} to ${env.name} -- it shows on the ladder above`)
         }
       >
         Deploy
@@ -180,8 +180,8 @@ export function EnvironmentActions({
           {candidates.length === 0 ? (
             <p className="hint">
               {isResearch(env)
-                ? "No build made in Constructor Research yet: Build in Research in the Builds tab."
-                : "No build has published a chart yet: build in the Builds tab, or publish from the IDE's Deploy."}
+                ? "No build made in Constructor Research yet: Build in Research under Builds below."
+                : "No build has published a chart yet: build under Builds below, or publish from the IDE's Deploy."}
             </p>
           ) : (
             <ul className="rows">
@@ -558,7 +558,7 @@ export function BuildInStudio({
     return (
       <p className="hint" data-build-studio-unavailable>
         No environment can take a Studio build yet: one needs a registry prefix and a registry connection to push with,
-        or a Constructor Research project (Organization › Environments). Until then, build on your machine or in CI.
+        or a Constructor Research project (Organization › Infrastructure). Until then, build on your machine or in CI.
       </p>
     );
   }
@@ -700,7 +700,7 @@ export function ProposeBuildWorkflow({
     return (
       <p className="hint">
         A CI workflow publishes to an environment&apos;s registry, and no environment of this project names one yet
-        (Organization › Environments).
+        (Organization › Infrastructure).
       </p>
     );
   }

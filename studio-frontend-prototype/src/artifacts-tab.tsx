@@ -47,7 +47,7 @@ export function ProjectOutputs({
 }: {
   token: string;
   projectId: string;
-  onOpenTab?: (tab: "builds" | "deploys" | "sources") => void;
+  onOpenTab?: (tab: "releases" | "sources") => void;
 }) {
   const [outputs, setOutputs] = useState<BuildOutput[] | null>(null);
   const [runs, setRuns] = useState<BuildRun[]>([]);
@@ -138,11 +138,11 @@ export function ProjectOutputs({
               <>
                 A CI run that uploads an artifact shows it here after the next sync. The runs themselves are on{" "}
                 {onOpenTab ? (
-                  <button className="linklike" onClick={() => onOpenTab("builds")}>
-                    Builds
+                  <button className="linklike" onClick={() => onOpenTab("releases")}>
+                    Releases
                   </button>
                 ) : (
-                  "Builds"
+                  "Releases"
                 )}
                 .
               </>
@@ -247,8 +247,8 @@ export function ProjectOutputs({
       {onOpenTab && (
         <p className="hint" data-outputs-images>
           Container images the builds published are deployed from{" "}
-          <button className="linklike" onClick={() => onOpenTab("deploys")}>
-            Deploys
+          <button className="linklike" onClick={() => onOpenTab("releases")}>
+            Releases
           </button>
           .
         </p>

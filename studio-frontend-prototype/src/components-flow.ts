@@ -182,7 +182,7 @@ export function alsoCovers(plan: readonly PlanRow[]): Record<string, string[]> {
 
 // ── The next step ────────────────────────────────────────────────────────
 
-/** `builds`: the product is written; building it is the Builds tab's. */
+/** `builds`: the product is written; building it is Releases'. */
 export type NextAction = "add-recommended" | "take-from-code" | "preview" | "fix" | "save" | "build" | "open" | "builds";
 
 export interface NextStep {

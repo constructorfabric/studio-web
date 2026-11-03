@@ -44,10 +44,19 @@ export const PRODUCT_SECTIONS: readonly { id: ProductSectionId; title: string; h
  *  as the catalogue's first micro-frontend source. */
 export const FRONTX_SHELL_TEMPLATE = "github:constructorfabric/gears-frontx-templates//template-shell@main";
 
-/** Project tabs that became a section of Product, by their old id. */
-export const MOVED_PROJECT_TABS: Readonly<Record<string, { tab: "components"; section: ProductSectionId }>> = {
+/** Project tabs that moved, by their old id: Frontend became a section of
+ *  Product, and Builds and Deploys became Releases (ADR-0056 §4). */
+export const MOVED_PROJECT_TABS: Readonly<Record<string, { tab: "components" | "releases"; section?: ProductSectionId }>> = {
   frontend: { tab: "components", section: "frontend" },
+  builds: { tab: "releases" },
+  deploys: { tab: "releases" },
 };
+
+/** The tab an id names now: a moved one's new tab, any other unchanged. For
+ *  every id kept somewhere -- a stored place, a pin, a project type. */
+export function currentProjectTab(id: string): string {
+  return MOVED_PROJECT_TABS[id]?.tab ?? id;
+}
 
 /** Whether the product has a frontend: the product records one, or -- for a
  *  project that picked micro-frontends before the product kept them -- its

@@ -121,7 +121,7 @@ export interface FlowFacts {
   /** The revision Studio keeps; `null` when there is none, `undefined` when
    *  it could not be read. */
   kept: { revision: number; text: string } | null | undefined;
-  /** What the Builds and Deploys tabs say, or `null` when unread. */
+  /** What Releases says of the builds and the deploys, or `null` when unread. */
   build: PipelineHint | null;
   deploy: PipelineHint | null;
 }
@@ -164,8 +164,8 @@ export function productFlow(f: FlowFacts): FlowStep[] {
   return [
     configure,
     save,
-    { id: "build", title: "Build", state: stateOf(f.build), status: f.build?.text ?? "Could not read the builds.", tab: "builds" },
-    { id: "deploy", title: "Deploy", state: stateOf(f.deploy), status: f.deploy?.text ?? "Could not read the deploys.", tab: "deploys" },
+    { id: "build", title: "Build", state: stateOf(f.build), status: f.build?.text ?? "Could not read the builds.", tab: "releases" },
+    { id: "deploy", title: "Deploy", state: stateOf(f.deploy), status: f.deploy?.text ?? "Could not read the deploys.", tab: "releases" },
   ];
 }
 

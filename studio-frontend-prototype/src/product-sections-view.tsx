@@ -64,7 +64,7 @@ export function ProductPage({
   token: string;
   projectId: string;
   backend: ReactNode;
-  /** Opens Builds or Deploys, for the strip's last two steps. */
+  /** Opens Releases, for the strip's last two steps. */
   onOpenTab?: (tab: PipelineTab) => void;
   /** The project's inventory (Parts); a section only when given. */
   parts?: (openBackend: () => void) => ReactNode;
@@ -237,8 +237,8 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
             <ProductNeeds infra={infra} />
             {infra.runsIn.length === 0 ? (
               <div className="muted">
-                No environment this project may deploy to. An organization administrator adds one under Environments; the
-                Deploys tab binds a profile to it.
+                No environment this project may deploy to. An organization administrator adds one under Infrastructure;
+                Releases binds a profile to it.
               </div>
             ) : (
               <table className="ptable" aria-label="Where the product runs">

@@ -19,9 +19,9 @@
  * are not this module's; `pathToPlace` answers nothing for them.
  */
 
-// Project tabs that became a section of another (the Frontend tab is now
-// Product › Frontend): an old address opens the tab that holds it, and the
-// section scrolls itself into view (product-sections-view.tsx).
+// Project tabs that moved (the Frontend tab is now Product › Frontend, Builds
+// and Deploys are Releases): an old address opens the tab that holds it, and
+// a section scrolls itself into view (product-sections-view.tsx).
 import { MOVED_PROJECT_TABS } from "./product-sections";
 
 /** What of the shell's Place an address carries. */

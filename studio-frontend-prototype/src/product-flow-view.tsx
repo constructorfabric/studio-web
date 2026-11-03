@@ -134,7 +134,7 @@ export function ProductFlow({
               type="button"
               className={`fc-step ${TONE[s.state]}${shown?.id === s.id ? " on" : ""}`}
               aria-expanded={shown?.id === s.id}
-              title={s.tab && onOpenTab ? `${s.status} Opens ${s.id === "build" ? "Builds" : "Deploys"}.` : undefined}
+              title={s.tab && onOpenTab ? `${s.status} Opens Releases.` : undefined}
               onClick={() => (s.tab && onOpenTab ? onOpenTab(s.tab) : setOpen(s.id))}
               data-flow-step={s.id}
               data-flow-state={s.state}
@@ -201,7 +201,7 @@ export function ProductFlow({
               <span className="grow">{shown.status}</span>
               {shown.tab && onOpenTab && (
                 <button type="button" className="ghost" onClick={() => onOpenTab(shown.tab!)}>
-                  Open {shown.id === "build" ? "Builds" : "Deploys"}
+                  Open Releases
                 </button>
               )}
             </div>

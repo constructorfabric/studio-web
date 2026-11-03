@@ -58,6 +58,13 @@ describe("the portal's address", () => {
     });
   });
 
+  it("opens the Builds and Deploys tabs' old addresses on Releases", () => {
+    const known = { ...KNOWN, projectTabs: [...KNOWN.projectTabs, "releases"] };
+    for (const tab of ["builds", "deploys"]) {
+      expect(pathToPlace(`/workspaces/ws1/projects/p1/${tab}`, "", known), tab).toMatchObject({ projectTab: "releases" });
+    }
+  });
+
   it("answers nothing for an address that is not a place of ours", () => {
     for (const path of ["/", "/space/5f6c1c9e-0000-4000-8000-000000000000", "/cf/studio-kits/v1/catalog", "/studio/abc", "/nowhere", "/components/extra", "/workspaces/ws1/projects/p1/unknown-tab", "/admin/nothing", "/workspaces/%E0%A4%A"]) {
       expect(pathToPlace(path, "", KNOWN), path).toBeUndefined();

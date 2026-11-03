@@ -19,6 +19,7 @@
  */
 
 import type { ProjectKind } from "./api";
+import { currentProjectTab } from "./product-sections";
 import type { ProjTab } from "./project-overview";
 
 export interface ProjectType {
@@ -83,8 +84,8 @@ export const PRESETS: { id: string; title: string; types: ProjectType[] }[] = [
         description:
           "Pick gears from the catalogue and put them together in an IDE session with an agent. A repository is created for you.",
         recipe: "product",
-        // Deploys too: the product card sends its runs there.
-        tabs: ["overview", "components", "parts", "sources", "builds", "deploys", "kits", "people"],
+        // Releases too: the product card sends its runs there.
+        tabs: ["overview", "components", "parts", "sources", "releases", "kits", "people"],
         first_tab: "overview",
       },
       {
@@ -92,7 +93,7 @@ export const PRESETS: { id: string; title: string; types: ProjectType[] }[] = [
         title: "Write a gear",
         description: "Write your own gear from a starter, try it in an IDE session and see it build.",
         recipe: "new_gears",
-        tabs: ["overview", "parts", "sources", "builds", "tests", "kits", "people"],
+        tabs: ["overview", "parts", "sources", "releases", "tests", "kits", "people"],
         first_tab: "overview",
       },
       {
@@ -125,10 +126,15 @@ export function parseTypes(raw: unknown, knownTabs: readonly string[]): ProjectT
     const title = typeof t.title === "string" ? t.title.trim() : "";
     if (!key || !title || seen.has(key) || typeof t.recipe !== "string" || !RECIPE_IDS.has(t.recipe)) continue;
     seen.add(key);
+    // A type saved before a tab moved names its old id (Builds, Deploys):
+    // read as the tab that holds it now, once.
     const tabs = Array.isArray(t.tabs)
-      ? (t.tabs.filter((x) => typeof x === "string" && known.has(x)) as ProjTab[])
+      ? ([...new Set(t.tabs.filter((x): x is string => typeof x === "string").map(currentProjectTab))].filter((x) =>
+          known.has(x),
+        ) as ProjTab[])
       : undefined;
-    const first = typeof t.first_tab === "string" && known.has(t.first_tab) ? (t.first_tab as ProjTab) : undefined;
+    const firstTab = typeof t.first_tab === "string" ? currentProjectTab(t.first_tab) : "";
+    const first = known.has(firstTab) ? (firstTab as ProjTab) : undefined;
     const kits = Array.isArray(t.kits) ? t.kits.filter((x): x is string => typeof x === "string" && x !== "") : undefined;
     out.push({
       key,

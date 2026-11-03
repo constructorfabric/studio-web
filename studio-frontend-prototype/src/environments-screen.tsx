@@ -1196,7 +1196,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
             What runs here
           </h4>
           {current.running.length === 0 ? (
-            <p className="empty">Nothing deployed to this cluster yet. A project deploys from its Deploys tab, or from the desktop after Generate.</p>
+            <p className="empty">Nothing deployed to this cluster yet. A project deploys from its Releases tab, or from the desktop after Generate.</p>
           ) : (
             <ul className="env-list">
               {current.running.map((d) => (
@@ -1302,12 +1302,15 @@ function OpenClusters({
   );
 }
 
-/** A project's environments, on its product card: bindings and deployments. */
+/** A project's environments: its profiles' bindings and its deployments.
+ *  Releases draws the two apart (ADR-0056 §4) -- the history under the
+ *  builds, the bindings in its folded Environments of this project. */
 export function ProjectEnvironments({
   token,
   projectId,
   profiles,
   title = "Environments",
+  show = "both",
   onSaved,
 }: {
   token: string;
@@ -1315,6 +1318,8 @@ export function ProjectEnvironments({
   profiles: readonly string[];
   /** The heading: where the bindings sit decides what they are called. */
   title?: string;
+  /** Which of the two to draw. */
+  show?: "both" | "bindings" | "history";
   /** The bindings were saved: whatever else shows them reads them again. */
   onSaved?: () => void;
 }) {
@@ -1378,7 +1383,7 @@ export function ProjectEnvironments({
         <h3>{title}</h3>
       </div>
       {error && <div className="error">{error}</div>}
-      {targets === null ? (
+      {show === "history" ? null : targets === null ? (
         <p className="hint">Loading…</p>
       ) : targets.environments.length === 0 ? (
         <p className="empty">The organization has no environment this project may deploy to yet.</p>
@@ -1426,9 +1431,10 @@ export function ProjectEnvironments({
           </div>
         </>
       )}
-      {deployments.length > 0 && targets && (
+      {show === "history" && targets && deployments.length === 0 && <p className="empty">Nothing deployed yet.</p>}
+      {show !== "bindings" && deployments.length > 0 && targets && (
         <ul className="env-list">
-          {deployments.slice(0, 10).map((d) => (
+          {deployments.slice(0, show === "history" ? 20 : 10).map((d) => (
             <li key={d.id}>
               <DeploymentLine d={d} showProject={false} />
               {canReadStatus(d) && <StatusButton token={token} org={targets.organization_id} d={d} />}

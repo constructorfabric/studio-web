@@ -407,7 +407,7 @@ export function failureCause(b: IdeBuild, now = Date.now()): FailureCause {
     return {
       kind: "cluster",
       gear: null,
-      next: "It never reached the cluster: check the environment's cluster and registry connections (Organization › Environments), then build again.",
+      next: "It never reached the cluster: check the environment's cluster and registry connections (Organization › Infrastructure), then build again.",
     };
   }
   if (b.where === "ci" && !b.failure) {

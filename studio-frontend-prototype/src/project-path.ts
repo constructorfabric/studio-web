@@ -110,7 +110,7 @@ function product(f: PathFacts): Draft {
 }
 
 function build(f: PathFacts): Draft {
-  const base = { id: "build" as const, title: "Build and deploy", tab: "builds" as const, action: "Open Builds" };
+  const base = { id: "build" as const, title: "Build and deploy", tab: "releases" as const, action: "Open Releases" };
   if (f.build === null) return { ...base, done: null, status: "Could not read the CI runs." };
   if (f.build === "none") return { ...base, done: false, status: "No CI run seen yet." };
   const at = f.build.sha ? ` at ${f.build.sha}` : "";

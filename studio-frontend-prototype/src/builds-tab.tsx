@@ -1,5 +1,6 @@
-// A project's Builds tab (ADR-0045, ADR-0048 §9): the second step of the
-// product's way out, after Product composed it and before Deploys installs it.
+// A project's builds (ADR-0045, ADR-0048 §9), a part of its Releases tab
+// (ADR-0056 §4): the step after Product composed the product and before a
+// deploy installs it.
 // One line says where it stands; then Build the product, one scenario at a
 // time -- in Studio, as a Job in the organization's cluster; on my machine, in
 // the desktop IDE; or in CI, by the repository's workflow, whose runs show
@@ -98,13 +99,19 @@ export function ProjectBuilds({
   projectId,
   projectName,
   onOpenTab,
+  round: outer = 0,
+  onChanged,
 }: {
   token: string;
   projectId: string;
   /** What the desktop app calls the project it opens. */
   projectName?: string;
-  /** Open another tab of the project: Deploys, once a build is published. */
+  /** Open another tab of the project: Product, when the line says so. */
   onOpenTab?: (tab: PipelineTab) => void;
+  /** Bumped by Releases when something else on it changed: read again. */
+  round?: number;
+  /** Something here changed what Releases shows around it. */
+  onChanged?: () => void;
 }) {
   const [ideBuilds, setIdeBuilds] = useState<IdeBuild[]>([]);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
@@ -126,10 +133,14 @@ export function ProjectBuilds({
   // How the project builds (ADR-0054 §7); `null` while it loads.
   const [build, setBuild] = useState<ProjectBuildSetting | null>(null);
   const [round, setRound] = useState(0);
-  const changed = useCallback((message: string) => {
-    setNote(message);
-    setRound((r) => r + 1);
-  }, []);
+  const changed = useCallback(
+    (message: string) => {
+      setNote(message);
+      setRound((r) => r + 1);
+      onChanged?.();
+    },
+    [onChanged],
+  );
 
   useEffect(() => {
     let live = true;
@@ -207,7 +218,7 @@ export function ProjectBuilds({
     return () => {
       live = false;
     };
-  }, [token, projectId, round]);
+  }, [token, projectId, round, outer]);
   const builds = useMemo(
     () => productBuildsOf(ideBuilds, runs ?? [], config?.build, repoPaths),
     [ideBuilds, runs, config, repoPaths],
@@ -227,9 +238,9 @@ export function ProjectBuilds({
   };
 
   return (
-    <>
-      <h1>Builds</h1>
-      <PipelineLine hint={buildsHint(builds, canBuildInStudio)} onOpenTab={onOpenTab} />
+    <section data-release-builds>
+      <h2>Builds</h2>
+      <PipelineLine hint={buildsHint(builds, canBuildInStudio)} onOpenTab={onOpenTab} here="releases" />
       {note && (
         <div className="hint" data-builds-note>
           {note}
@@ -290,7 +301,7 @@ export function ProjectBuilds({
         deployments={deployments}
         onChanged={changed}
       />
-    </>
+    </section>
   );
 }
 
