@@ -6,7 +6,7 @@ import type { Infrastructure } from "./product-sections";
 const infra = (over: Partial<Infrastructure> = {}): Infrastructure => ({
   profile: "prod",
   profileLabel: "Kubernetes",
-  runsIn: [{ environment: "dev", namespace: "studio", profile: "prod", database: "its own Postgres", missing: [] }],
+  runsIn: [{ environment: "dev", namespace: "studio", profile: "prod", database: "its own Postgres", missing: [], unchecked: false }],
   needs: null,
   applications: [],
   ...over,
@@ -61,7 +61,14 @@ describe("configuring the product", () => {
 
   it("names what the infrastructure lacks", () => {
     const [i] = configureParts(null, null, infra({ runsIn: [{ ...infra().runsIn[0], missing: ["PostgreSQL"] }] }));
-    expect(i).toMatchObject({ state: "failed", status: "Kubernetes; missing PostgreSQL in dev." });
+    expect(i.state).toBe("failed");
+    expect(i.status).toContain("a deploy to dev will stop: it gives no database");
+  });
+
+  it("asks for a check of the profile an environment runs, when the last one was another", () => {
+    const [i] = configureParts(null, null, infra({ profile: "dev", runsIn: [{ ...infra().runsIn[0], unchecked: true }] }));
+    expect(i.state).toBe("todo");
+    expect(i.status).toContain("dev runs profile prod, and the product was last checked for dev");
   });
 });
 

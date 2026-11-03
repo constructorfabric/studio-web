@@ -44,8 +44,24 @@ function infrastructurePart(infra: Infrastructure | null): FlowPart {
   const base = { id: "infrastructure" as const, title: "Infrastructure" };
   if (!infra) return { ...base, state: "unknown", status: "Could not read where the product runs." };
   if (!infra.profileLabel) return { ...base, state: "todo", status: "No profile yet: it is set when the gears are composed." };
-  const missing = infra.runsIn.flatMap((r) => r.missing.map((m) => `${m} in ${r.environment}`));
-  if (missing.length > 0) return { ...base, state: "failed", status: `${infra.profileLabel}; missing ${missing.join(", ")}.` };
+  const stops = infra.runsIn.filter((r) => r.missing.length > 0);
+  if (stops.length > 0) {
+    const where = stops.map((r) => r.environment).join(", ");
+    return {
+      ...base,
+      state: "failed",
+      status: `${infra.profileLabel}; a deploy to ${where} will stop: it gives no database for the gears that keep data. Switch it to the product's own Postgres (Organization › Infrastructure).`,
+    };
+  }
+  const unchecked = infra.runsIn.filter((r) => r.unchecked);
+  if (unchecked.length > 0) {
+    const r = unchecked[0];
+    return {
+      ...base,
+      state: "todo",
+      status: `${infra.profileLabel}; ${r.environment} runs profile ${r.profile}, and the product was last checked for ${infra.profile}: check it for ${r.profile} under Backend.`,
+    };
+  }
   if (infra.runsIn.length === 0)
     return { ...base, state: "todo", status: `${infra.profileLabel}; no environment to run in yet.` };
   return {

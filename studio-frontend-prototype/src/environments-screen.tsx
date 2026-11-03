@@ -644,8 +644,11 @@ export function EnvironmentForm({
               : "The product's own, when its gears keep data: a Postgres in its namespace, with every deploy"}
           </option>
           {input.database === "namespace" && <option value="namespace">The product&apos;s own (as recorded before)</option>}
-          {!research && (
-            <option value="shared">The environment&apos;s shared Postgres — recorded only, not handed to the chart yet</option>
+          {/* A shared server is recorded and deploys get nothing from it
+              (ADR-0048 §7), so a new choice of it is not offered; one
+              recorded before stays, saying so. */}
+          {!research && input.database === "shared" && (
+            <option value="shared">A shared Postgres — recorded only: deploys get no database from it</option>
           )}
         </select>
       </label>

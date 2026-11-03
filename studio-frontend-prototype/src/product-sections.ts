@@ -100,6 +100,9 @@ export interface RunsIn {
   database: string;
   /** What the product needs that it does not give: "PostgreSQL". */
   missing: string[];
+  /** The product was last checked for another profile than the one bound
+   *  here: what it needs there is not known yet. */
+  unchecked: boolean;
 }
 
 /** What Infrastructure says: the profile the product is composed for and the
@@ -117,7 +120,8 @@ export interface Infrastructure {
 
 const DATABASE_WORDS: Record<DeployEnvironment["database"], string> = {
   none: "its own Postgres, with each deploy",
-  shared: "the environment's shared Postgres (not handed to the chart yet)",
+  // ADR-0048 §7: recorded, not used -- a deploy gets no database from it.
+  shared: "none: a shared Postgres is recorded, and deploys get nothing from it",
   namespace: "its own Postgres, with each deploy",
 };
 
@@ -137,6 +141,7 @@ export function infrastructureOf(
   const profile = product?.profile ?? null;
   const profileLabel = profile ? (PRODUCT_PROFILES.find((p) => p.id === profile)?.label ?? profile) : null;
   const needs = product?.last_preview?.infrastructure ?? null;
+  const checkedFor = product?.last_preview?.profile ?? null;
   const postgres = needs?.some((t) => t.id === "postgres") ?? false;
   const runsIn = (targets?.environments ?? []).map(({ environment, namespace }) => ({
     environment: environment.name,
@@ -151,6 +156,10 @@ export function infrastructureOf(
     // A shared server is recorded, not handed to the chart: nothing serves
     // the host it names. Any other mode brings the product's own.
     missing: postgres && environment.database === "shared" ? ["PostgreSQL"] : [],
+    unchecked: (() => {
+      const bound = targets?.bindings.find((b) => b.environment_id === environment.id)?.profile ?? null;
+      return !!bound && !!checkedFor && bound !== checkedFor;
+    })(),
   }));
   return { profile, profileLabel, runsIn, needs, applications: product?.last_preview?.applications ?? [] };
 }

@@ -70,8 +70,9 @@ describe("where the product runs", () => {
         environment: "dev",
         namespace: "shop-dev",
         profile: null,
-        database: "the environment's shared Postgres (not handed to the chart yet)",
+        database: "none: a shared Postgres is recorded, and deploys get nothing from it",
         missing: [],
+        unchecked: false,
       },
       {
         environment: "prod",
@@ -79,8 +80,9 @@ describe("where the product runs", () => {
         profile: "prod",
         database: "its own Postgres, with each deploy (postgres:17)",
         missing: [],
+        unchecked: false,
       },
-      { environment: "lab", namespace: "shop-lab", profile: null, database: "its own Postgres, with each deploy", missing: [] },
+      { environment: "lab", namespace: "shop-lab", profile: null, database: "its own Postgres, with each deploy", missing: [], unchecked: false },
     ]);
     expect(infra.needs).toBeNull();
   });
