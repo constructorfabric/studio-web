@@ -3,7 +3,7 @@
 # cannot say: what the shell carries is read from its workspace and
 # package.json, and each micro-frontend describes itself in its own frontx.gdl
 # under src-app/mfe_packages/.
-gdl_version = "1.6"
+gdl_version = "1.5"
 
 shell(
     # It signs users in before it mounts a screen: OIDC through Keycloak

@@ -3,6 +3,6 @@
 # It holds the API services several screens call (accounts, connectors, tasks,
 # events); each micro-frontend's own frontx.gdl names the gears it reaches
 # through them.
-gdl_version = "1.6"
+gdl_version = "1.5"
 
 library()

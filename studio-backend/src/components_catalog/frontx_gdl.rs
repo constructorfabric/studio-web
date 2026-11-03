@@ -1,4 +1,4 @@
-//! A FrontX package's own description, `frontx.gdl` (GDL 1.6), read without
+//! A FrontX package's own description, `frontx.gdl` (GDL 1.5), read without
 //! evaluating it.
 //!
 //! The file sits at a package's root beside its `package.json` and says what
@@ -6,7 +6,7 @@
 //! `mfe(requires = [...])` or `library()`. Gearbox evaluates it as Starlark;
 //! Studio does not depend on Gearbox's crates, and the scan reads files from
 //! repositories it does not own, so this reads only the subset the vocabulary
-//! needs — a `gdl_version = "1.6"` line, the one call with literal named
+//! needs — a `gdl_version = "1.5"` line (or a later 1.x), the one call with literal named
 //! arguments (`True`, `False`, `None`, strings, lists of strings), and `#`
 //! comments — and refuses anything else with the reason. Nothing is executed.
 //!
@@ -48,8 +48,18 @@ const KEYWORDS: [&str; 10] = [
     "if", "elif", "else", "for", "while", "def", "lambda", "return", "and", "or",
 ];
 
-/// The GDL version the vocabulary was introduced in, and the only one read.
-const GDL_VERSION: &str = "1.6";
+/// The GDL version the vocabulary was introduced in. Any later 1.x is read
+/// too: a later minor may add arguments, and an unknown one is refused by
+/// name, so nothing a newer file says is misread.
+const GDL_VERSION: &str = "1.5";
+
+/// Whether `v` is a GDL version this reader takes: `1.5` or a later `1.x`.
+fn reads_version(v: &str) -> bool {
+    let Some((major, minor)) = v.split_once('.') else {
+        return false;
+    };
+    major == "1" && minor.parse::<u32>().is_ok_and(|m| m >= 5)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
@@ -387,10 +397,10 @@ pub(crate) fn read(src: &str) -> Result<FrontxDescription, String> {
     }
 
     match version.as_deref() {
-        Some(GDL_VERSION) => {}
+        Some(v) if reads_version(v) => {}
         Some(other) => {
             return Err(format!(
-                "gdl_version = \"{other}\"; this reads \"{GDL_VERSION}\", where frontx.gdl was introduced"
+                "gdl_version = \"{other}\"; this reads \"{GDL_VERSION}\", where frontx.gdl was introduced, and later 1.x"
             ));
         }
         None => {

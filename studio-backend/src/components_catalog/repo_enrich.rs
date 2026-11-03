@@ -527,6 +527,23 @@ impl RepoEnricher {
             };
             if dir.is_empty() || is_workspace_container(&body) {
                 containers += 1;
+                // A workspace container that describes itself as a shell
+                // (`shell(...)` in its frontx.gdl) is a shell all the same:
+                // catalogued under where it is, since a fork of a FrontX
+                // template keeps the template's npm name (Studio's portal is
+                // `@gears-frontx/frontx-template-shell`), and two shells under
+                // one name would overwrite each other. Not claimed: its
+                // micro-frontends and libraries stay components of their own.
+                if !dir.is_empty() && paths.contains(&format!("{dir}/{FRONTX_GDL}").as_str()) {
+                    let described = self.read_file(src, &format!("{dir}/{FRONTX_GDL}")).await;
+                    if described.as_deref().is_some_and(|b| {
+                        matches!(frontx_gdl::read(b), Ok(FrontxDescription::Shell { .. }))
+                    }) {
+                        let mut shell = self.frontx_component(src, &dir, &body, paths).await;
+                        shell.crate_name = shell_key(&self.repo, &dir);
+                        out.push(shell);
+                    }
+                }
                 continue;
             }
             // A template's manifest is not a package: `template-mfe` ships a
@@ -2089,6 +2106,13 @@ fn skip_path(path: &str) -> bool {
         SKIP_SEGMENTS.contains(seg)
             && !(*seg == "src-app" && segs.get(i + 1) == Some(&MFE_PACKAGES))
     })
+}
+
+/// The catalogue key of a shell that is a workspace container: where it is,
+/// `owner/repo//dir`, the form the frontend constructor names shells in
+/// (`github:owner/repo//dir@ref`).
+fn shell_key(repo: &str, dir: &str) -> String {
+    format!("{repo}//{dir}")
 }
 
 /// True when a `package.json` is an npm/pnpm/yarn **workspace container** — it

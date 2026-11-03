@@ -87,7 +87,7 @@ spell (`mfe_calls`). That is evidence, the way spec mapping's word matches
 are; the declared field replaces it.
 
 The declaration now exists outside `mfe.json`: a package may describe itself
-in a `frontx.gdl` beside its `package.json` (GDL 1.6, `mfe(requires = [...])`,
+in a `frontx.gdl` beside its `package.json` (GDL 1.5, `mfe(requires = [...])`,
 `shell(signs_in = …, runtime_env = …)` or `library()`). When it has one that
 reads, the scan takes `mfe_calls`, `shell_signin` and `shell_runtime_env` from
 it instead of the source, files a `library()` as a library rather than a
