@@ -422,7 +422,7 @@ fn address_change_needs_token(
 /// resolve with, and the subject comparison is the honest fallback: it can
 /// refuse an edit the person should have been allowed, never allow one they
 /// should not.
-async fn same_person(
+pub(super) async fn same_person(
     ctx: &SecurityContext,
     recorded_subject: &str,
     people: Option<&dyn PersonResolver>,

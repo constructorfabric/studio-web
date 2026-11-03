@@ -90,6 +90,7 @@ export type ProjTab =
   | "kits"
   | "artifacts"
   | "sources"
+  | "connections"
   | "activity"
   | "timeline"
   | "people"

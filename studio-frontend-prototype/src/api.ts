@@ -1514,6 +1514,9 @@ export interface Connection {
   created_at_epoch_secs: number;
   /** The provider's options: a gear repository's `ref` and `source_id`. */
   options?: Record<string, string>;
+  /** Whether the caller created it: a person's own connections are listed on
+   *  their profile, a tenant's shared ones on the tenant. */
+  mine?: boolean;
 }
 
 /* ── studio-environments: where an organization's products run (ADR-0043) ── */

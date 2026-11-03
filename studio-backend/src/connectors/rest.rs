@@ -301,6 +301,10 @@ pub struct ConnectionDto {
     pub created_at_epoch_secs: u64,
     /// The provider's options (a gear repository's `ref` and `source_id`).
     pub options: BTreeMap<String, String>,
+    /// Whether the caller created it, under any of their sign-ins: a person's
+    /// own connections are listed on their profile, a tenant's shared ones on
+    /// the tenant. The creator is not said otherwise.
+    pub mine: bool,
 }
 
 #[derive(Debug)]
@@ -578,8 +582,9 @@ pub struct TenantQuery {
     tenant: Option<Uuid>,
 }
 
-fn to_dto(c: Connection) -> ConnectionDto {
+fn to_dto(c: Connection, mine: bool) -> ConnectionDto {
     ConnectionDto {
+        mine,
         id: c.id,
         owner_tenant_id: c.owner_tenant_id,
         provider: c.provider,
@@ -593,9 +598,9 @@ fn to_dto(c: Connection) -> ConnectionDto {
     }
 }
 
-fn to_test_dto(c: Connection, id: DriverIdentity) -> ConnectionTestDto {
+fn to_test_dto(c: Connection, id: DriverIdentity, mine: bool) -> ConnectionTestDto {
     ConnectionTestDto {
-        connection: to_dto(c),
+        connection: to_dto(c, mine),
         account: id.account,
         display_name: id.display_name,
     }
@@ -652,6 +657,7 @@ async fn list_providers(
 async fn list_connections(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
+    Extension(people): Extension<People>,
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<JsonBody<ConnectionListDto>> {
     let svc = connectors.get()?;
@@ -659,8 +665,20 @@ async fn list_connections(
         .list(&ctx, q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()))
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // Whose each row is, side by side: one identity lookup per row whose
+    // creator is not the caller's current sign-in.
+    let mine = futures_util::future::join_all(
+        items
+            .iter()
+            .map(|c| super::service::same_person(&ctx, &c.created_by, people.0.as_deref())),
+    )
+    .await;
     Ok(Json(ConnectionListDto {
-        items: items.into_iter().map(to_dto).collect(),
+        items: items
+            .into_iter()
+            .zip(mine)
+            .map(|(c, mine)| to_dto(c, mine.unwrap_or(false)))
+            .collect(),
     }))
 }
 
@@ -696,7 +714,8 @@ async fn patch_connection(
                 .with_constraint(format!("{e:#}"))
                 .create()
         })?;
-    Ok(Json(to_test_dto(connection, identity)))
+    let mine = connection.created_by == ctx.subject_id().to_string();
+    Ok(Json(to_test_dto(connection, identity, mine)))
 }
 
 async fn create_connection(
@@ -728,7 +747,10 @@ async fn create_connection(
                 .with_constraint(format!("{e:#}"))
                 .create()
         })?;
-    Ok((StatusCode::CREATED, Json(to_test_dto(connection, identity))))
+    Ok((
+        StatusCode::CREATED,
+        Json(to_test_dto(connection, identity, true)),
+    ))
 }
 
 async fn probe_connection(
@@ -798,7 +820,10 @@ async fn confirm_sign_in(
                 .with_constraint(format!("{e:#}"))
                 .create()
         })?;
-    Ok((StatusCode::CREATED, Json(to_test_dto(connection, identity))))
+    Ok((
+        StatusCode::CREATED,
+        Json(to_test_dto(connection, identity, true)),
+    ))
 }
 
 async fn test_connection(
@@ -820,7 +845,8 @@ async fn test_connection(
             )
             .create()
     })?;
-    Ok(Json(to_test_dto(connection, identity)))
+    let mine = connection.created_by == ctx.subject_id().to_string();
+    Ok(Json(to_test_dto(connection, identity, mine)))
 }
 
 /// Publish one file into a repository through a connection.

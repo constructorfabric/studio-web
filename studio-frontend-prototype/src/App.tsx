@@ -5437,6 +5437,9 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // under six panels people read and then leave. The shipped sidebar has since
   // grown the same section, in the same place.
   { id: "sources", icon: "plug", label: "Sources" },
+  // What the project connects to: its own connections and the organization's
+  // it inherits. A person's own are on their profile.
+  { id: "connections", icon: "plug", label: "Connections" },
   { id: "activity", icon: "activity", label: "Activity" },
   { id: "timeline", icon: "clock", label: "Timeline" },
   { id: "people", icon: "users", label: "Team" },
@@ -5806,6 +5809,7 @@ function ProjectScreen({
             section="kits"
           />
         )}
+        {tab === "connections" && <ConnectorsView token={token} workspace={proj} owner="project" />}
         {tab === "sources" && (
           <>
             <h1>Sources</h1>
@@ -7611,13 +7615,22 @@ function SourceAttachPicker({
   );
 }
 
+/** Whose connections a Connections page lists. The organization's page and a
+ *  project's list the ones shared there -- the organization's, or the
+ *  project's with what it inherits; a person's profile lists their own,
+ *  personal ones. A personal connection is not on the shared pages: it is
+ *  nobody else's to use. */
+type ConnectionOwner = "organization" | "project" | "personal";
+
 function ConnectorsView({
   token,
   workspace: ws,
+  owner = "organization",
 }: {
   token: string;
   /** From the account switcher — this page no longer asks again. */
   workspace: Workspace;
+  owner?: ConnectionOwner;
   /** The side panel's filters. Not read: the connection list searches itself. */
   filters?: Filters;
 }) {
@@ -7676,15 +7689,44 @@ function ConnectorsView({
     void reload();
   }, [reload]);
 
+  const shown = useMemo(
+    () =>
+      connections === null
+        ? null
+        : connections.filter((c) => (owner === "personal" ? c.scope === "personal" && c.mine : c.scope !== "personal")),
+    [connections, owner],
+  );
+
   return (
     <>
-      <h1>Connections</h1>
-      <p className="subtitle">
-        How repositories and model credentials enter <b>{ws.name}</b>: its own connections plus
-        those shared with every project. Configure one once, then pick
-        repositories from a list instead of pasting clone URLs. Tokens go to credstore — after you
-        submit one the browser never sees it again.
-      </p>
+      {owner === "personal" ? (
+        <>
+          <h2>My connections</h2>
+          <p className="subtitle">
+            Your own sign-ins, kept in <b>{ws.name}</b> and readable only by you: Studio acts with them for you and for
+            nobody else -- a Constructor Research sign-in, a personal access token. The organization&apos;s and a
+            project&apos;s shared connections are on their own pages.
+          </p>
+        </>
+      ) : (
+        <>
+          <h1>Connections</h1>
+          <p className="subtitle">
+            {owner === "project" ? (
+              <>
+                What <b>{ws.name}</b> connects to: its own connections, and the organization&apos;s it inherits.
+              </>
+            ) : (
+              <>
+                What <b>{ws.name}</b> connects to and shares with its projects.
+              </>
+            )}{" "}
+            Configure one once, then pick repositories from a list instead of pasting clone URLs. Tokens go to
+            credstore — after you submit one the browser never sees it again. Your personal connections are on your
+            profile.
+          </p>
+        </>
+      )}
 
       {err && <p className="error">{err}</p>}
       {note && <p className="hint">{note}</p>}
@@ -7703,6 +7745,7 @@ function ConnectorsView({
           workspace={ws}
           providers={providers ?? []}
           category={adding || undefined}
+          only={owner === "personal" ? "personal" : undefined}
           onClose={() => setAdding(null)}
           onAdded={(t) => {
             setNote(`Connected as ${t.account}${t.display_name ? ` (${t.display_name})` : ""}.`);
@@ -7717,8 +7760,8 @@ function ConnectorsView({
           token={token}
           workspace={ws}
           providers={providers ?? []}
-          connections={connections ?? []}
-          loading={connections === null}
+          connections={shown ?? []}
+          loading={shown === null}
           sourcesTick={sourcesTick}
           envUses={envUses}
           onSourcesChanged={bumpSources}
@@ -7745,6 +7788,7 @@ function AddConnector({
   workspace,
   providers,
   category,
+  only,
   onClose,
   onAdded,
 }: {
@@ -7753,6 +7797,8 @@ function AddConnector({
   providers: ConnectorProvider[];
   /** Open on one kind, from the "Not connected yet" line. */
   category?: string;
+  /** Who it is for, when the page decides (a profile: the person). */
+  only?: Reach;
   onClose: () => void;
   onAdded: (t: { account: string; display_name?: string }) => void;
 }) {
@@ -7770,7 +7816,7 @@ function AddConnector({
   // On the organization's own page there is no project to keep it to: the
   // choice is the organization or yourself, and the organization is the default.
   const atOrg = workspace.id === workspace.orgId;
-  const defaultReach: Reach = atOrg ? "organization" : "workspace";
+  const defaultReach: Reach = only ?? (atOrg ? "organization" : "workspace");
   const [reach, setReach] = useState<Reach>(defaultReach);
   const [busy, setBusy] = useState<"probe" | "save" | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -7971,6 +8017,8 @@ function AddConnector({
         </li>
       </ul>
 
+      {!only && (
+      <>
       <label>Available to</label>
       <select value={reach} onChange={(e) => setReach(e.target.value as Reach)}>
         {!atOrg && <option value="workspace">{workspace.name} — this project only</option>}
@@ -7986,6 +8034,8 @@ function AddConnector({
             ? "Stored on this project; everyone in it can use the token."
             : "Stored on this project, but the token stays readable only by you."}
       </p>
+      </>
+      )}
 
       <label>Label</label>
       <input
@@ -9650,6 +9700,14 @@ function ProfileView({
       <MyPersonCard token={token} orgs={orgs} onChanged={onPerson} />
 
       <MyIdentitiesCard token={token} sessionSubject={me.subject_id} />
+
+      {/* A person's own connections, in each organization they are in: the
+          organization's and a project's shared ones are on their pages. */}
+      {orgs.map((o) => (
+        <section className="card" key={o.id} data-my-connections={o.id}>
+          <ConnectorsView token={token} workspace={{ ...o, orgId: o.id, orgName: o.name }} owner="personal" />
+        </section>
+      ))}
 
       {/* For support and debugging: what the token says. Folded, because
           nothing in it is something a person acts on. */}

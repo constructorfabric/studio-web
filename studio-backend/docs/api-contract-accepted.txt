@@ -1672,6 +1672,7 @@ response	GET /studio-connector/v1/connections	items.base_url	String	always
 response	GET /studio-connector/v1/connections	items.created_at_epoch_secs	u64	always
 response	GET /studio-connector/v1/connections	items.id	Uuid	always
 response	GET /studio-connector/v1/connections	items.label	String	always
+response	GET /studio-connector/v1/connections	items.mine	bool	always
 response	GET /studio-connector/v1/connections	items.options	BTreeMap<String,String>	always
 response	GET /studio-connector/v1/connections	items.owner_tenant_id	Uuid	always
 response	GET /studio-connector/v1/connections	items.provider	String	always
@@ -3711,6 +3712,7 @@ response	PATCH /studio-connector/v1/connections/{}	connection.base_url	String	al
 response	PATCH /studio-connector/v1/connections/{}	connection.created_at_epoch_secs	u64	always
 response	PATCH /studio-connector/v1/connections/{}	connection.id	Uuid	always
 response	PATCH /studio-connector/v1/connections/{}	connection.label	String	always
+response	PATCH /studio-connector/v1/connections/{}	connection.mine	bool	always
 response	PATCH /studio-connector/v1/connections/{}	connection.options	BTreeMap<String,String>	always
 response	PATCH /studio-connector/v1/connections/{}	connection.owner_tenant_id	Uuid	always
 response	PATCH /studio-connector/v1/connections/{}	connection.provider	String	always
@@ -4049,6 +4051,7 @@ response	POST /studio-connector/v1/connections	connection.base_url	String	always
 response	POST /studio-connector/v1/connections	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/connections	connection.id	Uuid	always
 response	POST /studio-connector/v1/connections	connection.label	String	always
+response	POST /studio-connector/v1/connections	connection.mine	bool	always
 response	POST /studio-connector/v1/connections	connection.options	BTreeMap<String,String>	always
 response	POST /studio-connector/v1/connections	connection.owner_tenant_id	Uuid	always
 response	POST /studio-connector/v1/connections	connection.provider	String	always
@@ -4090,6 +4093,7 @@ response	POST /studio-connector/v1/connections/{}/test	connection.base_url	Strin
 response	POST /studio-connector/v1/connections/{}/test	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/connections/{}/test	connection.id	Uuid	always
 response	POST /studio-connector/v1/connections/{}/test	connection.label	String	always
+response	POST /studio-connector/v1/connections/{}/test	connection.mine	bool	always
 response	POST /studio-connector/v1/connections/{}/test	connection.options	BTreeMap<String,String>	always
 response	POST /studio-connector/v1/connections/{}/test	connection.owner_tenant_id	Uuid	always
 response	POST /studio-connector/v1/connections/{}/test	connection.provider	String	always
@@ -4103,6 +4107,7 @@ response	POST /studio-connector/v1/oauth/complete	connection.base_url	String	alw
 response	POST /studio-connector/v1/oauth/complete	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/oauth/complete	connection.id	Uuid	always
 response	POST /studio-connector/v1/oauth/complete	connection.label	String	always
+response	POST /studio-connector/v1/oauth/complete	connection.mine	bool	always
 response	POST /studio-connector/v1/oauth/complete	connection.options	BTreeMap<String,String>	always
 response	POST /studio-connector/v1/oauth/complete	connection.owner_tenant_id	Uuid	always
 response	POST /studio-connector/v1/oauth/complete	connection.provider	String	always
