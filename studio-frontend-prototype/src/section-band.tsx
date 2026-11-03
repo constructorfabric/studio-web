@@ -15,6 +15,10 @@ export interface BandTab<Id extends string> {
   icon: string;
   label: string;
   hint?: string;
+  /** Works, but is not settled: marked so nobody builds on it unawares. */
+  experimental?: boolean;
+  /** Something there needs a look: how many, in the tab, its reason on hover. */
+  attention?: { tone: "failed" | "todo"; count: number; text: string } | null;
 }
 
 const REORDER_HINT = "Drag to reorder (Alt+Shift+←/→)";
@@ -120,6 +124,22 @@ export function OrderedSections<Id extends string>({
               {icon(t.icon)}
             </span>
             {t.label}
+            {t.attention && (
+              <span
+                className={`tab-attention ${t.attention.tone}`}
+                title={t.attention.text}
+                aria-label={t.attention.text}
+                role="status"
+                data-tab-attention={t.attention.tone}
+              >
+                {t.attention.count}
+              </span>
+            )}
+            {t.experimental && (
+              <span className="badge-experimental" title="Experimental: it works, and it may change or go">
+                exp
+              </span>
+            )}
           </button>
         );
       })}

@@ -200,3 +200,33 @@ export function lineDiff(before: string, after: string): DiffLine[] {
   while (j < m) out.push({ kind: "add", text: b[j++] });
   return out;
 }
+
+/** What a project tab flags in the bar: something failed there, or something
+ *  waits for the person. */
+export interface TabAttention {
+  tone: "failed" | "todo";
+  /** How many things: the errors, or the things waiting. */
+  count: number;
+  text: string;
+}
+
+/** Whether the Product tab needs a look, from the record alone: the engine's
+ *  errors at the last check, or a frontend picked before the product kept it.
+ *  `null`: nothing waits there. */
+export function productAttention(
+  product: Pick<ProjectProduct, "last_preview" | "frontend"> | null,
+  cfg: ProjectConfig | null | undefined,
+): TabAttention | null {
+  const preview = product?.last_preview;
+  if (preview && !preview.ok) {
+    return {
+      tone: "failed",
+      count: Math.max(preview.errors, 1),
+      text: `${plural(preview.errors, "error")} from the engine at the last check`,
+    };
+  }
+  if (!product?.frontend && cfg?.frontend && typeof cfg.frontend === "object") {
+    return { tone: "todo", count: 1, text: "A frontend picked before the product kept it: save it to the product" };
+  }
+  return null;
+}

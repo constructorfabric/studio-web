@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { configureParts, describedGaps, lineDiff, productFlow, type FlowFacts } from "./product-flow";
+import { configureParts, describedGaps, lineDiff, productAttention, productFlow, type FlowFacts } from "./product-flow";
 import type { Infrastructure } from "./product-sections";
 
 const infra = (over: Partial<Infrastructure> = {}): Infrastructure => ({
@@ -108,5 +108,18 @@ describe("what a save changes", () => {
       { kind: "same", text: "c" },
       { kind: "add", text: "d" },
     ]);
+  });
+});
+
+describe("when the Product tab needs a look", () => {
+  it("flags the engine's errors, then a frontend not saved to the product, else nothing", () => {
+    expect(productAttention({ last_preview: { ...preview, ok: false, errors: 2 }, frontend: null }, {})).toEqual({
+      tone: "failed",
+      count: 2,
+      text: "2 errors from the engine at the last check",
+    });
+    expect(productAttention({ last_preview: preview, frontend: null }, { frontend: { mfes: [] } })?.tone).toBe("todo");
+    expect(productAttention({ last_preview: preview, frontend }, { frontend: { mfes: [] } })).toBeNull();
+    expect(productAttention(null, null)).toBeNull();
   });
 });

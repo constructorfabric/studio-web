@@ -514,6 +514,7 @@ export const SURFACES: Surface[] = [
       "studio-notify",
       "studio-organizations",
       "studio-presence",
+      "studio-product",
       "studio-session",
       "studio-theia",
       "studio-user",

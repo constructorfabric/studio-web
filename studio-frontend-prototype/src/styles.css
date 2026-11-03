@@ -2868,3 +2868,11 @@ div.dm-block { padding-left: 0; }
 .fc-fit tr.differs td:last-child { color: var(--warning-foreground); font-weight: 600; }
 .fc-fit tr.fits td:last-child { color: var(--success); }
 .fc-fit tr.outside td:last-child { color: var(--muted-foreground); }
+
+/* A section that works but is not settled (BandTab.experimental). */
+.badge-experimental { margin-left: 4px; padding: 0 5px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 16px; text-transform: uppercase; letter-spacing: 0.02em; background: var(--warning-soft); color: var(--warning-foreground); }
+
+/* A tab that needs a look (BandTab.attention): failed in red, waiting in amber. */
+.tab-attention { display: inline-grid; place-items: center; min-width: 16px; height: 16px; margin-left: 5px; padding: 0 4px; border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 1; color: #fff; vertical-align: 1px; }
+.tab-attention.failed { background: var(--destructive); }
+.tab-attention.todo { background: var(--warning); }

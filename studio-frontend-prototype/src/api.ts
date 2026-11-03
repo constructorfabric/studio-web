@@ -2779,6 +2779,19 @@ export function orgScoped(path: string, org: string | undefined = currentOrganiz
 /** Fired on any 401 so the app can drop a dead session instead of looping. */
 export const UNAUTHENTICATED_EVENT = "studio:unauthenticated";
 
+/** Fired with the project's id after its product record was written: a save
+ *  of the picks, the frontend or the profile, and every preview, which
+ *  records what the engine said. The Product page's header and strip read
+ *  the record once; this tells them to read it again. */
+export const PRODUCT_CHANGED_EVENT = "studio:product-changed";
+
+function productChanged<T>(projectId: string, done: Promise<T>): Promise<T> {
+  return done.then((v) => {
+    window.dispatchEvent(new CustomEvent(PRODUCT_CHANGED_EVENT, { detail: projectId }));
+    return v;
+  });
+}
+
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   if (!token) {
     // Defensive: an empty token would reach the gateway as a missing bearer
@@ -6079,10 +6092,13 @@ export const api = {
       frontend?: FrontendPick | null;
     },
   ) =>
-    request<{ value: ProjectProduct }>(
-      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product`,
-      token,
-      { method: "PUT", body: JSON.stringify(body) },
+    productChanged(
+      projectId,
+      request<{ value: ProjectProduct }>(
+        `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product`,
+        token,
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
     ),
   /** Complete picks into a set the engine can resolve: what the catalogue
    *  proves cannot run is taken out, a missing plugin or REST host is put in,
@@ -6193,8 +6209,8 @@ export const api = {
     // A large product resolves past the gateway's 30 s; the backend finishes
     // the run and keeps its answer, so asking again (a read only -- a write
     // is never repeated) picks it up instead of reporting a timeout.
-    if (body.write) return ask();
-    return retryOnTimeout(ask, PREVIEW_RETRIES);
+    if (body.write) return productChanged(projectId, ask());
+    return productChanged(projectId, retryOnTimeout(ask, PREVIEW_RETRIES));
   },
   /** Create a new repository via the connector and set it as the project's gear repo. */
   createProjectRepo: (

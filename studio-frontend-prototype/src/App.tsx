@@ -90,6 +90,7 @@ import {
   type RepoActivity,
   ApiError,
   PLATFORM_ROOT_TENANT_ID,
+  PRODUCT_CHANGED_EVENT,
   UNAUTHENTICATED_EVENT,
   shortTypeName,
   TENANT_TYPES,
@@ -169,6 +170,7 @@ import {
   type RepoMode,
 } from "./project-form";
 import { ProjectTypesTab } from "./project-types-editor";
+import { productAttention, type TabAttention } from "./product-flow";
 import { ProductPage } from "./product-sections-view";
 import { BUILTIN_TYPES, landingTab, parseTypes, typeOfProject, visibleTabs, type ProjectType } from "./project-types";
 
@@ -1770,7 +1772,35 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       alive = false;
     };
   }, [crumb.nestedId, token]);
-  const projectTabs = visibleTabs(PROJECT_TABS, projectType);
+  // What the open project's tabs flag: read with the product, again whenever
+  // a section writes it (PRODUCT_CHANGED_EVENT).
+  const [attention, setAttention] = useState<Partial<Record<ProjTab, TabAttention>>>({});
+  useEffect(() => {
+    setAttention({});
+    const id = crumb.nestedId;
+    if (!id) return;
+    let alive = true;
+    const read = () =>
+      Promise.all([api.projectProduct(token, id).catch(() => null), api.projectConfig(token, id).catch(() => null)]).then(
+        ([product, cfg]) => {
+          if (!alive) return;
+          const p = productAttention(product, cfg);
+          setAttention(p ? { components: p } : {});
+        },
+      );
+    void read();
+    const changed = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === id) void read();
+    };
+    window.addEventListener(PRODUCT_CHANGED_EVENT, changed);
+    return () => {
+      alive = false;
+      window.removeEventListener(PRODUCT_CHANGED_EVENT, changed);
+    };
+  }, [crumb.nestedId, token]);
+  const projectTabs = visibleTabs(PROJECT_TABS, projectType).map((t) =>
+    attention[t.id] ? { ...t, attention: attention[t.id] } : t,
+  );
   useEffect(() => {
     if (!projectType) return;
     const fresh = landOnType.current;
@@ -5358,7 +5388,7 @@ type ProjectListRow = { id: string; name: string; row?: import("./api").RollupRo
 /** The sections of an open project — the type is defined next to the Overview
  *  that links to them; this is the shell rail's rendering of the list (the
  *  active tab is stored on the shell, not inside ProjectScreen). */
-const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
+const PROJECT_TABS: { id: ProjTab; icon: string; label: string; experimental?: boolean }[] = [
   // In the order the work happens, which is not the order the sections were
   // added. Icons are the lucide names the shipped project-sidebar picks.
   { id: "overview", icon: "home", label: "Overview" },
@@ -5412,7 +5442,10 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // After Builds, because a deploy takes what a build made. It was a block at
   // the bottom of the Product card, under the configuration.
   { id: "deploys", icon: "layers", label: "Deploys" },
-  { id: "kits", icon: "grid", label: "Kits" },
+  // Experimental: a kit installs through the IDE's runner and adds check
+  // methods to Domain model › Hypotheses; the flow works, its place does not
+  // settle yet (ADR-0056 may move it beside the repositories).
+  { id: "kits", icon: "grid", label: "Kits", experimental: true },
   { id: "artifacts", icon: "file", label: "Artifacts" },
   // Sources sits after them because it is where they come from: a sync run
   // here is what puts anything in Artifacts at all. It was a card near the

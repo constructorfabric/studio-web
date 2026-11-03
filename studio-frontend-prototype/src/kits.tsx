@@ -432,6 +432,10 @@ export function ProjectKits({
         </button>
       </div>
 
+      <div className="notice" data-kits-experimental>
+        <b>Experimental.</b> Kits work, and how they are installed and where they live may still change. A kit
+        requested when the project was created waits here until it is installed.
+      </div>
       <div className="notice">
         Open this project's IDE first. Install requests are sent through the authenticated backend
         to its trusted <code>cfs</code> runner; the browser never executes repository scripts.

@@ -11,7 +11,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
-import { api, type FrontendPick, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
+import { PRODUCT_CHANGED_EVENT, api, type FrontendPick, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
 import { FrontendConstructor } from "./frontend-constructor-view";
 import type { PipelineTab } from "./pipeline";
 import { ProductFlow } from "./product-flow-view";
@@ -98,6 +98,16 @@ export function ProductPage({
       alive = false;
     };
   }, [token, projectId, round]);
+
+  // A section wrote the product -- Backend previewed or saved it, Frontend
+  // saved its pick: the header and the strip read the record again.
+  useEffect(() => {
+    const changed = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === projectId) setRound((r) => r + 1);
+    };
+    window.addEventListener(PRODUCT_CHANGED_EVENT, changed);
+    return () => window.removeEventListener(PRODUCT_CHANGED_EVENT, changed);
+  }, [projectId]);
 
   const pick = (id: ProductSectionId) => {
     setSection(id);
