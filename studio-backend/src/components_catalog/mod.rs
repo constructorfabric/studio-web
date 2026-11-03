@@ -11,6 +11,7 @@ mod activity;
 mod candidates;
 mod cratesio;
 pub(crate) mod field_schema;
+mod frontx_gdl;
 mod history;
 mod memo;
 mod ownership;
