@@ -197,7 +197,7 @@ impl OAuthClient {
             .form(&form)
             .send()
             .await
-            .map_err(|e| anyhow!("the identity provider did not answer: {e}"))?;
+            .map_err(|e| not_reached("the identity provider", &self.token_url, &e))?;
         let status = res.status();
         let body = res.text().await.unwrap_or_default();
         if !status.is_success() {
@@ -214,6 +214,23 @@ impl OAuthClient {
         }
         serde_json::from_str(&body)
             .context("the identity provider's answer is not a token response")
+    }
+}
+
+/// A request that never got an answer, said so the person can act on it: a
+/// connection that could not be opened is this deployment's network, not
+/// their sign-in, and starting again will not help.
+pub(super) fn not_reached(who: &str, url: &str, e: &reqwest::Error) -> anyhow::Error {
+    let host = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .unwrap_or_else(|| url.to_owned());
+    if e.is_connect() || e.is_timeout() {
+        anyhow!(
+            "{who} at {host} cannot be reached from this Studio deployment, so nothing              can be done there yet. The network between them is not open: tell whoever runs              this deployment. ({e})"
+        )
+    } else {
+        anyhow!("{who} at {host} did not answer: {e}")
     }
 }
 
