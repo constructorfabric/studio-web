@@ -94,6 +94,8 @@ This replaces Organization › Environments. It has three parts.
 
 Configure, then Save to `product.gdl`, then Build, then Deploy, as one strip above the sections (`product-flow.ts`).
 
+The **product map** is Configure's overview and its constructor (`product-map.ts`, `product-map-view.tsx`): the product's frontend, backend and infrastructure as layers of one picture, with the links the facts give between them and the problems they show. Screens and gears are added and removed on it, through the same product record the sections write. The sections are its detailed views: each layer opens as the section of its name. The map and `product.gdl` are two views of one product: the text view shows the description the next save would write, and selecting a node selects its lines.
+
 - **Infrastructure** shows what the product needs: its profile, Postgres, the services its gears ask for. It also shows which environments it may go to, as links.
 - **Infrastructure does not edit environments or bindings.** That is Releases' job (§4).
 

@@ -15,6 +15,7 @@ import { PRODUCT_CHANGED_EVENT, api, type FrontendPick, type ProjectConfig, type
 import { FrontendConstructor } from "./frontend-constructor-view";
 import type { PipelineTab } from "./pipeline";
 import { ProductFlow } from "./product-flow-view";
+import { ProductMap } from "./product-map-view";
 import {
   hasFrontend,
   comesWith,
@@ -70,7 +71,10 @@ export function ProductPage({
   parts?: (openBackend: () => void) => ReactNode;
 }) {
   const [section, setSection] = useState<ProductSectionId>(() => {
-    const first = openingSection(landing, storedSection(projectId));
+    // The map is Configure's overview: where the page opens unless an address
+    // or this member's last look says otherwise.
+    const stored = storedSection(projectId);
+    const first = !landing && (stored === null || stored === "map") ? "map" : openingSection(landing, stored);
     landing = null;
     return first;
   });
@@ -132,6 +136,7 @@ export function ProductPage({
         onOpenTab={onOpenTab}
         onSaved={() => setRound((r) => r + 1)}
       />
+      {section === "map" && <ProductMap token={token} projectId={projectId} onSection={pick} />}
       {section === "parts" && parts?.(() => pick("backend"))}
       {section === "infrastructure" && <ProductInfrastructure token={token} projectId={projectId} />}
       <div hidden={section !== "backend"} data-product-section="backend">
