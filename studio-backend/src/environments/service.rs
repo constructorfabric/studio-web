@@ -760,7 +760,7 @@ impl EnvironmentService {
                 .map(|r| r.project.clone())
                 .unwrap_or_default();
             let projects = self
-                .research_api(ctx, org, env.connection_id)
+                .own_research_api(ctx, org)
                 .await?
                 .projects()
                 .await
@@ -769,12 +769,14 @@ impl EnvironmentService {
                 })?;
             return match projects.iter().find(|p| p.id == project) {
                 Some(p) => Ok(format!(
-                    "Constructor Research answers: project {} is this connection's",
+                    "Constructor Research answers: your sign-in reaches project {}",
                     if p.name.is_empty() { &p.id } else { &p.name }
                 )),
                 None => Err(Refusal::Precondition(
                     "ENVIRONMENT_RESEARCH_PROJECT_UNKNOWN",
-                    format!("'{project}' is not one of this connection's Research projects"),
+                    format!(
+                        "'{project}' is not one of your Research projects: its owner adds you                          to it in Research"
+                    ),
                 )),
             };
         }
@@ -1856,6 +1858,39 @@ impl EnvironmentService {
 
     /* ── Constructor Research (ADR-0049) ── */
 
+    /// The caller's own Research sign-in. A Research environment runs every
+    /// build, deploy and read with the sign-in of the member who asks
+    /// (ADR-0049 §1): Research's access keys are personal, and a project there
+    /// is shared by adding its members, so nobody runs on another's sign-in.
+    async fn own_research(&self, ctx: &SecurityContext, org: Uuid) -> Result<research::SignIn> {
+        let am = self.store.am().as_ref();
+        let from = [org, ctx.subject_tenant_id()];
+        connectors::own_connection(am, ctx, &from, connectors::RESEARCH_PROVIDER)
+            .await
+            .map(|(tenant, c)| research::SignIn {
+                tenant,
+                connection_id: c.id,
+            })
+            .ok_or_else(|| {
+                Refusal::Precondition(
+                    "ENVIRONMENT_RESEARCH_NOT_SIGNED_IN",
+                    "a Research environment runs with your own sign-in to Constructor                      Research: sign in under Connections, \"Sign in with Constructor\", first"
+                        .to_owned(),
+                )
+            })
+    }
+
+    /// The Research connector's calls with the caller's own sign-in.
+    async fn own_research_api(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> Result<crate::connectors::sdk::research::ResearchApi> {
+        let sign_in = self.own_research(ctx, org).await?;
+        self.research_api(ctx, sign_in.tenant, sign_in.connection_id)
+            .await
+    }
+
     /// The Research connector's calls through a connection, as the caller:
     /// a member's own sign-in is readable only by them (ADR-0049 §5).
     async fn research_api(
@@ -1939,6 +1974,7 @@ impl EnvironmentService {
             organization_id: org,
             project_id: project,
             connection_id: env.connection_id,
+            sign_in: Some(self.own_research(ctx, org).await?),
             research_project: target.project.clone(),
             profile: profile.clone(),
             product_file,
@@ -2136,6 +2172,7 @@ impl EnvironmentService {
                 profile,
                 commit: commit.unwrap_or_default(),
                 requested_by: Some(research::Requester::of(ctx)),
+                sign_in: Some(self.own_research(ctx, org).await?),
             }),
         };
         if d.action == DeploymentAction::Install {
@@ -2402,7 +2439,7 @@ impl EnvironmentService {
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
-            let api = self.research_api(ctx, org, env.connection_id).await?;
+            let api = self.own_research_api(ctx, org).await?;
             let rollout = research::rollout(&api, &target.project, &d.namespace)
                 .await
                 .map_err(|e| {
@@ -2443,12 +2480,14 @@ impl EnvironmentService {
         let env = self
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
-        if env.kind == EnvironmentKind::Research {
-            return Err(Refusal::Precondition(
-                "ENVIRONMENT_LOGS_UNSUPPORTED",
-                "Constructor Research keeps an application's logs itself: read them there"
-                    .to_owned(),
-            ));
+        if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
+            let api = self.own_research_api(ctx, org).await?;
+            let lines = usize::try_from(lines.clamp(1, deploy::LOG_LINES_MAX)).unwrap_or(200);
+            return research::logs(&api, &target.project, &d.namespace, lines)
+                .await
+                .map_err(|e| {
+                    Refusal::Precondition("ENVIRONMENT_RESEARCH_UNREACHABLE", format!("{e:#}"))
+                });
         }
         let from = env.connections_from(org);
         let svc = self.service(from)?;

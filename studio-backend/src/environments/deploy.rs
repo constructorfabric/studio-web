@@ -1020,7 +1020,7 @@ pub struct ContainerLog {
 
 /// How many lines of each log a reader gets when it does not say.
 pub const LOG_LINES: i64 = 200;
-const LOG_LINES_MAX: i64 = 2000;
+pub const LOG_LINES_MAX: i64 = 2000;
 const LOG_BYTES: i64 = 128 * 1024;
 /// A release with more pods than this is read for its first ones only.
 const LOG_PODS: usize = 12;

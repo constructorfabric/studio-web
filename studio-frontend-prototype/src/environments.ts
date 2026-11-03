@@ -104,7 +104,7 @@ export function environmentProblems(
   else if (others.some((e) => e.name === name && e.id !== editing)) out.name = `The organization already has an environment '${name}'.`;
   if (input.kind === "research") {
     // Research keeps the registry, the namespace and the address (ADR-0049 §2).
-    if (!input.connection_id) out.connection_id = "Choose the organization's Constructor Research connection.";
+    if (!input.connection_id) out.connection_id = "Choose your Constructor Research sign-in: it lists the projects to pick from.";
     if (!(input.research_project ?? "").trim()) out.research_project = "Choose the Research project the products run in.";
     if (input.projects && input.projects.length === 0) out.projects = "Choose at least one project, or let every project deploy here.";
     return out;
