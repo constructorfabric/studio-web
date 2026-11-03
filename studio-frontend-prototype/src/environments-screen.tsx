@@ -424,6 +424,9 @@ export function EnvironmentForm({
   };
   const restricted = input.projects != null;
   const research = input.kind === "research";
+  // Added from a place's card ("Add an environment here"): it runs there. The
+  // form does not offer another place, nor Research beside a cluster.
+  const place = editing ? undefined : [...clusters, ...researches].find((c) => c.id === initialCluster);
   // Switching what runs the products starts its own fields over: a cluster's
   // registry means nothing to Research, and Research's project nothing to a cluster.
   const runOn = (kind: "kubernetes" | "research") =>
@@ -463,6 +466,20 @@ export function EnvironmentForm({
         Description
         <input value={input.description} onChange={(e) => set("description", e.target.value)} placeholder="optional" />
       </label>
+      {place ? (
+        <div className="field" data-environment-place>
+          Runs on
+          <span>
+            <b>{place.label}</b>
+            {place.base_url && <code className="sub"> {place.base_url}</code>}
+          </span>
+          <span className="sub">
+            {research
+              ? "The Constructor Research connection this was added from."
+              : "The cluster this was added from. Add an environment on another cluster from that cluster's card."}
+          </span>
+        </div>
+      ) : (
       <label className="field">
         Runs on
         <select
@@ -479,9 +496,13 @@ export function EnvironmentForm({
           <option value="research">Constructor Research: its hardware, its registry, its addresses</option>
         </select>
       </label>
-      {research && <ResearchFields token={token} org={org} input={input} researches={researches} set={set} shown={shown} />}
+      )}
+      {research && (
+        <ResearchFields token={token} org={org} input={input} researches={place ? [place] : researches} set={set} shown={shown} />
+      )}
       {!research && (
       <>
+      {!place && (
       <label className="field">
         Cluster
         <select
@@ -507,6 +528,7 @@ export function EnvironmentForm({
         </select>
         {!connecting && shown("connection_id") && <span className="env-field-error">{shown("connection_id")}</span>}
       </label>
+      )}
       {connecting && (
         <AddCluster
           token={token}
