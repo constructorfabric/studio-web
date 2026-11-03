@@ -10,7 +10,7 @@ import {
   openingSection,
   productSummary,
   sectionFromPath,
-  withFrontend,
+  newFrontend,
   withoutFrontend,
 } from "./product-sections";
 
@@ -21,25 +21,23 @@ describe("the product's parts", () => {
 });
 
 describe("a product's frontend", () => {
-  it("is optional: a configuration that names none has none", () => {
+  it("is optional: a product that records none, in a configuration that names none, has none", () => {
     expect(hasFrontend(null)).toBe(false);
-    expect(hasFrontend({})).toBe(false);
+    expect(hasFrontend({}, { frontend: null })).toBe(false);
+    expect(hasFrontend({}, { frontend: newFrontend() })).toBe(true);
+    // A project that picked before the product kept its frontend.
     expect(hasFrontend({ frontend: { mfes: [] } })).toBe(true);
   });
 
-  it("is added from FrontX's shell template, keeping what was picked", () => {
-    expect(withFrontend({ kind: "product" })).toEqual({
-      kind: "product",
-      frontend: { mfes: [], shell: FRONTX_SHELL_TEMPLATE },
-    });
-    expect(withFrontend({ frontend: { mfes: ["@x/people-mfe"], shell: "github:o/r//s@v1" } }).frontend).toEqual({
-      mfes: ["@x/people-mfe"],
-      shell: "github:o/r//s@v1",
+  it("is added from FrontX's shell template, nothing mounted yet", () => {
+    expect(newFrontend()).toEqual({
+      shell: { repo: "constructorfabric/gears-frontx-templates", path: "template-shell", ref: "main" },
+      mfes: [],
     });
     expect(FRONTX_SHELL_TEMPLATE).toBe("github:constructorfabric/gears-frontx-templates//template-shell@main");
   });
 
-  it("is removed whole, leaving the rest of the configuration", () => {
+  it("recorded in the configuration before is removed whole, leaving the rest", () => {
     expect(withoutFrontend({ kind: "product", frontend: { mfes: ["a"] } })).toEqual({ kind: "product" });
   });
 

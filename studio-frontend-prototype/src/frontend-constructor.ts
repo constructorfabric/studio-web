@@ -11,7 +11,7 @@
  * Pure, so it is tested without a backend.
  */
 
-import type { CatalogNode, CatalogRepoSource } from "./api";
+import type { CatalogNode, CatalogRepoSource, FrontendPick, FrontxPlace } from "./api";
 
 export const FRONTX_NODE_TYPE = "gts.cf.studio.catalog.frontx.v1~";
 
@@ -148,6 +148,18 @@ export interface Mfe {
   /** The FrontX versions it pins (`@gears-frontx/react` → `0.2.0-alpha.0`),
    *  held against what the shell carries. Empty until a sync reads them. */
   wants?: Record<string, string>;
+  /** Its directory in the repository; `null` until a sync reads it. */
+  path?: string | null;
+  /** The packages it depends on, by name: the libraries it shares among them. */
+  deps?: string[];
+}
+
+/** A FrontX package that is neither a micro-frontend nor a shell: a library
+ *  micro-frontends share (Studio's `shared`). */
+export interface Library {
+  name: string;
+  repo: string | null;
+  path: string | null;
 }
 
 /** The shell's zones, in the order the constructor draws them. A domain no
@@ -227,7 +239,33 @@ export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<s
       calls: [...calls].sort(),
       via,
       wants: frontxPins(auto.deps_versions),
+      path: textOf(auto.path),
+      deps: strings(auto.deps_names),
     });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The catalogue's libraries: FrontX packages with no extensions that are
+ *  not a shell (one that carries FrontX packages), a template or FrontX's own. */
+export function librariesFrom(nodes: CatalogNode[], profiles: Record<string, Record<string, unknown>>): Library[] {
+  const out: Library[] = [];
+  for (const n of nodes) {
+    if (n.type_id !== FRONTX_NODE_TYPE) continue;
+    const v = n.value as Record<string, unknown>;
+    const name = str(v.name) ?? n.instance_id;
+    const auto = (profiles[name]?.auto ?? {}) as Record<string, unknown>;
+    const kind = str(v.component_kind);
+    const carries = auto.carries && typeof auto.carries === "object" && Object.keys(auto.carries).length > 0;
+    if (
+      kind === "micro-frontend" ||
+      TEMPLATE_KINDS.has(kind ?? "") ||
+      Array.isArray(auto.mfe_extensions) ||
+      carries ||
+      name.startsWith(FRONTX_SCOPE)
+    )
+      continue;
+    out.push({ name, repo: str(v.repository) ?? str(v.synced_from), path: textOf(auto.path) });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -390,7 +428,7 @@ export function ownerRepo(repo: string | null | undefined): string | null {
   return m ? `${m[1]}/${m[2].replace(/\.git$/, "")}` : null;
 }
 
-/** What `project.config.frontend.shell` names: `github:owner/repo//dir@ref`. */
+/** A shell as the constructor names it: `github:owner/repo//dir@ref`. */
 export function parseShellRef(ref: string | null | undefined): { repo: string; path: string; ref: string } | null {
   const m = /^github:([^/]+\/[^/]+?)\/\/(.+?)(?:@([^@]+))?$/.exec((ref ?? "").trim());
   return m ? { repo: m[1], path: m[2], ref: m[3] ?? "main" } : null;
@@ -408,6 +446,72 @@ export function chosenShell(shells: readonly Shell[], ref: string | null | undef
   return (
     shells.find((s) => repoKey(ownerRepo(s.repo) ?? "") === repoKey(want.repo) && (s.path ?? "") === want.path) ?? null
   );
+}
+
+/** What the product keeps of its frontend, and product.gdl says as
+ *  `frontend = frontx_product(...)`: the shell and each picked micro-frontend
+ *  by repository and directory, the product's gears each calls, and the
+ *  libraries they depend on that the shell does not have (one in the shell's
+ *  repository, under its directory, it has). A package the catalogue cannot
+ *  place (no repository or directory yet) is left out and named in
+ *  `unplaced`; `pick` is `null` when the shell cannot be placed. */
+export function frontendPick(
+  shellRef: string,
+  picked: readonly Mfe[],
+  libraries: readonly Library[],
+  productGears: readonly string[],
+): { pick: FrontendPick | null; unplaced: string[] } {
+  const shell = parseShellRef(shellRef);
+  if (!shell) return { pick: null, unplaced: [] };
+  const have = new Set(productGears.map(gearKey));
+  const unplaced: string[] = [];
+  const place = (name: string, repo: string | null | undefined, path: string | null | undefined): FrontxPlace | null => {
+    const owner = ownerRepo(repo);
+    if (!owner || !path) {
+      unplaced.push(name);
+      return null;
+    }
+    // The shell's repository at the shell's ref: one checkout for both.
+    const ref = repoKey(owner) === repoKey(shell.repo) ? shell.ref : undefined;
+    return { repo: owner, path, package: name, ...(ref ? { ref } : {}) };
+  };
+  const shellHas = (lib: FrontxPlace) =>
+    repoKey(lib.repo) === repoKey(shell.repo) && lib.path.startsWith(`${shell.path}/`);
+  const mfes: FrontendPick["mfes"] = [];
+  const libs = new Map<string, FrontxPlace>();
+  for (const m of picked) {
+    const at = place(m.name, m.repo, m.path);
+    if (!at) continue;
+    const requires = [...new Set(m.calls.map(gearKey).filter((g) => have.has(g)))].sort();
+    mfes.push(requires.length > 0 ? { ...at, requires } : at);
+    for (const dep of m.deps ?? []) {
+      const lib = libraries.find((l) => l.name === dep);
+      if (!lib || libs.has(dep)) continue;
+      const lat = place(lib.name, lib.repo, lib.path);
+      if (lat && !shellHas(lat)) libs.set(dep, lat);
+    }
+  }
+  const pick: FrontendPick = {
+    shell: { repo: shell.repo, path: shell.path, ref: shell.ref },
+    mfes,
+    ...(libs.size > 0 ? { libraries: [...libs.values()] } : {}),
+  };
+  return { pick, unplaced };
+}
+
+/** The shell reference and picked names a recorded frontend comes back as: a
+ *  micro-frontend by the npm name it was saved with, else by where it is. */
+export function picksOf(pick: FrontendPick, mfes: readonly Mfe[]): { shellRef: string; picks: string[] } {
+  const shellRef = `github:${pick.shell.repo}//${pick.shell.path}@${pick.shell.ref ?? "main"}`;
+  const picks = pick.mfes
+    .map(
+      (p) =>
+        p.package ??
+        mfes.find((m) => repoKey(ownerRepo(m.repo) ?? "") === repoKey(p.repo) && m.path === p.path)?.name ??
+        null,
+    )
+    .filter((n): n is string => !!n);
+  return { shellRef, picks };
 }
 
 /** A version as numbers and a prerelease: `0.2.0-alpha.16`. */
@@ -612,13 +716,14 @@ export function assemblySteps(input: {
     title: "Build",
     state: "todo",
     detail:
-      "npm ci, build the shell's packages, build each micro-frontend, generate the manifests, vite build. By hand today: gearbox generate does not assemble a frontend yet (ADR-0050 phase 2)",
+      "gearbox generate assembles frontend/ from the product.gdl's frontend block: the shell, the micro-frontends and libraries mounted in it, their FrontX pins set to the shell's and listed in frontx.lock.json; its Dockerfile runs npm install and the shell's build",
   });
   steps.push({
     id: "ship",
     title: "Ship",
     state: "todo",
-    detail: "A static image beside the product's, in its chart. Not yet: nothing builds it",
+    detail:
+      "gbx-<product>-frontend: nginx serving the build, /cf/ proxied to the gateway, deployed by the product's chart under its ui values",
   });
   return steps;
 }

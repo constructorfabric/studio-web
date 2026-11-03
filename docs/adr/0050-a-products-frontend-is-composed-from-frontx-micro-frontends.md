@@ -112,8 +112,16 @@ middle — navigation made of the picked screens, the page of the chosen one,
 the sidebar, overlays and popups — filled by drag or Add; the selected
 package on the right with where it shows and the gears it calls, ✓ in the
 product or ✗ not. The product's gears that no screen calls are listed with
-the packages that could show them. Until phase 2 the pick is kept in
-`project.config.frontend.mfes`.
+the packages that could show them. The pick is kept with the product (its
+record's `frontend`) and written into its `product.gdl` as
+`frontend = frontx_product(...)` (GDL 1.5): the shell and each package by
+repository and directory, each repository a `source`, the product's gears a
+screen calls as its `requires`, and the libraries the screens share that the
+shell lacks as `libraries`. A project that picked before keeps
+`project.config.frontend`, read until the next save. Studio writes the block
+only when its engine reads GDL 1.5 (`STUDIO_GEARBOX_FRONTX=1`); Gearbox's
+`frontx_product` is on the `feat/frontx-frontend` branch of a fork until it
+is proposed upstream.
 
 Above it, the steps a build of the frontend takes, each marked with what the
 constructor found, because assembling one by hand showed where each goes
@@ -124,7 +132,7 @@ wrong:
    their versions (`carries`), whether the shell signs users in
    (`src-app/app/auth/`, `shell_signin`), and whether it reads the
    product's addresses at start (`public/env.js`, `shell_runtime_env`).
-   The shell is chosen here and kept in `project.config.frontend.shell`.
+   The shell is chosen here and kept with the product's frontend.
 2. **Mount the micro-frontends.**
 3. **Align FrontX versions.** A mounted micro-frontend gets the shell's
    versions whatever it pinned (`deps_versions`). A pin that differs builds
@@ -136,8 +144,11 @@ wrong:
 5. **Reach the backend.** `/cf` goes to the product's gateway.
 6. **Gears behind the screens.** A screen that calls a gear the product
    lacks gets 404.
-7. **Build.**
-8. **Ship.** These last two are by hand until phase 2.
+7. **Build.** `gearbox generate` writes `frontend/`: the shell's workspace
+   with the picked micro-frontends and libraries mounted, their FrontX pins
+   aligned and recorded in `frontx.lock.json`, and a Dockerfile.
+8. **Ship.** The image `gbx-<product>-frontend` is nginx serving the build
+   and proxying `/cf/` to the gateway, deployed by the product's chart.
 
 ### 6. A gear's TypeScript SDK comes from its OpenAPI
 
@@ -159,7 +170,7 @@ a gear" does for the backend.
 | Phase | What | Owner |
 |---|---|---|
 | 1 | The scan records `mfe_extensions` and `mfe_calls` (every `src-app/mfe_packages/*`, at any depth); Product › Frontend composes and checks, and is optional ("Add a frontend" from `gears-frontx-templates`' `template-shell`); the pick in `project.config` | Studio |
-| 2 | `frontend` block in GDL, the shell as an application, generate builds and charts the frontend | Gearbox, Studio |
+| 2 | `frontend` block in GDL, the shell as an application, generate builds and charts the frontend; the pick kept with the product and written into `product.gdl` | Gearbox, Studio |
 | 3 | Per-gear npm SDKs from OpenAPI, `mfe.json` declares the gears it calls | Studio, FrontX |
 | 4 | Screens from specs, "Create a micro-frontend"; the backend serves the manifests | Studio, FrontX |
 

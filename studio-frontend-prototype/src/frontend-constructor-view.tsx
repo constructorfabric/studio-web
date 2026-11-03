@@ -10,8 +10,11 @@
  * the gears it calls and whether the product has them. The model is
  * `frontend-constructor.ts`.
  *
- * The pick is kept in `project.config.frontend` until product.gdl has a
- * frontend block (ADR-0050 phase 2). */
+ * The pick is kept with the product (`frontend` of its record), and its
+ * product.gdl says it as `frontend = frontx_product(...)` (GDL 1.5): the shell
+ * and each package by repository and directory, the gears each calls, and the
+ * libraries they share that the shell lacks. A project that picked before
+ * keeps `project.config.frontend`, read until the first save. */
 
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 
@@ -23,9 +26,12 @@ import {
   chosenShell,
   coverage,
   fitOf,
+  frontendPick,
   frontxSuggestion,
+  librariesFrom,
   mfesFrom,
   offersFor,
+  picksOf,
   placementLabel,
   projectRepos,
   shellRefOf,
@@ -33,6 +39,7 @@ import {
   splitTemplates,
   withFrontxSource,
   zonesOf,
+  type Library,
   type Mfe,
   type Placement,
   type Shell,
@@ -46,6 +53,8 @@ type Loaded = {
   mfes: Mfe[];
   /** Templates and examples: where a new micro-frontend starts. */
   templates: Mfe[];
+  /** Packages micro-frontends share: brought along when the shell lacks them. */
+  libraries: Library[];
   gears: string[];
   /** The shells in the catalogue: what a frontend can be assembled on. */
   shells: Shell[];
@@ -70,7 +79,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   const [err, setErr] = useState<string | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
   const [saved, setSaved] = useState<string[]>([]);
-  /** The shell it is assembled on, as `project.config.frontend.shell` names it. */
+  /** The shell it is assembled on, as `github:owner/repo//dir@ref`. */
   const [shellRef, setShellRef] = useState<string>(FRONTX_SHELL_TEMPLATE);
   const [savedShell, setSavedShell] = useState<string>(FRONTX_SHELL_TEMPLATE);
   /** The step whose detail is open; `null` shows them all folded. */
@@ -105,10 +114,12 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           const name = typeof n.value.gear_name === "string" ? n.value.gear_name : "";
           if (name) byName[name] = n.value as Record<string, unknown>;
         }
-        const { addable, templates } = splitTemplates(mfesFrom(components.nodes ?? [], byName));
+        const all = mfesFrom(components.nodes ?? [], byName);
+        const { addable, templates } = splitTemplates(all);
         setData({
           mfes: addable,
           templates,
+          libraries: librariesFrom(components.nodes ?? [], byName),
           gears: product?.gears ?? [],
           shells: shellsFrom(components.nodes ?? [], byName),
           suggestion: frontxSuggestion(
@@ -121,10 +132,13 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
             sources.items ?? [],
           ),
         });
-        const own = cfg?.frontend?.mfes ?? [];
+        // The product's own record first; a project that picked before it
+        // kept one has its picks in the project configuration.
+        const kept = product?.frontend ? picksOf(product.frontend, all) : null;
+        const own = kept?.picks ?? cfg?.frontend?.mfes ?? [];
         setPicks(own);
         setSaved(own);
-        const shell = cfg?.frontend?.shell ?? FRONTX_SHELL_TEMPLATE;
+        const shell = kept?.shellRef ?? cfg?.frontend?.shell ?? FRONTX_SHELL_TEMPLATE;
         setShellRef(shell);
         setSavedShell(shell);
       })
@@ -188,11 +202,14 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     setBusy(true);
     setErr(null);
     try {
-      const cfg = (await api.projectConfig(token, projectId)) ?? {};
-      await api.putProjectConfig(token, projectId, {
-        ...cfg,
-        frontend: { ...(cfg.frontend ?? {}), mfes: picks, shell: shellRef },
-      });
+      const chosen = picks.map((n) => data?.mfes.find((m) => m.name === n)).filter((m): m is Mfe => !!m);
+      const { pick, unplaced } = frontendPick(shellRef, chosen, data?.libraries ?? [], data?.gears ?? []);
+      if (!pick) throw new Error(`The shell \`${shellRef}\` is not a repository and directory.`);
+      if (unplaced.length > 0)
+        throw new Error(
+          `The catalogue does not say where ${unplaced.join(", ")} ${unplaced.length === 1 ? "is" : "are"} yet; sync the catalogue, then save.`,
+        );
+      await api.saveProjectProduct(token, projectId, { frontend: pick });
       setSaved(picks);
       setSavedShell(shellRef);
     } catch (e) {

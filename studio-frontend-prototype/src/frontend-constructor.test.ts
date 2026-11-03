@@ -9,12 +9,15 @@ import {
   compareVersions,
   coverage,
   fitOf,
+  frontendPick,
   frontxSuggestion,
   gearKey,
+  librariesFrom,
   mfesFrom,
   offersFor,
   ownerRepo,
   parseShellRef,
+  picksOf,
   placementLabel,
   productIdp,
   projectRepos,
@@ -359,5 +362,85 @@ describe("how the frontend gets built", () => {
     expect(steps[0].detail).toContain("o/r");
     expect(steps.find((s) => s.id === "mount")?.state).toBe("todo");
     expect(steps.find((s) => s.id === "signin")?.state).toBe("info");
+  });
+});
+
+describe("what the product keeps of its frontend", () => {
+  const studio = "https://github.com/acme/studio-web";
+  const org: Mfe = {
+    name: "@cs/org-mfe",
+    description: "",
+    version: null,
+    repo: studio,
+    path: "studio-frontend/src-app/mfe_packages/org-mfe",
+    placements: [],
+    calls: ["studio-organizations", "studio-tasks"],
+    via: {},
+    deps: ["@cs/shared", "@gears-frontx/react"],
+  };
+  const libraries = librariesFrom(
+    [
+      node("@cs/shared", { component_kind: "frontend-library", repository: studio }),
+      node("@gears-frontx/react", { component_kind: "frontend-library" }),
+      node("@cs/org-mfe", { component_kind: "micro-frontend" }),
+      node("@cs/portal", { repository: studio }),
+    ],
+    {
+      "@cs/shared": { auto: { path: "studio-frontend/src-app/mfe_packages/shared" } },
+      "@cs/portal": { auto: { carries: { "@gears-frontx/react": "0.2.0" } } },
+    },
+  );
+
+  it("reads the libraries: FrontX packages that are neither screens, shells nor FrontX's own", () => {
+    expect(libraries).toEqual([
+      { name: "@cs/shared", repo: studio, path: "studio-frontend/src-app/mfe_packages/shared" },
+    ]);
+  });
+
+  it("places each package by repository and directory, with the product's gears it calls", () => {
+    const { pick, unplaced } = frontendPick(
+      "github:constructorfabric/gears-frontx-templates//template-shell@v0.6",
+      [org],
+      libraries,
+      ["cf-studio-organizations", "cf-gears-api-gateway"],
+    );
+    expect(unplaced).toEqual([]);
+    expect(pick).toEqual({
+      shell: { repo: "constructorfabric/gears-frontx-templates", path: "template-shell", ref: "v0.6" },
+      mfes: [
+        {
+          repo: "acme/studio-web",
+          path: "studio-frontend/src-app/mfe_packages/org-mfe",
+          package: "@cs/org-mfe",
+          requires: ["studio-organizations"],
+        },
+      ],
+      // The template does not have Studio's shared library: it is brought.
+      libraries: [{ repo: "acme/studio-web", path: "studio-frontend/src-app/mfe_packages/shared", package: "@cs/shared" }],
+    });
+  });
+
+  it("brings no library the shell has, and names a package it cannot place", () => {
+    const { pick, unplaced } = frontendPick(
+      "github:acme/studio-web//studio-frontend@main",
+      [org, { ...people, repo: null }],
+      libraries,
+      [],
+    );
+    expect(pick?.libraries).toBeUndefined();
+    expect(pick?.mfes.map((m) => [m.package, m.ref, m.requires])).toEqual([["@cs/org-mfe", "main", undefined]]);
+    expect(unplaced).toEqual(["@cs/people-mfe"]);
+    expect(frontendPick("not a ref", [org], libraries, []).pick).toBeNull();
+  });
+
+  it("comes back as the shell and the names picked", () => {
+    const { pick } = frontendPick("github:acme/studio-web//studio-frontend@main", [org], libraries, []);
+    expect(picksOf(pick!, [org])).toEqual({
+      shellRef: "github:acme/studio-web//studio-frontend@main",
+      picks: ["@cs/org-mfe"],
+    });
+    // One saved without its npm name is found by where it is.
+    const { package: _, ...anonymous } = pick!.mfes[0];
+    expect(picksOf({ ...pick!, mfes: [anonymous] }, [org]).picks).toEqual(["@cs/org-mfe"]);
   });
 });
