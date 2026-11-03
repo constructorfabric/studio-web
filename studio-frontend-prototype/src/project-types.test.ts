@@ -13,7 +13,7 @@ import {
 import type { ProjectType } from "./project-types";
 import type { ProjTab } from "./project-overview";
 
-const TABS = ["overview", "specs", "components", "parts", "builds", "sources", "people"] as const;
+const TABS = ["overview", "specs", "components", "parts", "releases", "sources", "people"] as const;
 const BAR = TABS.map((id) => ({ id, label: id }));
 
 const learning = PRESETS.find((p) => p.id === "learning")!.types;
@@ -43,9 +43,17 @@ describe("reading a stored list", () => {
     expect(types[1].kits).toEqual(["sdlc"]);
   });
 
+  it("reads a type saved with Builds and Deploys as one Releases tab", () => {
+    const [t] = parseTypes(
+      { types: [{ key: "a", title: "A", recipe: "product", tabs: ["overview", "builds", "deploys"], first_tab: "deploys" }] },
+      TABS,
+    );
+    expect(t).toMatchObject({ tabs: ["overview", "releases"], first_tab: "releases" });
+  });
+
   it("reads every preset back as it was written", () => {
     for (const preset of PRESETS) {
-      expect(parseTypes({ types: preset.types }, ["overview", "issues", "specs", "model", "components", "parts", "builds", "tests", "deploys", "kits", "artifacts", "sources", "activity", "timeline", "people", "automation"]), preset.id).toEqual(preset.types);
+      expect(parseTypes({ types: preset.types }, ["overview", "issues", "specs", "model", "components", "parts", "releases", "tests", "kits", "artifacts", "sources", "activity", "timeline", "people", "automation"]), preset.id).toEqual(preset.types);
       expect(typesProblem(preset.types), preset.id).toBeNull();
     }
   });
@@ -95,8 +103,8 @@ describe("a project's type", () => {
   });
 
   it("opens on its first tab, or the first it shows", () => {
-    const t: ProjectType = { key: "t", title: "T", description: "", recipe: "product", tabs: ["builds", "sources"] };
-    expect(landingTab(BAR, t)).toBe("builds");
+    const t: ProjectType = { key: "t", title: "T", description: "", recipe: "product", tabs: ["releases", "sources"] };
+    expect(landingTab(BAR, t)).toBe("releases");
     expect(landingTab(BAR, { ...t, first_tab: "sources" })).toBe("sources");
     expect(landingTab(BAR, null)).toBe("overview");
   });

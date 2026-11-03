@@ -61,7 +61,9 @@ import { ProjectPath } from "./project-path-view";
  * Renamed rather than rebuilt, screens unchanged: "kits" is Components,
  * "people" is Team, "documents" is Specs. Timeline had no screen behind it
  * and Automation stored a trust ramp nothing read, so both were removed
- * (2026-11-03): a tab is in the list when it does something.
+ * (2026-11-03): a tab is in the list when it does something. Builds and
+ * Deploys became one Releases tab (ADR-0056 §4); their old ids still open it
+ * (MOVED_PROJECT_TABS).
  *
  * SOURCES was ours first and the product has since grown it, in the same place
  * and under the same name — worth knowing before anyone "aligns" it away.
@@ -79,9 +81,8 @@ export type ProjTab =
   | "model"
   | "components"
   | "parts"
-  | "builds"
+  | "releases"
   | "tests"
-  | "deploys"
   | "kits"
   | "artifacts"
   | "sources"

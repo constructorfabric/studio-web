@@ -31,7 +31,7 @@ const facts = (over: Partial<FlowFacts> = {}): FlowFacts => ({
   cfg: {},
   infra: infra(),
   kept: { revision: 4, text: described },
-  build: { text: "0.1.0 is published. Next: deploy it.", tone: "done", go: "deploys" },
+  build: { text: "0.1.0 is published. Next: deploy it.", tone: "done", go: "releases" },
   deploy: { text: "Runs in dev (studio).", tone: "done" },
   ...over,
 });
@@ -90,7 +90,7 @@ describe("the way from configured to running", () => {
       ["build", "done"],
       ["deploy", "done"],
     ]);
-    expect(steps[2].tab).toBe("builds");
+    expect(steps[2].tab).toBe("releases");
   });
 
   it("asks to save again when the product changed past its revision", () => {

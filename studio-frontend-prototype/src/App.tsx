@@ -62,7 +62,6 @@ import { ProjectOverview, type ProjTab } from "./project-overview";
 import { ProjectComponentsInventory } from "./project-components-view";
 import { makeZip } from "./zip";
 import { SpecModelTab } from "./spec-model-tab";
-import { ProjectBuilds } from "./builds-tab";
 import { ProjectTests } from "./tests-tab";
 import { ProjectTabHowto } from "./project-path-view";
 import { ProjectDocuments, ProjectOutputs } from "./artifacts-tab";
@@ -133,8 +132,9 @@ import { gearParentDir, gearSlug } from "./scaffold";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
-import { OrgEnvironments } from "./environments-screen";
-import { ProjectDeploys } from "./project-deploys-tab";
+import { OrgInfrastructure } from "./environments-screen";
+import { ProjectReleases } from "./releases-tab";
+import { currentProjectTab } from "./product-sections";
 import { KubeconfigField } from "./kubeconfig-field";
 import { kubeconfigServer } from "./kubeconfig";
 import { environmentsByConnection } from "./environments";
@@ -784,8 +784,11 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "people", icon: "users", label: "People" },
     // Owned by the organization and inherited by every project in it.
     { id: "connectors", icon: "plug", label: "Connections" },
-    // Where its products run: clusters, registries, approvals (ADR-0043).
-    { id: "environments", icon: "layers", label: "Environments" },
+    // Where its products run (ADR-0056 §2): the places it holds, the
+    // environments it defines on them, what runs where. It was Environments;
+    // the id stays, so stored places and pins still open it, and so does the
+    // old address (place-url.ts).
+    { id: "environments", icon: "layers", label: "Infrastructure" },
     // What its model calls and IDE sessions cost, and the prices (issue #781).
     { id: "costs", icon: "coins", label: "Costs" },
     // What its projects build: the registry, the catalogue, and the gear
@@ -980,7 +983,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const [projectLabel, setProjectLabel] = useState<string | undefined>(restoredPlace.projectLabel);
   // The open project's active tab. Lifted here so the sidebar is the project's
   // nav (see the PROJECT section below); opening a different project resets it.
-  const [projectTab, setProjectTab] = useState<ProjTab>(restoredPlace.projectTab ?? "overview");
+  // A tab stored before it moved (Builds, Deploys) opens where it is now.
+  const [projectTab, setProjectTab] = useState<ProjTab>(
+    restoredPlace.projectTab ? (currentProjectTab(restoredPlace.projectTab) as ProjTab) : "overview",
+  );
   /** The open workspace's section. Lives here beside projectTab and for the
    *  same reason: the band that switches it is chrome above the work area, not
    *  part of the screen it switches. */
@@ -2399,7 +2405,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     setActiveSpace(null);
                     setProjectLabel(pin.name);
                     setCrumb({ projectId: pin.workspaceId, nestedId: pin.projectId });
-                    setProjectTab(pin.tab as ProjTab);
+                    setProjectTab(currentProjectTab(pin.tab) as ProjTab);
                     setView("projects");
                   }}
                 />
@@ -2858,7 +2864,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "environments" && orgAsSpace && (
-          <OrgEnvironments
+          <OrgInfrastructure
             key={orgAsSpace.id}
             token={token}
             org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
@@ -5428,20 +5434,17 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string; experimental?: b
   // Kits are how the project works (workflows, conventions pinned to a Git
   // version), not what it is made of, so they stopped sharing a page with the
   // specs-to-product journey.
-  // What the product was built into, where, and how it went (ADR-0045): after
-  // the tab that says what it is made of, before where it runs. The portal
-  // does not build; CI and the IDE do.
-  { id: "builds", icon: "activity", label: "Builds" },
+  // How the product goes out (ADR-0056 §4): the ladder of the environments it
+  // may deploy to, dev to prod, with what runs in each; then its builds
+  // (ADR-0045) and its deploys (ADR-0043). It was two tabs, Builds and
+  // Deploys, with nothing leading from one to the next; their old ids open
+  // it (MOVED_PROJECT_TABS).
+  { id: "releases", icon: "activity", label: "Releases" },
   // Whether what was built works, and whether what the specs say is checked:
   // the CI jobs of the mainline and of the open pull requests, and a summary
-  // of spec against code that opens Specs. After Builds, which it reads, and
-  // before Deploys, which should take only what passed.
+  // of spec against code that opens Specs. After Releases, which builds what
+  // it reads.
   { id: "tests", icon: "check", label: "Tests" },
-  // Where the product runs (ADR-0043): the organization's environments this
-  // project may deploy to, its namespace in each, its bindings and deploys.
-  // After Builds, because a deploy takes what a build made. It was a block at
-  // the bottom of the Product card, under the configuration.
-  { id: "deploys", icon: "layers", label: "Deploys" },
   // Experimental: a kit installs through the IDE's runner and adds check
   // methods to Domain model › Hypotheses; the flow works, its place does not
   // settle yet (ADR-0056 may move it beside the repositories).
@@ -5794,7 +5797,8 @@ function ProjectScreen({
                 projectId={proj.id}
                 projectName={proj.name}
                 workspaceId={workspace.id}
-                onOpenTab={setTab}
+                // The kit's Builds step: Builds is a part of Releases now.
+                onOpenTab={() => setTab("releases")}
               />
             }
             parts={(openBackend) => (
@@ -5805,14 +5809,11 @@ function ProjectScreen({
         {tab === "parts" && (
           <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={() => setTab("components")} />
         )}
-        {tab === "builds" && (
-          <ProjectBuilds token={token} projectId={proj.id} projectName={proj.name} onOpenTab={setTab} />
+        {tab === "releases" && (
+          <ProjectReleases token={token} projectId={proj.id} projectName={proj.name} onOpenTab={setTab} />
         )}
         {tab === "tests" && (
           <ProjectTests token={token} projectId={proj.id} workspaceId={workspace.id} onOpenSpecs={() => setTab("specs")} />
-        )}
-        {tab === "deploys" && (
-          <ProjectDeploys token={token} projectId={proj.id} onOpenTab={setTab} />
         )}
         {tab === "kits" && (
           <ProjectKits

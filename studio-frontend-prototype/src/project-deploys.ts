@@ -1,5 +1,5 @@
-/* A project's Deploys tab (ADR-0043, project side): the rules behind it, kept
- * apart from the React for their tests. */
+/* A project's deploys, on its Releases tab (ADR-0043, project side): the
+ * rules behind them, kept apart from the React for their tests. */
 
 import type { Deployment, DeployEnvironment } from "./api";
 import type { IdeBuild } from "./builds";
