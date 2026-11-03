@@ -1,0 +1,24 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.action.v1~constructor_studio.shell.chain_outcome.done.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Reply a chain carries as its next: the request succeeded. executeActionsChain returns nothing (mfes 0.4.0), so a caller that waits on the outcome adds this reply. See mfe-shared host/chainOutcome.ts.",
+  "allOf": [
+    {
+      "$ref": "gts://gts.frontx.mfes.comm.action.v1~"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["requestId"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["payload"]
+}

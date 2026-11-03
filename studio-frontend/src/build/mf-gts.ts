@@ -1,4 +1,5 @@
 import * as esbuild from 'esbuild';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
@@ -157,6 +158,7 @@ interface EnrichedSharedEntry {
   version: string;
   chunkPath: string;
   unwrapKey: string | null;
+  contentHash?: string;
 }
 
 type EnrichedManifest = MfeJsonManifest & {
@@ -188,10 +190,11 @@ class MfeJsonEnricher {
   enrich(
     mfeJson: MfeJson,
     mfManifest: MfManifest,
-    sharedDeps: string[]
+    sharedDeps: string[],
+    sharedOutputDir: string
   ): EnrichedMfeJson {
     const metaData = this.buildMetaData(mfManifest);
-    const shared = this.buildSharedEntries(sharedDeps);
+    const shared = this.buildSharedEntries(sharedDeps, sharedOutputDir);
     const entries = this.buildEntries(mfeJson.entries, mfManifest.exposes);
 
     return {
@@ -218,14 +221,20 @@ class MfeJsonEnricher {
   }
 
   private buildSharedEntries(
-    declaredDeps: string[]
+    declaredDeps: string[],
+    sharedOutputDir: string
   ): EnrichedSharedEntry[] {
-    return declaredDeps.map((name) => ({
-      name,
-      version: this.resolvePackageVersion(name),
-      chunkPath: `shared/${StandaloneEsmBuilder.normalizeDepName(name)}.js`,
-      unwrapKey: null,
-    }));
+    return declaredDeps.map((name) => {
+      const fileName = `${StandaloneEsmBuilder.normalizeDepName(name)}.js`;
+      const contentHash = computeContentHash(path.join(sharedOutputDir, fileName));
+      return {
+        name,
+        version: this.resolvePackageVersion(name),
+        chunkPath: `shared/${fileName}`,
+        unwrapKey: null,
+        ...(contentHash !== undefined ? { contentHash } : {}),
+      };
+    });
   }
 
   /**
@@ -416,6 +425,9 @@ class StandaloneEsmBuilder {
     // re-exports so `import { createContext } from "react"` works in blob URLs.
     this.patchCjsNamedExports(outfile, dep.name);
 
+    // Last, and before anything hashes the file (`computeContentHash`).
+    StandaloneEsmBuilder.normalizeEmbeddedModulePaths(outfile);
+
     const label =
       dep.externals.length > 0
         ? `(external: ${dep.externals.join(', ')})`
@@ -564,6 +576,44 @@ class StandaloneEsmBuilder {
   static normalizeDepName(name: string): string {
     return name.replace(/^@/, '').replace(/\//g, '-');
   }
+
+  private static normalizeEmbeddedModulePaths(outfile: string): void {
+    const source = fs.readFileSync(outfile, 'utf-8');
+    const normalized = normalizeEmbeddedModulePathsInSource(source);
+    if (normalized !== source) {
+      fs.writeFileSync(outfile, normalized, 'utf-8');
+    }
+  }
+}
+
+/**
+ * sha256 of a shared chunk's final bytes, so the runtime can tell a chunk it
+ * already has from one it must fetch. No hash, and a warning, when the chunk
+ * cannot be read: a missing contentHash is a valid manifest, a wrong one is not.
+ * Taken from the template's mf-gts.ts.
+ */
+export function computeContentHash(chunkFilePath: string): string | undefined {
+  try {
+    return createHash('sha256').update(fs.readFileSync(chunkFilePath)).digest('hex');
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[frontx-mf-gts] contentHash: could not read shared chunk "${chunkFilePath}" (${reason}). ` +
+        'Publishing manifest without a contentHash for this dependency.'
+    );
+    return undefined;
+  }
+}
+
+/**
+ * Canonicalizes the `node_modules` paths esbuild embeds in non-minified output
+ * (pnpm store segments, leading `../` hops), so one dependency at one version
+ * hashes the same across install layouts. Taken from the template's mf-gts.ts.
+ */
+export function normalizeEmbeddedModulePathsInSource(source: string): string {
+  return source
+    .replace(/(?:\.\.\/)*(?:node_modules\/)?\.pnpm\/[^/"'\s]+\/node_modules\//g, 'node_modules/')
+    .replace(/(?:\.\.\/)+node_modules\//g, 'node_modules/');
 }
 
 
@@ -917,8 +967,8 @@ export function frontxMfGts(): Plugin {
         // ── Build standalone ESMs for shared deps ───────────────────────────
 
         const sharedDeps = resolvedExternals;
+        const sharedOutputDir = path.join(distDir, 'shared');
         if (sharedDeps.length > 0) {
-          const sharedOutputDir = path.join(distDir, 'shared');
           const esmBuilder = new StandaloneEsmBuilder(
             sharedDeps,
             sharedOutputDir,
@@ -934,7 +984,7 @@ export function frontxMfGts(): Plugin {
         // ── Write enriched build-output manifest ─────────────────────────────
 
         const enricher = new MfeJsonEnricher(packageRoot);
-        const enrichedMfeJson = enricher.enrich(mfeJson, mfManifest, sharedDeps);
+        const enrichedMfeJson = enricher.enrich(mfeJson, mfManifest, sharedDeps, sharedOutputDir);
 
         fs.writeFileSync(
           mfeJsonManifestPath,

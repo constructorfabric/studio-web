@@ -1,21 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FrontXApp, ScreenExtension } from '@gears-frontx/react';
+import type { FrontXApp } from '@gears-frontx/react';
 
 const { SCREEN_DOMAIN, mocks } = vi.hoisted(() => ({
   SCREEN_DOMAIN: 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1',
-  mocks: { mounted: [] as string[], mountScreen: vi.fn(), isMountingScreen: vi.fn(() => false), publish: vi.fn() },
+  mocks: { mounted: [] as string[], mountScreen: vi.fn(), publish: vi.fn() },
 }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   screenDomain: { id: SCREEN_DOMAIN },
 }));
-vi.mock('@/app/mfe/mountScreen', () => ({ mountScreen: mocks.mountScreen, isMountingScreen: mocks.isMountingScreen }));
+vi.mock('@/app/mfe/mountScreen', () => ({ mountScreen: mocks.mountScreen }));
 vi.mock('@/app/mfe/sharedContext', () => ({ publishStudioContext: mocks.publish }));
+vi.mock('@/app/mfe/domainOccupancy', () => ({ occupancyOf: () => ({ mounted: () => mocks.mounted }) }));
 
 import { freshNavigationHistory } from '@frontx-test-utils/memoryNavigationHistory';
 import { screen } from '@frontx-test-utils/screenFixture';
 import reducer, { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import { startRouting } from './startRouting';
+import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 
 const screens = [
   screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 }),
@@ -33,7 +35,7 @@ function fakeApp(initial: Partial<AppContextState>) {
   let state: AppContextState = { ...reducer(undefined, { type: '@@init' }), ...initial };
   const app = {
     store: { dispatch: (action: unknown) => { state = reducer(state, action as never); }, getState: () => ({ [APP_CONTEXT_SLICE_KEY]: state }) },
-    mfeRegistry: { getExtensionsForDomain: () => screens, getMountedExtensions: () => mocks.mounted },
+    mfeRegistry: { getExtensionsForDomain: () => screens },
   } as unknown as FrontXApp;
   return { app, state: () => state };
 }
@@ -41,8 +43,7 @@ const catalogs = () => ({ loadOrganizations: vi.fn(), loadWorkspaces: vi.fn(), l
 
 beforeEach(() => {
   mocks.mounted = [];
-  mocks.mountScreen.mockImplementation(async (_r: unknown, ext: ScreenExtension) => { mocks.mounted = [ext.id]; });
-  mocks.isMountingScreen.mockReturnValue(false);
+  mocks.mountScreen.mockImplementation(async (_r: unknown, ext: StudioScreenExtension) => { mocks.mounted = [ext.id]; });
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -99,7 +100,7 @@ describe('startRouting', () => {
     const { history, adapter } = freshNavigationHistory('/?screen=people;org=o1');
     const { app } = fakeApp(ready);
     let landProjects!: () => void;
-    mocks.mountScreen.mockImplementation((_r: unknown, ext: ScreenExtension) =>
+    mocks.mountScreen.mockImplementation((_r: unknown, ext: StudioScreenExtension) =>
       ext.id === 'projects.main'
         ? new Promise<void>((resolve) => { landProjects = () => { mocks.mounted = [ext.id]; resolve(); }; })
         : Promise.resolve().then(() => { mocks.mounted = [ext.id]; })
@@ -108,12 +109,10 @@ describe('startRouting', () => {
     await vi.waitFor(() => expect(mocks.mounted).toEqual(['people']));
 
     handle.navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w1' }, 'push');
-    mocks.isMountingScreen.mockReturnValue(true);
     history.go(-1);
     await adapter.settle();
     expect(mocks.mounted).toEqual(['people']);
 
-    mocks.isMountingScreen.mockReturnValue(false);
     landProjects();
     await vi.waitFor(() => expect(mocks.mounted).toEqual(['people']));
     expect(mocks.mountScreen).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ id: 'people' }));

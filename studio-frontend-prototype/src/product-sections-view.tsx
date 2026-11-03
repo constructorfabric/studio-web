@@ -11,17 +11,17 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
-import { api, type ProjectConfig, type ProjectTargets } from "./api";
+import { api, type FrontendPick, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
 import { FrontendConstructor } from "./frontend-constructor-view";
 import {
-  FRONTX_SHELL_TEMPLATE,
   PRODUCT_SECTIONS,
   hasFrontend,
+  comesWith,
   infrastructureOf,
   openingSection,
   productSummary,
   sectionFromPath,
-  withFrontend,
+  newFrontend,
   withoutFrontend,
   type Infrastructure,
   type ProductSectionId,
@@ -71,12 +71,23 @@ export function ProductPage({
     return first;
   });
   const [summary, setSummary] = useState<ProductSummary | null>(null);
+  // A product that could not be read is not a product that is not there.
+  const [readError, setReadError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
 
   useEffect(() => {
     let alive = true;
     Promise.all([
-      api.projectProduct(token, projectId).catch(() => null),
+      api.projectProduct(token, projectId).then(
+        (p) => {
+          if (alive) setReadError(null);
+          return p;
+        },
+        (e: unknown) => {
+          if (alive) setReadError(errText(e));
+          return null;
+        },
+      ),
       api.projectConfig(token, projectId).catch(() => null),
     ]).then(([product, cfg]) => alive && setSummary(productSummary(product, cfg)));
     return () => {
@@ -95,7 +106,7 @@ export function ProductPage({
   return (
     <>
       <section className="card" style={{ marginBottom: 12 }} data-product-header>
-        <SummaryLine summary={summary} />
+        <SummaryLine summary={summary} readError={readError} />
         <div className="row" style={{ alignItems: "center", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
           <div className="doc-views" role="tablist" aria-label="The product's parts" style={{ marginBottom: 0 }} data-product-sections>
             {PRODUCT_SECTIONS.filter((s) => s.id !== "parts" || parts).map((s) => (
@@ -131,12 +142,22 @@ export function ProductPage({
 }
 
 /** The product in one line. */
-function SummaryLine({ summary: s }: { summary: ProductSummary | null }) {
+function SummaryLine({ summary: s, readError }: { summary: ProductSummary | null; readError: string | null }) {
+  if (readError) {
+    return (
+      <p className="error" style={{ margin: 0 }} data-product-summary>
+        The product could not be read: {readError}
+      </p>
+    );
+  }
   if (!s) return <p className="muted" style={{ margin: 0 }}>Reading the product…</p>;
   if (!s.id && s.gears === 0) {
     return (
       <p style={{ margin: 0 }} data-product-summary>
-        <b>No product yet.</b> <span className="muted">Pick its gears under Backend; it is saved to the repository from there.</span>
+        <b>No product yet.</b>{" "}
+        <span className="muted">
+          Pick its gears under Backend and Save: Studio keeps it, and Publish puts it in the repository.
+        </span>
       </p>
     );
   }
@@ -171,7 +192,7 @@ function SummaryLine({ summary: s }: { summary: ProductSummary | null }) {
             )}
           </>
         ) : (
-          "not saved to the repository yet"
+          "not saved yet"
         )}
       </span>
       <span className="muted">· {s.frontend ? "with a frontend" : "no frontend"}</span>
@@ -274,6 +295,7 @@ function ProductNeeds({ infra }: { infra: Infrastructure }) {
           <th>Runs on</th>
           <th>For</th>
           <th>Gears</th>
+          <th>Comes</th>
         </tr>
       </thead>
       <tbody>
@@ -287,6 +309,9 @@ function ProductNeeds({ infra }: { infra: Infrastructure }) {
               : `${infra.applications.length} application${infra.applications.length === 1 ? "" : "s"}: ${infra.applications.join(", ")}`}
           </td>
           <td className="muted">all</td>
+          <td>
+            <span className="badge ok">with every deploy</span>
+          </td>
         </tr>
         {infra.needs.map((t) => (
           <tr key={t.id} data-technology={t.id}>
@@ -296,6 +321,15 @@ function ProductNeeds({ infra }: { infra: Infrastructure }) {
             <td>{t.why}</td>
             <td title={t.gears.map(gearLabel).join(", ")}>
               {t.gears.length <= 3 ? t.gears.map(gearLabel).join(", ") : `${t.gears.length} gears`}
+            </td>
+            <td title={comesWith(t.id).words}>
+              {comesWith(t.id).deployed ? (
+                <span className="badge ok">with every deploy</span>
+              ) : (
+                <span className="badge" data-outside>
+                  outside Studio
+                </span>
+              )}
             </td>
           </tr>
         ))}
@@ -316,14 +350,18 @@ function ProductFrontend({
   onChanged: () => void;
 }) {
   const [cfg, setCfg] = useState<ProjectConfig | null | undefined>(undefined);
+  const [product, setProduct] = useState<ProjectProduct | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    api
-      .projectConfig(token, projectId)
-      .then((c) => alive && setCfg(c))
+    Promise.all([api.projectConfig(token, projectId), api.projectProduct(token, projectId).catch(() => null)])
+      .then(([c, p]) => {
+        if (!alive) return;
+        setProduct(p);
+        setCfg(c);
+      })
       .catch((e) => {
         if (!alive) return;
         setCfg(null);
@@ -334,14 +372,22 @@ function ProductFrontend({
     };
   }, [token, projectId]);
 
-  async function change(next: (c: ProjectConfig | null) => ProjectConfig) {
+  /** Give the product a frontend, or take it away (`null`): the product keeps
+   *  it, and a project's older record of one in its configuration goes too. */
+  async function change(frontend: FrontendPick | null) {
     setBusy(true);
     setErr(null);
     try {
-      const fresh = await api.projectConfig(token, projectId);
-      const value = next(fresh);
-      await api.putProjectConfig(token, projectId, value);
-      setCfg(value);
+      const saved = await api.saveProjectProduct(token, projectId, { frontend });
+      setProduct(saved.value);
+      if (!frontend) {
+        const fresh = await api.projectConfig(token, projectId);
+        if (fresh?.frontend) {
+          const value = withoutFrontend(fresh);
+          await api.putProjectConfig(token, projectId, value);
+          setCfg(value);
+        }
+      }
       onChanged();
     } catch (e) {
       setErr(errText(e));
@@ -350,15 +396,13 @@ function ProductFrontend({
     }
   }
 
-  const has = hasFrontend(cfg);
-  const picked = cfg?.frontend?.mfes?.length ?? 0;
+  const has = hasFrontend(cfg, product);
+  const picked = product?.frontend?.mfes.length ?? cfg?.frontend?.mfes?.length ?? 0;
   return (
     <section className="card" data-product-section="frontend" data-product-frontend={has ? "yes" : "no"}>
       {has && (
         <div className="row" style={{ alignItems: "center", marginBottom: 8 }}>
-          <span className="grow muted" style={{ fontSize: 12 }}>
-            Shell from <code>{cfg?.frontend?.shell ?? FRONTX_SHELL_TEMPLATE}</code>.
-          </span>
+          <span className="grow" />
           <button
             type="button"
             className="ghost"
@@ -366,7 +410,7 @@ function ProductFrontend({
             title={picked > 0 ? `Its ${picked} micro-frontend${picked === 1 ? "" : "s"} are dropped with it` : undefined}
             onClick={() => {
               if (picked === 0 || window.confirm("Remove the product's frontend, with the micro-frontends picked for it?"))
-                void change(withoutFrontend);
+                void change(null);
             }}
           >
             Remove the frontend
@@ -389,7 +433,7 @@ function ProductFrontend({
             , with micro-frontends mounted in it.
           </p>
           <span>
-            <button type="button" className="primary" disabled={busy} onClick={() => void change(withFrontend)}>
+            <button type="button" className="primary" disabled={busy} onClick={() => void change(newFrontend())}>
               {busy ? "Adding…" : "Add a frontend"}
             </button>
           </span>

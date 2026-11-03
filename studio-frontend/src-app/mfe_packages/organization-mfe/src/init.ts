@@ -4,7 +4,7 @@
  * Cache/runtime note:
  * - The host app owns the shared runtime via queryCache().
  * - Child apps join that shared QueryClient via queryCacheShared().
- * - Do not add queryCache(), createFrontXApp(), or QueryClientProvider here.
+ * - Do not add queryCache(), presets.full(), or QueryClientProvider here.
  */
 // @cpt-dod:cpt-frontx-dod-mfe-isolation-internal-dataflow:p1
 // @cpt-dod:cpt-frontx-dod-unit-test-generation-and-agent-verification-blank-mfe-tests:p1
@@ -16,13 +16,12 @@ import {
   apiRegistry,
   effects,
   queryCacheShared,
-  authShared,
   i18n,
 } from '@gears-frontx/react';
 import { homeSlice } from './slices/homeSlice';
 import { initHomeEffects } from './effects/homeEffects';
 import { _BlankApiService } from './api/_BlankApiService';
-import { AccountsApiService } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, authShared } from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build — mock plugin syncs during build(),
 // so services must already be present for mock activation to find them

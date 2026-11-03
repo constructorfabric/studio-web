@@ -215,6 +215,11 @@ pub struct StartSignInRequest {
     #[schema(value_type = Option<String>)]
     #[serde(default)]
     pub owner_tenant_id: Option<Uuid>,
+    /// The callback page of the portal the person starts from, so the sign-in
+    /// comes back there. It must be one the deployment is configured with;
+    /// omitted = the configured default.
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
 }
 
 #[derive(Debug)]
@@ -765,6 +770,7 @@ async fn start_sign_in(
                 label: &req.label,
                 base_url: req.base_url.as_deref(),
                 scope: req.scope.as_deref().unwrap_or("personal"),
+                redirect_uri: req.redirect_uri.as_deref(),
             },
         )
         .await

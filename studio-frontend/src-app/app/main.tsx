@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF } from '@gears-frontx/react';
+import { FrontXProvider, apiRegistry, auth, createFrontX, microfrontends, presets, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF } from '@gears-frontx/react';
 import { SHELL_SCHEMAS } from '@/app/mfe/schemas';
 import {
   AccountsApiService,
@@ -23,6 +23,7 @@ import { appContextSlice } from '@/app/slices/appContextSlice';
 import { appSessionSlice } from '@/app/slices/appSessionSlice';
 import { editorSessionSlice } from '@/app/slices/editorSessionSlice';
 import { keycloakOidcProvider } from '@/app/auth/keycloakOidcProvider';
+import { sharedAuthTransport } from '@/app/auth/sharedAuthTransport';
 import App from './App';
 import { ShellToaster } from '@/app/layout/ShellToaster'; // Below globals.css: the kit Button's CSS must follow Tailwind's preflight
 
@@ -53,8 +54,9 @@ apiRegistry.initialize({});
 
 // Create FrontX app instance
 // Register MfeHandlerMF to enable Module Federation MFE loading
-const app = createFrontXApp({
-  microfrontends: {
+const app = createFrontX()
+  .useAll(presets.full())
+  .use(microfrontends({
     typeSystem: gtsPlugin,
     mfeHandlers: [
       // The handler says when there is a frame; the editor's session talks to
@@ -63,11 +65,11 @@ const app = createFrontXApp({
       new MfeHandlerIframe(STUDIO_MFE_ENTRY_IFRAME, (frame, entry) => editorSession.frame(frame, entry)),
       new MfeHandlerMF(FRONTX_MFE_ENTRY_MF),
     ],
-  },
-  // Default frontxApiTransport(): Bearer on every REST call of the host and
-  // all MFEs, one deduplicated refresh-and-retry after a 401.
-  auth: { provider: keycloakOidcProvider },
-});
+  }))
+  // Bearer on every REST call of the host and, through the session it
+  // publishes, of every MFE; one deduplicated refresh-and-retry after a 401.
+  .use(auth({ provider: keycloakOidcProvider, transport: sharedAuthTransport() }))
+  .build();
 
 // Mock API off from the first paint: the framework's `mock()` plugin turns mock
 // mode ON by default on localhost, and the MFE scaffolds still carry maps. A

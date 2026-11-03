@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopSession } from "./api";
-import { desktopLink, desktopPresence } from "./open-in-desktop";
+import { desktopLink, desktopPresence, myDesktop } from "./open-in-desktop";
 
 const session = (member_id: string, device_name?: string): DesktopSession => ({
   id: `${member_id}-${device_name ?? "x"}`,
@@ -53,5 +53,25 @@ describe("the link that opens a project on the desktop", () => {
     const url = new URL(desktopLink({ id: "p-1" }));
     expect(url.searchParams.has("product")).toBe(false);
     expect(url.searchParams.has("branch")).toBe(false);
+  });
+});
+
+describe("the desktop a file opens on", () => {
+  const at = (member: string, lastSeen: number, id = `${member}-${lastSeen}`) => ({
+    id,
+    workspace_id: "ws",
+    member_id: member,
+    device_id: id,
+    device_name: id,
+    started_at_epoch_secs: 0,
+    last_seen_epoch_secs: lastSeen,
+    expires_at_epoch_secs: lastSeen + 90,
+    heartbeat_secs: 30,
+  });
+
+  it("is my own, the one heard from last, and never somebody else's", () => {
+    expect(myDesktop([at("me", 10), at("bob", 99), at("me", 50)], "me")?.id).toBe("me-50");
+    expect(myDesktop([at("bob", 99)], "me")).toBeUndefined();
+    expect(myDesktop([at("me", 10)], undefined)).toBeUndefined();
   });
 });

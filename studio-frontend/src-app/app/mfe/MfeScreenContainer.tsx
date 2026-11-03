@@ -3,7 +3,6 @@
 /** MFE Screen Container Component. */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { releaseMountLock } from '@/app/mfe/mountScreen';
 import {
   useFrontX,
   eventBus,
@@ -32,12 +31,7 @@ export function MfeScreenContainer() {
     });
   }, [app]);
   const startRouting = useCallback(() => {
-    const registry = app.mfeRegistry;
-    if (!registry) return;
-    // StrictMode detaches and re-attaches the slot with the doomed first
-    // mount still in flight; without this the guard in mountScreen swallows
-    // the next one and the session opens on a blank screen.
-    releaseMountLock(registry);
+    if (!app.mfeRegistry) return;
     // Which screen opens is the address's to say, and the effects that
     // start the router decide it (ADR-0028). Emitted on every attach: the
     // second time only re-applies what the address already says.

@@ -438,6 +438,9 @@ hypothesis:
   plus a shorter SSO idle timeout on the realm (recommended); or `prompt=login`
   on every sign-in.
 
+  The prototype now sends `prompt=login` on every redirect to the IdP; its
+  password form never touched the cookie. `studio-frontend` still sends none.
+
 # 2026-09-17
 
 - [ ] Decide how a notification leaves Studio, then build it @andrejk666

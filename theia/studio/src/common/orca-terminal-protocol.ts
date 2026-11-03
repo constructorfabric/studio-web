@@ -23,6 +23,16 @@ export const NO_ORCA_PAIRING = 'This IDE has no pairing with the Orca runtime';
  * frontend offers to pair again on it, as it does for a missing one.
  */
 export const STALE_ORCA_PAIRING = 'Orca no longer accepts the pairing this IDE keeps';
+/**
+ * The Orca pairing link in `text` -- what the clipboard holds after the member
+ * copied one in Orca -- or `undefined`. Only a whole link counts: a pairing
+ * code is a secret, and a clipboard holding something else is not ours (#493).
+ */
+export function pairingLinkIn(text: string | undefined): string | undefined {
+    const link = text?.trim();
+    return link && /^orca:\/\/pair\?\S*code=\S+$/.test(link) ? link : undefined;
+}
+
 /** Whether an `attach` failure is one a new pairing fixes. */
 export function needsPairing(message: string): boolean {
     return message.includes(NO_ORCA_PAIRING) || message.includes(STALE_ORCA_PAIRING);

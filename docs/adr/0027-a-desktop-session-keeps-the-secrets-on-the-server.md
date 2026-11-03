@@ -180,6 +180,31 @@ ADR-0022's two directions are kept and both start on the desktop:
   portal's `studio-theia` routes answer the same for either runtime; a command
   for a desktop session is queued, not called.
 
+*As built (phases 4 and 5, #954):*
+
+* **Events** have a route of their own,
+  `POST /studio-theia/v1/desktop-sessions/{id}/events`, rather than a second
+  credential on `/studio-theia/v1/events`. That route is anonymous at the
+  gateway, since a container has no user token, and its handler trusts only
+  the S2S token. The desktop route is authenticated like any member call, and
+  the lease must be live and the caller's own (`studio-session`'s
+  `DesktopSessionsClientV1`). So neither credential can reach the other's
+  path. The envelope is the forwarder's, and the republished `theia.*`
+  events carry `runtime: desktop` with the lease id as `session_id`.
+* **Commands** are sent with
+  `POST /studio-theia/v1/desktop-sessions/{id}/commands` (only the holder may
+  send one). They go out on `studio-events` as `desktop_session.command_sent`.
+  The desktop reads the channel under the member's token while it holds a
+  lease, keeps only commands addressed to its own leases, and hands each to
+  the window showing that workspace. The window runs it and reports the
+  outcome as a `workspace-activity` event.
+* **A desktop has no operation queue.** Its Git is the member's own clone,
+  so of the control calls a container takes it runs `open_in_editor`. It
+  answers `enqueue_operation` and `retry_operation` that it cannot. The
+  portal's *open a file* uses this: when the member has the project open on
+  their own desktop and no web session for it is mounted, the file opens on
+  the desktop.
+
 ### 6. The portal opens the desktop by link
 
 The workspace screen offers "Open in desktop" beside "Open Studio". It is a
@@ -294,13 +319,13 @@ in the manner of a remote development extension.
    `studio-events`.
 6. **Packaging.** Installers, signing and update, moved in from `studio-desktop`.
 
-State on 2026-09-29 (desktop 0.3.0-beta.5): phase 1 is built (#391); phase 2
-(#445); phase 3 (#450); of phase 5, the link (#419), not the commands; of
-phase 6, the Windows installer from CI (`desktop-windows.yml`, released per
-`desktop-v*` tag) and the update (*Help → Check for Updates*, #452; the
-channel as a setting, #506), not signing. Phase 4 is open. The refresh token
-in the OS keychain (§2) is not built: the sign-in lasts as long as the app
-runs. What each release changed is in
+State on 2026-10-31: phase 1 is built (#391); phase 2 (#445); phase 3 (#450);
+phase 4 and the commands of phase 5 (#954, see §5); the link of phase 5
+(#419); of phase 6, the Windows installer from CI (`desktop-windows.yml`,
+released per `desktop-v*` tag) and the update (*Help → Check for Updates*,
+#452; the channel as a setting, #506), not signing. The refresh token in the
+OS keychain (§2) is built (#954): Theia's `KeyStoreService`, one per Studio,
+following rotation. What each release changed is in
 [desktop-release-notes.md](../desktop-release-notes.md).
 
 ### Open questions

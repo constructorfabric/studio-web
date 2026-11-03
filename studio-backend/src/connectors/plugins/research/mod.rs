@@ -38,8 +38,10 @@ pub struct Config {
     /// make the member's access key.
     #[serde(default = "default_scope")]
     pub scope: String,
-    /// The portal's callback page. The identity provider sends the person
-    /// here, and only here, with the code.
+    /// The portal's callback page, or several, comma-separated, when more
+    /// than one portal signs in (the portal and its prototype). The first is
+    /// the default; a sign-in comes back to the one its portal names, and the
+    /// identity provider's client must allow every one.
     #[serde(default)]
     pub redirect_uri: String,
     /// Research's account API, `https://<stand>/api/platform-account/v1`: the
@@ -95,7 +97,13 @@ impl Config {
             client_id: self.client_id.trim().to_owned(),
             client_secret: self.client_secret.trim().to_owned(),
             scope: self.scope.trim().to_owned(),
-            redirect_uri: self.redirect_uri.trim().to_owned(),
+            redirect_uris: self
+                .redirect_uri
+                .split(',')
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .map(str::to_owned)
+                .collect(),
         })
     }
 }
@@ -151,6 +159,18 @@ mod tests {
         );
         assert_eq!(c.token_url, "https://idp.example.com/idp/connect/token");
         assert_eq!(c.scope, "openid profile user platform");
+    }
+
+    #[test]
+    fn several_callbacks_are_comma_separated_and_the_first_is_the_default() {
+        let mut cfg = configured();
+        cfg.redirect_uri = " https://a.example.com/cb , https://b.example.com/cb,".into();
+        let c = cfg.client().unwrap();
+        assert_eq!(
+            c.redirect_uris,
+            ["https://a.example.com/cb", "https://b.example.com/cb"]
+        );
+        assert_eq!(c.redirect_uri(None).unwrap(), "https://a.example.com/cb");
     }
 
     #[test]

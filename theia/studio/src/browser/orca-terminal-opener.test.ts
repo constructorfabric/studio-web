@@ -10,7 +10,8 @@ import { Container } from '@theia/core/shared/inversify';
 import { Emitter } from '@theia/core/lib/common/event';
 import { TerminalService } from '@theia/terminal/lib/browser/base/terminal-service';
 import { QuickInputService } from '@theia/core/lib/common/quick-pick-service';
-import { OrcaTerminalService } from '../common/orca-terminal-protocol';
+import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
+import { OrcaTerminalService, pairingLinkIn } from '../common/orca-terminal-protocol';
 import type { OrcaTerminal } from '../common/orca-protocol';
 import { OrcaTerminalFrontendClient, OrcaTerminalOpener, orcaTabTitle } from './orca-terminal-opener';
 
@@ -40,7 +41,7 @@ function fakeWidget() {
 
 function setup(
     attach: (stream: string) => Promise<void> = async () => undefined,
-    { canPair = false, answers = [] as Array<string | undefined> } = {}
+    { canPair = false, answers = [] as Array<string | undefined>, clipboard = '' } = {}
 ) {
     const widgets: Array<ReturnType<typeof fakeWidget>> = [];
     const terminals = {
@@ -68,6 +69,7 @@ function setup(
     container.bind(TerminalService).toConstantValue(terminals as never);
     container.bind(OrcaTerminalService).toConstantValue(bridge as never);
     container.bind(QuickInputService).toConstantValue(quickInput as never);
+    container.bind(ClipboardService).toConstantValue({ readText: async () => clipboard, writeText: async () => undefined } as never);
     container.bind(OrcaTerminalFrontendClient).toSelf().inSingletonScope();
     container.bind(OrcaTerminalOpener).toSelf().inSingletonScope();
     return {
@@ -196,6 +198,37 @@ describe('Open on an Orca agent, with no pairing yet', () => {
         expect(widgets[0].written).toEqual([]);
     });
 
+    it('pairs from a link already copied in Orca, without asking', async () => {
+        let first = true;
+        const { opener, bridge, quickInput, widgets } = setup(
+            () => (first ? ((first = false), unpaired()) : Promise.resolve()),
+            { canPair: true, clipboard: '  orca://pair?code=copied \n' }
+        );
+        await opener.open(agent);
+        expect(quickInput.input).not.toHaveBeenCalled();
+        expect(bridge.pair).toHaveBeenCalledWith('orca://pair?code=copied');
+        expect(widgets[0].written).toEqual([]);
+    });
+
+    it('asks, saying why, when the copied link does not pair', async () => {
+        let first = true;
+        const { opener, bridge, quickInput } = setup(
+            () => (first ? ((first = false), unpaired()) : Promise.resolve()),
+            { canPair: true, clipboard: 'orca://pair?code=old', answers: ['orca://pair?code=new'] }
+        );
+        bridge.pair.mockImplementationOnce(async () => { throw new Error('Orca no longer accepts this code'); });
+        await opener.open(agent);
+        expect(quickInput.input.mock.calls[0]).toEqual([expect.objectContaining({ prompt: expect.stringMatching(/clipboard did not pair: Orca no longer accepts this code/) })]);
+        expect(bridge.pair).toHaveBeenLastCalledWith('orca://pair?code=new');
+    });
+
+    it('leaves a clipboard holding anything else alone', async () => {
+        const { opener, bridge, quickInput } = setup(unpaired, { canPair: true, clipboard: 'my password orca://pair?code=x', answers: [undefined] });
+        await opener.open(agent);
+        expect(bridge.pair).not.toHaveBeenCalled();
+        expect(quickInput.input).toHaveBeenCalledTimes(1);
+    });
+
     it('says why in the tab when the person does not pair', async () => {
         const { opener, bridge, widgets } = setup(unpaired, { canPair: true, answers: [undefined] });
         await opener.open(agent);
@@ -208,5 +241,16 @@ describe('Open on an Orca agent, with no pairing yet', () => {
         await opener.open(agent);
         expect(quickInput.input).not.toHaveBeenCalled();
         expect(widgets[0].written.join('')).toMatch(/no pairing with the Orca runtime/);
+    });
+});
+
+describe('the Orca pairing link on the clipboard', () => {
+    it('is a whole link, trimmed, and nothing else', () => {
+        expect(pairingLinkIn(' orca://pair?code=abc\n')).toBe('orca://pair?code=abc');
+        expect(pairingLinkIn('orca://pair?v=2&code=abc')).toBe('orca://pair?v=2&code=abc');
+        expect(pairingLinkIn('orca://pair?code=')).toBeUndefined();
+        expect(pairingLinkIn('see orca://pair?code=abc')).toBeUndefined();
+        expect(pairingLinkIn('https://example.com')).toBeUndefined();
+        expect(pairingLinkIn(undefined)).toBeUndefined();
     });
 });

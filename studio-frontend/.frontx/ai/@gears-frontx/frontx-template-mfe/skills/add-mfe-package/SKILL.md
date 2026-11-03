@@ -55,8 +55,10 @@ to mount into an extension domain).
    one entry ID per exposed module, and one extension ID per screen contributed to a
    domain (typically `gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1`
    for a screen-domain contribution).
-5. **Implement the lifecycle** — `src/lifecycle.tsx` extends `ThemeAwareReactLifecycle`
-   from `@gears-frontx/react`; the MFE's own `init.ts` builds its app instance with
+5. **Implement the lifecycle** — `src/lifecycle.tsx` extends `StudioMfeLifecycle`
+   from `@constructor-studio/mfe-shared` (FrontX's `ThemeAwareReactLifecycle` with
+   Studio's shadow styles), passing the kit theme anchored on `:host`, as
+   `_blank-mfe` does; the MFE's own `init.ts` builds its app instance with
    `createFrontX().use(effects()).use(queryCacheShared()).use(mock()).build()` so it
    joins the host's shared `QueryClient` without owning a second one.
 6. **Regenerate manifests** — run `npm run generate:mfe-manifests` so the host's

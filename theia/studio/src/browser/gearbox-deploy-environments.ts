@@ -30,6 +30,15 @@ export interface DeployTargets {
 export interface DeploymentStatus {
     readonly workloads: readonly { readonly name: string; readonly ready: number; readonly desired: number; readonly images: readonly string[] }[];
     readonly hosts: readonly string[];
+    readonly problems: readonly string[];
+}
+
+/** The end of one container's log; mirrors `ContainerLog` there. */
+export interface ContainerLog {
+    readonly pod: string;
+    readonly container: string;
+    readonly previous: boolean;
+    readonly text: string;
 }
 
 /** A proposed CI build workflow; mirrors `BuildWorkflow` there. */
@@ -72,6 +81,8 @@ export interface ProductDeployment {
     readonly chartVersion: string | undefined;
     readonly state: string;
     readonly reason: string | undefined;
+    /** What the run said: its summary, or why it failed. */
+    readonly outcome?: string;
     readonly requestedAt: string;
     readonly requestedBy: string | undefined;
 }
@@ -261,6 +272,7 @@ export class DeployEnvironments {
                 chartVersion: text(d.chart_version),
                 state: text(d.state) ?? 'unknown',
                 reason: text(d.reason),
+                outcome: text(d.outcome),
                 requestedAt: text(d.requested_at) ?? '',
                 requestedBy: text(d.requested_by_name),
             }))
@@ -307,7 +319,7 @@ export class DeployEnvironments {
         if (!res.ok) {
             throw new Error(await refusal(res));
         }
-        const body = await res.json() as { workloads?: { name?: string; ready?: number; desired?: number; images?: string[] }[]; hosts?: string[] };
+        const body = await res.json() as { workloads?: { name?: string; ready?: number; desired?: number; images?: string[] }[]; hosts?: string[]; problems?: string[] };
         return {
             workloads: (body.workloads ?? []).map(w => ({
                 name: w.name ?? '',
@@ -316,7 +328,25 @@ export class DeployEnvironments {
                 images: Array.isArray(w.images) ? w.images.filter((i): i is string => typeof i === 'string') : [],
             })),
             hosts: (body.hosts ?? []).filter((h): h is string => typeof h === 'string'),
+            problems: (body.problems ?? []).filter((p): p is string => typeof p === 'string'),
         };
+    }
+
+    /** The end of each container's log of a deployed release, read from its cluster now. */
+    async logs(organizationId: string, deploymentId: string): Promise<ContainerLog[]> {
+        const res = await this.fetchApi(
+            `/studio-environments/v1/deployments/${encodeURIComponent(deploymentId)}/logs?organization_id=${encodeURIComponent(organizationId)}`,
+        );
+        if (!res.ok) {
+            throw new Error(await refusal(res));
+        }
+        const body = await res.json() as { containers?: { pod?: unknown; container?: unknown; previous?: unknown; text?: unknown }[] };
+        return (body.containers ?? []).map(c => ({
+            pod: typeof c.pod === 'string' ? c.pod : '',
+            container: typeof c.container === 'string' ? c.container : '',
+            previous: c.previous === true,
+            text: typeof c.text === 'string' ? c.text : '',
+        }));
     }
 
     /** Propose `.github/workflows/studio-build-<product>.yml` to the project's repository as a pull request (ADR-0048 §5). */

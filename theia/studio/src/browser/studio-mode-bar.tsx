@@ -201,6 +201,9 @@ const BY_WORK: readonly Mode[] = [
                 actions: [
                     { command: 'studio:analyze:open', icon: 'graph', label: 'Analyze', title: 'How the project\'s specs are doing: coverage, findings, trends' },
                     { command: 'studio.artifact-graph:toggle', icon: 'type-hierarchy', label: 'Traceability', title: 'The graph of what the specs reference and what references them' },
+                    // The desktop's only (desktop-domain-model-contribution.ts):
+                    // a session registers no such command, so it is not drawn there.
+                    { command: 'studio.domain-model:toggle', icon: 'symbol-class', label: 'Domain model', title: 'What the documents say the application is, and where they disagree' },
                     cliAction('validate'),
                 ],
             },

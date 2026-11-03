@@ -30,6 +30,7 @@ pub(crate) mod build; // a product built by Studio in the organization's cluster
 mod database;
 mod deploy;
 mod model;
+mod preflight; // what a deploy checks before and while it installs
 mod preview; // a build tried in a namespace of its own, removed when it expires (ADR-0055)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)

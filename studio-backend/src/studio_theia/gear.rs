@@ -8,14 +8,15 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::{Gear, GearCtx, RestApiCapability};
 use tracing::info;
 
+use crate::studio_theia::commands::StudioEventsCommandRelay;
 use crate::studio_theia::config::StudioTheiaConfig;
 use crate::studio_theia::control_client::TheiaControlLocalClient;
 use crate::studio_theia::discovery::{
-    ControlTokenResolver, StudioSessionResolver, TheiaEndpointResolver,
+    ControlTokenResolver, DesktopSessionResolver, StudioSessionResolver, TheiaEndpointResolver,
 };
 use crate::studio_theia::rest;
 use crate::studio_theia::sdk::TheiaControlClientV1;
-use crate::studio_theia::service::TheiaService;
+use crate::studio_theia::service::{DesktopBridge, TheiaService};
 #[cfg(not(feature = "theia-event-broker"))]
 use crate::studio_theia::sink::StudioEventsSink;
 
@@ -67,7 +68,8 @@ impl Gear for StudioTheiaGear {
         // caller's ctx) and token reverse-resolve (the ingress's auth primitive).
         let resolver = Arc::new(StudioSessionResolver::new(ctx.client_hub()));
         let endpoint_resolver: Arc<dyn TheiaEndpointResolver> = resolver.clone();
-        let token_resolver: Arc<dyn ControlTokenResolver> = resolver;
+        let token_resolver: Arc<dyn ControlTokenResolver> = resolver.clone();
+        let desktop_sessions: Arc<dyn DesktopSessionResolver> = resolver;
         // Feature selects the sink: the broker sink under `theia-event-broker`,
         // otherwise `StudioEventsSink`, which republishes onto studio-events as
         // `theia.<kind>`. Both are `dyn TheiaEventSink`.
@@ -83,6 +85,12 @@ impl Gear for StudioTheiaGear {
             endpoint_resolver,
             token_resolver,
             sink,
+            DesktopBridge {
+                sessions: desktop_sessions,
+                // Commands go out on studio-events whichever sink takes the
+                // events in: the desktop listens on the portal's channel.
+                commands: Arc::new(StudioEventsCommandRelay::new(ctx.client_hub())),
+            },
         )?);
 
         // Publish the in-process client so other gears can drive the IDE

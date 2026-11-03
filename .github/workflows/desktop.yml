@@ -218,6 +218,13 @@ jobs:
       - name: Build the app
         working-directory: theia/electron-app
         run: npx theia build --mode production
+      # The built app is started and must show its shell and the Studio
+      # view's sign-in, with no backend failure in its log, before it ships.
+      - name: Smoke test the app
+        working-directory: theia/electron-app
+        run: |
+          node --test scripts/smoke.test.mjs
+          node scripts/smoke.mjs --timeout 300
       - name: Package
         working-directory: theia/electron-app
         shell: pwsh

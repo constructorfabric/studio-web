@@ -25,6 +25,12 @@ export const OrcaService = Symbol('OrcaService');
 export const ORCA_AGENTS = ['claude', 'codex', 'opencode'] as const;
 export type OrcaAgent = (typeof ORCA_AGENTS)[number];
 
+/** An agent Orca says it cannot start on this machine, and Orca's own words why. */
+export interface OrcaMissingAgent {
+    readonly agent: string;
+    readonly why: string;
+}
+
 /** Is a runtime reachable, and which one. */
 export interface OrcaRuntimeStatus {
     /** False when no runtime answers — the panel then explains how to start one. */
@@ -45,6 +51,13 @@ export interface OrcaRuntimeStatus {
      * offers this list instead of the full one.
      */
     readonly agents?: readonly string[];
+    /**
+     * On a member's machine, the agents Orca itself says it cannot start
+     * (`orca agent hooks status`, #495). Orca starts an agent with its own
+     * environment, so its answer, not the IDE's PATH, is the one that counts
+     * there; `agents` then is every agent but these.
+     */
+    readonly agentsMissing?: readonly OrcaMissingAgent[];
     /** Why the runtime could not be reached, when it could not. */
     readonly error?: string;
     /**

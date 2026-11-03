@@ -90,6 +90,15 @@ describe('ManifestGenerator', () => {
     });
   });
 
+  it('a shared entry passes its contentHash through to the manifest', () => {
+    const shared = { name: 'react', version: '19.2.4', chunkPath: 'assets/react.js', unwrapKey: null, contentHash: 'abc123' };
+    writePackage('demo-mfe', mfJson, { ...mfEnriched, manifest: { ...mfEnriched.manifest, shared: [shared] } });
+
+    const [config] = generate();
+
+    expect((config.manifest as { shared: unknown[] }).shared).toEqual([shared]);
+  });
+
   it('resolves a production public path from --base-path', () => {
     writePackage('demo-mfe', mfJson, mfEnriched);
 

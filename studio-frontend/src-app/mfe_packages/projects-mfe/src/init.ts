@@ -1,4 +1,4 @@
-import { AccountsApiService } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, authShared } from '@constructor-studio/mfe-shared';
 /**
  * MFE Bootstrap — executed once per loaded entry, NOT once per MFE.
  */
@@ -9,7 +9,6 @@ import {
   createFrontX,
   registerSlice,
   apiRegistry,
-  authShared,
   effects,
   i18n,
   queryCacheShared,

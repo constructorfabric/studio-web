@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FrontXProvider, apiRegistry, createFrontXApp } from '@gears-frontx/react';
+import { FrontXProvider, apiRegistry, createFrontX, presets } from '@gears-frontx/react';
 import { AccountsApiService } from '@constructor-studio/mfe-shared';
 import '@/app/events/bootstrapEvents'; // Register app-level events (type augmentation)
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
@@ -16,7 +16,7 @@ apiRegistry.initialize({});
 
 // Create FrontX app instance (no theme support when using --uikit none)
 // No UI component library included
-const app = createFrontXApp();
+const app = createFrontX().useAll(presets.full()).build();
 
 // Register app-level effects (no auth runtime here — header falls back to /me subject id)
 registerBootstrapEffects(app);

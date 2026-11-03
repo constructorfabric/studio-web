@@ -47,7 +47,6 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 
 describe('MfeScreenContainer', () => {
   let registry: {
-    getMountedExtensions: ReturnType<typeof vi.fn>;
     getExtensionsForDomain: ReturnType<typeof vi.fn>;
     executeActionsChain: ReturnType<typeof vi.fn>;
   };
@@ -55,7 +54,6 @@ describe('MfeScreenContainer', () => {
 
   beforeEach(() => {
     registry = {
-      getMountedExtensions: vi.fn().mockReturnValue([]),
       getExtensionsForDomain: vi.fn().mockReturnValue([
         {
           id: 'people',
@@ -73,7 +71,7 @@ describe('MfeScreenContainer', () => {
         // The workspace level's screen: never the entry point of a session.
         { id: 'projects', presentation: { route: '/projects', order: 20, level: 'workspace' } },
       ]),
-      executeActionsChain: vi.fn().mockResolvedValue(undefined),
+      executeActionsChain: vi.fn(),
     };
     app = { mfeRegistry: registry };
     mockUseFrontX.mockReturnValue(app);
@@ -139,28 +137,6 @@ describe('MfeScreenContainer', () => {
     await waitFor(() => {
       expect(mockEmit).toHaveBeenCalledWith('app/routing/start');
     });
-  });
-
-  // The sequence StrictMode produces: a mount starts against the root, the slot
-  // detaches and re-attaches, and the doomed first mount is still in flight.
-  // Without the release the guard in mountScreen swallows the next one and the
-  // session opens on a blank screen with no active tab.
-  it('frees a doomed mount still in flight when a fresh root arrives', async () => {
-    const { mountScreen, isMountingScreen } = await import('./mountScreen');
-    registry.executeActionsChain.mockReturnValue(new Promise<void>(() => {}));
-    void mountScreen(registry as never, {
-      id: 'people',
-      presentation: { route: '/people', order: 30, level: 'organization' },
-    } as never);
-    expect(isMountingScreen(registry as never)).toBe(true);
-
-    const { MfeScreenContainer } = await import('./MfeScreenContainer');
-    render(<MfeScreenContainer />);
-
-    await waitFor(() => {
-      expect(mockEmit).toHaveBeenCalledWith('app/routing/start');
-    });
-    expect(isMountingScreen(registry as never)).toBe(false);
   });
 
   it('says the screens could not be loaded when bootstrap rejects', async () => {

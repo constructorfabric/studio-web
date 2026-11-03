@@ -29,6 +29,7 @@ interface RawShared {
   version: string;
   chunkPath: string;
   unwrapKey: string | null;
+  contentHash?: string;
 }
 
 interface RawExposeAssets {
@@ -135,6 +136,7 @@ interface OutMfManifestShared {
   version: string;
   chunkPath: string;
   unwrapKey: string | null;
+  contentHash?: string;
 }
 
 interface OutMfManifest {
@@ -463,6 +465,7 @@ export class ManifestGenerator {
         version: s.version,
         chunkPath: s.chunkPath,
         unwrapKey: s.unwrapKey,
+        ...(s.contentHash !== undefined ? { contentHash: s.contentHash } : {}),
       })),
     };
   }

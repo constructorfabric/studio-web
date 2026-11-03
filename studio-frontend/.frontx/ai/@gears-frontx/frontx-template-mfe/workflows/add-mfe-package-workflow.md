@@ -40,7 +40,8 @@ each step names the concrete command or file template-mfe ships.
    - Rename/replace `src/screens/home/HomeScreen.tsx` with the real screen.
    - Update `src/screens/home/i18n/*.json` (or rename the directory) with real copy
      for every locale the template ships.
-   - Keep `src/lifecycle.tsx` extending `ThemeAwareReactLifecycle`; keep `init.ts`'s
+   - Keep `src/lifecycle.tsx` extending `StudioMfeLifecycle` (`@constructor-studio/mfe-shared`)
+     with the kit theme, as `_blank-mfe` does; keep `init.ts`'s
      plugin chain (`effects()`, `queryCacheShared()`, `mock()`) unless the new MFE has
      a documented reason to diverge.
 

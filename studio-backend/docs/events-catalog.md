@@ -17,6 +17,7 @@ is [`studio-frontend/docs/studio-events.md`](../../studio-frontend/docs/studio-e
 | `task_run` | the run id | `GET /studio-tasks/v1/runs/{id}` |
 | `workspace` | the workspace (root project) id | `GET /studio-theia/v1/workspaces/{id}/status` |
 | `review_request` | the review request id | `GET /studio-documents/v1/review-requests?project_id=` |
+| `desktop_session` | the desktop session (lease) id | `GET /studio-session/v1/desktop-sessions?project_id=` |
 
 ## `task_run` — background work
 
@@ -72,20 +73,38 @@ the portal's contract.
 
 | `kind` | Meaning | Payload fields |
 | --- | --- | --- |
-| `theia.operation` | an operation the IDE ran | `workspace_id`, `session_id`, `sequence`, `event` |
-| `theia.audit` | an audit record from the session | `workspace_id`, `session_id`, `sequence`, `event` |
-| `theia.repositories-changed` | the workspace's repository set changed | `workspace_id`, `session_id`, `sequence`, `event` |
-| `theia.workspace-snapshot-changed` | the workspace snapshot changed | `workspace_id`, `session_id`, `sequence`, `event` |
-| `theia.workspace-activity` | activity heartbeat | `workspace_id`, `session_id`, `sequence`, `event` |
+| `theia.operation` | an operation the IDE ran | `workspace_id`, `session_id`, `runtime`, `sequence`, `event` |
+| `theia.audit` | an audit record from the session | `workspace_id`, `session_id`, `runtime`, `sequence`, `event` |
+| `theia.repositories-changed` | the workspace's repository set changed | `workspace_id`, `session_id`, `runtime`, `sequence`, `event` |
+| `theia.workspace-snapshot-changed` | the workspace snapshot changed | `workspace_id`, `session_id`, `runtime`, `sequence`, `event` |
+| `theia.workspace-activity` | activity heartbeat | `workspace_id`, `session_id`, `runtime`, `sequence`, `event` |
 
 `event` is the forwarded callback argument verbatim; `sequence` is `null` for
-the kinds the bridge does not order. A kind the bridge forwards that is not in
+the kinds the bridge does not order. `runtime` is `container` for a session the
+backend launched (`session_id` is that session) and `desktop` for a desktop
+Studio (ADR-0027 phase 4: `session_id` is its desktop session). A kind the bridge forwards that is not in
 this table is not republished (`studio_theia::sink::REPUBLISHED_KINDS`).
 
 **These kinds break rule E2** — hyphens rather than snake_case, and a noun
 (`theia.operation`) rather than a past-tense verb. They are pass-through from
 the bridge and are the first thing to normalise when the Theia contract is
 revisited; they are listed here so nobody copies the shape.
+
+## `desktop_session` — commands for a desktop Studio
+
+Published by `studio-theia` (`source: "studio-theia"`) when the portal sends a
+command to a desktop session (ADR-0027 phase 5). Nothing dials a member's
+laptop, so the desktop listens here for the events about its own session and
+runs each through its operation queue; what came of it comes back as that
+session's `theia.*` events. The channel is the tenant's, so a command names
+what to do and never carries a secret.
+
+| `kind` | When | Payload fields |
+| --- | --- | --- |
+| `desktop_session.command_sent` | the portal sent the desktop a command | `workspace_id`, `command_id`, `command`, `params` |
+
+`command` is `open_in_editor`, `enqueue_operation` or `retry_operation`, and
+`params` are that control call's own (`studio_theia::commands`).
 
 ## This page is checked
 

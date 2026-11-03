@@ -13,7 +13,9 @@ use toolkit::client_hub::ClientHub;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
-use crate::studio_session::sdk::{SessionIdentity, StudioSessionDiscoveryClientV1};
+use crate::studio_session::sdk::{
+    DesktopSessionsClientV1, SessionIdentity, StudioSessionDiscoveryClientV1,
+};
 use crate::studio_theia::sdk::{SessionTarget, TheiaControlError};
 
 /// A concrete, dial-able Theia control endpoint for one session.
@@ -107,5 +109,38 @@ impl ControlTokenResolver for StudioSessionResolver {
                     .create()
             })?;
         Ok(discovery.resolve_control_token(token).await?)
+    }
+}
+
+/// Finds the caller's own live desktop session (ADR-0027 phases 4 and 5): a
+/// desktop has no S2S token, so its events and the commands sent to it are
+/// authorized by the member's token and the lease it holds.
+#[async_trait]
+pub trait DesktopSessionResolver: Send + Sync {
+    async fn resolve_own_desktop(
+        &self,
+        ctx: &SecurityContext,
+        desktop_session_id: uuid::Uuid,
+    ) -> Result<Option<SessionIdentity>, TheiaControlError>;
+}
+
+#[async_trait]
+impl DesktopSessionResolver for StudioSessionResolver {
+    async fn resolve_own_desktop(
+        &self,
+        ctx: &SecurityContext,
+        desktop_session_id: uuid::Uuid,
+    ) -> Result<Option<SessionIdentity>, TheiaControlError> {
+        let desktops = self
+            .hub
+            .try_get::<dyn DesktopSessionsClientV1>()
+            .ok_or_else(|| {
+                CanonicalError::service_unavailable()
+                    .with_detail("studio-session desktop sessions are not available")
+                    .create()
+            })?;
+        Ok(desktops
+            .resolve_own_desktop_session(ctx, desktop_session_id)
+            .await)
     }
 }

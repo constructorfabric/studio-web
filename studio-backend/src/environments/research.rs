@@ -931,9 +931,11 @@ pub async fn rollout(
         return Ok(super::deploy::Rollout {
             hosts: Vec::new(),
             workloads: Vec::new(),
+            problems: Vec::new(),
         });
     };
     Ok(super::deploy::Rollout {
+        problems: Vec::new(),
         hosts: app.links(),
         workloads: app
             .services

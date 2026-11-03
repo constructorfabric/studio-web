@@ -7,7 +7,9 @@ import {
   expiresIn,
   isSecretKey,
   latestByEnvironment,
+  lifetimeLabel,
   livePreviews,
+  previewLifetimes,
   previewNameFor,
   parseValues,
   productUrls,
@@ -196,5 +198,21 @@ describe("a project's previews (ADR-0055)", () => {
     expect(expiresIn("2026-10-30T15:00:00Z", now)).toBe("expires in 5 h");
     expect(expiresIn("2026-10-30T10:20:00Z", now)).toBe("expires in 20 min");
     expect(expiresIn("2026-10-30T09:00:00Z", now)).toBe("expiring");
+  });
+});
+
+describe("a preview's lifetime", () => {
+  it("offers the usual steps up to the environment's most, and the most itself", () => {
+    expect(previewLifetimes(72)).toEqual([4, 24, 72]);
+    expect(previewLifetimes(48)).toEqual([4, 24, 48]);
+    expect(previewLifetimes(2)).toEqual([2]);
+    expect(previewLifetimes(336)).toEqual([4, 24, 72, 168, 336]);
+  });
+
+  it("reads in days once it is whole days past two", () => {
+    expect(lifetimeLabel(4)).toBe("4 h");
+    expect(lifetimeLabel(24)).toBe("24 h");
+    expect(lifetimeLabel(72)).toBe("3 d");
+    expect(lifetimeLabel(50)).toBe("50 h");
   });
 });

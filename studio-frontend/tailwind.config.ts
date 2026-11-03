@@ -19,9 +19,9 @@ export default {
     // excluded here (scanning their node_modules/dist OOMs the host).
     './src-app/app/**/*.{js,ts,jsx,tsx}',
     './src/**/*.{js,ts,jsx,tsx}',
-    // Workspace package sources + built output (e.g. @gears-frontx/react UI)
-    './packages/*/src/**/*.{js,ts,jsx,tsx}',
-    './packages/*/dist/**/*.{js,mjs}',
+    // The dev panel (@gears-frontx/studio): the stylesheet it injects leaves out
+    // some of its classes, the menus' max-height and the switch track among them.
+    './node_modules/@gears-frontx/studio/dist/**/*.js',
   ],
   safelist: [
     // RTL utilities used in package components

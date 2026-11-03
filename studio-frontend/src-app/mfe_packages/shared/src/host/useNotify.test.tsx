@@ -1,6 +1,6 @@
 import React from 'react';
-import { renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import { FRONTX_SCREEN_DOMAIN, MfeProvider } from '@gears-frontx/react';
 import { createMfeBridgeFixture, mfeContextValue } from '@frontx-test-utils/createMfeBridgeFixture';
 import { STUDIO_ACTION_NOTIFY } from './hostActions';
@@ -11,7 +11,7 @@ function mount() {
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <MfeProvider value={mfeContextValue(fixture.bridge)}>{children}</MfeProvider>
   );
-  return { ...fixture, ...renderHook(() => useNotify('test'), { wrapper }) };
+  return { ...fixture, ...renderHook(() => useNotify(), { wrapper }) };
 }
 
 describe('useNotify', () => {
@@ -25,21 +25,6 @@ describe('useNotify', () => {
         payload: { kind: 'success', text: 'Saved' },
       },
     });
-  });
-
-  it('logs a refused request under its tag', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { result, executeActionsChain } = mount();
-    executeActionsChain.mockRejectedValueOnce(new Error('no handler'));
-    result.current({ kind: 'error', text: 'Not saved' });
-    await waitFor(() =>
-      expect(error).toHaveBeenCalledWith(
-        '[test] host action failed',
-        STUDIO_ACTION_NOTIFY,
-        expect.any(Error)
-      )
-    );
-    error.mockRestore();
   });
 
   it('keeps the same function across renders, so an effect that lists it does not subscribe again', () => {

@@ -65,6 +65,7 @@ const DOMAINS: &[&str] = &[
     "studio-insight",
     "studio-kits",
     "studio-llm",
+    "studio-mcp",
     "studio-notify",
     "studio-organizations",
     "studio-presence",

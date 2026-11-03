@@ -1,7 +1,7 @@
 import { FRONTX_SCREEN_DOMAIN, type ChildMfeBridge } from '@gears-frontx/react';
 import {
   STUDIO_ACTION_ARTIFACT_OPEN,
-  sendAndForget,
+  sendToHost,
   type StudioArtifactKind,
 } from '@constructor-studio/mfe-shared';
 import type { ArtifactRow } from '../model/artifact';
@@ -19,21 +19,17 @@ export function requestOpenArtifact(
   row: OpenableArtifact
 ): void {
   if (row.kind === null) return;
-  sendAndForget(
-    bridge,
-    {
-      type: STUDIO_ACTION_ARTIFACT_OPEN,
-      target: FRONTX_SCREEN_DOMAIN,
-      payload: {
-        projectId,
-        artifactId: row.id,
-        repository: row.repository,
-        path: row.path,
-        kind: row.kind,
-      },
+  sendToHost(bridge, {
+    type: STUDIO_ACTION_ARTIFACT_OPEN,
+    target: FRONTX_SCREEN_DOMAIN,
+    payload: {
+      projectId,
+      artifactId: row.id,
+      repository: row.repository,
+      path: row.path,
+      kind: row.kind,
     },
-    'projects'
-  );
+  });
 }
 
 /** A Studio document by its id, its title where a file has its path. */

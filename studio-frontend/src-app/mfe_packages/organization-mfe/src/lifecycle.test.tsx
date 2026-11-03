@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
+import { FrontXProvider } from '@gears-frontx/react';
+import { createTestApp } from '@frontx-test-utils/createTestApp';
 import { STUDIO_SHARED_PROPERTY_CONTEXT_SECTION } from '@constructor-studio/mfe-shared';
 import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
@@ -11,6 +12,9 @@ import {
   createMfeBridgeFixture,
   mfeContextValue,
 } from '../../../__test-utils__/createMfeBridgeFixture';
+
+// `./init` is mocked, so this is the runtime's one FrontX app.
+const app = createTestApp();
 
 type BridgeFixture = ReturnType<typeof createMfeBridgeFixture>;
 type TestBridge = BridgeFixture['bridge'];
@@ -31,19 +35,23 @@ vi.mock('@gears-frontx/react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@gears-frontx/react')>();
   return {
     ...actual,
-    ThemeAwareReactLifecycle: class ThemeAwareReactLifecycle {
-      constructor(public readonly app: TestApp) {}
-
-      mount(container: Element | ShadowRoot, bridge: TestBridge): void {
-        superMountSpy(container, bridge);
-      }
-    },
     apiRegistry: {
       getService: getServiceMock,
     },
     useApiQuery: useApiQueryMock,
   };
 });
+
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  StudioMfeLifecycle: class StudioMfeLifecycle {
+    constructor(public readonly app: TestApp) {}
+
+    mount(container: Element | ShadowRoot, bridge: TestBridge): void {
+      superMountSpy(container, bridge);
+    }
+  },
+}));
 
 vi.mock('./init', () => ({
   mfeApp: { id: 'blank-mfe-app' },
@@ -107,7 +115,7 @@ describe('organization-mfe lifecycle', () => {
     // The root reads the shell's section property, so it needs the MFE context
     // the real lifecycle puts around it.
     render(
-      <FrontXProvider app={createFrontXApp({})} mfeBridge={mfeContextValue(bridge)}>
+      <FrontXProvider app={app} mfeBridge={mfeContextValue(bridge)}>
         {renderContent(bridge) as React.ReactNode}
       </FrontXProvider>
     );
@@ -130,7 +138,7 @@ describe('organization-mfe lifecycle', () => {
     });
 
     render(
-      <FrontXProvider app={createFrontXApp({})} mfeBridge={mfeContextValue(bridge)}>
+      <FrontXProvider app={app} mfeBridge={mfeContextValue(bridge)}>
         {renderContent(bridge) as React.ReactNode}
       </FrontXProvider>
     );
@@ -141,7 +149,7 @@ describe('organization-mfe lifecycle', () => {
     expect(screen.getByText('description')).toBeTruthy();
   });
 
-  it('inherits base mount behavior from ThemeAwareReactLifecycle', async () => {
+  it('inherits base mount behavior from StudioMfeLifecycle', async () => {
     const module = await import('./lifecycle');
     const lifecycle = module.default as {
       mount: (container: Element, bridge: TestBridge) => void;

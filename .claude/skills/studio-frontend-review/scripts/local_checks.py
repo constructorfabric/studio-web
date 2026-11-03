@@ -144,6 +144,7 @@ def overlaps(name, start, end, fe, prefix, lines):
 
 def jscpd(workdir, fe, prefix, lines, no_sandbox):
     out_dir = f"{workdir}/jscpd"
+    # `packages/` only exists on a PR head from before #946.
     roots = [d for d in ("src-app", "packages", "src") if os.path.isdir(os.path.join(fe, d))]
     cmd = ["jscpd", "--silent", "--reporters", "json", "--output", out_dir, "--min-lines", "5", "--min-tokens", "50",
            "--format", "typescript,tsx,javascript,jsx", "--ignore", "**/node_modules/**,**/dist/**,**/*.d.ts,**/*.json",

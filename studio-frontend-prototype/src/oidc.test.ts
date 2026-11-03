@@ -177,6 +177,12 @@ describe("where sign-in sends you", () => {
     expect((await authorize()).get("redirect_uri")).toBe("https://legacy.example/prototype/");
   });
 
+  it("asks for the account every time, so a live IdP session is not taken over", async () => {
+    at("https://studio-dev-poc.cfabric.org/");
+
+    expect((await authorize()).get("prompt")).toBe("login");
+  });
+
   it("carries the way back in `state`, which the redirect_uri can no longer hold", async () => {
     at("https://studio-dev-poc.cfabric.org/space/01d89b55-aef7-4ca4-921a-7a4d472b3455");
 

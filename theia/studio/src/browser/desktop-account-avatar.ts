@@ -1,17 +1,11 @@
-// The desktop's account tab -- the Constructor Studio view on the left rail,
-// whose icon is the person glyph -- shows the signed-in member's photo from
-// their Studio profile instead.
+// The signed-in member's photo and their organizations' logos, as the
+// Constructor Studio view shows them on the desktop: the photo beside the
+// member's name, each logo beside its organization in the project tree.
 //
-// Not Theia's Accounts button: product-ext hides the whole sidebar menu it
-// lives in (`.theia-sidebar-menu { display: none }`), and the person glyph a
-// member sees is this view's tab. A stylesheet rather than a changed icon
-// class, because the tab is re-rendered from the title on every layout
-// change. Desktop only: a session in the portal sits under the portal's own
-// header, photo and all.
+// The view's tab on the left rail keeps its own icon -- the way into the
+// Studio Web integration -- rather than the photo: a face there read as an
+// account menu, and was cut by the rail.
 
-import { FrontendApplicationContribution } from '@theia/core/lib/browser';
-import { injectable } from '@theia/core/shared/inversify';
-import { desktopStatus, onDesktopChange } from './desktop-studio-client';
 import { StudioApi } from './studio-api';
 
 /**
@@ -30,69 +24,39 @@ export function avatarSource(avatarUrl: string | null | undefined, studioUrl: st
     return url.startsWith('/') && studioUrl ? `${studioUrl.replace(/\/+$/, '')}${url}` : undefined;
 }
 
-/** The Constructor Studio view's tab (`DESKTOP_STUDIO_WIDGET_ID`), as Theia renders it on the rail. */
-export const ACCOUNT_TAB_ICON = '[id="shell-tab-studio.desktop"] .lm-TabBar-tabIcon';
-
-/** The account tab, drawn as the photo in a circle the size of a rail icon. */
-export function avatarCss(src: string): string {
-    const quoted = JSON.stringify(src);
-    return `${ACCOUNT_TAB_ICON} {
-    background: center / cover no-repeat url(${quoted});
-    border-radius: 50%;
-    width: 24px;
-    height: 24px;
-}
-${ACCOUNT_TAB_ICON}::before { content: ''; }`;
-}
-
-/** How often the sign-in is looked at again: a local call, and a sign-in can finish without any view announcing it. */
-const WATCH_MS = 15_000;
-
 /** Who the photo is of: a change of Studio, of person or of state is another photo, or none. */
 export function photoKey(status: { state?: string; studioUrl?: string; user?: { sub?: string } } | undefined): string {
     return status?.state === 'signed-in' ? `${status.studioUrl ?? ''}|${status.user?.sub ?? ''}` : '';
 }
 
-@injectable()
-export class DesktopAccountAvatar implements FrontendApplicationContribution {
-    protected readonly style = document.createElement('style');
-    /** The person the photo on show is of, once it was found; `undefined` asks again. */
-    protected shown: string | undefined;
-
-    onStart(): void {
-        void desktopStatus().then(status => {
-            if (!status?.enabled) {
-                return;
-            }
-            document.head.appendChild(this.style);
-            // The views announce a sign-in they started, but the window's own
-            // sign-in at launch, or one finished in the browser, may pass
-            // unannounced: the photo stayed the generic glyph. So the state is
-            // also read on a timer, and the profile only when it changed.
-            onDesktopChange(() => void this.refresh());
-            setInterval(() => void this.refresh(), WATCH_MS);
-            void this.refresh();
-        });
+/** The member's photo on `studioUrl`, from their Studio profile; `undefined` for none. */
+export async function memberPhoto(studioUrl: string | undefined): Promise<string | undefined> {
+    const res = await StudioApi.fetch('/studio-user/v1/me');
+    if (!res.ok) {
+        return undefined;
     }
+    const me = await res.json() as { avatar_url?: string | null };
+    return avatarSource(me.avatar_url, studioUrl);
+}
 
-    protected async refresh(): Promise<void> {
-        const status = await desktopStatus().catch(() => undefined);
-        const key = photoKey(status);
-        if (key === this.shown) {
-            return;
-        }
-        const src = key && status ? await this.photo(status.studioUrl).catch(() => undefined) : undefined;
-        this.style.textContent = src ? avatarCss(src) : '';
-        // A photo that could not be read yet is asked for again next time.
-        this.shown = src || !key ? key : undefined;
-    }
+/** The image types a logo may be (the portal accepts no other). */
+const LOGO_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
-    protected async photo(studioUrl: string | undefined): Promise<string | undefined> {
-        const res = await StudioApi.fetch('/studio-user/v1/me');
-        if (!res.ok) {
-            return undefined;
-        }
-        const me = await res.json() as { avatar_url?: string | null };
-        return avatarSource(me.avatar_url, studioUrl);
+/** A logo as the portal answers it, as an address an `<img>` can show; `undefined` for anything else. */
+export function logoSource(logo: { content_type?: string; data?: string } | undefined): string | undefined {
+    const type = logo?.content_type?.trim().toLowerCase();
+    const data = logo?.data?.trim();
+    if (!type || !LOGO_TYPES.has(type) || !data || !/^[A-Za-z0-9+/=]+$/.test(data)) {
+        return undefined;
     }
+    return `data:${type};base64,${data}`;
+}
+
+/** An organization's logo from the portal; `undefined` when it has none (404) or it cannot be read. */
+export async function organizationLogo(organizationId: string): Promise<string | undefined> {
+    const res = await StudioApi.fetch(`/studio-organizations/v1/logo?organization_id=${encodeURIComponent(organizationId)}`);
+    if (!res.ok) {
+        return undefined;
+    }
+    return logoSource(await res.json() as { content_type?: string; data?: string });
 }

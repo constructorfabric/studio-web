@@ -95,6 +95,18 @@ describe("the Build and Run panel", () => {
     expect(host.querySelector("[data-run-address]")?.textContent).toContain("http://127.0.0.1:8087");
   });
 
+  it("offers debug configurations beside Run, and says while they are being written", async () => {
+    await draw({});
+    expect(q("[data-run-debug]")).toBeNull();
+    const onAddDebugConfigurations = jest.fn();
+    await draw({ onAddDebugConfigurations });
+    await act(() => q("[data-run-debug]")?.click());
+    expect(onAddDebugConfigurations).toHaveBeenCalled();
+    await draw({ onAddDebugConfigurations, addingDebugConfigurations: true });
+    expect(q("[data-run-debug]")?.disabled).toBe(true);
+    expect(q("[data-run-debug]")?.textContent).toBe("Adding…");
+  });
+
   it("says which gears need a database and which configuration Run uses", async () => {
     await draw({});
     const note = host.querySelector("[data-run-db]")?.textContent ?? "";

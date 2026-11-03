@@ -4,6 +4,7 @@
 # `cargo test api_contract` fails until it is recorded, with a reason, in
 # docs/api-contract-breaks.txt. See docs/api-conventions.md, rule G4.
 
+event	desktop_session.command_sent	desktop_session
 event	review_request.cancelled	review_request
 event	review_request.created	review_request
 event	review_request.decided	review_request
@@ -18,6 +19,10 @@ event	theia.operation	workspace
 event	theia.repositories-changed	workspace
 event	theia.workspace-activity	workspace
 event	theia.workspace-snapshot-changed	workspace
+event-field	desktop_session.command_sent	command
+event-field	desktop_session.command_sent	command_id
+event-field	desktop_session.command_sent	params
+event-field	desktop_session.command_sent	workspace_id
 event-field	review_request.cancelled	due_at
 event-field	review_request.cancelled	id
 event-field	review_request.cancelled	outstanding
@@ -74,25 +79,31 @@ event-field	task.succeeded	state
 event-field	task.succeeded	summary
 event-field	task.succeeded	task_type
 event-field	theia.audit	event
+event-field	theia.audit	runtime
 event-field	theia.audit	sequence
 event-field	theia.audit	session_id
 event-field	theia.audit	workspace_id
 event-field	theia.operation	event
+event-field	theia.operation	runtime
 event-field	theia.operation	sequence
 event-field	theia.operation	session_id
 event-field	theia.operation	workspace_id
 event-field	theia.repositories-changed	event
+event-field	theia.repositories-changed	runtime
 event-field	theia.repositories-changed	sequence
 event-field	theia.repositories-changed	session_id
 event-field	theia.repositories-changed	workspace_id
 event-field	theia.workspace-activity	event
+event-field	theia.workspace-activity	runtime
 event-field	theia.workspace-activity	sequence
 event-field	theia.workspace-activity	session_id
 event-field	theia.workspace-activity	workspace_id
 event-field	theia.workspace-snapshot-changed	event
+event-field	theia.workspace-snapshot-changed	runtime
 event-field	theia.workspace-snapshot-changed	sequence
 event-field	theia.workspace-snapshot-changed	session_id
 event-field	theia.workspace-snapshot-changed	workspace_id
+event-subject	desktop_session
 event-subject	review_request
 event-subject	task_run
 event-subject	workspace
@@ -301,6 +312,7 @@ request	POST /studio-connector/v1/oauth/start	base_url	String	optional
 request	POST /studio-connector/v1/oauth/start	label	String	required
 request	POST /studio-connector/v1/oauth/start	owner_tenant_id	Uuid	optional
 request	POST /studio-connector/v1/oauth/start	provider	String	required
+request	POST /studio-connector/v1/oauth/start	redirect_uri	String	optional
 request	POST /studio-connector/v1/oauth/start	scope	String	optional
 request	POST /studio-connector/v1/probe	base_url	String	optional
 request	POST /studio-connector/v1/probe	provider	String	required
@@ -774,6 +786,8 @@ request	POST /studio-spec-mapping/v1/plan	decisions.gear_version	String	optional
 request	POST /studio-spec-mapping/v1/plan	nonfunctional	Vec<String>	optional
 request	POST /studio-spec-mapping/v1/plan	requirements	Vec<String>	optional
 request	POST /studio-spec-mapping/v1/plan	terms	BTreeMap<String,Vec<String>>	optional
+request	POST /studio-theia/v1/desktop-sessions/{}/commands	command	String	required
+request	POST /studio-theia/v1/desktop-sessions/{}/commands	params	Value	optional
 request	POST /studio-user/v1/me	avatar_url	String	optional
 request	POST /studio-user/v1/me	display_name	String	optional
 request	POST /studio-user/v1/me	email	String	optional
@@ -897,6 +911,7 @@ request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
 request	PUT /studio-product/v1/projects/{}/product	config	Value	optional
+request	PUT /studio-product/v1/projects/{}/product	frontend	Value	optional
 request	PUT /studio-product/v1/projects/{}/product	gears	Vec<String>	optional
 request	PUT /studio-product/v1/projects/{}/product	name	String	optional
 request	PUT /studio-product/v1/projects/{}/product	product_id	String	optional
@@ -2532,6 +2547,11 @@ response	GET /studio-environments/v1/deployments	items.requested_by_name	String	
 response	GET /studio-environments/v1/deployments	items.run_id	Uuid	optional
 response	GET /studio-environments/v1/deployments	items.state	String	always
 response	GET /studio-environments/v1/deployments	total	u32	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers	Vec<{}>	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers.container	String	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers.pod	String	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers.previous	bool	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers.text	String	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment	{}	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment.action	String	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment.build	String	optional
@@ -2569,6 +2589,7 @@ response	GET /studio-environments/v1/deployments/{}/status	deployment.requested_
 response	GET /studio-environments/v1/deployments/{}/status	deployment.run_id	Uuid	optional
 response	GET /studio-environments/v1/deployments/{}/status	deployment.state	String	always
 response	GET /studio-environments/v1/deployments/{}/status	hosts	Vec<String>	always
+response	GET /studio-environments/v1/deployments/{}/status	problems	Vec<String>	always
 response	GET /studio-environments/v1/deployments/{}/status	workloads	Vec<{}>	always
 response	GET /studio-environments/v1/deployments/{}/status	workloads.desired	i32	always
 response	GET /studio-environments/v1/deployments/{}/status	workloads.images	Vec<String>	always
@@ -2779,6 +2800,11 @@ response	GET /studio-llm/v1/workspaces/{}/client-config	developer_message_settin
 response	GET /studio-llm/v1/workspaces/{}/client-config	model	String	optional
 response	GET /studio-llm/v1/workspaces/{}/client-config	provider	String	optional
 response	GET /studio-llm/v1/workspaces/{}/client-config	reason	String	optional
+response	GET /studio-mcp/v1/oauth-protected-resource	authorization_servers	Vec<String>	optional
+response	GET /studio-mcp/v1/oauth-protected-resource	bearer_methods_supported	Vec<String>	always
+response	GET /studio-mcp/v1/oauth-protected-resource	resource	String	always
+response	GET /studio-mcp/v1/oauth-protected-resource	resource_name	String	always
+response	GET /studio-mcp/v1/oauth-protected-resource	scopes_supported	Vec<String>	always
 response	GET /studio-organizations/v1/access-catalogue	default_roles	Value	always
 response	GET /studio-organizations/v1/access-catalogue	privileges	Vec<String>	always
 response	GET /studio-organizations/v1/capabilities	decides_requests	bool	always
@@ -4819,6 +4845,10 @@ response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	scope	Strin
 response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	source	String	always
 response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	status	String	always
 response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	version	String	always
+response	POST /studio-mcp/v1/messages	error	Value	optional
+response	POST /studio-mcp/v1/messages	id	Value	always
+response	POST /studio-mcp/v1/messages	jsonrpc	String	always
+response	POST /studio-mcp/v1/messages	result	Value	optional
 response	POST /studio-notify/v1/messages	poll	String	always
 response	POST /studio-notify/v1/messages	run_id	Uuid	always
 response	POST /studio-organizations/v1/organization-requests	created_at_ms	i64	always
@@ -5129,6 +5159,9 @@ response	POST /studio-tasks/v1/runs/{}/retry	summary	String	optional
 response	POST /studio-tasks/v1/runs/{}/retry	task_type	String	always
 response	POST /studio-tasks/v1/runs/{}/retry	tenant_id	Uuid	always
 response	POST /studio-tasks/v1/runs/{}/retry	updated_at	String	always
+response	POST /studio-theia/v1/desktop-sessions/{}/commands	command	String	always
+response	POST /studio-theia/v1/desktop-sessions/{}/commands	command_id	Uuid	always
+response	POST /studio-theia/v1/desktop-sessions/{}/commands	desktop_session_id	Uuid	always
 response	POST /studio-user/v1/grants/backfill	failed	u32	always
 response	POST /studio-user/v1/grants/backfill	organizations	u32	always
 response	POST /studio-user/v1/grants/backfill	rewritten	u32	always
@@ -5778,6 +5811,7 @@ route	GET /studio-domain-model/v1/types/{}
 route	GET /studio-domain-model/v1/types/{}/conformance
 route	GET /studio-environments/v1/builds/{}/log
 route	GET /studio-environments/v1/deployments
+route	GET /studio-environments/v1/deployments/{}/logs
 route	GET /studio-environments/v1/deployments/{}/status
 route	GET /studio-environments/v1/environments
 route	GET /studio-environments/v1/project-build
@@ -5801,6 +5835,7 @@ route	GET /studio-llm/v1/providers/{}/{}
 route	GET /studio-llm/v1/workspaces/{}/client-config
 route	GET /studio-llm/v1/workspaces/{}/models
 route	GET /studio-llm/v1/workspaces/{}/providers/{}/{}
+route	GET /studio-mcp/v1/oauth-protected-resource
 route	GET /studio-organizations/v1/access-catalogue
 route	GET /studio-organizations/v1/capabilities
 route	GET /studio-organizations/v1/logo
@@ -5968,6 +6003,7 @@ route	POST /studio-llm/v1/chat/completions
 route	POST /studio-llm/v1/providers/{}/{}
 route	POST /studio-llm/v1/workspaces/{}/chat/completions
 route	POST /studio-llm/v1/workspaces/{}/providers/{}/{}
+route	POST /studio-mcp/v1/messages
 route	POST /studio-notify/v1/messages
 route	POST /studio-organizations/v1/organization-requests
 route	POST /studio-organizations/v1/organization-requests/{}/cancel
@@ -6004,6 +6040,8 @@ route	POST /studio-spec-quality/v1/analyze/purpose
 route	POST /studio-spec-quality/v1/analyze/traceability
 route	POST /studio-tasks/v1/runs/{}/cancel
 route	POST /studio-tasks/v1/runs/{}/retry
+route	POST /studio-theia/v1/desktop-sessions/{}/commands
+route	POST /studio-theia/v1/desktop-sessions/{}/events
 route	POST /studio-theia/v1/workspaces/{}/open
 route	POST /studio-theia/v1/workspaces/{}/operations
 route	POST /studio-theia/v1/workspaces/{}/operations/{}/retry

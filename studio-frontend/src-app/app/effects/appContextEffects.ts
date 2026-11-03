@@ -9,8 +9,8 @@
  * address is written. The catalogs (organizations, workspaces, projects) are
  * data, fetched in `contextCatalogs.ts` and stored before any navigation.
  */
-import { eventBus, screenDomain, type FrontXApp, type ScreenExtension } from '@gears-frontx/react';
-import { levelOf, placementOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
+import { eventBus, screenDomain, type FrontXApp } from '@gears-frontx/react';
+import { levelOf, placementOf, sectionOf, type ScreenLevel, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
@@ -45,8 +45,8 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
   let routing: RoutingHandle | null = null;
   const catalogs = createContextCatalogs(app, () => routing?.materialize());
 
-  const screens = (): ScreenExtension[] =>
-    (app.mfeRegistry?.getExtensionsForDomain(screenDomain.id) ?? []) as ScreenExtension[];
+  const screens = (): StudioScreenExtension[] =>
+    (app.mfeRegistry?.getExtensionsForDomain(screenDomain.id) ?? []) as StudioScreenExtension[];
 
   /** The route for `token` at `level`, carrying what the address (or, before one exists, the slice) knows. */
   const routeFor = (token: string, level: ScreenLevel, overrides: Partial<ShellRoute> = {}): ShellRoute => {

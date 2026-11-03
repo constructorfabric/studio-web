@@ -1,13 +1,20 @@
 /* The Product tab's Frontend section (ADR-0050): the product's UI as a FrontX shell
- * with micro-frontends mounted in it. The packages one can add on the left,
+ * with micro-frontends mounted in it. Above, the steps a build of it takes —
+ * the shell, the micro-frontends, their FrontX versions, sign-in, the
+ * backend, the gears behind the screens, build, ship — each with what the
+ * constructor found, so the way to a running frontend is visible before it is
+ * built. Below, the packages one can add on the left,
  * from the catalogue; the shell in the middle, drawn as the portal draws it —
  * navigation, the page, the sidebar, overlays and popups — filled with the
  * screens the picked packages bring; the selected package on the right, with
  * the gears it calls and whether the product has them. The model is
  * `frontend-constructor.ts`.
  *
- * The pick is kept in `project.config.frontend` until product.gdl has a
- * frontend block (ADR-0050 phase 2). */
+ * The pick is kept with the product (`frontend` of its record), and its
+ * product.gdl says it as `frontend = frontx_product(...)` (GDL 1.5): the shell
+ * and each package by repository and directory, the gears each calls, and the
+ * libraries they share that the shell lacks. A project that picked before
+ * keeps `project.config.frontend`, read until the first save. */
 
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 
@@ -15,18 +22,30 @@ import { api } from "./api";
 import { repoPathsOf } from "./builds";
 import {
   SUGGESTED_FRONTX_SOURCE,
+  assemblySteps,
+  chosenShell,
   coverage,
+  fitOf,
+  frontendPick,
   frontxSuggestion,
+  librariesFrom,
   mfesFrom,
   offersFor,
+  picksOf,
   placementLabel,
   projectRepos,
+  shellRefOf,
+  shellsFrom,
   splitTemplates,
   withFrontxSource,
   zonesOf,
+  type Library,
   type Mfe,
   type Placement,
+  type Shell,
+  type Step,
 } from "./frontend-constructor";
+import { FRONTX_SHELL_TEMPLATE } from "./product-sections";
 import { errText } from "./problem";
 
 type Loaded = {
@@ -34,7 +53,11 @@ type Loaded = {
   mfes: Mfe[];
   /** Templates and examples: where a new micro-frontend starts. */
   templates: Mfe[];
+  /** Packages micro-frontends share: brought along when the shell lacks them. */
+  libraries: Library[];
   gears: string[];
+  /** The shells in the catalogue: what a frontend can be assembled on. */
+  shells: Shell[];
   /** The project's repository to read micro-frontends from, when the
    *  catalogue does not read it yet. */
   suggestion: string | null;
@@ -56,6 +79,11 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   const [err, setErr] = useState<string | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
   const [saved, setSaved] = useState<string[]>([]);
+  /** The shell it is assembled on, as `github:owner/repo//dir@ref`. */
+  const [shellRef, setShellRef] = useState<string>(FRONTX_SHELL_TEMPLATE);
+  const [savedShell, setSavedShell] = useState<string>(FRONTX_SHELL_TEMPLATE);
+  /** The step whose detail is open; `null` shows them all folded. */
+  const [openStep, setOpenStep] = useState<Step["id"] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [page, setPage] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -86,11 +114,14 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           const name = typeof n.value.gear_name === "string" ? n.value.gear_name : "";
           if (name) byName[name] = n.value as Record<string, unknown>;
         }
-        const { addable, templates } = splitTemplates(mfesFrom(components.nodes ?? [], byName));
+        const all = mfesFrom(components.nodes ?? [], byName);
+        const { addable, templates } = splitTemplates(all);
         setData({
           mfes: addable,
           templates,
+          libraries: librariesFrom(components.nodes ?? [], byName),
           gears: product?.gears ?? [],
+          shells: shellsFrom(components.nodes ?? [], byName),
           suggestion: frontxSuggestion(
             projectRepos({
               gearRepo: gearRepo.nodes?.[0]?.value.repo,
@@ -101,9 +132,15 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
             sources.items ?? [],
           ),
         });
-        const own = cfg?.frontend?.mfes ?? [];
+        // The product's own record first; a project that picked before it
+        // kept one has its picks in the project configuration.
+        const kept = product?.frontend ? picksOf(product.frontend, all) : null;
+        const own = kept?.picks ?? cfg?.frontend?.mfes ?? [];
         setPicks(own);
         setSaved(own);
+        const shell = kept?.shellRef ?? cfg?.frontend?.shell ?? FRONTX_SHELL_TEMPLATE;
+        setShellRef(shell);
+        setSavedShell(shell);
       })
       .catch((e) => alive && setErr(errText(e)));
     return () => {
@@ -146,6 +183,11 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   );
   const zones = useMemo(() => zonesOf(picked), [picked]);
   const cover = useMemo(() => coverage(picked, data?.gears ?? []), [picked, data]);
+  const shell = useMemo(() => chosenShell(data?.shells ?? [], shellRef), [data, shellRef]);
+  const steps = useMemo(
+    () => assemblySteps({ shellRef, shell, picked, productGears: data?.gears ?? [] }),
+    [shellRef, shell, picked, data],
+  );
 
   if (err) return <div className="error">{err}</div>;
   if (!data) return <p className="muted">Reading the micro-frontends in the catalogue…</p>;
@@ -155,14 +197,21 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     setPicks((p) => p.filter((x) => x !== name));
     if (selected === name) setSelected(null);
   };
-  const dirty = JSON.stringify(picks) !== JSON.stringify(saved);
+  const dirty = JSON.stringify(picks) !== JSON.stringify(saved) || shellRef !== savedShell;
   async function save() {
     setBusy(true);
     setErr(null);
     try {
-      const cfg = (await api.projectConfig(token, projectId)) ?? {};
-      await api.putProjectConfig(token, projectId, { ...cfg, frontend: { ...(cfg.frontend ?? {}), mfes: picks } });
+      const chosen = picks.map((n) => data?.mfes.find((m) => m.name === n)).filter((m): m is Mfe => !!m);
+      const { pick, unplaced } = frontendPick(shellRef, chosen, data?.libraries ?? [], data?.gears ?? []);
+      if (!pick) throw new Error(`The shell \`${shellRef}\` is not a repository and directory.`);
+      if (unplaced.length > 0)
+        throw new Error(
+          `The catalogue does not say where ${unplaced.join(", ")} ${unplaced.length === 1 ? "is" : "are"} yet; sync the catalogue, then save.`,
+        );
+      await api.saveProjectProduct(token, projectId, { frontend: pick });
       setSaved(picks);
+      setSavedShell(shellRef);
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -183,6 +232,15 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
+      <BuildSteps
+        steps={steps}
+        open={openStep}
+        onOpen={(id) => setOpenStep((o) => (o === id ? null : id))}
+        shells={data.shells}
+        shell={shell}
+        shellRef={shellRef}
+        onShell={setShellRef}
+      />
       <div className="pm-status" role="status">
         <span className="pm-summary" data-frontend-summary>
           {picked.length} micro-frontend{picked.length === 1 ? "" : "s"} · {screens.length} screen
@@ -352,7 +410,18 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           onDragOver={(e) => e.preventDefault()}
           onDrop={onDrop}
         >
-          <div className="pm-h">The product's shell</div>
+          <div className="pm-h">
+            The product&apos;s shell
+            {shell && (
+              <span className="fc-shell-name">
+                {" "}
+                · {shell.name}
+                {shell.version ? `@${shell.version}` : ""}
+                {shell.signsIn === false && <span className="fc-tag bad">no sign-in</span>}
+                {shell.signsIn === true && <span className="fc-tag ok">signs in</span>}
+              </span>
+            )}
+          </div>
           <div className="fc-frame">
             <div className="fc-top">
               <span className="fc-dot" />
@@ -409,6 +478,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
 
         <Inspector
           mfe={selectedMfe}
+          shell={shell}
           gears={data.gears}
           missing={selectedMfe ? (cover.missing.get(selectedMfe.name) ?? []) : []}
           picked={selectedMfe ? picks.includes(selectedMfe.name) : false}
@@ -485,6 +555,7 @@ function PageCard({
 
 function Inspector({
   mfe,
+  shell,
   gears,
   missing,
   picked,
@@ -492,6 +563,7 @@ function Inspector({
   onAdd,
 }: {
   mfe: Mfe | undefined;
+  shell: Shell | null;
   gears: string[];
   missing: string[];
   picked: boolean;
@@ -551,6 +623,7 @@ function Inspector({
           {gears.length} gears are in the product.
         </small>
       </section>
+      <FitSection mfe={mfe} shell={shell} />
       {mfe.version && <small className="muted">version {mfe.version}</small>}
       {picked ? (
         <button type="button" onClick={() => onRemove(mfe.name)}>
@@ -562,5 +635,148 @@ function Inspector({
         </button>
       )}
     </div>
+  );
+}
+
+const STEP_MARK: Record<Step["state"], string> = { ok: "✓", warn: "!", bad: "✗", todo: "…", info: "i" };
+
+/** The steps a build of this frontend takes, in order, each marked with what
+ *  the constructor found; one opens to say why. The first step is where the
+ *  shell is chosen. */
+function BuildSteps({
+  steps,
+  open,
+  onOpen,
+  shells,
+  shell,
+  shellRef,
+  onShell,
+}: {
+  steps: Step[];
+  open: Step["id"] | null;
+  onOpen: (id: Step["id"]) => void;
+  shells: Shell[];
+  shell: Shell | null;
+  shellRef: string;
+  onShell: (ref: string) => void;
+}) {
+  const shown = steps.find((s) => s.id === open);
+  const refs = shells.map((s) => ({ shell: s, ref: shellRefOf(s) })).filter((x): x is { shell: Shell; ref: string } => !!x.ref);
+  return (
+    <div className="pm-box fc-steps" aria-label="How this frontend gets built" data-build-steps>
+      <div className="pm-h">How this frontend gets built</div>
+      <ol>
+        {steps.map((s, i) => (
+          <li key={s.id}>
+            <button
+              type="button"
+              className={`fc-step ${s.state}${open === s.id ? " on" : ""}`}
+              aria-expanded={open === s.id}
+              onClick={() => onOpen(s.id)}
+              title={s.detail}
+              data-step={s.id}
+              data-state={s.state}
+            >
+              <span className="fc-step-mark" aria-hidden="true">
+                {STEP_MARK[s.state]}
+              </span>
+              <span className="fc-step-n">{i + 1}</span>
+              {s.title}
+            </button>
+          </li>
+        ))}
+      </ol>
+      {shown && (
+        <div className="fc-step-detail" data-step-detail={shown.id}>
+          <p style={{ margin: 0 }}>{shown.detail}</p>
+          {shown.id === "shell" && (
+            <label className="fc-shell-pick">
+              Assemble on{" "}
+              <select value={shellRef} onChange={(e) => onShell(e.target.value)} aria-label="The shell">
+                {!refs.some((r) => r.ref === shellRef) && <option value={shellRef}>{shellRef}</option>}
+                {refs.map(({ shell: s, ref }) => (
+                  <option key={ref} value={ref}>
+                    {s.name}
+                    {s.version ? `@${s.version}` : ""} · {ref.replace(/^github:/, "")}
+                    {s.signsIn === true ? " · signs in" : s.signsIn === false ? " · no sign-in" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {shown.id === "shell" && shell && (
+            <div className="fc-carries">
+              {Object.entries(shell.carries)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([pkg, v]) => (
+                  <code key={pkg}>
+                    {pkg.replace("@gears-frontx/", "")} {v}
+                  </code>
+                ))}
+            </div>
+          )}
+          {shown.id === "build" && (
+            <ol className="fc-commands">
+              <li>
+                <code>npm ci</code>
+              </li>
+              <li>
+                <code>npm run build:packages</code> — the FrontX packages the shell carries
+              </li>
+              <li>
+                <code>npm run build:mfes</code> — each micro-frontend, a module-federation remote
+              </li>
+              <li>
+                <code>npm run generate:mfe-manifests</code> — what the shell reads to mount them
+              </li>
+              <li>
+                <code>vite build</code> — the static site
+              </li>
+            </ol>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A micro-frontend's FrontX pins against the shell's: what a build gets. */
+function FitSection({ mfe, shell }: { mfe: Mfe; shell: Shell | null }) {
+  const pins = Object.keys(mfe.wants ?? {}).length;
+  return (
+    <section data-fit>
+      <div className="pm-h">FrontX it pins</div>
+      {pins === 0 ? (
+        <span className="muted">Not read yet: sync the catalogue to see the versions it asks for.</span>
+      ) : !shell ? (
+        <span className="muted">The shell is not in the catalogue, so what it carries is unknown.</span>
+      ) : (
+        <table className="fc-fit">
+          <tbody>
+            {fitOf(mfe, shell).map((f) => (
+              <tr key={f.pkg} className={f.verdict} data-verdict={f.verdict}>
+                <td>
+                  <code>{f.pkg.replace("@gears-frontx/", "")}</code>
+                </td>
+                <td>{f.wants}</td>
+                <td>
+                  {f.verdict === "fits"
+                    ? `✓ ${f.has}`
+                    : f.verdict === "differs"
+                      ? `→ ${f.has}`
+                      : "from the registry"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {pins > 0 && shell && fitOf(mfe, shell).some((f) => f.verdict === "differs") && (
+        <p className="pm-why" style={{ margin: "6px 0 0" }}>
+          The shell carries other versions; the build gets the shell&apos;s. It builds only if the package uses nothing
+          they lack: try a shell its versions match.
+        </p>
+      )}
+    </section>
   );
 }

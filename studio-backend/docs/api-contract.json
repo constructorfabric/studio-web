@@ -1843,6 +1843,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/deployments/{deployment_id}/logs",
+      "operation_id": "studio_environments.get_deployment_logs",
+      "tag": "",
+      "summary": "The end of each container's log of a deployed release",
+      "authenticated": true,
+      "responses": [
+        "DeploymentLogsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/deployments/{deployment_id}/status",
       "operation_id": "studio_environments.get_deployment_status",
       "tag": "",
@@ -2190,6 +2207,20 @@
         "401",
         "403",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-mcp/v1/oauth-protected-resource",
+      "operation_id": "studio_mcp.get_protected_resource",
+      "tag": "StudioMcp",
+      "summary": "Where an agent signs in for the MCP endpoint (RFC 9728)",
+      "authenticated": false,
+      "responses": [
+        "ProtectedResourceDto"
+      ],
+      "errors": [
         "500"
       ]
     },
@@ -4962,6 +4993,22 @@
     },
     {
       "method": "POST",
+      "path": "/studio-mcp/v1/messages",
+      "operation_id": "studio_mcp.send_message",
+      "tag": "StudioMcp",
+      "summary": "Send an MCP message: the handshake, the tool list or a tool call",
+      "authenticated": false,
+      "responses": [
+        "JsonRpcResponseDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-notify/v1/messages",
       "operation_id": "studio_notify.send",
       "tag": "StudioNotify",
@@ -5536,6 +5583,37 @@
       ],
       "errors": [
         "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-theia/v1/desktop-sessions/{desktop_session_id}/commands",
+      "operation_id": "studio_theia.send_desktop_command",
+      "tag": "StudioTheia",
+      "summary": "Send a command to a desktop session",
+      "authenticated": true,
+      "request": "DesktopCommandRequest",
+      "responses": [
+        "DesktopCommandDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-theia/v1/desktop-sessions/{desktop_session_id}/events",
+      "operation_id": "studio_theia.push_desktop_events",
+      "tag": "StudioTheia",
+      "summary": "A desktop session's events",
+      "authenticated": true,
+      "errors": [
         "401",
         "404",
         "500"

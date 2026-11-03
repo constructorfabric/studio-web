@@ -22,8 +22,11 @@ pub struct TheiaForwardedEvent {
     pub tenant_id: Uuid,
     /// Trusted workspace the session belongs to (from the control token).
     pub workspace_id: Uuid,
-    /// The live session the token resolved to.
+    /// The live session the token resolved to: a container session, or a
+    /// desktop session's lease (ADR-0027 phase 4).
     pub session_id: Uuid,
+    /// Which runtime `session_id` is: `container` or `desktop`.
+    pub runtime: &'static str,
     /// Event kind: `operation` | `audit` | `repositories-changed` |
     /// `workspace-snapshot-changed` | `workspace-activity`.
     pub kind: String,
@@ -117,6 +120,7 @@ impl TheiaEventSink for StudioEventsSink {
             .with_payload(serde_json::json!({
                 "workspace_id": event.workspace_id,
                 "session_id": event.session_id,
+                "runtime": event.runtime,
                 "sequence": event.sequence,
                 "event": event.payload,
             })),

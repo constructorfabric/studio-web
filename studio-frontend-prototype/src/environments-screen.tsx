@@ -19,6 +19,7 @@ import {
   type DeployEnvironment,
   type DeployEnvironmentInput,
   type Deployment,
+  type ContainerLog,
   type DeploymentStatus,
   type EnvironmentBinding,
   type ProjectTargets,
@@ -32,6 +33,7 @@ import {
   type EnvironmentField,
   STATE_LABELS,
   awaitingDecision,
+  canReadStatus,
   clusterCards,
   clusterConnections,
   emptyEnvironment,
@@ -67,6 +69,13 @@ function DeploymentLine({ d, showProject }: { d: Deployment; showProject: boolea
     <div className="env-deployment">
       <StateBadge d={d} />
       <b>{d.product}</b>
+      {/* Beside the environment, not in it (ADR-0055), and it goes on its own. */}
+      {d.preview && (
+        <span className="badge" title="A preview: its own namespace beside the environment, removed when it expires">
+          preview {d.preview.name}
+        </span>
+      )}
+      {(d.action ?? "install") === "uninstall" && <span className="badge">taken out</span>}
       {showProject && <span className="sub">{d.project_name}</span>}
       <span className="sub">
         → {d.environment_name} · <code>{d.namespace}</code>
@@ -95,6 +104,23 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
   const [status, setStatus] = useState<DeploymentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [logs, setLogs] = useState<ContainerLog[] | null>(null);
+  const [readingLogs, setReadingLogs] = useState(false);
+  const readLogs = async () => {
+    if (logs) {
+      setLogs(null);
+      return;
+    }
+    setReadingLogs(true);
+    setError(null);
+    try {
+      setLogs((await api.deploymentLogs(token, org, d.id)).containers);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setReadingLogs(false);
+    }
+  };
   const read = async () => {
     setBusy(true);
     setError(null);
@@ -110,6 +136,9 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
     <div className="env-status">
       <button type="button" className="ghost" disabled={busy} onClick={() => void read()} data-deployment-status>
         {busy ? "Asking the cluster…" : status ? "Ask again" : "Status in the cluster"}
+      </button>{" "}
+      <button type="button" className="ghost" disabled={readingLogs} onClick={() => void readLogs()} data-deployment-logs>
+        {readingLogs ? "Reading the logs…" : logs ? "Hide logs" : "Logs"}
       </button>
       {error && <span className="error">{error}</span>}
       {status && (
@@ -123,6 +152,11 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
               {w.name} <span className="sub">{w.images.join(", ")}</span>
             </li>
           ))}
+          {(status.problems ?? []).map((p) => (
+            <li key={p} className="error" data-deployment-problem>
+              {p}
+            </li>
+          ))}
           {status.hosts.map((h) => (
             <li key={h}>
               <a href={`https://${h}`} target="_blank" rel="noreferrer">
@@ -131,6 +165,22 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
             </li>
           ))}
         </ul>
+      )}
+      {logs && (
+        <div className="env-logs" data-deployment-logs-view>
+          {logs.length === 0 && <p className="sub">No pods of this release run in {d.namespace}.</p>}
+          {logs.map((l) => (
+            <details key={`${l.pod}/${l.container}/${l.previous}`} open={logs.length === 1 || l.previous}>
+              <summary>
+                {l.pod} · {l.container}
+                {l.previous ? " (the run before its last restart)" : ""}
+              </summary>
+              <pre style={{ maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                {l.text.trim() === "" ? "(empty)" : l.text}
+              </pre>
+            </details>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -548,18 +598,18 @@ export function EnvironmentForm({
           onChange={(e) => set("database", e.target.value as "none" | "shared" | "namespace")}
           aria-label="Database"
         >
-          <option value="none">None: the product brings its own</option>
-          <option value="namespace">
+          <option value="none">
             {research
-              ? "A Postgres service of the product's own in its Research application, with the databases its gears keep"
-              : "A Postgres of the product's own, in its namespace, with the databases its gears keep"}
+              ? "The product's own, when its gears keep data: a Postgres service in its Research application"
+              : "The product's own, when its gears keep data: a Postgres in its namespace, with every deploy"}
           </option>
+          {input.database === "namespace" && <option value="namespace">The product&apos;s own (as recorded before)</option>}
           {!research && (
             <option value="shared">The environment&apos;s shared Postgres — recorded only, not handed to the chart yet</option>
           )}
         </select>
       </label>
-      {input.database === "namespace" && (
+      {input.database !== "shared" && (
         <label className="field">
           Postgres image
           <input
@@ -1058,7 +1108,6 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                       <b>{e.name}</b>
                       {e.protected && <span className="badge">protected</span>}
                       {e.database === "shared" && <span className="badge">shared database</span>}
-                      {e.database === "namespace" && <span className="badge">own Postgres</span>}
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     <Answer id={e.id} />
@@ -1225,12 +1274,15 @@ export function ProjectEnvironments({
   projectId,
   profiles,
   title = "Environments",
+  onSaved,
 }: {
   token: string;
   projectId: string;
   profiles: readonly string[];
   /** The heading: where the bindings sit decides what they are called. */
   title?: string;
+  /** The bindings were saved: whatever else shows them reads them again. */
+  onSaved?: () => void;
 }) {
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [bindings, setBindings] = useState<EnvironmentBinding[]>([]);
@@ -1263,7 +1315,12 @@ export function ProjectEnvironments({
   const bound = (profile: string) => bindings.find((b) => b.profile === profile)?.environment_id ?? "";
   const bind = (profile: string, environment: string) => {
     setSaved(false);
-    setBindings((all) => [...all.filter((b) => b.profile !== profile), ...(environment ? [{ profile, environment_id: environment }] : [])]);
+    // Values belong to a profile in one environment: kept while it stays there.
+    setBindings((all) => {
+      const was = all.find((b) => b.profile === profile);
+      const next = was?.environment_id === environment ? was : { profile, environment_id: environment };
+      return [...all.filter((b) => b.profile !== profile), ...(environment ? [next] : [])];
+    });
   };
   const save = async () => {
     setBusy(true);
@@ -1271,6 +1328,7 @@ export function ProjectEnvironments({
     try {
       setBindings((await api.saveBindings(token, projectId, bindings)).items);
       setSaved(true);
+      onSaved?.();
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -1339,7 +1397,7 @@ export function ProjectEnvironments({
           {deployments.slice(0, 10).map((d) => (
             <li key={d.id}>
               <DeploymentLine d={d} showProject={false} />
-              {d.state === "succeeded" && <StatusButton token={token} org={targets.organization_id} d={d} />}
+              {canReadStatus(d) && <StatusButton token={token} org={targets.organization_id} d={d} />}
             </li>
           ))}
         </ul>

@@ -11,8 +11,8 @@ standard template. For an overview of what the template contains, see
 
 ```bash
 npm install
-npm run build:package && npm run build:packages   # build the lib + solution packages
-npm run dev:all                                    # host + all MFE dev servers
+npm run build:package   # build the lib
+npm run dev:all         # host + all MFE dev servers
 ```
 
 Open **http://localhost:5173**. The host faces the shared `dev` stand — sign in
@@ -44,7 +44,6 @@ src-app/
     ├── demo-mfe/             # Hello World, Profile, Theme, UIKit, Widgets Host
     ├── _blank-mfe/           # Minimal MFE — copy this to start a new one
     └── widgets-fixture-a|b/  # Widgets that mount into demo-mfe's widgets domain
-packages/                     # Solution packages: react, framework, state, i18n, studio, auth
 src/                          # Shared solution lib (api, build, gts)
 ```
 
@@ -81,15 +80,21 @@ Add a screen to an existing MFE (e.g. `src-app/mfe_packages/demo-mfe`):
    );
    ```
 
-2. **Wrap it in a Module Federation lifecycle**
+2. **Wrap it in a Module Federation lifecycle.** A Studio MFE extends
+   `StudioMfeLifecycle` from `@constructor-studio/mfe-shared`, not FrontX's
+   `ThemeAwareReactLifecycle`: it gives the first mount a styled paint and keeps
+   the shadow host transparent over the shell's page.
    ```tsx
    // src/lifecycle-my-screen.tsx
-   import { ThemeAwareReactLifecycle } from '@gears-frontx/react';
+   import { anchorKitThemeOnShadowHost, StudioMfeLifecycle } from '@constructor-studio/mfe-shared';
+   import kitTheme from '@gears-frontx/ui-kit/theme.css?inline';
    import { mfeApp } from './init';
    import { MyScreen } from './screens/my-screen/MyScreen';
 
-   class MyScreenLifecycle extends ThemeAwareReactLifecycle {
-     constructor() { super(mfeApp); }
+   const KIT_THEME_ON_HOST = anchorKitThemeOnShadowHost(kitTheme);
+
+   class MyScreenLifecycle extends StudioMfeLifecycle {
+     constructor() { super(mfeApp, KIT_THEME_ON_HOST); }
      protected renderContent(bridge) { return <MyScreen bridge={bridge} />; }
    }
    export default new MyScreenLifecycle();
@@ -156,8 +161,10 @@ const MenuToggle = () => {
 ```
 
 The app is **event-driven**: prefer emitting events over dispatching directly.
-Hooks such as `useMountedExtensions`, `useTheme`, `useTranslation`, and
-`useApiQuery` subscribe to store changes without polling.
+Hooks such as `useTheme`, `useTranslation`, and `useApiQuery` subscribe to
+store changes without polling. The shell's own `useMountedExtensions`
+(`@/app/mfe/domainOccupancy`) counts an extension from the end of its mount
+until its container is destroyed.
 
 ## Styling
 
@@ -199,16 +206,15 @@ Import via the `@` alias: `import { Badge } from '@/app/components/ui/badge';`
 ```bash
 # Development
 npm run dev:all           # build MFEs + start host and all MFE preview servers
-npm run dev               # host only (rebuilds packages + MFEs, then vite)
+npm run dev               # host only (rebuilds the lib + MFEs, then vite)
 npm run build             # full production build
-npm run build:packages    # build solution workspace packages
 npm run build:mfes        # build all MFE packages
 npm run generate:mfe-manifests   # regenerate the host MFE manifest index
 npm run preview           # preview a production build
 
 # Validation
 npm run lint              # ESLint
-npm run type-check        # type-check host app, packages, and MFEs
+npm run type-check        # type-check the lib, host app, MFEs and e2e
 npm run arch:deps         # dependency-boundary rules
 npm run test:unit         # unit tests (package + app + workspace MFEs)
 ```

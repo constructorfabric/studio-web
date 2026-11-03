@@ -8,14 +8,13 @@ import {
   createFrontX,
   registerSlice,
   apiRegistry,
-  authShared,
   effects,
   i18n,
   queryCacheShared,
 } from '@gears-frontx/react';
 import { connectSlice } from './slices/connectSlice';
 import { initConnectEffects } from './effects/connectEffects';
-import { ConnectorsApiService } from '@constructor-studio/mfe-shared';
+import { ConnectorsApiService, authShared } from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build so plugin sync finds them.
 apiRegistry.register(ConnectorsApiService);

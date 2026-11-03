@@ -9,6 +9,7 @@
 //! `docs/adr/0022-theia-backend-bridge.md` and
 //! `docs/theia-bridge-contract-v1.md`.
 
+pub mod commands;
 pub mod config;
 pub mod control_client;
 pub mod discovery;

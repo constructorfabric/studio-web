@@ -8,6 +8,11 @@ import * as path from 'path';
 import { describeRepository, pullRequestLinkOf, pushRepository, repositoriesUnder, runGit, syncRepository } from './desktop-git';
 import { broughtDocuments } from '../common/desktop-git';
 
+// These run real git, a dozen processes a test. On Windows each one can take
+// a second (antivirus scans every spawn), so jest's 5 s default fails them at
+// random rather than for a reason.
+jest.setTimeout(60_000);
+
 // Real git against a bare repository standing in for the remote: what Sync and
 // Push do is git's behaviour, and a fake runner would only test the fake.
 

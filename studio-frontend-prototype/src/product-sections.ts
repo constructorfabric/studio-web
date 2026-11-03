@@ -19,7 +19,15 @@
  *
  * Pure, so it is tested without a backend. */
 
-import type { DeployEnvironment, EnvironmentBinding, ProductTechnology, ProjectConfig, ProjectProduct } from "./api";
+import type {
+  DeployEnvironment,
+  EnvironmentBinding,
+  FrontendPick,
+  ProductTechnology,
+  ProjectConfig,
+  ProjectProduct,
+} from "./api";
+import { parseShellRef } from "./frontend-constructor";
 import { PRODUCT_PROFILES } from "./product";
 
 export type ProductSectionId = "parts" | "infrastructure" | "backend" | "frontend";
@@ -41,20 +49,25 @@ export const MOVED_PROJECT_TABS: Readonly<Record<string, { tab: "components"; se
   frontend: { tab: "components", section: "frontend" },
 };
 
-/** Whether the product has a frontend: its configuration names one. A project
- *  that picked micro-frontends before this was a question has one. */
-export function hasFrontend(cfg: ProjectConfig | null | undefined): boolean {
-  return !!cfg?.frontend && typeof cfg.frontend === "object";
+/** Whether the product has a frontend: the product records one, or -- for a
+ *  project that picked micro-frontends before the product kept them -- its
+ *  configuration does. */
+export function hasFrontend(
+  cfg: ProjectConfig | null | undefined,
+  product?: Pick<ProjectProduct, "frontend"> | null,
+): boolean {
+  return !!product?.frontend || (!!cfg?.frontend && typeof cfg.frontend === "object");
 }
 
-/** The configuration with a frontend added from the FrontX shell template,
- *  keeping any micro-frontends already picked. */
-export function withFrontend(cfg: ProjectConfig | null | undefined): ProjectConfig {
-  const base = cfg ?? {};
-  return { ...base, frontend: { mfes: [], ...(base.frontend ?? {}), shell: base.frontend?.shell ?? FRONTX_SHELL_TEMPLATE } };
+/** The frontend a product starts with: the FrontX shell template, nothing
+ *  mounted yet. */
+export function newFrontend(): FrontendPick {
+  const { repo, path, ref } = parseShellRef(FRONTX_SHELL_TEMPLATE)!;
+  return { shell: { repo, path, ref }, mfes: [] };
 }
 
-/** The configuration without its frontend: the product is gears alone again. */
+/** The configuration without the frontend it recorded before the product
+ *  kept it. */
 export function withoutFrontend(cfg: ProjectConfig | null | undefined): ProjectConfig {
   const out = { ...(cfg ?? {}) };
   delete out.frontend;
@@ -94,10 +107,19 @@ export interface Infrastructure {
 }
 
 const DATABASE_WORDS: Record<DeployEnvironment["database"], string> = {
-  none: "no database",
-  shared: "the environment's shared Postgres",
-  namespace: "a Postgres of its own in its namespace",
+  none: "its own Postgres, with each deploy",
+  shared: "the environment's shared Postgres (not handed to the chart yet)",
+  namespace: "its own Postgres, with each deploy",
 };
+
+/** How a technology the product needs gets to where it runs: the database
+ *  comes with every deploy; the rest is somebody else's to run, and the
+ *  gear's settings say where. */
+export function comesWith(technology: string): { deployed: boolean; words: string } {
+  return technology === "postgres"
+    ? { deployed: true, words: "with every deploy: Studio runs it beside the product" }
+    : { deployed: false, words: "not deployed by Studio: run it, and set where in the gear's settings" };
+}
 
 export function infrastructureOf(
   product: Pick<ProjectProduct, "profile" | "last_preview"> | null,
@@ -112,10 +134,14 @@ export function infrastructureOf(
     namespace,
     profile: targets?.bindings.find((b) => b.environment_id === environment.id)?.profile ?? null,
     database:
-      environment.database === "namespace" && environment.database_image
-        ? `${DATABASE_WORDS.namespace} (${environment.database_image})`
-        : (DATABASE_WORDS[environment.database] ?? environment.database),
-    missing: postgres && environment.database === "none" ? ["PostgreSQL"] : [],
+      needs !== null && !postgres && environment.database !== "shared"
+        ? "none needed"
+        : environment.database !== "shared" && environment.database_image
+          ? `${DATABASE_WORDS[environment.database]} (${environment.database_image})`
+          : (DATABASE_WORDS[environment.database] ?? environment.database),
+    // A shared server is recorded, not handed to the chart: nothing serves
+    // the host it names. Any other mode brings the product's own.
+    missing: postgres && environment.database === "shared" ? ["PostgreSQL"] : [],
   }));
   return { profile, profileLabel, runsIn, needs, applications: product?.last_preview?.applications ?? [] };
 }
@@ -136,7 +162,10 @@ export interface ProductSummary {
 }
 
 export function productSummary(
-  product: Pick<ProjectProduct, "product_id" | "profile" | "gears" | "written" | "description" | "last_preview"> | null,
+  product: Pick<
+    ProjectProduct,
+    "product_id" | "profile" | "gears" | "written" | "description" | "last_preview" | "frontend"
+  > | null,
   cfg: ProjectConfig | null | undefined,
 ): ProductSummary {
   const profile = product?.profile ?? null;
@@ -149,7 +178,7 @@ export function productSummary(
     preview: product?.last_preview
       ? { ok: product.last_preview.ok, errors: product.last_preview.errors, warnings: product.last_preview.warnings }
       : null,
-    frontend: hasFrontend(cfg),
+    frontend: hasFrontend(cfg, product),
   };
 }
 

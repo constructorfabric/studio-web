@@ -28,11 +28,11 @@ import React, { useCallback, useEffect } from 'react';
 import { X } from 'lucide-react';
 import {
   useFrontX,
-  useMountedExtensions,
   ExtensionDomainSlot,
   overlayDomain,
   FRONTX_ACTION_UNMOUNT_EXT,
 } from '@gears-frontx/react';
+import { useMountedExtensions } from '@/app/mfe/domainOccupancy';
 import type { OverlayExtension } from './overlayExtension';
 
 export const OverlayDialog: React.FC = () => {
@@ -48,9 +48,9 @@ export const OverlayDialog: React.FC = () => {
   const visible = Boolean(openExtensionId);
   const label = openExtension?.presentation?.label;
 
-  const close = useCallback(async () => {
+  const close = useCallback(() => {
     if (!openExtensionId) return;
-    await app.mfeRegistry?.executeActionsChain({
+    app.mfeRegistry?.executeActionsChain({
       action: {
         type: FRONTX_ACTION_UNMOUNT_EXT,
         target: overlayDomain.id,
@@ -62,7 +62,7 @@ export const OverlayDialog: React.FC = () => {
   useEffect(() => {
     if (!visible) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') void close();
+      if (event.key === 'Escape') close();
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
@@ -77,7 +77,7 @@ export const OverlayDialog: React.FC = () => {
         type="button"
         tabIndex={-1}
         aria-hidden="true"
-        onClick={() => void close()}
+        onClick={close}
         className="absolute inset-0 cursor-default bg-[color:var(--overlay-modal)]"
       />
       <div
@@ -97,7 +97,7 @@ export const OverlayDialog: React.FC = () => {
           type="button"
           aria-label={label ? `Close ${label}` : 'Close'}
           title="Close"
-          onClick={() => void close()}
+          onClick={close}
           className="absolute right-4 top-4 grid size-7 place-items-center rounded-full bg-muted text-muted-foreground transition-colors hover:text-foreground"
         >
           <X className="size-4" strokeWidth={1.75} aria-hidden="true" />

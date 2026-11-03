@@ -16,6 +16,8 @@
 //! `docs/design/studio-spec-mapping.md`.
 
 mod local;
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 pub(crate) mod plan;
 mod product;
 pub(crate) mod reading;

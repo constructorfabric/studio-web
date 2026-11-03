@@ -108,6 +108,17 @@ export const GENERATE_AND_BUILD = {
 };
 
 /**
+ * Constructor Studio: write the open product's debug configurations -- one
+ * CodeLLDB configuration per application Run starts -- into the workspace's
+ * `.vscode/launch.json`, so F5 debugs what Run runs. The Run & Deploy view's
+ * "Debug configurations" button does the same.
+ */
+export const ADD_DEBUG_CONFIGURATIONS = {
+  id: "gearbox.product.addDebugConfigurations",
+  label: "Gearbox: Add Debug Configurations",
+};
+
+/**
  * Constructor Studio: show the Resolution Lock, for a caller that means *show*
  * it -- the ribbon and the Gearbox menu. Same reason as `SHOW_CONFLICTS`:
  * `gearbox.lock.toggle` closes an open lock, which is right in `View > Views`

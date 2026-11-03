@@ -1,6 +1,7 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
+import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
 import { CONNECTION_LIST_NAMESPACE } from '../../../i18n';
 import en from '../i18n/en.json';
 import { ConnectionsTable } from './ConnectionsTable';
@@ -12,6 +13,8 @@ import type { ConnectionRow } from '../../../shared/useConnectionList';
  * columns, and above all that the four without a data source render a
  * placeholder rather than a value borrowed from a different fact.
  */
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
+
 vi.mock('./HealthInline', () => ({
   HealthInline: ({ connectionId }: { connectionId: string }) => (
     <span data-testid={`health-${connectionId}`}>stub</span>
@@ -34,7 +37,6 @@ const ROW: ConnectionRow = {
 };
 
 async function mount(rows: ConnectionRow[]) {
-  createFrontXApp({});
   const { mfeApp } = await import('../../../init');
   i18nRegistry.register(CONNECTION_LIST_NAMESPACE, 'en' as never, en);
 

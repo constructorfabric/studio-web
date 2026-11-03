@@ -178,11 +178,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
             <dl className="grid gap-2">
               <div>
                 <dt className="font-medium">{t('domain_id')}</dt>
-                <dd className="font-mono text-sm text-muted-foreground">{bridge.domainId}</dd>
+                <dd className="font-mono text-sm text-muted-foreground">{bridge.extDomainId}</dd>
               </div>
               <div>
                 <dt className="font-medium">{t('instance_id')}</dt>
-                <dd className="font-mono text-sm text-muted-foreground">{bridge.instanceId}</dd>
+                <dd className="font-mono text-sm text-muted-foreground">{bridge.extensionId}</dd>
               </div>
               <div>
                 <dt className="font-medium">{t('current_theme')}</dt>

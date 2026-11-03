@@ -14,8 +14,9 @@ Authoritative files:
 - `src-app/app/layout/Menu.tsx` — menu rendering and mount dispatch
 - `src-app/app/mfe/bootstrap.ts` — domain registration and manifest ingestion
 - `src/gts/schemas/extension_screen.v1.json` — the derived screen extension type
-- `packages/framework/src/plugins/microfrontends/gts/frontx.screensets/instances/domains/` —
-  the four well-known domain instances
+- `@gears-frontx/react` (`screenDomain`, `sidebarDomain`, `popupDomain`,
+  `overlayDomain`) — the four well-known domain instances, from the npm
+  framework; `bootstrap.ts` registers them without `route` (ADR-0028)
 - `scripts/generate-mfe-manifests.ts`, `src/build/mf-gts.ts` — the build-time
   pipeline
 

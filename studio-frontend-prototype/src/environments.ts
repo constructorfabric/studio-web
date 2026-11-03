@@ -5,6 +5,12 @@
 
 import type { Connection, DeployEnvironment, DeployEnvironmentInput, Deployment, DeploymentState } from "./api";
 
+/** Whether a deploy's release is worth reading from its cluster: one that
+ *  installed, or one that failed -- whose pods say why -- or is installing. */
+export function canReadStatus(d: Pick<Deployment, "state" | "action">): boolean {
+  return d.action !== "uninstall" && (d.state === "succeeded" || d.state === "failed" || d.state === "running");
+}
+
 /** One namespace per project and environment, unless the environment says otherwise. */
 export const DEFAULT_NAMESPACE_PATTERN = "{project}-{environment}";
 
@@ -212,11 +218,13 @@ export function runningNow(deployments: readonly Deployment[]): Deployment[] {
   const seen = new Set<string>();
   const out: Deployment[] = [];
   for (const d of deployments) {
-    if (d.state !== "succeeded") continue;
+    // A preview runs beside the environment, not in it (ADR-0055 §2).
+    if (d.state !== "succeeded" || d.preview) continue;
     const key = `${d.project_id}/${d.environment_id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(d);
+    // Taken out: nothing of the project runs there now.
+    if ((d.action ?? "install") === "install") out.push(d);
   }
   return out;
 }

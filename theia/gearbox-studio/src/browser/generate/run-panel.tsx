@@ -39,6 +39,9 @@ export interface RunPanelProps {
   /** Create the missing databases in the Postgres that already answers. */
   readonly onCreateDatabases?: () => void;
   readonly creatingDatabases?: boolean;
+  /** "Debug configurations": write the product's CodeLLDB configurations into launch.json, so F5 starts what Run starts. */
+  readonly onAddDebugConfigurations?: () => void;
+  readonly addingDebugConfigurations?: boolean;
 }
 
 export function RunPanel(props: RunPanelProps): React.ReactElement {
@@ -88,6 +91,18 @@ export function RunPanel(props: RunPanelProps): React.ReactElement {
             <button type="button" className="gbx-start-primary" data-run-run onClick={props.onRun} title={`Run ${chosen.bin} with ${chosen.dbGears.length > 0 ? chosen.localConfig : chosen.config}`}>
               Run
             </button>
+            {props.onAddDebugConfigurations !== undefined && (
+              <button
+                type="button"
+                className="gbx-choice"
+                data-run-debug
+                disabled={props.addingDebugConfigurations}
+                onClick={props.onAddDebugConfigurations}
+                title="Add a CodeLLDB configuration per application to .vscode/launch.json, so F5 builds and starts it under the debugger as Run does"
+              >
+                {props.addingDebugConfigurations ? "Adding…" : "Debug configurations"}
+              </button>
+            )}
             <button type="button" className="gbx-choice" data-run-linked onClick={props.onLinkedGears} title="List the gears linked into the binary, without starting it">
               Linked gears
             </button>

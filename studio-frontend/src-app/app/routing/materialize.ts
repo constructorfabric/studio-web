@@ -9,10 +9,11 @@
  * write harmless. This is the only writer of `org`, `workspace`, `project`,
  * `section` and `artifact`, and the only caller of `mountScreen`.
  */
-import { screenDomain, type FrontXApp, type MfeRegistry, type ScreenExtension } from '@gears-frontx/react';
+import { screenDomain, type FrontXApp, type MfeRegistry } from '@gears-frontx/react';
 import { TENANT_TYPES, errorMessage, isStudioArtifactKind, type StudioArtifact } from '@constructor-studio/mfe-shared';
-import { entryPointOf, levelOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
-import { isMountingScreen, mountScreen } from '@/app/mfe/mountScreen';
+import { entryPointOf, levelOf, sectionOf, type ScreenLevel, type StudioScreenExtension } from '@/app/mfe/screenLevels';
+import { occupancyOf } from '@/app/mfe/domainOccupancy';
+import { mountScreen } from '@/app/mfe/mountScreen';
 import { publishStudioContext } from '@/app/mfe/sharedContext';
 import {
   closeContextProject,
@@ -68,7 +69,11 @@ export interface Materializer {
    * running from it is about a place the person has left.
    */
   transition(): void;
-  /** Forgets a mount that failed and applies the address again — for when the screen slot has re-attached. */
+  /**
+   * Forgets a mount that failed and applies the address again, asking for its
+   * screen even while that still counts as mounted — for when the screen slot
+   * has re-attached.
+   */
   retry(): void;
 }
 
@@ -91,8 +96,8 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   /** The visit whose editor had nothing to open and nowhere to go, so that is said once per address. */
   let editorStrandedIn: number | null = null;
 
-  const screensOf = (registry: MfeRegistry): ScreenExtension[] =>
-    registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
+  const screensOf = (registry: MfeRegistry): StudioScreenExtension[] =>
+    registry.getExtensionsForDomain(screenDomain.id) as StudioScreenExtension[];
 
   /** The route of a level's entry point, carrying the context that level shows. */
   const entryRoute = (registry: MfeRegistry, level: ScreenLevel, from: ShellRoute | null): ShellRoute | null => {
@@ -160,22 +165,20 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   };
 
   const isMounted = (registry: MfeRegistry, group: ScreenGroup): boolean => {
-    const [mountedId] = registry.getMountedExtensions(screenDomain.id);
+    const [mountedId] = occupancyOf(registry).mounted(screenDomain.id);
     return groupOfExtension(deps.groups(), mountedId)?.token === group.token;
   };
 
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
-  const mountFailed = (registry: MfeRegistry, group: ScreenGroup, startedIn: number, reason: string): void => {
-    if (startedIn !== visit) {
-      // The address moved on while this mount was running: the failure is
-      // about a visit the person has left, and the current address gets its
-      // own pass — its own attempt included — rather than being marked stuck
-      // or replaced by a fallback for the old one.
-      warn(`Screen "${group.token}" did not mount (${reason}); the address has moved on since`);
-      materialize();
-      return;
-    }
-    warn(`Screen "${group.token}" did not mount (${reason}); not trying again until the address changes`);
+  const mountFailed = (registry: MfeRegistry, group: ScreenGroup, reason: string): void => {
+    // The requests of one visit join one runtime entry and fail together: the
+    // first has already said so and stuck the visit or moved the address.
+    if (stuckIn === visit || navigation.currentRoute()?.token !== group.token) return;
+    // The runtime keeps the cause to itself, so this names what was asked for.
+    const { id, presentation } = group.owner;
+    warn(
+      `Screen "${group.token}" (${id} at ${presentation.route}) did not mount (${reason}); not trying again until the address changes`
+    );
     // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
     const fallback =
       fallbackTo === group.token ? null : entryRoute(registry, levelOf(group.owner), navigation.currentRoute());
@@ -198,24 +201,23 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
   const mount = (registry: MfeRegistry, group: ScreenGroup): void => {
-    if (isMountingScreen(registry)) return;
     if (stuckIn === visit) return;
     const startedIn = visit;
-    void mountScreen(registry, group.owner)
-      .then(() => {
-        // The registry logs a failed chain and resolves — it never rejects — so
-        // success is read off the mounted set, not off the promise.
+    void mountScreen(registry, group.owner).then(
+      () => {
+        // A mount from a visit the person has left, done or replaced, says
+        // nothing about this one: the current address only gets its own pass.
+        if (startedIn !== visit) return materialize();
         if (isMounted(registry, group)) {
           fallbackTo = null;
           stuckIn = null;
           materialize();
           return;
         }
-        // Another mount took over (a StrictMode re-attach); its own completion re-runs this.
-        if (isMountingScreen(registry)) return;
-        mountFailed(registry, group, startedIn, 'the actions chain did not complete');
-      })
-      .catch((error: unknown) => mountFailed(registry, group, startedIn, errorMessage(error)));
+        mountFailed(registry, group, 'the actions chain did not complete');
+      },
+      (error: unknown) => (startedIn !== visit ? materialize() : mountFailed(registry, group, errorMessage(error)))
+    );
   };
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
 
@@ -227,10 +229,14 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   const retry = (): void => {
     stuckIn = null;
     fallbackTo = null;
-    materialize();
+    // A screen counts as mounted until its release from the old root ends, and
+    // nothing asks for it after that. The runtime answers a mounted screen at
+    // once and makes a new mount wait out a release.
+    pass(true);
   };
 
-  const materialize = (): void => {
+  /** One pass over the address; `remount` asks for its screen even while that counts as mounted. */
+  const pass = (remount: boolean): void => {
     const registry = app.mfeRegistry;
     if (!registry) return;
     const groups = deps.groups();
@@ -387,10 +393,12 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6
-    if (!isMounted(registry, group)) mount(registry, group);
+    if (remount || !isMounted(registry, group)) mount(registry, group);
     // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6
     // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
   };
+
+  const materialize = (): void => pass(false);
 
   return { materialize, transition, retry };
 }

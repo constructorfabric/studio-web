@@ -154,7 +154,7 @@ describe('AuthGate', () => {
   });
 
   it('renders ungated with a warning when no auth runtime is configured', () => {
-    // The no-uikit scaffold entry builds createFrontXApp() without an auth
+    // The no-uikit scaffold entry builds presets.full() without an auth
     // plugin — the gate must not crash the whole app on mount there.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockUseFrontX.mockReturnValue({});

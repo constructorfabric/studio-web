@@ -24,6 +24,7 @@ import { CommandRegistry, CommandService } from '@theia/core/lib/common/command'
 import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
+import { ScmService } from '@theia/scm/lib/browser/scm-service';
 import { DesktopStudioWidget } from './desktop-studio-widget';
 import { TENANT_TYPES } from './desktop-projects';
 import { fakeStudio } from './desktop-studio-client.fake';
@@ -77,6 +78,9 @@ function studio(): void {
     fakeStudio.open = async () => { throw new Error('the workspace\'s sources could not be listed (HTTP 502)'); };
 }
 
+/** No checkouts: the card's SCM lines are another test's. */
+const NO_SCM = { repositories: [], onDidAddRepository: () => ({ dispose: () => undefined }), onDidRemoveRepository: () => ({ dispose: () => undefined }) } as never;
+
 describe('the desktop Studio view', () => {
     let widget: DesktopStudioWidget;
     let stored: Map<string, unknown>;
@@ -120,6 +124,7 @@ describe('the desktop Studio view', () => {
                 setData: async (key: string, value: unknown) => { stored.set(key, value); },
             } as never);
             bind(WindowService).toConstantValue({ openNewWindow: (url: string) => { external.push(url); } } as never);
+            bind(ScmService).toConstantValue(NO_SCM);
             bind(DesktopStudioWidget).toSelf();
         });
         const container = new Container();
@@ -358,6 +363,7 @@ describe('the desktop Studio view, before anything is known', () => {
             bind(CommandRegistry).toConstantValue(commands as never);
             bind(StorageService).toConstantValue({ getData: async () => undefined, setData: async () => undefined } as never);
             bind(WindowService).toConstantValue({ openNewWindow: jest.fn() } as never);
+            bind(ScmService).toConstantValue(NO_SCM);
             bind(DesktopStudioWidget).toSelf();
         }));
         let widget!: DesktopStudioWidget;

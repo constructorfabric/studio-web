@@ -44,8 +44,8 @@ function createBridge(initial: string | null | undefined = undefined) {
       }
     },
     bridge: {
-      domainId: 'screen',
-      instanceId: 'inst-1',
+      extDomainId: 'screen',
+      extensionId: 'inst-1',
       executeActionsChain: vi.fn(),
       registerActionHandler: vi.fn(),
       getProperty: (id: string) =>
@@ -78,6 +78,10 @@ describe('MfeHandlerIframe', () => {
   it('handles the iframe entry subtype at a priority above the default', () => {
     expect(handler.handledBaseTypeId).toBe(STUDIO_MFE_ENTRY_IFRAME);
     expect(handler.priority).toBeGreaterThan(0);
+  });
+
+  it('the handler never builds a bridge: the runtime does', () => {
+    expect(() => handler.bridgeFactory.create('d', 't', 'i')).toThrow(/runtime/);
   });
 
   it('shows a waiting state while the property holds nothing, and announces it', async () => {
