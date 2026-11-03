@@ -2908,6 +2908,9 @@ div.dm-block { padding-left: 0; }
 .pmap-item .ghost { padding: 2px 8px; font-size: 12px; }
 .pmap-item-name { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .pmap-item-sub { font-size: 11px; color: var(--muted-foreground); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pmap-item[style] { border-left: 3px solid hsl(var(--g-h) 62% 55%); }
+.pmap-item[style]:hover { background: color-mix(in oklab, hsl(var(--g-h) 70% 60%) 10%, var(--card)); }
+.pmap-item-group[style] { color: color-mix(in oklab, hsl(var(--g-h) 65% 48%) 80%, var(--foreground)); position: sticky; top: -8px; z-index: 1; background: var(--card); padding: 4px 0; }
 .pmap-item-group { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin: 6px 0 2px; }
 
 .pmap-canvas { position: relative; display: grid; gap: 44px; align-content: start; min-width: 0; padding: 4px 0 12px; }

@@ -1021,11 +1021,15 @@ function Palette({
           {gearOffers?.length === 0 && <p className="muted">Nothing more to add{q ? " that matches" : ""}.</p>}
           {gearOffers?.map((g) => (
             <div key={g.category}>
-              <div className="pmap-item-group">{g.category}</div>
+              {/* In its subsystem's hue, as its column on the map. */}
+              <div className="pmap-item-group" style={{ "--g-h": hueOf(g.category) } as CSSProperties}>
+                {g.category}
+              </div>
               {g.items.map((o) => (
                 <div
                   key={o.name}
                   className="pmap-item"
+                  style={{ "--g-h": hueOf(g.category) } as CSSProperties}
                   draggable={!busy}
                   onDragStart={(e) => {
                     e.dataTransfer.setData(DRAG_GEAR, o.name);
@@ -1035,7 +1039,12 @@ function Palette({
                   data-pmap-offer-gear={o.name}
                 >
                   <div className="grow">
-                    <div className="pmap-item-name">{o.label}</div>
+                    <div className="pmap-item-name">
+                      <span className="pmap-glyph" aria-hidden>
+                        ⚙
+                      </span>
+                      {o.label}
+                    </div>
                     {o.description && <div className="pmap-item-sub">{o.description}</div>}
                   </div>
                   <button type="button" className="ghost" disabled={busy} onClick={() => onAddGear(o.name)}>
