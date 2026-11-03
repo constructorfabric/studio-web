@@ -25,7 +25,7 @@ import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews, useDeployRe
 import { EnvironmentForm, ProjectEnvironments } from "./environments-screen";
 import { clusterConnections, registryConnections, researchConnections } from "./environments";
 import { errText, relTime } from "./format";
-import { KUBERNETES_PROFILES } from "./kits";
+import { KUBERNETES_PROFILES } from "./product";
 import { deployableBuilds, productUrls, profilesBoundTo } from "./project-deploys";
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
@@ -234,7 +234,7 @@ export function ProjectReleases({
           <summary>
             <b>Environments of this project</b>{" "}
             <span className="sub">
-              which environment each profile deploys to, and the project&apos;s own environments
+              which profile each environment runs, and the project&apos;s own environments
               {ownEnvironments.length > 0 ? ` (${ownEnvironments.length})` : ""}
             </span>
           </summary>
@@ -246,7 +246,7 @@ export function ProjectReleases({
             token={token}
             projectId={projectId}
             profiles={KUBERNETES_PROFILES}
-            title="Which environment each profile deploys to"
+            title="Which profile each environment runs"
             show="bindings"
             onSaved={() => changed("Bindings saved.")}
           />

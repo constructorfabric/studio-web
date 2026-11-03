@@ -571,7 +571,7 @@ pub struct ProjectTargetsDto {
     pub project_name: String,
     /// The environments this project may deploy to.
     pub environments: Vec<TargetDto>,
-    /// Its product's profiles bound to them.
+    /// The product profile each of them runs: an environment at most once.
     pub bindings: Vec<BindingDto>,
     /// The secret keys of its configuration, per environment.
     pub secrets: Vec<ConfigSecretDto>,
@@ -1839,9 +1839,10 @@ pub fn register_routes(
         .operation_id("studio_environments.update_bindings")
         .summary("Bind a project's product profiles to environments")
         .description(
-            "For `?project_id=`: the whole list, each kubernetes profile at most once, each \
-             to an environment that takes the project's deploys. A binding grants nothing: \
-             every deploy is still checked against its environment.",
+            "For `?project_id=`: the whole list, each environment at most once with the \
+             kubernetes profile it runs (a profile may run in several), each one that takes \
+             the project's deploys. A binding grants nothing: every deploy is still checked \
+             against its environment.",
         )
         .tag(TAG)
         .authenticated()

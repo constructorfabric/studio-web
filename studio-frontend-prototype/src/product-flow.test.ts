@@ -1,12 +1,25 @@
 import { describe, expect, it } from "vitest";
 
 import { configureParts, describedGaps, lineDiff, productAttention, productFlow, type FlowFacts } from "./product-flow";
-import type { Infrastructure } from "./product-sections";
+import type { Infrastructure, RunsIn } from "./product-sections";
+
+const env = (over: Partial<RunsIn> = {}): RunsIn => ({
+  environment: "dev",
+  namespace: "studio",
+  profile: "prod",
+  profileLabel: "Kubernetes · prod",
+  verdict: { state: "ok", errors: 0, check: null },
+  needs: null,
+  database: "its own Postgres",
+  missing: [],
+  unchecked: null,
+  ...over,
+});
 
 const infra = (over: Partial<Infrastructure> = {}): Infrastructure => ({
   profile: "prod",
-  profileLabel: "Kubernetes",
-  runsIn: [{ environment: "dev", namespace: "studio", profile: "prod", database: "its own Postgres", missing: [], unchecked: false }],
+  profileLabel: "Kubernetes · prod",
+  runsIn: [env()],
   needs: null,
   applications: [],
   ...over,
@@ -17,7 +30,8 @@ const frontend = {
   mfes: [{ repo: "acme/web", path: "studio-frontend/src-app/mfe_packages/people-mfe" }],
 };
 
-const preview = { profile: "prod", ok: true, errors: 0, warnings: 0, applications: [], gears: [] };
+const check = { ok: true, errors: 0, warnings: 0, applications: [], gears: [], gdl_sha256: "abc" };
+const preview = { ...check, profile: "prod" };
 
 const described = `product(
     gears = [
@@ -27,7 +41,7 @@ const described = `product(
 )`;
 
 const facts = (over: Partial<FlowFacts> = {}): FlowFacts => ({
-  product: { gears: ["cf-gears-api-gateway", "cf-studio-documents"], last_preview: preview, frontend: null, profile: "prod" },
+  product: { gears: ["cf-gears-api-gateway", "cf-studio-documents"], checks: { prod: check }, last_preview: preview, frontend: null },
   cfg: {},
   infra: infra(),
   kept: { revision: 4, text: described },
@@ -38,13 +52,14 @@ const facts = (over: Partial<FlowFacts> = {}): FlowFacts => ({
 
 describe("configuring the product", () => {
   it("reads each part off what the project holds", () => {
+    const failed = { ...check, ok: false, errors: 2 };
     const [i, b, f] = configureParts(
-      { gears: ["cf-gears-api-gateway"], last_preview: { ...preview, ok: false, errors: 2 }, frontend, profile: "prod" },
+      { gears: ["cf-gears-api-gateway"], checks: { prod: failed }, last_preview: { ...failed, profile: "prod" }, frontend },
       {},
       infra(),
     );
     expect([i.state, b.state, f.state]).toEqual(["done", "failed", "done"]);
-    expect(b.status).toBe("1 gear; 2 errors from the engine.");
+    expect(b.status).toBe("1 gear; Kubernetes · prod (dev): 2 errors from the engine.");
     expect(f.status).toBe("1 micro-frontend on studio-frontend.");
   });
 
@@ -60,15 +75,41 @@ describe("configuring the product", () => {
   });
 
   it("names what the infrastructure lacks", () => {
-    const [i] = configureParts(null, null, infra({ runsIn: [{ ...infra().runsIn[0], missing: ["PostgreSQL"] }] }));
+    const [i] = configureParts(null, null, infra({ runsIn: [env({ missing: ["PostgreSQL"] })] }));
     expect(i.state).toBe("failed");
-    expect(i.status).toContain("a deploy to dev will stop: it gives no database");
+    expect(i.status).toContain("A deploy to dev will stop: it gives no database");
   });
 
-  it("asks for a check of the profile an environment runs, when the last one was another", () => {
-    const [i] = configureParts(null, null, infra({ profile: "dev", runsIn: [{ ...infra().runsIn[0], unchecked: true }] }));
+  it("asks for a check of the profile an environment runs, when it has none", () => {
+    const [i] = configureParts(null, null, infra({ runsIn: [env({ unchecked: "not checked yet for prod" })] }));
     expect(i.state).toBe("todo");
-    expect(i.status).toContain("dev runs profile prod, and the product was last checked for dev");
+    expect(i.status).toBe("dev: not checked yet for prod. Check it under Backend.");
+  });
+
+  it("says which profile each environment runs", () => {
+    const [i] = configureParts(null, null, infra({ runsIn: [env(), env({ environment: "stage" })] }));
+    expect(i.status).toBe("dev runs Kubernetes · prod; stage runs Kubernetes · prod.");
+  });
+
+  it("is done only when every bound profile's check is current and resolves", () => {
+    const two = infra({ runsIn: [env(), env({ environment: "lab", profile: "local", profileLabel: "One host · local" })] });
+    const product = { gears: ["cf-gears-api-gateway"], frontend: null, last_preview: preview };
+    // `local` was never checked.
+    const [, waiting] = configureParts({ ...product, checks: { prod: check } }, null, two);
+    expect(waiting.state).toBe("todo");
+    expect(waiting.status).toBe("1 gear, not checked by the engine yet for One host · local (lab).");
+    // Checked, but for a description that has changed since.
+    const [, stale] = configureParts({ ...product, checks: { prod: check, local: { ...check, gdl_sha256: "old" } } }, null, two);
+    expect(stale.state).toBe("todo");
+    const [, done] = configureParts({ ...product, checks: { prod: check, local: check } }, null, two);
+    expect(done.state).toBe("done");
+    expect(done.status).toBe("1 gear; resolves for Kubernetes · prod (dev), One host · local (lab).");
+  });
+
+  it("checks prod when no environment is bound", () => {
+    const none = infra({ runsIn: [env({ profile: null, profileLabel: null, verdict: null })] });
+    const [, b] = configureParts({ gears: ["a"], frontend: null, last_preview: { ...check, profile: "dev" }, checks: { dev: check } }, null, none);
+    expect(b.status).toBe("1 gear, not checked by the engine yet for Kubernetes · prod.");
   });
 });
 

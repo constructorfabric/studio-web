@@ -4987,6 +4987,7 @@ response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.help	St
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.line	u32	optional
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.message	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.severity	String	always
+response	POST /studio-product/v1/projects/{}/product/preview	gdl_sha256	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	gears	Vec<{}>	always
 response	POST /studio-product/v1/projects/{}/product/preview	gears.crate_name	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	gears.id	String	always

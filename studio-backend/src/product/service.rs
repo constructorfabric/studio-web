@@ -245,9 +245,7 @@ impl ProductService {
             .await?
             .and_then(|n| n.value.as_object().cloned())
             .unwrap_or_default();
-        for (k, v) in patch {
-            value.insert(k, v);
-        }
+        merge_product_patch(&mut value, patch);
         value.insert(
             "project_id".to_owned(),
             Value::String(project_id.to_owned()),
@@ -773,6 +771,61 @@ fn latest_record(nodes: Vec<GtsNode>, key: &str) -> Option<GtsNode> {
             };
             at(a).cmp(&at(b))
         })
+}
+
+/// A patch laid over a product record: each field replaced, except `checks`,
+/// which is merged by profile -- a preview checks one profile and must not
+/// take the others' verdicts away (ADR-0057).
+fn merge_product_patch(
+    value: &mut serde_json::Map<String, Value>,
+    patch: serde_json::Map<String, Value>,
+) {
+    for (k, v) in patch {
+        if let (true, Value::Object(new), Some(Value::Object(old))) =
+            (k == "checks", &v, value.get_mut(&k))
+        {
+            old.extend(new.clone());
+            continue;
+        }
+        value.insert(k, v);
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    #[test]
+    fn a_check_of_one_profile_keeps_the_others() {
+        let mut value = serde_json::json!({
+            "gears": ["a"],
+            "checks": {"prod": {"ok": true}, "dev": {"ok": true}},
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        let patch = serde_json::json!({
+            "gears": ["b"],
+            "checks": {"dev": {"ok": false}},
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        merge_product_patch(&mut value, patch);
+        assert_eq!(value["gears"], serde_json::json!(["b"]));
+        assert_eq!(value["checks"]["prod"]["ok"], true);
+        assert_eq!(value["checks"]["dev"]["ok"], false);
+        // A record from before checks were kept takes them as they come.
+        let mut old = serde_json::Map::new();
+        merge_product_patch(
+            &mut old,
+            serde_json::json!({"checks": {"prod": {"ok": true}}})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        );
+        assert_eq!(old["checks"]["prod"]["ok"], true);
+    }
 }
 
 #[cfg(test)]

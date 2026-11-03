@@ -90,6 +90,8 @@ connections it, its workspaces or its projects hold.
 
 ### 2. A project binds a product's profiles to environments
 
+> Amended by ADR-0057 ([a profile is chosen per environment and checked per profile](0057-a-profile-is-chosen-per-environment-and-checked-per-profile.md)): a binding is environment → profile, each environment bound once and a profile to any number of them, and the engine's verdict is kept per profile.
+
 A project maps each `kubernetes` profile of its product to an environment of
 its organization, for example `prod` → *Org prod*. Generate takes the
 profile's `namespace` and `image_registry` from that environment instead of

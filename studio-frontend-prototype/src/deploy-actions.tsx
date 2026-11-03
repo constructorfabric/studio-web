@@ -492,13 +492,12 @@ export function EnvironmentConfig({
 }
 
 /** What the Product step last wrote: the description's path, its branch and
- *  pull request, the profile picked. What a build builds unless told
- *  otherwise. */
+ *  pull request. What a build builds unless told otherwise; the profile is
+ *  the environment's binding's (ADR-0057). */
 export interface SavedProduct {
   path: string;
   branch: string | null;
   prUrl: string | null;
-  profile: string | null;
   /** The description revision Studio keeps and a build takes (ADR-0053 §2). */
   revision?: number | null;
 }
@@ -522,6 +521,15 @@ export function buildTarget(e: DeployEnvironment): string {
   return isResearch(e) ? `Research project ${e.research_project}` : e.registry;
 }
 
+/** The profile a build for `environment` takes: the one bound to it, else the
+ *  one every other environment runs, else `prod`. */
+export function profileFor(bindings: readonly EnvironmentBinding[], environment: string): string {
+  const bound = bindings.find((b) => b.environment_id === environment)?.profile;
+  if (bound) return bound;
+  const all = [...new Set(bindings.map((b) => b.profile))];
+  return all.length === 1 ? all[0] : "prod";
+}
+
 /** Build in Studio: a Job in the environment's cluster clones the repository,
  *  generates the product, builds its images and pushes them and the chart to
  *  the environment's registry. Said as one sentence -- what is built, from
@@ -531,7 +539,7 @@ export function BuildInStudio({
   token,
   projectId,
   environments,
-  profiles,
+  bindings,
   saved,
   own,
   onChanged,
@@ -539,7 +547,8 @@ export function BuildInStudio({
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
-  profiles: string[];
+  /** Which profile each environment runs: a build takes its environment's. */
+  bindings: EnvironmentBinding[];
   saved: SavedProduct | null;
   /** The repository's own Dockerfiles and chart (ADR-0054 §7); absent: on gears. */
   own?: ProjectBuildSetting | null;
@@ -566,8 +575,9 @@ export function BuildInStudio({
   const env = choices.find((e) => e.id === envId) ?? choices[0];
   const file = productFile ?? saved?.path ?? "product.gdl";
   const branch = gitRef ?? saved?.branch ?? "";
-  const options = profiles.length ? profiles : ["prod"];
-  const prof = profile ?? (saved?.profile && options.includes(saved.profile) ? saved.profile : options[0]);
+  const bound = profileFor(bindings, env.id);
+  const options = [...new Set([bound, ...bindings.map((b) => b.profile)])];
+  const prof = profile ?? bound;
   return (
     <div data-build-in-studio>
       {own ? (
@@ -682,13 +692,13 @@ export function ProposeBuildWorkflow({
   token,
   projectId,
   environments,
-  profiles,
+  bindings,
   saved,
 }: {
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
-  profiles: string[];
+  bindings: EnvironmentBinding[];
   saved: SavedProduct | null;
 }) {
   const choices = environments.filter((e) => e.registry.includes("/"));
@@ -705,8 +715,7 @@ export function ProposeBuildWorkflow({
     );
   }
   const env = choices.find((e) => e.id === envId) ?? choices[0];
-  const options = profiles.length ? profiles : ["prod"];
-  const profile = saved?.profile && options.includes(saved.profile) ? saved.profile : options[0];
+  const profile = profileFor(bindings, env.id);
   const file = saved?.path ?? "product.gdl";
   return (
     <div data-propose-workflow>

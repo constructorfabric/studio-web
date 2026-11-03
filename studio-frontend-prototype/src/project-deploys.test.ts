@@ -8,6 +8,7 @@ import {
   isSecretKey,
   latestByEnvironment,
   lifetimeLabel,
+  oneEach,
   livePreviews,
   previewLifetimes,
   previewNameFor,
@@ -52,6 +53,15 @@ describe("a project's deploys", () => {
     ];
     expect(profilesBoundTo(b, "dev")).toEqual(["k8s"]);
     expect(profilesBoundTo(b, "test")).toEqual([]);
+  });
+
+  it("keep one binding per environment from a list saved when a profile was bound once", () => {
+    const b = [
+      { profile: "prod", environment_id: "dev" },
+      { profile: "stage", environment_id: "dev" },
+      { profile: "prod", environment_id: "prod" },
+    ];
+    expect(oneEach(b)).toEqual([b[0], b[2]]);
   });
 });
 

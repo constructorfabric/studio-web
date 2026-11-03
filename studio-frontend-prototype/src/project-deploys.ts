@@ -53,6 +53,14 @@ export function expiresIn(expiresAt: string, now: number = Date.now()): string {
   return `expires in ${Math.max(1, Math.round(ms / 60_000))} min`;
 }
 
+/** One binding per environment: a list saved when a profile was bound once
+ *  could bind two profiles to one environment, which is no longer saved
+ *  (ADR-0057). The first stays; saving the list drops the rest. */
+export function oneEach<B extends { environment_id: string }>(bindings: readonly B[]): B[] {
+  const seen = new Set<string>();
+  return bindings.filter((b) => !seen.has(b.environment_id) && !!seen.add(b.environment_id));
+}
+
 /** The profiles bound to an environment, as the line under it says them. */
 export function profilesBoundTo(bindings: readonly { profile: string; environment_id: string }[], environment: string): string[] {
   return bindings.filter((b) => b.environment_id === environment).map((b) => b.profile);

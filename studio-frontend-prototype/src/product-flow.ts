@@ -12,6 +12,7 @@
 import type { ProjectConfig, ProjectProduct } from "./api";
 import { gearKey } from "./frontend-constructor";
 import type { PipelineHint, PipelineTab } from "./pipeline";
+import { FALLBACK_PROFILE, profileLabel, verdictOf } from "./product";
 import type { Infrastructure, ProductSectionId } from "./product-sections";
 
 /** `none`: a part the product may go without and does (no frontend): neither
@@ -38,48 +39,74 @@ export interface FlowStep {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-type ProductFacts = Pick<ProjectProduct, "gears" | "last_preview" | "frontend" | "profile"> | null;
+type ProductFacts = Pick<ProjectProduct, "gears" | "checks" | "last_preview" | "frontend"> | null;
 
+/** Where the product runs, environment by environment: each runs the profile
+ *  bound to it, and gives it a database or not. */
 function infrastructurePart(infra: Infrastructure | null): FlowPart {
   const base = { id: "infrastructure" as const, title: "Infrastructure" };
   if (!infra) return { ...base, state: "unknown", status: "Could not read where the product runs." };
-  if (!infra.profileLabel) return { ...base, state: "todo", status: "No profile yet: it is set when the gears are composed." };
+  if (infra.runsIn.length === 0) return { ...base, state: "todo", status: "No environment to run in yet." };
   const stops = infra.runsIn.filter((r) => r.missing.length > 0);
   if (stops.length > 0) {
     const where = stops.map((r) => r.environment).join(", ");
     return {
       ...base,
       state: "failed",
-      status: `${infra.profileLabel}; a deploy to ${where} will stop: it gives no database for the gears that keep data. Switch it to the product's own Postgres (Organization › Infrastructure).`,
+      status: `A deploy to ${where} will stop: it gives no database for the gears that keep data. Switch it to the product's own Postgres (Organization › Infrastructure).`,
     };
   }
-  const unchecked = infra.runsIn.filter((r) => r.unchecked);
+  const bound = infra.runsIn.filter((r) => r.profile);
+  if (bound.length === 0)
+    return { ...base, state: "todo", status: "No environment runs a profile yet: bind one in Releases." };
+  const unchecked = bound.filter((r) => r.unchecked);
   if (unchecked.length > 0) {
-    const r = unchecked[0];
     return {
       ...base,
       state: "todo",
-      status: `${infra.profileLabel}; ${r.environment} runs profile ${r.profile}, and the product was last checked for ${infra.profile}: check it for ${r.profile} under Backend.`,
+      status: `${unchecked.map((r) => `${r.environment}: ${r.unchecked}`).join("; ")}. Check it under Backend.`,
     };
   }
-  if (infra.runsIn.length === 0)
-    return { ...base, state: "todo", status: `${infra.profileLabel}; no environment to run in yet.` };
   return {
     ...base,
     state: "done",
-    status: `${infra.profileLabel}; runs in ${infra.runsIn.map((r) => r.environment).join(", ")}.`,
+    status: `${bound.map((r) => `${r.environment} runs ${r.profileLabel}`).join("; ")}.`,
   };
 }
 
-function backendPart(product: ProductFacts): FlowPart {
+/** The gears, checked by the engine for every profile an environment runs
+ *  (for `prod` when none is bound): done only while each of those checks is
+ *  about the product as it is and resolves. */
+function backendPart(product: ProductFacts, infra: Infrastructure | null): FlowPart {
   const base = { id: "backend" as const, title: "Backend" };
   const gears = product?.gears?.length ?? 0;
   if (gears === 0) return { ...base, state: "todo", status: "No gears picked yet." };
-  const preview = product?.last_preview;
-  if (!preview) return { ...base, state: "todo", status: `${plural(gears, "gear")}, not checked by the engine yet.` };
-  return preview.ok
-    ? { ...base, state: "done", status: `${plural(gears, "gear")}; resolves.` }
-    : { ...base, state: "failed", status: `${plural(gears, "gear")}; ${plural(preview.errors, "error")} from the engine.` };
+  // Each bound profile with the environments that run it.
+  const where = new Map<string, string[]>();
+  for (const r of infra?.runsIn ?? []) if (r.profile) where.set(r.profile, [...(where.get(r.profile) ?? []), r.environment]);
+  if (where.size === 0) where.set(FALLBACK_PROFILE, []);
+  const named = (p: string) => {
+    const envs = where.get(p) ?? [];
+    return envs.length > 0 ? `${profileLabel(p)} (${envs.join(", ")})` : profileLabel(p);
+  };
+  const verdicts = [...where.keys()].map((p) => ({ p, v: verdictOf(product, p) }));
+  const failed = verdicts.filter(({ v }) => v.state === "failed");
+  if (failed.length > 0) {
+    return {
+      ...base,
+      state: "failed",
+      status: `${plural(gears, "gear")}; ${failed.map(({ p, v }) => `${named(p)}: ${plural(v.errors, "error")}`).join("; ")} from the engine.`,
+    };
+  }
+  const waiting = verdicts.filter(({ v }) => v.state === "unchecked" || v.state === "stale");
+  if (waiting.length > 0) {
+    return {
+      ...base,
+      state: "todo",
+      status: `${plural(gears, "gear")}, not checked by the engine yet for ${waiting.map(({ p }) => named(p)).join(", ")}.`,
+    };
+  }
+  return { ...base, state: "done", status: `${plural(gears, "gear")}; resolves for ${[...where.keys()].map(named).join(", ")}.` };
 }
 
 function frontendPart(product: ProductFacts, cfg: ProjectConfig | null | undefined): FlowPart {
@@ -104,7 +131,7 @@ export function configureParts(
   cfg: ProjectConfig | null | undefined,
   infra: Infrastructure | null,
 ): FlowPart[] {
-  return [infrastructurePart(infra), backendPart(product), frontendPart(product, cfg)];
+  return [infrastructurePart(infra), backendPart(product, infra), frontendPart(product, cfg)];
 }
 
 /** The gears, plugins included, a description names (`use_gear("x"`,

@@ -16,6 +16,7 @@ import {
   type BuildLog,
   type Deployment,
   type DeployEnvironment,
+  type EnvironmentBinding,
   type ProjectBuildSetting,
   type ProjectConfig,
 } from "./api";
@@ -119,7 +120,7 @@ export function ProjectBuilds({
   // Where the product can be built and deployed: the organization's
   // environments this project may use, its bindings, its deploys.
   const [environments, setEnvironments] = useState<DeployEnvironment[]>([]);
-  const [profiles, setProfiles] = useState<string[]>([]);
+  const [bindings, setBindings] = useState<EnvironmentBinding[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [saved, setSaved] = useState<SavedProduct | null>(null);
   const [chosen, setChosen] = useState<BuildScenario | null>(null);
@@ -153,7 +154,7 @@ export function ProjectBuilds({
       .then((t) => {
         if (!live) return;
         setEnvironments(t.environments.map((e) => e.environment));
-        setProfiles([...new Set(t.bindings.map((b) => b.profile))]);
+        setBindings(t.bindings);
       })
       .catch(() => live && setEnvironments([]));
     api
@@ -161,7 +162,7 @@ export function ProjectBuilds({
       .then((b) => live && setBuild(b))
       .catch(() => live && setBuild({ kind: "gears", images: [], chart: null }));
     // What to build is the Product step's answer: where it last committed
-    // product.gdl, on which branch, for which profile.
+    // product.gdl and on which branch; the profile is the environment's.
     api
       .projectProduct(token, projectId)
       .then((p) => {
@@ -173,7 +174,6 @@ export function ProjectBuilds({
           path: p.description?.path ?? p.written?.path ?? "product.gdl",
           branch: p.description ? null : p.written?.branch || null,
           prUrl: p.published?.pr_url ?? p.written?.pr_url ?? null,
-          profile: p.profile ?? null,
           revision: p.description?.revision ?? null,
         });
       })
@@ -269,7 +269,7 @@ export function ProjectBuilds({
             token={token}
             projectId={projectId}
             environments={environments}
-            profiles={profiles}
+            bindings={bindings}
             saved={saved}
             own={build?.kind === "own" ? build : null}
             onChanged={changed}
@@ -281,7 +281,7 @@ export function ProjectBuilds({
             token={token}
             projectId={projectId}
             environments={environments}
-            profiles={profiles}
+            bindings={bindings}
             saved={saved}
             config={config}
             setConfig={setConfig}
@@ -362,7 +362,7 @@ function InCi({
   token,
   projectId,
   environments,
-  profiles,
+  bindings,
   saved,
   config,
   setConfig,
@@ -375,7 +375,7 @@ function InCi({
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
-  profiles: string[];
+  bindings: EnvironmentBinding[];
   saved: SavedProduct | null;
   config: ProjectConfig | null;
   setConfig: (c: ProjectConfig) => void;
@@ -454,7 +454,7 @@ function InCi({
         token={token}
         projectId={projectId}
         environments={environments}
-        profiles={profiles}
+        bindings={bindings}
         saved={saved}
       />
       {failures.map((f) => (

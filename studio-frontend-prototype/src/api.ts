@@ -1738,7 +1738,8 @@ export interface ResearchHardware {
   trial: boolean;
 }
 
-/** A project's product profile bound to an environment. */
+/** An environment of the project and the product profile it runs there
+ *  (ADR-0057): each environment bound at most once, a profile to any number. */
 export interface EnvironmentBinding {
   profile: string;
   environment_id: string;
@@ -3248,27 +3249,36 @@ export interface ProjectProduct {
   name?: string;
   /** Catalogue names (`cf-gears-api-gateway`), in the order they were picked. */
   gears?: string[];
+  /** The profile the old single select checked; nothing reads it now. */
   profile?: string;
   updated_at?: string;
-  /** What the engine said the last time the product was previewed. */
-  last_preview?: {
-    profile: string;
-    ok: boolean;
-    errors: number;
-    warnings: number;
-    applications: string[];
-    /** Every gear the resolution contains, picked or pulled in, by crate. */
-    gears: string[];
-    corpus_commit?: string | null;
-    /** What the gears need running beside them; absent in a record from before. */
-    infrastructure?: ProductTechnology[];
-  };
+  /** What the engine said of the product, per profile id (ADR-0057). Absent
+   *  in a record from before; a check is about the description whose hash it
+   *  carries. */
+  checks?: Record<string, ProductCheck>;
+  /** The latest check, whichever profile it was: kept for older readers. */
+  last_preview?: ProductCheck & { profile: string };
   /** Where `product.gdl` was last committed; `path` is relative to the repository root. */
   written?: { branch: string; commit_sha: string; pr_url?: string | null; path?: string };
   /** The description revision Studio keeps (ADR-0053), and its path in the repository. */
   description?: { revision: number; sha256?: string; path?: string | null };
   /** Where and which revision was last published to the repository (ADR-0053 §3). */
   published?: { revision: number; branch: string; commit_sha: string; pr_url?: string | null; path?: string; at?: string };
+}
+
+/** What the engine said of the product for one profile. */
+export interface ProductCheck {
+  ok: boolean;
+  errors: number;
+  warnings: number;
+  applications: string[];
+  /** Every gear the resolution contains, picked or pulled in, by crate. */
+  gears: string[];
+  corpus_commit?: string | null;
+  /** What the gears need running beside them; absent in a record from before. */
+  infrastructure?: ProductTechnology[];
+  /** The hash of the `product.gdl` it checked; absent in a record from before. */
+  gdl_sha256?: string;
 }
 
 /** One revision of a product's description, which Studio keeps (ADR-0053). */
@@ -3310,6 +3320,8 @@ export function descriptionConflictOf(e: unknown): ProductDescriptionConflict | 
 /** What the Gearbox engine made of a set of picked gears. */
 export interface ProductPreview {
   product_gdl: string;
+  /** Hex SHA-256 of `product_gdl`; absent from an older backend. */
+  gdl_sha256?: string;
   profile: string;
   ok: boolean;
   diagnostics: GearboxDiagnostic[];

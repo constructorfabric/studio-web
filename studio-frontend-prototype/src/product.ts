@@ -6,16 +6,104 @@
 // they land, what cannot work. This module only decides what can be offered
 // for picking and how the picks and the session are spelled.
 
-import type { GearboxDiagnostic, GearboxStatus, RepoEntry } from "./api";
+import type { EnvironmentBinding, GearboxDiagnostic, GearboxStatus, ProductCheck, ProjectProduct, RepoEntry } from "./api";
 import type { Candidate, PlanRow } from "./api";
 
+/** The shape a profile deploys the product in, as `product.gdl` spells its
+ *  constructor. */
+export type ProfileKind = "embedded" | "self_hosted" | "kubernetes";
+
 /** The deployment profiles a generated product.gdl declares, in the order they
- *  are offered, with what each one means to somebody choosing. */
-export const PRODUCT_PROFILES: readonly { id: string; label: string }[] = [
-  { id: "dev", label: "dev · one process" },
-  { id: "local", label: "local · processes on one host" },
-  { id: "prod", label: "prod · Kubernetes" },
+ *  are shown: the shape first, which is what somebody reading cares about,
+ *  then the id the description and the bindings use. */
+export const PRODUCT_PROFILES: readonly { id: string; kind: ProfileKind; label: string }[] = [
+  { id: "prod", kind: "kubernetes", label: "Kubernetes · prod" },
+  { id: "local", kind: "self_hosted", label: "One host · local" },
+  { id: "dev", kind: "embedded", label: "One process · dev" },
 ];
+
+/** The profiles an environment can run (ADR-0057: only kubernetes ones bind,
+ *  for now): the ones whose shape is a cluster. */
+export const KUBERNETES_PROFILES: readonly string[] = PRODUCT_PROFILES.filter((p) => p.kind === "kubernetes").map((p) => p.id);
+
+/** A profile as a person reads it: "Kubernetes · prod"; an id the product
+ *  does not declare, as it is. */
+export function profileLabel(id: string): string {
+  return PRODUCT_PROFILES.find((p) => p.id === id)?.label ?? id;
+}
+
+/** The profile checked when no environment is bound: the one a release would
+ *  take. */
+export const FALLBACK_PROFILE = "prod";
+
+/** The profiles the engine checks whenever the product changes: the ones some
+ *  environment runs, or -- with none bound -- `prod`. Others are checked on
+ *  demand. */
+export function profilesToCheck(bindings: readonly Pick<EnvironmentBinding, "profile">[]): string[] {
+  const bound = [...new Set(bindings.map((b) => b.profile))];
+  if (bound.length === 0) return [FALLBACK_PROFILE];
+  // In the order the profiles are shown, an unknown id last.
+  const order = (id: string) => {
+    const i = PRODUCT_PROFILES.findIndex((p) => p.id === id);
+    return i < 0 ? PRODUCT_PROFILES.length : i;
+  };
+  return bound.sort((a, b) => order(a) - order(b));
+}
+
+/** The environments that run `profile`, by id. */
+export function environmentsRunning(bindings: readonly EnvironmentBinding[], profile: string): string[] {
+  return bindings.filter((b) => b.profile === profile).map((b) => b.environment_id);
+}
+
+type CheckFacts = Pick<ProjectProduct, "checks" | "last_preview"> | null | undefined;
+
+/** What the engine last said of the product for `profile`. A record from
+ *  before checks were kept per profile has only its last preview, which
+ *  answers for the profile it was made for. */
+export function checkOf(product: CheckFacts, profile: string): ProductCheck | null {
+  const kept = product?.checks?.[profile];
+  if (kept) return kept;
+  const last = product?.last_preview;
+  return !product?.checks && last?.profile === profile ? last : null;
+}
+
+/** The description the record is about now: the hash of the last check's, which
+ *  every change of the product makes again. `null` for a record from before. */
+export function currentDescription(product: CheckFacts): string | null {
+  return product?.last_preview?.gdl_sha256 ?? null;
+}
+
+/** One profile's verdict: resolves, fails with errors, never checked, or
+ *  checked against a description that has changed since. */
+export interface ProfileVerdict {
+  state: "ok" | "failed" | "unchecked" | "stale";
+  errors: number;
+  check: ProductCheck | null;
+}
+
+/** `profile`'s verdict against the description whose hash is `current`
+ *  (the record's own by default). A check without a hash is current only
+ *  while nothing says otherwise: a record from before hashes were kept. */
+export function verdictOf(product: CheckFacts, profile: string, current: string | null = currentDescription(product)): ProfileVerdict {
+  const check = checkOf(product, profile);
+  if (!check) return { state: "unchecked", errors: 0, check: null };
+  if (current && check.gdl_sha256 !== current) return { state: "stale", errors: check.errors, check };
+  return { state: check.ok ? "ok" : "failed", errors: check.errors, check };
+}
+
+/** A verdict in a few words: "✓", "✗ 2 errors", "not checked", "stale". */
+export function verdictText(v: ProfileVerdict): string {
+  switch (v.state) {
+    case "ok":
+      return "✓";
+    case "failed":
+      return `✗ ${v.errors} error${v.errors === 1 ? "" : "s"}`;
+    case "unchecked":
+      return "not checked";
+    case "stale":
+      return "stale";
+  }
+}
 
 /** Whether a candidate can go into a product.gdl at all. Only Rust gears and
  *  their plugins are composed by the engine; FrontX packages (`@scope/x`),
