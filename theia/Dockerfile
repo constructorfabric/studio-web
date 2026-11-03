@@ -201,13 +201,16 @@ FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe6
 # merges, the engine is the snapshot of that PR's branch on its author's fork;
 # move back to a constructorfabric/gearbox release once it does.
 ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-a0bebdc
-ARG STUDIO_GEARBOX_VERSION=0.1.0-a0bebdc
-ARG STUDIO_GEARBOX_REF=a0bebdc362b0b73a0261f5b5ebdb8e9a9e382073
-ARG STUDIO_GEARBOX_SHA256=f50e5b6266618441dc2db40d1402d92030bd7fede3f6fdf66df422525c0dd364
+ARG STUDIO_GEARBOX_RELEASE=snapshot-361e703
+ARG STUDIO_GEARBOX_VERSION=0.1.0-361e703
+ARG STUDIO_GEARBOX_REF=361e70390d1001a5e0a11ed5dbdfdefa761cd7a6
+ARG STUDIO_GEARBOX_SHA256=27d1dd882fe178a37098b74870398ad3b63dea18686415f20cb4408953ea7fa2
 # Not used here: gearbox-engine.yml reads them for the desktop's archives.
-ARG STUDIO_GEARBOX_SHA256_WIN32_X64=4905986c085324abb8452c96f68ce13a015e7d8fb7ad906d26ecea1171ac5dae
-ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=9bc7459619f29b32829b6a6798c724707328cc40e00299f17a15ac1ce03f6adb
+# Empty when the release has no archive for that platform: the workflow then
+# packs no engine for it (snapshot-361e703 has no macOS build; its runner
+# never came). Fill it in with the next release that has one.
+ARG STUDIO_GEARBOX_SHA256_WIN32_X64=385ee3a96ec772c9cace3668ea7b3fceb2e0bd94e57b6d55415936c38bce8682
+ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \
