@@ -68,6 +68,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0054](0054-a-project-keeps-environments-of-its-own-on-places-the-organization-opens.md) | A project keeps environments of its own, on places the organization opens to it | proposed | 2026-10-29 |
 | [0055](0055-a-build-is-previewed-in-a-namespace-of-its-own-that-expires.md) | A build is previewed in a namespace of its own that expires | proposed | 2026-10-30 |
 | [0056](0056-places-environments-and-releases-are-laid-out-the-way-an-organization-runs-them.md) | Places, environments and releases are laid out the way an organization runs them | proposed | 2026-11-03 |
+| [0057](0057-a-profile-is-chosen-per-environment-and-checked-per-profile.md) | A profile is chosen per environment and checked per profile | proposed | 2026-11-03 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
