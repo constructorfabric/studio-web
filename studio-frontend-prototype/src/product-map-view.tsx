@@ -25,6 +25,7 @@ import { useGearCatalogue } from "./product-configurator-view";
 import { offers } from "./product-configurator";
 import {
   MAP_LAYERS,
+  MISSING_GROUP,
   catalogueMfe,
   frontendWith,
   frontendWithout,
@@ -407,7 +408,34 @@ export function ProductMap({
 
 /* ── The lanes and the links ─────────────────────────────────────────────── */
 
-type Path = { key: string; d: string; link: MapLink };
+/** One drawn line: every link between the same two drawn ends (a folded
+ *  group draws its nodes' links at its header), `count` of them. */
+type Path = { key: string; d: string; link: MapLink; links: MapLink[]; count: number; mid: { x: number; y: number } };
+
+/** The groups of a lane in the order that crosses fewest lines: by the mean
+ *  place of what links into them from the lane above (a barycentre). The
+ *  engine's group of what is missing stays first; groups nothing above links
+ *  to come after the rest, in their own order. */
+function laneOrder(
+  groups: { group: string; nodes: MapNode[] }[],
+  above: Map<string, number>,
+  links: readonly MapLink[],
+): { group: string; nodes: MapNode[] }[] {
+  if (above.size === 0) return groups;
+  const score = (g: { nodes: MapNode[] }) => {
+    const ids = new Set(g.nodes.map((n) => n.id));
+    const at: number[] = [];
+    for (const l of links) {
+      if (ids.has(l.to) && above.has(l.from)) at.push(above.get(l.from)!);
+      else if (ids.has(l.from) && above.has(l.to)) at.push(above.get(l.to)!);
+    }
+    return at.length ? at.reduce((a, b) => a + b, 0) / at.length : Number.POSITIVE_INFINITY;
+  };
+  return groups
+    .map((g, i) => ({ g, i, s: g.group === MISSING_GROUP ? Number.NEGATIVE_INFINITY : score(g) }))
+    .sort((a, b) => (a.s === b.s ? a.i - b.i : a.s - b.s))
+    .map((x) => x.g);
+}
 
 function Canvas({
   map,
@@ -443,8 +471,26 @@ function Canvas({
   const [paths, setPaths] = useState<Path[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [over, setOver] = useState<MapLayer | null>(null);
+  /** The node the pointer is on: its links show as if it were selected. */
+  const [hover, setHover] = useState<string | null>(null);
   const lanes = MAP_LAYERS.filter((l) => layers.has(l.id));
   const groupKey = (n: MapNode) => `${n.layer}:${n.group}`;
+
+  // Each lane's groups ordered under what links into them from the lane
+  // above, so lines run down rather than across.
+  const laneGroups = useMemo(() => {
+    const out = new Map<MapLayer, { group: string; nodes: MapNode[] }[]>();
+    let above = new Map<string, number>();
+    for (const lane of MAP_LAYERS) {
+      const groups = laneOrder(groupsOf(map.nodes, lane.id), above, map.links);
+      out.set(lane.id, groups);
+      if (!layers.has(lane.id)) continue;
+      const next = new Map<string, number>();
+      groups.flatMap((g) => g.nodes).forEach((n, i) => next.set(n.id, i));
+      above = next;
+    }
+    return out;
+  }, [map, layers]);
 
   const measure = useCallback(() => {
     const el = box.current;
@@ -452,37 +498,72 @@ function Canvas({
     const at = el.getBoundingClientRect();
     const rank = (layer: MapLayer) => MAP_LAYERS.findIndex((l) => l.id === layer);
     // A node in a folded group is drawn at its group's header.
-    const rectOf = (id: string) => {
+    // `end` names what is drawn for a node -- its group's header while the
+    // group is folded -- so links between the same drawn ends are one line.
+    const endOf = (id: string) => {
       const n = nodeById.get(id);
       if (!n || !layers.has(n.layer)) return null;
-      const target = collapsed.has(groupKey(n)) ? refs.current.get(`group:${groupKey(n)}`) : refs.current.get(id);
-      const r = target?.getBoundingClientRect();
-      return r ? { x: r.left - at.left, y: r.top - at.top, w: r.width, h: r.height } : null;
+      const end = collapsed.has(groupKey(n)) ? `group:${groupKey(n)}` : id;
+      const r = refs.current.get(end)?.getBoundingClientRect();
+      return r ? { end, layer: n.layer, x: r.left - at.left, y: r.top - at.top, w: r.width, h: r.height } : null;
+    };
+    type End = NonNullable<ReturnType<typeof endOf>>;
+    const bundles = new Map<string, { a: End; b: End; links: MapLink[] }>();
+    for (const l of map.links) {
+      const a = endOf(l.from);
+      const b = endOf(l.to);
+      if (!a || !b || a.end === b.end) continue;
+      const key = `${a.end}>${b.end}`;
+      const had = bundles.get(key);
+      if (had) had.links.push(l);
+      else bundles.set(key, { a, b, links: [l] });
+    }
+    // Lines between lanes leave the bottom and arrive at the top; within a
+    // lane both ends are at the bottom.
+    const sides = (a: End, b: End) => {
+      const same = rank(a.layer) === rank(b.layer);
+      const down = rank(a.layer) < rank(b.layer);
+      return { aBottom: same || down, bBottom: same || !down };
+    };
+    // A node's lines are spread along its edge in the order of their other
+    // ends, so they fan out instead of leaving from one point.
+    const edges = new Map<string, { key: string; other: number }[]>();
+    const onEdge = (edge: string, key: string, other: End) =>
+      edges.set(edge, [...(edges.get(edge) ?? []), { key, other: other.x + other.w / 2 }]);
+    for (const [key, { a, b }] of bundles) {
+      const { aBottom, bBottom } = sides(a, b);
+      onEdge(`${a.end}:${aBottom ? "b" : "t"}`, key, b);
+      onEdge(`${b.end}:${bBottom ? "b" : "t"}`, key, a);
+    }
+    const xOn = (end: End, edge: string, key: string) => {
+      const list = [...(edges.get(edge) ?? [])].sort((p, q) => p.other - q.other);
+      const k = list.findIndex((e) => e.key === key);
+      const pad = Math.min(12, end.w / 4);
+      const span = end.w - 2 * pad;
+      return end.x + pad + (list.length <= 1 ? span / 2 : (span * k) / (list.length - 1));
     };
     const out: Path[] = [];
-    map.links.forEach((l, i) => {
-      const a = rectOf(l.from);
-      const b = rectOf(l.to);
-      const na = nodeById.get(l.from);
-      const nb = nodeById.get(l.to);
-      if (!a || !b || !na || !nb) return;
-      const ax = a.x + a.w / 2;
-      const bx = b.x + b.w / 2;
+    for (const [key, { a, b, links }] of bundles) {
+      const { aBottom, bBottom } = sides(a, b);
+      const ax = xOn(a, `${a.end}:${aBottom ? "b" : "t"}`, key);
+      const bx = xOn(b, `${b.end}:${bBottom ? "b" : "t"}`, key);
+      const ay = aBottom ? a.y + a.h : a.y;
+      const by = bBottom ? b.y + b.h : b.y;
       let d: string;
-      if (rank(na.layer) === rank(nb.layer)) {
-        const ay = a.y + a.h;
-        const by = b.y + b.h;
+      let mid: { x: number; y: number };
+      if (aBottom && bBottom) {
         const dip = Math.max(ay, by) + 24;
         d = `M${ax},${ay} C${ax},${dip} ${bx},${dip} ${bx},${by}`;
+        mid = { x: (ax + bx) / 2, y: dip - 6 };
       } else {
-        const down = rank(na.layer) < rank(nb.layer);
-        const ay = down ? a.y + a.h : a.y;
-        const by = down ? b.y : b.y + b.h;
-        const mid = (ay + by) / 2;
-        d = `M${ax},${ay} C${ax},${mid} ${bx},${mid} ${bx},${by}`;
+        const m = (ay + by) / 2;
+        d = `M${ax},${ay} C${ax},${m} ${bx},${m} ${bx},${by}`;
+        mid = { x: (ax + bx) / 2, y: m };
       }
-      out.push({ key: `${i}:${l.from}>${l.to}`, d, link: l });
-    });
+      // The line speaks for its worst link: a bad one is never hidden in a bundle.
+      const link = links.find((l) => l.state === "bad") ?? links[0];
+      out.push({ key, d, link, links, count: links.length, mid });
+    }
     setPaths(out);
     setSize({ w: el.scrollWidth, h: el.scrollHeight });
   }, [map, nodeById, layers, collapsed]);
@@ -503,14 +584,16 @@ function Canvas({
     if (el) refs.current.set(id, el);
     else refs.current.delete(id);
   };
-  const touches = (l: MapLink) => (selected ? l.from === selected || l.to === selected : link ? l === link : false);
+  // What is lit: the selection, else what the pointer is on.
+  const lit = selected ?? (link ? null : hover);
+  const touches = (l: MapLink) => (lit ? l.from === lit || l.to === lit : link ? l === link : false);
   const linked = new Set<string>();
-  if (selected) for (const l of linksOf(map, selected)) linked.add(l.from === selected ? l.to : l.from);
+  if (lit) for (const l of linksOf(map, lit)) linked.add(l.from === lit ? l.to : l.from);
   if (link) {
     linked.add(link.from);
     linked.add(link.to);
   }
-  const focus = !!selected || !!link;
+  const focus = !!lit || !!link;
 
   const accepts = (layer: MapLayer, e: DragEvent) =>
     (layer === "frontend" && e.dataTransfer.types.includes(DRAG_MFE)) || (layer === "backend" && e.dataTransfer.types.includes(DRAG_GEAR));
@@ -522,7 +605,9 @@ function Canvas({
         key={n.id}
         ref={setRef(n.id)}
         type="button"
-        className={`pmap-node ${n.state} ${n.detail.kind}${selected === n.id ? " on" : ""}${linked.has(n.id) ? " linked" : ""}${focus && !linked.has(n.id) && selected !== n.id ? " dim" : ""}`}
+        className={`pmap-node ${n.state} ${n.detail.kind}${selected === n.id ? " on" : ""}${linked.has(n.id) ? " linked" : ""}${focus && !linked.has(n.id) && lit !== n.id ? " dim" : ""}`}
+        onMouseEnter={() => setHover(n.id)}
+        onMouseLeave={() => setHover((h) => (h === n.id ? null : h))}
         title={`${KIND_WORDS[n.detail.kind]}: ${n.label}${STATE_WORDS[n.state] ? ` (${STATE_WORDS[n.state]})` : ""}`}
         onClick={(e) => {
           e.stopPropagation();
@@ -553,11 +638,17 @@ function Canvas({
         {paths.map((p) => {
           // Gear-to-gear links show only for what is selected: the lane would
           // be a web otherwise.
-          if (p.link.kind === "depends" && !touches(p.link)) return null;
-          const cls = `pmap-link ${p.link.kind} ${p.link.state}${touches(p.link) ? " on" : focus ? " dim" : ""}`;
+          const on = p.links.some(touches);
+          if (p.links.every((l) => l.kind === "depends") && !on) return null;
+          const cls = `pmap-link ${p.link.kind} ${p.link.state}${on ? " on" : focus ? " dim" : ""}`;
           return (
             <g key={p.key}>
-              <path className={cls} d={p.d} />
+              <path className={cls} d={p.d} style={p.count > 1 ? { strokeWidth: `${Math.min(5, 1.2 + Math.log2(p.count))}px` } : undefined} />
+              {p.count > 1 && (on || !focus) && (
+                <text className="pmap-link-count" x={p.mid.x} y={p.mid.y} textAnchor="middle" dominantBaseline="middle">
+                  {p.count}
+                </text>
+              )}
               <path
                 className="pmap-link-hit"
                 d={p.d}
@@ -566,7 +657,7 @@ function Canvas({
                   onLink(p.link);
                 }}
               >
-                <title>{p.link.why}</title>
+                <title>{p.count > 1 ? `${p.count} links: ${p.links.slice(0, 4).map((l) => l.why).join("; ")}${p.count > 4 ? "; …" : ""}` : p.link.why}</title>
               </path>
             </g>
           );
@@ -574,7 +665,7 @@ function Canvas({
       </svg>
       {lanes.length === 0 && <p className="muted">Every layer is hidden: turn one on above.</p>}
       {lanes.map((lane) => {
-        const groups = groupsOf(map.nodes, lane.id);
+        const groups = laneGroups.get(lane.id) ?? [];
         const shell = map.nodes.find((n) => n.detail.kind === "shell");
         return (
           <div

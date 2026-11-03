@@ -2910,7 +2910,7 @@ div.dm-block { padding-left: 0; }
 .pmap-item-sub { font-size: 11px; color: var(--muted-foreground); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .pmap-item-group { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin: 6px 0 2px; }
 
-.pmap-canvas { position: relative; display: grid; gap: 28px; align-content: start; min-width: 0; padding: 4px 0 12px; }
+.pmap-canvas { position: relative; display: grid; gap: 44px; align-content: start; min-width: 0; padding: 4px 0 12px; }
 .pmap-links { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 0; }
 .pmap-link { fill: none; stroke: var(--studio-icon-subtle); stroke-width: 1.2; opacity: .45; }
 .pmap-link.bad { stroke: var(--destructive); opacity: .9; stroke-width: 1.6; }
@@ -2918,6 +2918,7 @@ div.dm-block { padding-left: 0; }
 .pmap-link.depends { stroke-dasharray: 2 3; }
 .pmap-link.dim { opacity: .08; }
 .pmap-link.on { stroke: var(--primary); opacity: 1; stroke-width: 2.2; }
+.pmap-link-count { font-size: 10px; font-weight: 600; fill: var(--muted-foreground); paint-order: stroke; stroke: var(--card); stroke-width: 3px; pointer-events: none; }
 .pmap-link.bad.on { stroke: var(--destructive); }
 .pmap-link-hit { fill: none; stroke: transparent; stroke-width: 10; pointer-events: stroke; cursor: pointer; }
 

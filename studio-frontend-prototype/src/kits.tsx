@@ -1795,7 +1795,7 @@ function ProductCard({
           <GearConfigForm token={token} product={product} />
             {catalogue && "error" in catalogue && (
               <p className="hint" style={{ fontSize: 12 }}>
-                The product map needs the gear catalogue, which could not be read ({catalogue.error}).
+                The gears by group need the gear catalogue, which could not be read ({catalogue.error}).
               </p>
             )}
         </>
