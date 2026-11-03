@@ -35,6 +35,8 @@ pub use super::driver::{
 #[cfg(test)]
 pub use super::driver::{ConnectorCategory, DriverIdentity};
 pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
+/// Whether a name is a gear repository's source id, as the engine takes it.
+pub use super::gear_repository::is_source_id;
 pub use super::kubernetes::ClusterAccess;
 pub use super::references::{Mention, NumberRef, Relation, find as find_references};
 pub use super::registry::{RegistryAccess, same_registry};

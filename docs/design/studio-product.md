@@ -540,6 +540,7 @@ profile but `dev.yaml`; otherwise the gear is configured by environment.
 | `STUDIO_GEARBOX_BIN` | `gearbox` | The engine CLI |
 | `STUDIO_GEARBOX_CORPUS_URL` | unset: no corpus until the platform has a gear repository | The corpus while the platform has no gear repository (ADR-0046) |
 | `STUDIO_GEARBOX_CORPUS_REF` | `main` | Its ref |
+| `STUDIO_GEARBOX_CORPUS_ID` | the corpus URL's repository name, kebab-case; `gears-rust` without a URL | The source id descriptions name the corpus by |
 | `STUDIO_GEARBOX_REFRESH_SECS` | `600` | How often the checkout is refreshed |
 
 On start, with Gearbox configured, the corpus is checked out and the engine run

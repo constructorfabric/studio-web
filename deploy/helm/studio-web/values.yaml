@@ -193,13 +193,16 @@ backend:
   # refreshed in the background at most every `refreshSecs`. An `emptyDir`
   # unless `persistence` is on: then a restart fetches instead of re-cloning.
   # `corpusUrl` (the platform's gears, ADR-0042) is required once enabled;
-  # an empty `corpusRef` means `main`.
+  # an empty `corpusRef` means `main`. `corpusId` is the source id product
+  # descriptions name the corpus by; empty takes the corpus repository's
+  # name (`gears-rust` for `.../gears-rust.git`).
   gearbox:
     enabled: false
     sizeLimit: 2Gi
     mountPath: /var/lib/studio/gearbox
     corpusUrl: ""
     corpusRef: ""
+    corpusId: ""
     refreshSecs: ""
     # A claim instead of the emptyDir, like artifactClone's (#848). One
     # replica only (ReadWriteOnce): a rollout needs maxSurge 0. `sizeLimit`

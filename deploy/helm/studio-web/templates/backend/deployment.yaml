@@ -223,6 +223,10 @@ spec:
             - name: STUDIO_GEARBOX_CORPUS_REF
               value: {{ . | quote }}
             {{- end }}
+            {{- with .corpusId }}
+            - name: STUDIO_GEARBOX_CORPUS_ID
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .refreshSecs }}
             - name: STUDIO_GEARBOX_REFRESH_SECS
               value: {{ . | quote }}

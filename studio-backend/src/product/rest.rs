@@ -21,7 +21,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::gearbox::{CORPUS_SOURCE_ID, GearRoot, Gearbox, PROFILES, PreviewInput, Scope};
+use super::gearbox::{GearRoot, Gearbox, PROFILES, PreviewInput, Scope};
 use super::service::ProductService;
 use crate::catalog_graph::gts::GtsNode;
 use crate::org_scope::OrgCtx;
@@ -1619,7 +1619,7 @@ async fn gearbox_status(
             corpus_url: None,
             corpus_ref: None,
             corpus_commit: None,
-            source_id: CORPUS_SOURCE_ID.to_string(),
+            source_id: super::gearbox::corpus_source_id().to_string(),
             profiles,
             problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
             sources: Vec::new(),

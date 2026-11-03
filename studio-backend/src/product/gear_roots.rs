@@ -372,6 +372,7 @@ mod tests {
             workdir: std::env::temp_dir(),
             corpus_url: String::new(),
             corpus_ref: "main".into(),
+            corpus_id: "gears-rust".into(),
             refresh: Duration::from_secs(600),
         }));
         let org = Uuid::from_u128(0x0a);
