@@ -36,7 +36,7 @@ impl Gear for StudioKitsGear {
             .set(Arc::new(KitRegistryService::new(
                 account_management,
                 ctx.client_hub(),
-            )))
+            )?))
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
         Ok(())
     }

@@ -12,17 +12,37 @@ use uuid::Uuid;
 pub const INSTALLATIONS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.kit_installations.v1~";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+/// One kit of the catalogue. In `STUDIO_KIT_CATALOGUE` only `slug`, `name`,
+/// `repository_url` and `default_version` are required; the rest default as
+/// the built-in kits have them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KitDescriptor {
     pub slug: String,
     pub name: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub publisher: String,
+    #[serde(default = "default_visibility")]
     pub visibility: String,
+    #[serde(default = "default_source")]
     pub source: String,
     pub repository_url: String,
     pub default_version: String,
+    #[serde(default = "default_manifest_path")]
     pub manifest_path: String,
+}
+
+fn default_visibility() -> String {
+    "public".to_owned()
+}
+
+fn default_source() -> String {
+    "github".to_owned()
+}
+
+fn default_manifest_path() -> String {
+    ".cf-studio-kit.toml".to_owned()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,24 +130,36 @@ struct InstallationDocument {
 
 pub struct KitRegistryService {
     account_management: Arc<dyn AccountManagementClient>,
+    /// `STUDIO_KIT_CATALOGUE`, else [`official_catalogue`]; read once.
+    catalogue: Vec<KitDescriptor>,
     #[cfg(feature = "theia-bridge")]
     client_hub: Arc<ClientHub>,
 }
 
 impl KitRegistryService {
+    /// Refused when `STUDIO_KIT_CATALOGUE` is set and does not read: a
+    /// deployment that names its kits must not quietly offer others.
     pub fn new(
         account_management: Arc<dyn AccountManagementClient>,
         _client_hub: Arc<ClientHub>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let catalogue = match std::env::var("STUDIO_KIT_CATALOGUE")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+        {
+            Some(json) => parse_catalogue(&json).context("STUDIO_KIT_CATALOGUE")?,
+            None => official_catalogue(),
+        };
+        Ok(Self {
             account_management,
+            catalogue,
             #[cfg(feature = "theia-bridge")]
             client_hub: _client_hub,
-        }
+        })
     }
 
     pub fn catalogue(&self) -> Vec<KitDescriptor> {
-        official_catalogue()
+        self.catalogue.clone()
     }
 
     pub async fn list_installations(
@@ -480,6 +512,29 @@ impl KitRegistryService {
     }
 }
 
+/// A deployment's catalogue: a JSON array of [`KitDescriptor`]s. Each slug
+/// and default version must be one a request could name, and slugs distinct;
+/// an empty list is a deployment without kits.
+fn parse_catalogue(json: &str) -> Result<Vec<KitDescriptor>> {
+    let kits: Vec<KitDescriptor> =
+        serde_json::from_str(json).context("not a JSON array of kits")?;
+    let mut seen = std::collections::HashSet::new();
+    for kit in &kits {
+        if normalize_slug(&kit.slug)? != kit.slug {
+            bail!("kit slug `{}` must be lowercase", kit.slug);
+        }
+        if !seen.insert(kit.slug.as_str()) {
+            bail!("two kits share the slug `{}`", kit.slug);
+        }
+        normalize_version(&kit.default_version).with_context(|| format!("kit `{}`", kit.slug))?;
+        if !kit.repository_url.starts_with("https://") {
+            bail!("kit `{}`: repository_url must be an https URL", kit.slug);
+        }
+    }
+    Ok(kits)
+}
+
+/// The catalogue when the deployment names none: Constructor's own kits.
 fn official_catalogue() -> Vec<KitDescriptor> {
     vec![
         KitDescriptor {
@@ -735,7 +790,7 @@ mod tests {
     use super::{
         KitInstallation, KitMaterialization, MaterializationOutcome, ProjectRepository,
         SCOPE_ALL_REPOSITORIES, SCOPE_PROJECT, normalize_install_mode, normalize_reported_label,
-        normalize_scope, normalize_slug, normalize_version, official_catalogue,
+        normalize_scope, normalize_slug, normalize_version, official_catalogue, parse_catalogue,
         reconciliation_targets, record_outcome, upgrade_installation, upsert_materialization,
     };
 
@@ -773,6 +828,39 @@ mod tests {
                 kit.default_version
             );
         }
+    }
+
+    #[test]
+    fn a_deployment_names_its_own_kits() {
+        let kits = parse_catalogue(
+            r#"[{"slug": "ops", "name": "Ops", "repository_url": "https://github.com/acme/kit-ops",
+                 "default_version": "v1.2.0"}]"#,
+        )
+        .unwrap();
+        assert_eq!(kits.len(), 1);
+        assert_eq!(kits[0].source, "github");
+        assert_eq!(kits[0].visibility, "public");
+        assert_eq!(kits[0].manifest_path, ".cf-studio-kit.toml");
+        assert!(parse_catalogue("[]").unwrap().is_empty());
+        // The built-in list round-trips, so it is also a template to copy.
+        let official = official_catalogue();
+        let json = serde_json::to_string(&official).unwrap();
+        assert_eq!(parse_catalogue(&json).unwrap(), official);
+    }
+
+    #[test]
+    fn a_catalogue_that_does_not_read_is_refused() {
+        let kit = |slug: &str, url: &str, version: &str| {
+            format!(
+                r#"{{"slug": "{slug}", "name": "n", "repository_url": "{url}", "default_version": "{version}"}}"#
+            )
+        };
+        let ok = kit("ops", "https://github.com/acme/kit-ops", "main");
+        assert!(parse_catalogue("{}").is_err());
+        assert!(parse_catalogue(&format!("[{ok}, {ok}]")).is_err());
+        assert!(parse_catalogue(&format!("[{}]", kit("Ops", "https://x/y", "main"))).is_err());
+        assert!(parse_catalogue(&format!("[{}]", kit("ops", "http://x/y", "main"))).is_err());
+        assert!(parse_catalogue(&format!("[{}]", kit("ops", "https://x/y", "../main"))).is_err());
     }
 
     #[test]

@@ -219,6 +219,10 @@ backend:
   frontx:
     shellTemplate: ""
     source: ""
+  # The kit catalogue (kit_registry/README.md): a JSON array of kits, each
+  # `slug`, `name`, `repository_url`, `default_version`. Empty is
+  # Constructor's own kits; a value that does not read stops the backend.
+  kitCatalogue: ""
   # OpenTelemetry push to the cluster's collector (deploy/observability).
   #
   # The instruments already exist in the binary — the api-gateway gear installs
