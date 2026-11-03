@@ -22,6 +22,7 @@ Status: **proposed** · Date: 2026-11-03 · Lays out the screens of `cpt-studio-
   - [3. Project › Product](#3-project--product)
   - [4. Project › Releases](#4-project--releases)
   - [5. One form per place](#5-one-form-per-place)
+  - [6. The product map's next layers](#6-the-product-maps-next-layers)
 - [Consequences](#consequences)
 - [More Information](#more-information)
 - [Traceability](#traceability)
@@ -117,6 +118,48 @@ This replaces the Builds and Deploys tabs.
 - A Research place asks for the Research project and hardware. A cluster asks for the registry, namespaces and database.
 - A project's own environment is added from Releases. Its place is chosen from the ones ADR-0054 allows.
 
+### 6. The product map's next layers
+
+The product map (§3) shows the product as it is described: its screens, its
+gears, and what they need beside them. To give the whole picture it gains
+four layers. Each one is read from data Studio already keeps, so none of
+them asks the person to describe anything twice.
+
+1. **Specs, above the screens.** The capabilities the project's documents
+   declare are what Backend's Specs coverage shows today. Each capability
+   links to the gears that close it:
+   - a solid link when a gear closes it by contract;
+   - a dashed link when a gear only mentions its words;
+   - a red link to a "needs a gear" placeholder, with candidates from the
+     catalogue, when nothing closes it.
+
+   A deployment capability links to a profile and its environments instead.
+   Selecting a gear shows the requirements it closes. A gear that closes
+   none and that no screen calls is a candidate for removal. Specs do not
+   go into `product.gdl`: they are why the product is what it is, not part
+   of its description.
+2. **Configuration and secrets on the nodes.** A gear in the product can
+   still be unable to run, because it is not configured. Today that is the
+   line "N things to finish". On the map, a node carries its own items: what
+   is not set, and for each environment what is not set there. The values
+   and secrets are the ones Releases keeps per environment.
+3. **External services**, a group inside the infrastructure layer. These
+   are the model providers reached through the gateway, the identity
+   provider, the code host and Constructor Research. Each gear that uses one
+   links to it. The service shows whether the project has a working
+   connection to it: a shared one, only a member's personal one, or none.
+4. **What runs, as an overlay.** Pick an environment, and each node shows
+   the version running there and whether it is healthy. The data is the
+   Releases ladder and its deploys. The map without the overlay is the
+   product as described; with it, the product as deployed. The difference
+   between the two is what a release still has to close.
+
+Configuration, external services and the overlay come first, because they
+are what most often makes a product that resolves fail to run. Specs follow.
+The domain model (which entities each gear keeps), test coverage of
+capabilities, and where each part's code comes from with newer versions are
+later layers, not part of this step.
+
 ## Consequences
 
 - **Each thing has one owner and one screen:**
@@ -128,6 +171,8 @@ This replaces the Builds and Deploys tabs.
   1. The form follows its place (§5), and the Product strip (§3) is done.
   2. Releases (§4) is done. Previews still sit with an environment's step, not beside the build they preview.
   3. Infrastructure (§2) is done.
+  4. The product map's next layers (§6), in this order: configuration and
+     external services, then the runtime overlay, then Specs.
 
 ## More Information
 
