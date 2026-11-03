@@ -261,6 +261,7 @@ sees. Nothing answers with an event: Studio polls.
 |---|---|
 | `GET /auth/session` | the connection's test: the member's id, name and email |
 | `GET /projects` | the projects the member owns or collaborates on |
+| `GET`, `PATCH /projects/{p}` | `deployment_enabled`, turned on before a deploy |
 | `GET /projects/{p}/hardware-configurations` | the hardware a project's services may use, trial or not |
 | `GET`, `POST /projects/{p}/desks` | the desk a build uses |
 | `GET /desks/{d}`, `POST`/`DELETE /desks/{d}/filesystem` | start the desk, wait for `running`, stop it |
@@ -269,7 +270,7 @@ sees. Nothing answers with an event: Studio polls.
 | `GET /api/platform-keeper/image-builds/{i}/logs` | the last lines of a failed build |
 | `GET`, `POST /projects/{p}/applications`, `GET`, `DELETE /applications/{a}` | the environment's application: found by name, created, read, removed |
 | `POST /applications/{a}/services`, `PATCH /applications/{a}/services/{s}`, `DELETE /services/{s}` | its services, one call each |
-| `POST /services/{s}/start`, `/restart`, `GET /services/{s}` | run them; `status` and the public `link` |
+| `POST /services/{s}/start`, `/stop`, `GET /services/{s}` | run them; `status` and the public `link` |
 
 What Research's API cannot do today, and what Studio does instead:
 
@@ -280,7 +281,33 @@ What Research's API cannot do today, and what Studio does instead:
 - **an upload**: none; the desk's files;
 - **events**: none; polling;
 - **service logs**: a live stream only (`/api/platform-keeper/services/{s}/
-  logs`); Studio does not show them yet.
+  logs`), of the current container, with no history: Studio reads its last
+  lines when a deploy finds a service failed or not answering.
+
+How Research builds, as Research's own deployment MCP
+(`constructor-research-mcp`) found on live runs, and Studio does the same:
+
+- a Dockerfile is named `Dockerfile` or `<name>.dockerfile`; Studio writes
+  `studio-<app>.dockerfile`;
+- a build started right after its files were uploaded does not see them:
+  Studio waits 30 s after the upload;
+- `build_status` reads `error` for a moment while Research retries a build
+  itself: an error counts once seen twice for the same image, and a confirmed
+  one is built once more, as `<name>-r2`, before the build fails;
+- a project's deployments are off until `deployment_enabled` is turned on,
+  and Research's UI shows its applications only then: Studio turns it on;
+- Research starts only a stopped or failed service, and its restart of a
+  running one stops it and starts it at once, before it has stopped. Studio
+  changes a running service stopped: stop, wait, `PATCH`, start;
+- `running` is not ready: after a deploy Studio asks each public link for a
+  minute (any answer below 500 counts), and follows every service's log for
+  that minute. Research keeps no log of a replaced container, and each
+  connection replays the current one: a connection that begins with another
+  first line, or "Container is waiting to start" after the container's own
+  lines, is a restart. The deploy still succeeds; its result names each
+  service that restarted, with what the container before printed, and each
+  that did not answer, with its last lines or, when it printed nothing, the
+  usual reasons a container exits at once.
 
 Later, for images from elsewhere and for what a chart may hold: a service
 that names an image outside Research's registry with a pull credential;

@@ -190,7 +190,8 @@ spec-quality checks are also MCP tools, for the agent a developer already works
 in: Claude Code, Codex, Cursor. It is another way into Studio, not a
 replacement for the portal: every call acts as you, with your token, and can
 do only what you can do in the portal. The full guide is
-[`docs/mcp.md`](docs/mcp.md).
+[`docs/mcp.md`](docs/mcp.md); its section 5 says how it sits next to
+Constructor Research's own MCP.
 
 | | |
 |---|---|
