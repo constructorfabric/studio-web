@@ -62,6 +62,10 @@ const MOVED_TO_ADMIN: Record<string, string> = { objects: "objects", views: "vie
  *  Infrastructure now (ADR-0056 §2). */
 const MOVED_VIEWS: Record<string, keyof typeof VIEW_PATHS> = { environments: "environments" };
 
+/** Workspace sections that are gone, whose old address opens the default one:
+ *  Process, the hand-edited stage and capability catalogue (ADR-0058). */
+const RETIRED_WORKSPACE_TABS: readonly string[] = ["process"];
+
 /** What each part of a path may name; anything else is not an address of ours. */
 export interface KnownPlaces {
   projectTabs: readonly string[];
@@ -128,7 +132,8 @@ export function pathToPlace(pathname: string, search: string, known: KnownPlaces
       return withOrg({ view: "projects", adminOpen: false, crumb: { projectId: ws, nestedId: project }, projectTab });
     }
     if (rest.length > 2) return undefined;
-    const workspaceTab = second ?? DEFAULT_WORKSPACE_TAB;
+    const workspaceTab =
+      second === undefined || RETIRED_WORKSPACE_TABS.includes(second) ? DEFAULT_WORKSPACE_TAB : second;
     if (!known.workspaceTabs.includes(workspaceTab)) return undefined;
     return withOrg({ view: "projects", adminOpen: false, crumb: { projectId: ws }, workspaceTab });
   }

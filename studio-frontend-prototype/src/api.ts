@@ -930,6 +930,8 @@ export interface ProjectConfig {
   /** The key of the project type it was created as (`project-types.ts`);
    *  `kind` stays the recipe that created it. */
   type?: string;
+  /** Read by nothing since ADR-0058: the stages are a computed status. Kept
+   *  so a config that carries it round-trips unchanged. */
   stages?: string[];
   status?: ProjectStatus;
   /** Seed source: a git url, a brief, or an uploaded file id. */
@@ -1412,19 +1414,6 @@ export interface JourneyStage {
   /** "builtin" | "organization" | "workspace" — which level defined it. */
   owner: string;
   owner_tenant_id?: string | null;
-}
-
-/** Normalise a stage selection against a catalogue: the required entries plus
- *  what was chosen, in catalogue order.
- *
- *  Takes the catalogue rather than closing over one, because there is no longer
- *  a single right answer — it depends on the workspace. */
-export function normalizeStages(
-  selected: readonly string[],
-  catalogue: readonly JourneyStage[],
-): string[] {
-  const chosen = new Set(selected);
-  return catalogue.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
 }
 
 export type RepoSource = "local" | "git" | "github" | "gitlab";
@@ -3589,53 +3578,10 @@ export const api = {
 
   /* ── studio-documents gear (types + templates + validation) ── */
 
-  /** Define, replace or hide a journey stage in this workspace.
-   *
-   *  `hidden: true` is a tombstone: it removes the inherited entry from the
-   *  effective catalogue instead of replacing it. Reverting is `deleteStage`. */
-  upsertStage: (
-    token: string,
-    workspaceId: string,
-    body: {
-      key: string;
-      label: string;
-      required?: boolean;
-      position?: number;
-      requires?: string[];
-      gates?: string[];
-      hidden?: boolean;
-    },
-  ) =>
-    request<JourneyStage>(`/studio-documents/v1/workspaces/${workspaceId}/stages`, token, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  /** Drop this workspace's own entry for `key`, so what it inherits shows
-   *  through again. Idempotent. */
-  deleteStage: (token: string, workspaceId: string, key: string) =>
-    request<void>(
-      `/studio-documents/v1/workspaces/${workspaceId}/stages/${encodeURIComponent(key)}`,
-      token,
-      { method: "DELETE" },
-    ),
-
-  upsertCapability: (
-    token: string,
-    workspaceId: string,
-    body: { key: string; label: string; terms?: string[]; contracts?: string[]; nonfunctional?: boolean; hidden?: boolean },
-  ) =>
-    request<Capability>(`/studio-documents/v1/workspaces/${workspaceId}/capabilities`, token, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  deleteCapability: (token: string, workspaceId: string, key: string) =>
-    request<void>(
-      `/studio-documents/v1/workspaces/${workspaceId}/capabilities/${encodeURIComponent(key)}`,
-      token,
-      { method: "DELETE" },
-    ),
+  /* No upsertStage / deleteStage / upsertCapability / deleteCapability: the
+     workspace's Process catalogue was their only caller, and ADR-0058 retired
+     it. Stages are a computed status, the capability vocabulary is the
+     platform's; the server keeps the endpoints for data that already exists. */
 
   /** Every spec a project has, in one list, with each queue counted.
    *

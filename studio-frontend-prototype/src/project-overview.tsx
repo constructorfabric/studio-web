@@ -377,19 +377,11 @@ export function ProjectOverview({
   }, [findings]);
   const highFindings = (bySeverity.get("high") ?? 0) + (bySeverity.get("critical") ?? 0);
 
-  // Catalogue order, filtered to what this project carries. Never re-sorted:
-  // the order is the catalogue's, and the catalogue is the workspace's.
-  //
-  // No selection means the whole catalogue, not an empty row. It used to mean
-  // an empty row, which was right while the New project card asked for a
-  // subset and wrong the moment it stopped: `stage_status` has always computed
-  // against every stage the workspace has, so showing none of them hid an
-  // answer the server had already worked out. A project that carries a subset
-  // -- one created before, or one that gets a stage setting later -- still
-  // gets exactly that subset.
-  const stages = (config?.stages ?? []).length
-    ? stageCatalogue.filter((s) => config?.stages?.includes(s.key))
-    : stageCatalogue;
+  // Every stage, in catalogue order. A project does not pick its stages: they
+  // are a computed status of what it has (ADR-0058), and `stage_status` has
+  // always answered for every one. A `stages` list an older project carries in
+  // its config used to filter these chips; it no longer does.
+  const stages = stageCatalogue;
 
   const liveSession = sessions.find((s) => s.state === "running") ?? sessions[0];
 

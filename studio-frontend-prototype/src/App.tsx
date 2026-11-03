@@ -20,7 +20,6 @@ import {
   IdentityDirectory,
   LazyScreens,
   ObjectTypes,
-  ProcessCatalogTab,
   ProjectKits,
   SpecQuality,
 } from "./lazy-screens";
@@ -93,7 +92,6 @@ import {
   UNAUTHENTICATED_EVENT,
   shortTypeName,
   TENANT_TYPES,
-  normalizeStages,
   type Connection,
   type ConnectorProvider,
   type Me,
@@ -991,7 +989,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
    *  same reason: the band that switches it is chrome above the work area, not
    *  part of the screen it switches. */
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(
-    restoredPlace.workspaceTab ?? "projects",
+    // A tab remembered from before a section was retired (Process, ADR-0058)
+    // opens on the default one rather than on nothing.
+    WORKSPACE_TABS.some((t) => t.id === restoredPlace.workspaceTab)
+      ? (restoredPlace.workspaceTab as WorkspaceTab)
+      : "projects",
   );
   // Opening a different project starts on its Overview — but a reload is not
   // "opening a different project", and resetting there would undo the restore
@@ -3819,7 +3821,11 @@ function ProjectsView({
    had produced zero rows against one project-level document, which is what a
    section with no reader looks like. Authoring moved to the project's Documents
    section, where the writing actually happens. */
-type WorkspaceTab = "projects" | "ptypes" | "types" | "process";
+/* No "process" either: the workspace's Process catalogue, which hand-edited the
+   journey stages and the capability vocabulary, was retired by ADR-0058. The
+   stages are a computed status and the vocabulary is the platform's; an old
+   address to that section opens the workspace's default one (place-url.ts). */
+type WorkspaceTab = "projects" | "ptypes" | "types";
 
 /** The workspace's page header, shown above EVERY one of its sections — the
  *  project screen does exactly this with its own name, and the level above
@@ -3853,7 +3859,6 @@ const WORKSPACE_TABS: { id: WorkspaceTab; icon: string; label: string; hint: str
   { id: "projects", icon: "grid", label: "Projects", hint: "The projects in this workspace" },
   { id: "ptypes", icon: "layers", label: "Project types", hint: "What New project offers and which tabs each kind shows" },
   { id: "types", icon: "file", label: "Document types", hint: "Templates, section checklists and rules" },
-  { id: "process", icon: "activity", label: "Process", hint: "The journey's stages and the capability vocabulary" },
 ];
 
 function WorkspaceCatalogue({
@@ -3875,7 +3880,6 @@ function WorkspaceCatalogue({
     <div>
       {tab === "ptypes" && <ProjectTypesTab token={token} workspace={workspace} tabs={PROJECT_TABS} />}
       {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
-      {tab === "process" && <ProcessCatalogTab token={token} workspaceId={workspaceId} />}
     </div>
   );
 }
@@ -3972,21 +3976,11 @@ function WorkspaceProjects({
   // owner, and a PR against an empty repo is ceremony.
   const [openPr, setOpenPr] = useState(false);
   // Journey framing captured at creation (previously dead in the UI): a free-text
-  // brief and the opt-in journey stages (Intent is always applied).
+  // brief. Stages are not asked for: they are a computed status (ADR-0058).
   const [brief, setBrief] = useState("");
   // Which page of the card is showing. An index rather than a key, because the
   // pages are a list whose length depends on the answers -- see `clampStep`.
   const [step, setStep] = useState(0);
-  // The workspace's effective stage catalogue: names, order, and which are
-  // required. It was a constant in api.ts until ADR-0014 s7 moved it to the
-  // server, because the journey is a thing an organization configures.
-  // Read for `normalizeStages`, which has to know which entries are required.
-  // Nothing picks from it here any more: a project's `stages` is not a gate --
-  // no backend code reads it, `stage_status` computes against the workspace's
-  // whole catalogue -- it only filtered the chips on the project's Overview.
-  // Asking for a display filter before the project exists put the question at
-  // the one moment nobody can answer it.
-  const [stageCatalogue, setStageCatalogue] = useState<import("./api").JourneyStage[]>([]);
   // Resumable provisioning: the live checklist and the context that accumulates
   // ids across steps, kept in a ref so Retry reuses the same run.
   const [prov, setProv] = useState<StepState[] | null>(null);
@@ -4061,17 +4055,6 @@ function WorkspaceProjects({
       .then((r) => setKitCatalog(r.items ?? []))
       .catch(() => setKitCatalog([]));
   }, [creating, token]);
-
-  // ...and its journey-stage catalogue, for the same reason and at the same
-  // moment. An empty catalogue simply renders no chips: a project can still be
-  // created, and its stages can be set later.
-  useEffect(() => {
-    if (!creating) return;
-    api
-      .stages(token, workspace.id)
-      .then((r) => setStageCatalogue(r.items ?? []))
-      .catch(() => setStageCatalogue([]));
-  }, [creating, token, workspace.id]);
 
   // Both kinds that create or attach a repository start at a connection. Not
   // loaded for `existing`, which attaches its repository afterwards rather than
@@ -4244,8 +4227,9 @@ function WorkspaceProjects({
       },
     });
 
-    // 3) Project config — mode/kind/stages/brief. Idempotent overwriting PUT,
-    //    so it always runs (cheap) and re-running is safe.
+    // 3) Project config — mode/kind/brief. Idempotent overwriting PUT, so it
+    //    always runs (cheap) and re-running is safe. No `stages`: a project
+    //    does not pick its stages, they are a computed status (ADR-0058).
     steps.push({
       key: "config",
       label: "Project config",
@@ -4256,7 +4240,6 @@ function WorkspaceProjects({
           mode,
           kind: newKind,
           type: newType.key,
-          stages: normalizeStages(cfg.stages ?? [], stageCatalogue),
           status: cfg.status ?? "draft",
           brief: brief.trim() || cfg.brief,
           source_git_url: ctx.cloneUrl || cfg.source_git_url,

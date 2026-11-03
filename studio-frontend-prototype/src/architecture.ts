@@ -546,9 +546,9 @@ export const SURFACES: Surface[] = [
   {
     id: "doc-types",
     area: "portal",
-    title: "Document types and process",
-    does: "Define document templates, section checklists and the journey's stages for a workspace.",
-    components: ["DocumentTypesTab", "ProcessCatalogTab", "TypesView"],
+    title: "Document types",
+    does: "Define document templates and section checklists for a workspace.",
+    components: ["DocumentTypesTab", "TypesView"],
     gears: ["studio-documents", "studio-spec-quality"],
   },
   {

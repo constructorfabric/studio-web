@@ -3,7 +3,7 @@ import { pathToPlace, placeToPath, type UrlPlace } from "./place-url";
 
 const KNOWN = {
   projectTabs: ["overview", "specs", "components", "kits"],
-  workspaceTabs: ["projects", "types", "process"],
+  workspaceTabs: ["projects", "ptypes", "types"],
   adminViews: ["people", "access", "secrets"],
 };
 
@@ -35,7 +35,7 @@ describe("the portal's address", () => {
   it("reads back every path it writes", () => {
     const places: UrlPlace[] = [
       { ...base, view: "gears" },
-      { ...base, crumb: { projectId: "ws1" }, workspaceTab: "process" },
+      { ...base, crumb: { projectId: "ws1" }, workspaceTab: "ptypes" },
       { ...base, crumb: { projectId: "ws1", nestedId: "p1" }, projectTab: "specs", activeOrgId: "org-9" },
       { ...base, adminOpen: true, adminView: "access" },
     ];
@@ -49,6 +49,13 @@ describe("the portal's address", () => {
   it("opens a place on its default tab when the address names none", () => {
     expect(pathToPlace("/workspaces/ws1/projects/p1", "", KNOWN)).toMatchObject({ projectTab: "overview" });
     expect(pathToPlace("/workspaces/ws1", "", KNOWN)).toMatchObject({ workspaceTab: "projects" });
+  });
+
+  it("opens the retired Process section's old address on the workspace's default tab", () => {
+    expect(pathToPlace("/workspaces/ws1/process", "", KNOWN)).toMatchObject({
+      crumb: { projectId: "ws1" },
+      workspaceTab: "projects",
+    });
   });
 
   it("opens the Frontend tab's old address on Product, which now holds it", () => {

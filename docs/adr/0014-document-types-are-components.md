@@ -269,6 +269,8 @@ the graph, and per-key document types no longer exist to be excepted.
 
 ### 7. Stages move to the backend; the frontend constants are deleted
 
+> Superseded by [ADR-0058](0058-the-process-comes-from-the-specs-and-the-domain-model.md): stages are a computed status, and no workspace edits them. The same record retires the hand-edited part of §5.
+
 `JOURNEY_STAGES` and `DEFAULT_STAGES` are removed from both clients and served
 as an effective, inheritance-resolved list. `intent` stops being required by
 construction — it is a built-in stage flagged `required`, which an organization
