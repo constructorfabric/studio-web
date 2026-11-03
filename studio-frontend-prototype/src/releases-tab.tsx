@@ -16,7 +16,7 @@
  * A build is published in Studio, the IDE or CI; a deploy names it and the
  * server installs it with the environment's connection (ADR-0048). */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { ApiError, api, type Connection, type DeployEnvironment, type Deployment, type ProjectTargets } from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
@@ -124,11 +124,9 @@ export function ProjectReleases({
       <style>{RELEASES_CSS}</style>
       <h1>Releases</h1>
       <p className="subtitle">
-        How this project&apos;s product goes out: a build publishes it, a deploy installs it in an environment -- a cluster,
-        where it installs the build&apos;s published chart, or Constructor Research, where it runs a build made there -- and a
-        release climbs the environments from the first to the last.
+        Build the product, deploy it to the first environment, then let the release climb the environments in order.
       </p>
-      {targets && (
+      {targets && deployableBuilds(builds).length > 0 && (
         <PipelineLine
           hint={deploysHint({
             environments: targets.environments.length,
@@ -146,6 +144,45 @@ export function ProjectReleases({
           {notice}
         </div>
       )}
+      <ReleaseStep
+        n={1}
+        title="Build"
+        done={deployableBuilds(builds).length > 0}
+        status={
+          deployableBuilds(builds).length > 0
+            ? `${deployableBuilds(builds).length} published build${deployableBuilds(builds).length === 1 ? "" : "s"}; the newest is ready to deploy.`
+            : "Nothing published yet: build the product first."
+        }
+        step="build"
+      >
+        <ProjectBuilds
+          token={token}
+          projectId={projectId}
+          projectName={projectName}
+          onOpenTab={onOpenTab}
+          round={shared}
+          onChanged={buildsChanged}
+          embedded
+        />
+      </ReleaseStep>
+
+      <ReleaseStep
+        n={2}
+        title="Deploy"
+        done={steps.some((s) => !!s.runs)}
+        later={deployableBuilds(builds).length === 0}
+        status={
+          noEnvironment
+            ? "No environment to deploy to yet."
+            : steps.some((s) => !!s.runs)
+              ? "Running; a release climbs the environments in order."
+              : deployableBuilds(builds).length === 0
+                ? "Once a build is published, deploy it to the first environment."
+                : "Deploy the newest build to the first environment."
+        }
+        step="deploy"
+        keepOpen
+      >
       {unavailable ? (
         <p className="empty">This Studio has no environments yet (the backend predates them).</p>
       ) : targets === null ? (
@@ -203,28 +240,6 @@ export function ProjectReleases({
             onChanged={changed}
           />
         </section>
-      )}
-
-      <ProjectBuilds
-        token={token}
-        projectId={projectId}
-        projectName={projectName}
-        onOpenTab={onOpenTab}
-        round={shared}
-        onChanged={buildsChanged}
-      />
-
-      {!unavailable && (
-        <div className="card" data-deploy-history>
-          <ProjectEnvironments
-            key={round}
-            token={token}
-            projectId={projectId}
-            profiles={KUBERNETES_PROFILES}
-            title="Deploy history"
-            show="history"
-          />
-        </div>
       )}
 
       {targets && !unavailable && (
@@ -307,7 +322,77 @@ export function ProjectReleases({
           )}
         </details>
       )}
+      </ReleaseStep>
+
+      {!unavailable && (
+        <ReleaseStep
+          n={3}
+          title="History"
+          done={false}
+          quiet
+          status={deployments.length ? `${deployments.length} deploy${deployments.length === 1 ? "" : "s"} so far.` : "Nothing deployed yet."}
+          step="history"
+        >
+          <div data-deploy-history>
+            <ProjectEnvironments
+              key={round}
+              token={token}
+              projectId={projectId}
+              profiles={KUBERNETES_PROFILES}
+              title="Deploy history"
+              show="history"
+            />
+          </div>
+        </ReleaseStep>
+      )}
     </div>
+  );
+}
+
+/** One step of the release, in the order it is done: a number (a tick once
+ *  done), what it is and where it stands. A done step folds to that line
+ *  until opened; `keepOpen` never folds; `quiet` starts folded (the
+ *  history, read when wanted); `later` is a step that waits on the one
+ *  before. */
+function ReleaseStep({
+  n,
+  title,
+  status,
+  done,
+  later = false,
+  keepOpen = false,
+  quiet = false,
+  step,
+  children,
+}: {
+  n: number;
+  title: string;
+  status: string;
+  done: boolean;
+  later?: boolean;
+  keepOpen?: boolean;
+  quiet?: boolean;
+  step: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const shown = keepOpen || (open ?? !(done || quiet));
+  return (
+    <section className={`card release-step${done ? " done" : later ? " later" : " current"}`} data-release-flow-step={step}>
+      <button
+        type="button"
+        className="release-step-head"
+        aria-expanded={shown}
+        disabled={keepOpen}
+        onClick={() => setOpen(!shown)}
+      >
+        <span className="release-step-n">{done ? "✓" : n}</span>
+        <span className="release-step-title">{title}</span>
+        <span className="release-step-status">{status}</span>
+        {!keepOpen && <span className="release-step-toggle">{shown ? "Hide" : "Show"}</span>}
+      </button>
+      {shown && <div className="release-step-body">{children}</div>}
+    </section>
   );
 }
 
@@ -476,6 +561,20 @@ const RELEASES_CSS = `
 .project-deploys .ladder > li.on { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary) inset; }
 .project-deploys .ladder-build { flex:0 1 140px; background:var(--accent); }
 .project-deploys .ladder-actions { gap:6px; flex-wrap:wrap; margin-top:auto; padding-top:6px; }
+.project-deploys .ladder > li.ladder-build { flex:0 1 160px; }
+.project-deploys .release-step { padding:0; overflow:hidden; margin:0 0 12px; }
+.project-deploys .release-step-head { display:flex; align-items:center; gap:12px; width:100%; padding:12px 16px; background:none; border:0; text-align:left; cursor:pointer; color:inherit; font:inherit; }
+.project-deploys .release-step-head:disabled { cursor:default; opacity:1; }
+.project-deploys .release-step-n { flex:none; display:inline-grid; place-items:center; width:26px; height:26px; border-radius:50%; font-weight:700; font-size:13px; background:var(--accent); color:var(--foreground); }
+.project-deploys .release-step.current .release-step-n { background:var(--primary); color:var(--primary-foreground, #fff); }
+.project-deploys .release-step.done .release-step-n { background:color-mix(in srgb, #16a34a 22%, transparent); color:#15803d; }
+.project-deploys .release-step-title { font-weight:700; font-size:15px; }
+.project-deploys .release-step-status { flex:1; color:var(--muted-foreground); font-size:13px; }
+.project-deploys .release-step-toggle { font-size:12px; color:var(--primary); }
+.project-deploys .release-step.current { border-color:color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.project-deploys .release-step.later .release-step-body { opacity:.75; }
+.project-deploys .release-step-body { padding:0 16px 14px; border-top:1px solid var(--border); padding-top:12px; }
+.project-deploys .release-step-body > .card, .project-deploys .release-step-body section.card { box-shadow:none; }
 .project-deploys .release-own summary { cursor:pointer; }
 .project-deploys .release-own[open] summary { margin-bottom:10px; }
 .project-deploys .release-own-head { margin:16px 0 4px; }

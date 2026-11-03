@@ -103,6 +103,7 @@ export function ProjectBuilds({
   onOpenTab,
   round: outer = 0,
   onChanged,
+  embedded = false,
 }: {
   token: string;
   projectId: string;
@@ -114,6 +115,8 @@ export function ProjectBuilds({
   round?: number;
   /** Something here changed what Releases shows around it. */
   onChanged?: () => void;
+  /** Inside Releases' first step, which gives the heading. */
+  embedded?: boolean;
 }) {
   const [ideBuilds, setIdeBuilds] = useState<IdeBuild[]>([]);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
@@ -241,7 +244,7 @@ export function ProjectBuilds({
 
   return (
     <section data-release-builds>
-      <h2>Builds</h2>
+      {!embedded && <h2>Builds</h2>}
       <PipelineLine hint={buildsHint(builds, canBuildInStudio)} onOpenTab={onOpenTab} here="releases" />
       {note && (
         <div className="hint" data-builds-note>
