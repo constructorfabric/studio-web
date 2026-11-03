@@ -9,7 +9,7 @@ import '../../../../events/specsEvents';
  * heard the refusal has neither the bridge nor this dictionary.
  */
 export function useTypeDecisionRefusals(projectId: string): void {
-  const notify = useNotify('projects');
+  const notify = useNotify();
   const t = useSpecsText();
 
   useEffect(() => {

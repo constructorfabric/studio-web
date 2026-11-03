@@ -194,6 +194,22 @@ export interface DeploymentStatus {
   readonly workloads: readonly { readonly name: string; readonly ready: number; readonly desired: number; readonly images: readonly string[] }[];
   /** Hosts the release's ingresses answer on. */
   readonly hosts: readonly string[];
+  /** The containers that cannot start, and why: one line each. */
+  readonly problems?: readonly string[];
+}
+
+/** The end of one container's log of a deployed release. */
+export interface ContainerLog {
+  readonly pod: string;
+  readonly container: string;
+  /** The run before its last restart: what a crashing container said before it died. */
+  readonly previous: boolean;
+  readonly text: string;
+}
+
+/** What a container's log is headed with. */
+export function logHeading(log: Pick<ContainerLog, "pod" | "container" | "previous">): string {
+  return `${log.pod} · ${log.container}${log.previous ? " (the run before its last restart)" : ""}`;
 }
 
 /** The CI workflow Studio proposed to the project's repository (ADR-0048 §5). */
@@ -238,6 +254,39 @@ export function defaultTarget(
   if (env !== undefined) return { kind: "environment", id: env.id };
   const context = currentContext ?? contexts[0];
   return context !== undefined ? { kind: "context", name: context } : undefined;
+}
+
+/**
+ * The target after the environments were read (again): what the member chose
+ * stays; a local context picked only because no environment was known yet --
+ * the project was not resolved, or the sign-in came later -- gives way to the
+ * project's environment, so a deploy does not go to whatever cluster the
+ * machine's kubeconfig happens to point at.
+ */
+export function nextTarget(
+  current: DeployTarget | undefined,
+  chosen: boolean,
+  targets: DeployTargets | undefined,
+  profile: string | undefined,
+  contexts: readonly string[],
+  currentContext: string | undefined,
+): DeployTarget | undefined {
+  if (current !== undefined && (chosen || current.kind === "environment")) return current;
+  return defaultTarget(targets, profile, contexts, currentContext) ?? current;
+}
+
+/** How long the Run & Deploy view waits before asking again for a project it could not place. */
+export const TARGETS_RETRY_MS = 15_000;
+
+/**
+ * Whether to read the project's environments and builds for `file` now. Once
+ * per product file -- unless the project could not be placed (signed out, the
+ * sign-in still resuming, the server away), which is asked again after a while
+ * instead of never.
+ */
+export function shouldAskFlow(asked: { readonly file?: string; readonly at?: number; readonly placed: boolean }, file: string, now: number): boolean {
+  if (asked.file !== file) return true;
+  return !asked.placed && (asked.at === undefined || now - asked.at >= TARGETS_RETRY_MS);
 }
 
 /** The environment a target names, when it names one. */
@@ -425,6 +474,8 @@ export interface ProductDeployment {
   readonly chartVersion: string | undefined;
   readonly state: string;
   readonly reason: string | undefined;
+  /** What the run said: its summary, or why it failed. */
+  readonly outcome?: string;
   readonly requestedAt: string;
   readonly requestedBy: string | undefined;
 }
@@ -442,6 +493,28 @@ export const DEPLOYMENT_STATE_LABELS: Readonly<Record<DeploymentState, string>> 
 
 export function deploymentStateLabel(state: string): string {
   return DEPLOYMENT_STATE_LABELS[state as DeploymentState] ?? state;
+}
+
+/** A deploy the server has not finished: its release may change any moment. */
+export function deployInFlight(state: string): boolean {
+  return state === "queued" || state === "running";
+}
+
+/**
+ * What the Run & Deploy view follows on its next look: whether to look again
+ * in a few seconds (a build or a deploy is still going), and the deploys whose
+ * release to read from the cluster each time -- the installing ones, so a pod
+ * that cannot start shows while helm still waits for it.
+ */
+export function flowToFollow(
+  builds: readonly Pick<ProductBuild, "status">[],
+  deployments: readonly Pick<ProductDeployment, "id" | "state" | "action">[],
+): { readonly again: boolean; readonly statuses: readonly string[] } {
+  const going = deployments.filter((d) => deployInFlight(d.state));
+  return {
+    again: builds.some((b) => b.status === "running") || going.length > 0,
+    statuses: going.filter((d) => d.action !== "uninstall" && d.state === "running").map((d) => d.id),
+  };
 }
 
 /** A build's stages: the generated tree, the images, and their publishing. */
@@ -561,8 +634,25 @@ export function nextStep(input: {
         ? { text: `Uninstalled from ${where}.`, tone: "done" }
         : { text: `Runs in ${where}${deploy.chartVersion !== undefined ? `: ${deploy.chartVersion}` : ""}.`, tone: "done" };
     case "failed":
-      return { text: `The last deploy to ${where} failed${deploy.reason !== undefined ? `: ${deploy.reason}` : ""}.`, tone: "failed" };
+      return {
+        text: `The last deploy to ${where} failed${
+          (deploy.reason ?? deploy.outcome) !== undefined ? `: ${firstLineOf(deploy.reason ?? deploy.outcome ?? "")}` : ""
+        }.`,
+        tone: "failed",
+      };
     default:
       return { text: `${deploymentStateLabel(deploy.state)}: ${where}.`, tone: "todo" };
   }
+}
+
+/**
+ * The line of `text` that says what went wrong: the first that starts with
+ * `Error` (helm and docker print theirs after a line of progress, such as
+ * "Release … does not exist. Installing it now."), else the first non-empty
+ * one; at most 240 characters.
+ */
+export function firstLineOf(text: string): string {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  const line = lines.find((l) => /^error\b/i.test(l)) ?? lines[0] ?? "";
+  return line.length > 240 ? `${line.slice(0, 240).trimEnd()}…` : line;
 }

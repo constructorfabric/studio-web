@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
-import { anchorKitThemeOnShadowHost, ThemeAwareReactLifecycle } from '@gears-frontx/react';
+import { anchorKitThemeOnShadowHost, StudioMfeLifecycle } from '@constructor-studio/mfe-shared';
 import kitTheme from '@gears-frontx/ui-kit/theme.css?inline';
 import { mfeApp } from './init';
 import { OrganizationRoot } from './OrganizationRoot';
@@ -12,19 +12,16 @@ import { OrganizationRoot } from './OrganizationRoot';
  * DocumentFragment that `:root` can never reach. Rewritten once at module load
  * rather than per mount.
  *
- * Known, measured-harmless collision: the base BASE_RESETS sheet paints `:host`
- * from `hsl(var(--background))`; the kit's re-anchored hex tokens make that
- * expression invalid, so the host computes transparent. That is what the screen
- * wants: its root keeps the kit's `[data-theme]` paint off deliberately, so the
- * shell's own ground shows through.
+ * The screen root keeps the kit's `[data-theme]` paint off deliberately, so the
+ * shell's own ground shows through the host `StudioMfeLifecycle` keeps
+ * transparent.
  */
 const KIT_THEME_ON_HOST = anchorKitThemeOnShadowHost(kitTheme);
 
-class ScreensetLifecycle extends ThemeAwareReactLifecycle {
+class ScreensetLifecycle extends StudioMfeLifecycle {
   constructor() {
-    // ThemeAwareReactLifecycle consumes the host handoff and passes the
-    // shared server-state runtime into FrontXProvider for this mounted root.
-    super(mfeApp, { additionalStyles: [KIT_THEME_ON_HOST] });
+    // StudioMfeLifecycle puts the kit theme on the shadow host; the base class does the rest.
+    super(mfeApp, KIT_THEME_ON_HOST);
   }
 
   protected renderContent(bridge: ChildMfeBridge): React.ReactNode {

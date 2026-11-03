@@ -127,7 +127,8 @@ input.search {
 
 .pagination {
   margin: 0;
-  width: auto;
+  flex: 1;
+  justify-content: flex-end;
 }
 
 .pageNumber,

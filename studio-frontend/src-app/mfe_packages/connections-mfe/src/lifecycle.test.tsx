@@ -1,10 +1,10 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
   FRONTX_SHARED_PROPERTY_THEME,
   FrontXProvider,
-  createFrontXApp,
   i18nRegistry,
 } from '@gears-frontx/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,30 +43,34 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
   };
 });
 
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  // `apiRegistry` is a singleton instance — `register`/`initialize` (called by
-  // the real `./init`) live on its prototype, so replacing the object with a
-  // spread copy would silently drop them. Spying in place keeps the instance,
-  // and with it every method `./init` needs, while only `getService` is faked.
-  vi.spyOn(actual.apiRegistry, 'getService').mockImplementation(getServiceMock);
-  return {
-    ...actual,
-    ThemeAwareReactLifecycle: class ThemeAwareReactLifecycle {
-      constructor(public readonly app: TestApp) {}
+vi.mock('@gears-frontx/react', (importOriginal) =>
+  withOwnQueryCache(importOriginal, (actual) => {
+    // `apiRegistry` is a singleton instance — `register`/`initialize` (called by
+    // the real `./init`) live on its prototype, so replacing the object with a
+    // spread copy would silently drop them. Spying in place keeps the instance,
+    // and with it every method `./init` needs, while only `getService` is faked.
+    vi.spyOn(actual.apiRegistry, 'getService').mockImplementation(getServiceMock);
+    return {
+      useApiQuery: useApiQueryMock,
+      // The screen-level loader is a real `@gears-frontx/react` export now (the
+      // scaffold's own `useScreenTranslations` is gone) — overridden the same
+      // way `useApiQuery` is, so the screen's busy/error gate stays deterministic
+      // instead of racing a real dynamic import.
+      useScreenTranslations: useScreenTranslationsMock,
+    };
+  })
+);
 
-      mount(container: Element | ShadowRoot, bridge: TestBridge): void {
-        superMountSpy(container, bridge);
-      }
-    },
-    useApiQuery: useApiQueryMock,
-    // The screen-level loader is a real `@gears-frontx/react` export now (the
-    // scaffold's own `useScreenTranslations` is gone) — overridden the same
-    // way `useApiQuery` is, so the screen's busy/error gate stays deterministic
-    // instead of racing a real dynamic import.
-    useScreenTranslations: useScreenTranslationsMock,
-  };
-});
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  StudioMfeLifecycle: class StudioMfeLifecycle {
+    constructor(public readonly app: TestApp) {}
+
+    mount(container: Element | ShadowRoot, bridge: TestBridge): void {
+      superMountSpy(container, bridge);
+    }
+  },
+}));
 
 describe('connections-mfe lifecycle', () => {
   beforeEach(() => {
@@ -113,12 +117,6 @@ describe('connections-mfe lifecycle', () => {
   });
 
   it('renders the connections list screen with the provided bridge', async () => {
-    // `./init` builds its app with queryCacheShared(), which only ever holds
-    // an *activator* for the shared QueryClient — the client itself is
-    // created by a host's queryCache(). Priming one here is what lets
-    // FrontXProvider's deferred-subtree check resolve instead of rendering
-    // null forever.
-    createFrontXApp({});
     const initModule = await import('./init');
     const module = await import('./lifecycle');
     const lifecycle = module.default;
@@ -154,7 +152,7 @@ describe('connections-mfe lifecycle', () => {
     expect(screen.getByText(en.empty_title)).toBeTruthy();
   });
 
-  it('inherits base mount behavior from ThemeAwareReactLifecycle', async () => {
+  it('inherits base mount behavior from StudioMfeLifecycle', async () => {
     const module = await import('./lifecycle');
     const lifecycle = module.default as {
       mount: (container: Element, bridge: TestBridge) => void;

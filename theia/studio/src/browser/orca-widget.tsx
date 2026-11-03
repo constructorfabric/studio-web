@@ -33,7 +33,7 @@ import {
 import { OrcaTerminalOpener, OrcaPairCommand } from './orca-terminal-opener';
 import { DesktopOrcaProjectSync } from './desktop-orca-project-sync';
 import { ORCA_ADD_PROJECTS_PREFERENCE, keptMessage } from '../common/desktop-orca-projects';
-import { ORCA_INSTALL_URL, missingAgentsNote, orcaAvailability, type OrcaAction } from '../common/orca-availability';
+import { ORCA_INSTALL_URL, missingAgentsNote, orcaAvailability, orcaMissingAgentsNote, type OrcaAction } from '../common/orca-availability';
 import {
     defaultWorktree,
     groupWorktrees,
@@ -279,9 +279,12 @@ export class OrcaWidget extends ReactWidget {
      */
     protected agents(): readonly string[] {
         // On a member's machine Orca starts the agent with its own
-        // environment, which the IDE's PATH says nothing about: offer them all.
+        // environment, which the IDE's PATH says nothing about: offer all but
+        // those Orca itself says it cannot find (#495).
         if (this.status?.host === 'local') {
-            return ORCA_AGENTS;
+            const missing = this.status.agentsMissing ?? [];
+            const offered = ORCA_AGENTS.filter(agent => !missing.some(m => m.agent === agent));
+            return offered.length ? offered : ORCA_AGENTS;
         }
         return this.status?.agents?.length ? this.status.agents : ORCA_AGENTS;
     }
@@ -762,7 +765,13 @@ export class OrcaWidget extends ReactWidget {
                                     Start {agent}
                                 </button>
                             ))}
-                            {this.status?.agents && this.status.agents.length < ORCA_AGENTS.length && (
+                            {this.status?.host === 'local' && (this.status.agentsMissing?.length ?? 0) > 0 && (
+                                // Orca's own reason, and how to install the agent.
+                                <span className="studio-orca-meta" data-orca-missing-agents>
+                                    {orcaMissingAgentsNote(this.status.agentsMissing ?? [])}
+                                </span>
+                            )}
+                            {this.status?.host !== 'local' && this.status?.agents && this.status.agents.length < ORCA_AGENTS.length && (
                                 // Naming the absent ones beats leaving someone
                                 // wondering why the panel offers fewer agents
                                 // than the documentation does. "This image"

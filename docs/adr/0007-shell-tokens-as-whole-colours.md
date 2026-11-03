@@ -156,6 +156,20 @@ finally did.
   independently of this change — `eslint.config.js` imports `typescript-eslint`,
   which no `package.json` declares (true in `HEAD` as well).
 
+### Amendment 2026-11-02 — `@gears-frontx/studio` from npm
+
+`packages/studio` is gone (#946) and the Studio panel's stylesheet comes from
+npm (`@gears-frontx/studio` 0.2.0-alpha.3). The notation half is upstream: whole
+colours and `color-mix`, no `hsl(var(--x))` left. The `:where()` half is not:
+`.text-foreground`, `.text-muted-foreground` and `.hover:text-muted-foreground`
+are plain class selectors again (the `/70` one became an arbitrary `color-mix`
+class in the component), so they carry real specificity and sit later in
+`<head>` than `globals.css`. That is accepted for now: each resolves to the same
+colour as the app's own utility of the same name, and Tailwind scans the studio
+dist, so the app generates the same classes. It stops being harmless the first
+time a value differs, and belongs upstream, in gears-frontx-templates, where
+the studio package lives.
+
 ## Traceability
 
 - **PRD**: [PRD](../prd/constructor-studio.md)

@@ -10,6 +10,12 @@
  */
 import type { DomainKey, Param } from '@gears-frontx/routing';
 
+/**
+ * A domain key or extension token: @gears-frontx/routing 0.4's `name` rule,
+ * which it no longer exports. `route.test.ts` holds it to the library's own.
+ */
+export const ROUTE_NAME = /^[a-z][a-z0-9-]*$/;
+
 /** The root domain key the shell projects. A valid `name`; `route.test.ts` proves it. */
 export const SCREEN_DOMAIN_KEY = 'screen' as DomainKey;
 

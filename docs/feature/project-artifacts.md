@@ -991,8 +991,8 @@ payload it refuses is logged and goes nowhere. The action and its handler are
 declared together: the registry refuses a domain that declares an action
 without a handler, and the contract check rejects an entry whose domain action
 the domain does not list. Either refusal is no screen slot at all — which is
-why a test registers the shell's domains on a real registry. A chain the shell
-does refuse is logged by `sendAndForget`, and the row stays on screen.
+why a test registers the shell's domains on a real registry. A chain the runtime
+refuses is dropped without a word to the MFE, and the row stays on screen.
 
 **Implements**:
 - `cpt-studiofrontend-flow-project-artifacts-browse`
@@ -1075,7 +1075,7 @@ placeholder, a dash or a zero dressed as an answer.
 - [ ] Activating a file's name, or _Open in editor_ in its row menu, publishes one action naming the project, the node, its repository, its path and its kind, and the table does not change.
 - [ ] The row menu of an issue or a pull request says _Open_ and follows the node's url; it never says _Open in editor_.
 - [ ] A row with neither a path to edit nor a url to visit has its row menu disabled.
-- [ ] When the shell refuses the action, the table stays as it was and the failure is logged.
+- [ ] When the shell refuses the action, the table stays as it was.
 - [ ] Choosing a type narrows the table to that kind through the request, and starts the table again from the first page.
 - [ ] Choosing Commits, Comments or Authors lists that kind; "All types" lists files, issues, pull requests and repositories only.
 - [ ] No row shows a document kind, a readiness percentage, or a per-file ingest status.

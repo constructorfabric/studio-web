@@ -243,6 +243,51 @@ describe('OrcaServiceImpl', () => {
         }));
     });
 
+    describe('which agents it offers (#495)', () => {
+        const live = { app: { running: true }, runtime: { state: 'ready', reachable: true } };
+        const answering = (hooks: unknown) => jest.fn(async (args: string[]) => {
+            if (args[0] === 'status') {
+                return live;
+            }
+            if (hooks instanceof Error) {
+                throw hooks;
+            }
+            return hooks;
+        });
+        const saved = process.env.STUDIO_SESSION_TOKEN;
+        afterEach(() => {
+            if (saved === undefined) {
+                delete process.env.STUDIO_SESSION_TOKEN;
+            } else {
+                process.env.STUDIO_SESSION_TOKEN = saved;
+            }
+        });
+
+        it('on a member\'s machine, all but those Orca says it cannot find', async () => {
+            delete process.env.STUDIO_SESSION_TOKEN;
+            const json = answering({ statuses: [{ agent: 'codex', state: 'not_installed', detail: 'Orca could not find Codex at codex' }] });
+            const status = await service(json).status();
+            expect(json).toHaveBeenCalledWith(['agent', 'hooks', 'status']);
+            expect(status.agents).toEqual(['claude', 'opencode']);
+            expect(status.agentsMissing).toEqual([{ agent: 'codex', why: 'Orca could not find Codex at codex' }]);
+        });
+
+        it('on a member\'s machine, all of them when Orca cannot say', async () => {
+            delete process.env.STUDIO_SESSION_TOKEN;
+            const status = await service(answering(new OrcaCliError('unknown command', [], ''))).status();
+            expect(status.agents).toEqual(['claude', 'codex', 'opencode']);
+            expect(status.agentsMissing).toEqual([]);
+        });
+
+        it('in a session, what the image carries, without asking Orca', async () => {
+            process.env.STUDIO_SESSION_TOKEN = 'gate';
+            const json = answering({ statuses: [] });
+            const status = await service(json).status();
+            expect(json).not.toHaveBeenCalledWith(['agent', 'hooks', 'status']);
+            expect(status.agentsMissing).toBeUndefined();
+        });
+    });
+
     it('does not call a headless runtime a desktop one', async () => {
         // `orca serve` in the session container answers running: true with
         // desktopWindowStatus: openable — a window it *could* open, not one

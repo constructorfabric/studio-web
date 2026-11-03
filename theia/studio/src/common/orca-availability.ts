@@ -9,7 +9,7 @@
 //
 // docs/feature/orca-integration.md lists every state and its action.
 
-import type { OrcaRuntimeStatus } from './orca-protocol';
+import type { OrcaMissingAgent, OrcaRuntimeStatus } from './orca-protocol';
 
 /** Where a member gets Orca. */
 export const ORCA_INSTALL_URL = 'https://github.com/stablyai/orca/releases/latest';
@@ -187,4 +187,49 @@ export function missingAgentsNote(host: OrcaRuntimeStatus['host'], missing: read
     return host === 'local'
         ? `Not found on the PATH Studio sees: ${missing.join(', ')}. Orca may still find them; install them if a start fails.`
         : `Not in this image: ${missing.join(', ')}`;
+}
+
+/** How to install each agent Studio offers, for the panel to say. */
+export const AGENT_INSTALL: Readonly<Record<string, string>> = {
+    claude: 'npm install -g @anthropic-ai/claude-code',
+    codex: 'npm install -g @openai/codex',
+    opencode: 'npm install -g opencode-ai',
+};
+
+/**
+ * The agents of `offered` that Orca says it cannot find, from
+ * `orca agent hooks status --json` (#495).
+ *
+ * Orca reports each agent it knows with the state of its hooks. Only a
+ * `not_installed` whose detail says Orca looked for the agent's command and
+ * did not find it means the agent itself is missing; a `not_installed` with
+ * no detail is about the hooks, and says nothing of the agent. An agent Orca
+ * does not report stays on offer: absence of an answer is not a no.
+ */
+export function agentsOrcaCannotFind(hooksStatus: unknown, offered: readonly string[]): OrcaMissingAgent[] {
+    const statuses = (hooksStatus as { statuses?: unknown } | undefined)?.statuses;
+    if (!Array.isArray(statuses)) {
+        return [];
+    }
+    const missing: OrcaMissingAgent[] = [];
+    for (const row of statuses) {
+        const { agent, state, detail } = (row ?? {}) as { agent?: unknown; state?: unknown; detail?: unknown };
+        if (typeof agent !== 'string' || !offered.includes(agent) || state === 'installed') {
+            continue;
+        }
+        if (typeof detail === 'string' && /could not find/i.test(detail)) {
+            missing.push({ agent, why: detail });
+        }
+    }
+    return missing;
+}
+
+/** The note naming the agents Orca cannot start here, and how to install each. */
+export function orcaMissingAgentsNote(missing: readonly OrcaMissingAgent[]): string {
+    return missing
+        .map(({ agent, why }) => {
+            const install = AGENT_INSTALL[agent];
+            return install ? `${why}. Install it with ${install}, then press Refresh.` : `${why}.`;
+        })
+        .join(' ');
 }

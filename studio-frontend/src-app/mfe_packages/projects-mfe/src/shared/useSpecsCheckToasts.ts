@@ -74,7 +74,7 @@ export function checkNotice(t: ScreenText, check: SpecsCheck): CheckNotice {
 export function useSpecsCheckToasts(): void {
   const { isLoaded } = useSpecsSectionTranslations();
   const t = useSpecsText();
-  const notify = useNotify('projects');
+  const notify = useNotify();
   const dispatch = useAppDispatch();
   const checks = useAppSelector((state) => state[SPECS_CHECK_SLICE_KEY].checks);
   /** What each project's toast says, so a render that changes nothing sends nothing. */

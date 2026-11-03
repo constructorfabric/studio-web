@@ -23,7 +23,6 @@ vi.mock('@gears-frontx/react', () => ({
   effects,
   i18n,
   queryCacheShared,
-  authShared,
 }));
 
 vi.mock('./api/ArtifactIngestApiService', () => ({
@@ -46,6 +45,7 @@ vi.mock('@constructor-studio/mfe-shared', () => ({
   ConnectorsApiService: class ConnectorsApiService {},
   StudioTasksApiService: class StudioTasksApiService {},
   StudioEventsApiService: class StudioEventsApiService {},
+  authShared,
 }));
 
 vi.mock('./slices/navSlice', () => ({

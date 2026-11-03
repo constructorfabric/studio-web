@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ScreenExtension } from '@gears-frontx/react';
-import { entryPointOf, placementOf, resolveLevelMenu } from './screenLevels';
+import { entryPointOf, placementOf, resolveLevelMenu, type StudioScreenExtension } from './screenLevels';
 
 function screen(
   id: string,
   presentation: { level?: string; placement?: string; order?: number }
-): ScreenExtension {
-  return { id, entry: `entry.${id}`, presentation: { label: id, ...presentation } } as unknown as ScreenExtension;
+): StudioScreenExtension {
+  return { id, entry: `entry.${id}`, presentation: { label: id, ...presentation } } as unknown as StudioScreenExtension;
 }
 
 const overview = screen('overview', { level: 'project', order: 10 });

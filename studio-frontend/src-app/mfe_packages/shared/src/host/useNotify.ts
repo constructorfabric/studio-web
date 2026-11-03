@@ -4,7 +4,7 @@ import { useCallback } from 'react';
 import { useMfeBridge } from '@gears-frontx/react';
 import { notify, type StudioNotice } from './hostActions';
 
-export function useNotify(tag: string): (notice: StudioNotice) => void {
+export function useNotify(): (notice: StudioNotice) => void {
   const bridge = useMfeBridge();
-  return useCallback((notice: StudioNotice) => notify(bridge, notice, tag), [bridge, tag]);
+  return useCallback((notice: StudioNotice) => notify(bridge, notice), [bridge]);
 }

@@ -46,8 +46,11 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useAppSelector: () => undefined,
   useDomainExtensions: (domain: string) =>
     domain === SCREEN_DOMAIN ? screenExtensions.value : overlayExtensions.value,
-  useMountedExtensions: () => screenExtensions.value.slice(0, 1),
   eventBus: mockEventBus,
+}));
+vi.mock('@/app/mfe/domainOccupancy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/app/mfe/domainOccupancy')>()),
+  useMountedExtensions: () => screenExtensions.value.slice(0, 1),
 }));
 
 // The right-hand cluster is covered by its own suites; the top bar's job here is
@@ -63,7 +66,6 @@ describe('Header (global top bar)', () => {
   beforeEach(() => {
     overlayExtensions.value = [];
     screenExtensions.value = [peopleScreen];
-    mockRegistry.executeActionsChain.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

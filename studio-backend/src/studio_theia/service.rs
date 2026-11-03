@@ -8,8 +8,11 @@ use serde::de::DeserializeOwned;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
+use crate::studio_theia::commands::DesktopCommandRelay;
 use crate::studio_theia::config::StudioTheiaConfig;
-use crate::studio_theia::discovery::{ControlTokenResolver, TheiaEndpointResolver};
+use crate::studio_theia::discovery::{
+    ControlTokenResolver, DesktopSessionResolver, TheiaEndpointResolver,
+};
 use crate::studio_theia::sdk::{SessionTarget, TheiaControlError};
 use crate::studio_theia::sink::TheiaEventSink;
 
@@ -20,6 +23,15 @@ pub struct TheiaService {
     resolver: Arc<dyn TheiaEndpointResolver>,
     token_resolver: Arc<dyn ControlTokenResolver>,
     sink: Arc<dyn TheiaEventSink>,
+    desktops: Arc<dyn DesktopSessionResolver>,
+    commands: Arc<dyn DesktopCommandRelay>,
+}
+
+/// How a desktop session is reached (ADR-0027 phases 4 and 5): who holds it,
+/// and the channel its commands go out on.
+pub struct DesktopBridge {
+    pub sessions: Arc<dyn DesktopSessionResolver>,
+    pub commands: Arc<dyn DesktopCommandRelay>,
 }
 
 impl TheiaService {
@@ -28,6 +40,7 @@ impl TheiaService {
         resolver: Arc<dyn TheiaEndpointResolver>,
         token_resolver: Arc<dyn ControlTokenResolver>,
         sink: Arc<dyn TheiaEventSink>,
+        desktop: DesktopBridge,
     ) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_secs))
@@ -38,6 +51,8 @@ impl TheiaService {
             resolver,
             token_resolver,
             sink,
+            desktops: desktop.sessions,
+            commands: desktop.commands,
         })
     }
 
@@ -53,6 +68,14 @@ impl TheiaService {
 
     pub fn token_resolver(&self) -> &Arc<dyn ControlTokenResolver> {
         &self.token_resolver
+    }
+
+    pub fn desktops(&self) -> &Arc<dyn DesktopSessionResolver> {
+        &self.desktops
+    }
+
+    pub fn commands(&self) -> &Arc<dyn DesktopCommandRelay> {
+        &self.commands
     }
 
     /// POST `{base}/internal/theia/v1/{method}` under the resolved session

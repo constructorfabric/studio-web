@@ -15,7 +15,7 @@
  * type. Hence `extension_overlay.v1.json`, and hence this test.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -24,16 +24,17 @@ import {
   gtsPlugin,
   type MfeEntryMF,
   type Extension,
-  type ScreenExtension,
 } from '@gears-frontx/react';
 // Not re-exported by @gears-frontx/react — this is the contract check
 // `registerExtension` runs after the type-system register succeeds.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
 import { SHELL_SCHEMAS } from './schemas';
-import { resolveLevelMenu } from './screenLevels';
+import { resolveLevelMenu, type StudioScreenExtension } from './screenLevels';
 import {
   STUDIO_ACTION_ARTIFACT_OPEN,
+  STUDIO_ACTION_CHAIN_DONE,
+  STUDIO_ACTION_CHAIN_FAILED,
   STUDIO_ACTION_NOTIFY,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
@@ -87,6 +88,31 @@ const entriesById = new Map(
   manifests.flatMap((config) => config.entries).map((entry) => [entry.id, entry])
 );
 
+/**
+ * The entries whose code waits on the shell with `requestFromHost`, by package.
+ * A package that starts calling it fails the test below until its entry is here
+ * (the mfe-package-contract guideline says why).
+ */
+const REQUEST_FROM_HOST_ENTRIES: Record<string, string[]> = {
+  'projects-mfe': [
+    'gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.workspace_create.v1',
+  ],
+};
+
+const MFE_PACKAGES = path.resolve(__dirname, '../../mfe_packages');
+
+/** The MFE packages whose own sources call `requestFromHost`; mfe-shared only defines it. */
+function packagesCallingRequestFromHost(): string[] {
+  return readdirSync(MFE_PACKAGES)
+    .filter((name) => name !== 'shared' && existsSync(path.join(MFE_PACKAGES, name, 'src')))
+    .filter((name) =>
+      readdirSync(path.join(MFE_PACKAGES, name, 'src'), { recursive: true, encoding: 'utf8' })
+        .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+        .some((file) => /\brequestFromHost\(/.test(readFileSync(path.join(MFE_PACKAGES, name, 'src', file), 'utf8')))
+    )
+    .sort();
+}
+
 // Exactly what main.tsx registers before constructing the app.
 for (const schema of SHELL_SCHEMAS) gtsPlugin.registerSchema(schema);
 
@@ -105,6 +131,19 @@ describe('generated MFE manifest', () => {
       ...(config.extensions ?? []).map((extension) => extension.id),
     ]);
     expect(ids.filter((id) => !isWellFormedGtsId(id))).toEqual([]);
+  });
+
+  // requestFromHost's replies come back to the entry that asked, and the runtime
+  // drops a reply its target does not declare without a word: the request would
+  // wait forever (domainRegistration.test shows it on a real registry).
+  it('names the entries of every MFE that waits on the shell with requestFromHost', () => {
+    expect(packagesCallingRequestFromHost()).toEqual(Object.keys(REQUEST_FROM_HOST_ENTRIES).sort());
+  });
+
+  it.each(Object.values(REQUEST_FROM_HOST_ENTRIES).flat())('lets %s take the replies to its requests', (id) => {
+    expect(entriesById.get(id)?.actions).toEqual(
+      expect.arrayContaining([STUDIO_ACTION_CHAIN_DONE, STUDIO_ACTION_CHAIN_FAILED])
+    );
   });
 
   it('gives every declared property and action a well-formed GTS id', () => {
@@ -332,7 +371,7 @@ describe('generated MFE manifest', () => {
     });
 
     it("draws the project's tabs in the design's order, Specs and Sources after Artifacts", () => {
-      const tabs = resolveLevelMenu(screens as ScreenExtension[], 'project');
+      const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'project');
       expect(tabs.map((ext) => ext.presentation.label)).toEqual([
         'Overview',
         'Artifacts',

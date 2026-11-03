@@ -9,19 +9,16 @@ type TestApp = { id: string };
 
 const superMountSpy = vi.fn();
 
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return {
-    ...actual,
-    ThemeAwareReactLifecycle: class ThemeAwareReactLifecycle {
-      constructor(public readonly app: TestApp) {}
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  StudioMfeLifecycle: class StudioMfeLifecycle {
+    constructor(public readonly app: TestApp) {}
 
-      mount(container: Element | ShadowRoot, bridge: TestBridge): void {
-        superMountSpy(container, bridge);
-      }
-    },
-  };
-});
+    mount(container: Element | ShadowRoot, bridge: TestBridge): void {
+      superMountSpy(container, bridge);
+    }
+  },
+}));
 
 vi.mock('./init', () => ({
   mfeApp: { id: 'projects-mfe-app' },
@@ -57,7 +54,7 @@ describe('projects-mfe lifecycle', () => {
     expect(screen.getByTestId('projects-root')).toBeTruthy();
   });
 
-  it('inherits base mount behavior from ThemeAwareReactLifecycle', async () => {
+  it('inherits base mount behavior from StudioMfeLifecycle', async () => {
     const module = await import('./lifecycle');
     const lifecycle = module.default as {
       mount: (container: Element, bridge: TestBridge) => void;

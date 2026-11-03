@@ -7,7 +7,7 @@ import '../events/documentUploadEvents';
 export function useUploadToasts(): void {
   useUploadTranslations();
   const t = useUploadText();
-  const notify = useNotify('projects');
+  const notify = useNotify();
 
   useEffect(() => {
     const finished = eventBus.on(

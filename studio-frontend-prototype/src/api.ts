@@ -1791,6 +1791,17 @@ export interface DeploymentStatus {
   deployment: Deployment;
   workloads: { name: string; ready: number; desired: number; images: string[] }[];
   hosts: string[];
+  /** The containers that cannot start, and why: one line each. Absent from a server before it. */
+  problems?: string[];
+}
+
+/** The end of one container's log of a deployed release. */
+export interface ContainerLog {
+  pod: string;
+  container: string;
+  /** The run before its last restart. */
+  previous: boolean;
+  text: string;
 }
 
 /** `build_artifact`: a file a CI run kept. `release`: a release and its files. */
@@ -4690,6 +4701,13 @@ export const api = {
       token,
     ),
 
+  /** The end of each container's log of a deployed release, read from its cluster now. */
+  deploymentLogs: (token: string, org: string, id: string) =>
+    request<{ containers: ContainerLog[] }>(
+      `/studio-environments/v1/deployments/${encodeURIComponent(id)}/logs?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+
   /* ── studio-connector ── */
 
   connectorProviders: (token: string) =>
@@ -6273,6 +6291,14 @@ export const api = {
       `/studio-session/v1/desktop-sessions?project_id=${encodeURIComponent(projectId)}`,
       token,
       "items",
+    ),
+  /** Send a command to a desktop the member holds open (ADR-0027 §5): it goes
+   *  out on studio-events, and the desktop runs it. 404 for an ended one. */
+  sendDesktopCommand: (token: string, desktopSessionId: string, command: string, params: Record<string, unknown>) =>
+    request<{ command_id: string; desktop_session_id: string; command: string }>(
+      `/studio-theia/v1/desktop-sessions/${encodeURIComponent(desktopSessionId)}/commands`,
+      token,
+      { method: "POST", body: JSON.stringify({ command, params }) },
     ),
 
   /**

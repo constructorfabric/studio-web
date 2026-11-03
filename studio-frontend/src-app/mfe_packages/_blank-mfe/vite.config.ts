@@ -12,6 +12,7 @@ const sharedDeps = [
   '@gears-frontx/framework',
   '@gears-frontx/state',
   '@gears-frontx/mfes',
+  '@gears-frontx/routing',
   '@gears-frontx/gts-plugin',
   '@gears-frontx/api',
   '@gears-frontx/i18n',

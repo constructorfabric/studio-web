@@ -359,10 +359,10 @@ export function ProjectKits({
       </p>
       {product.composing && (
         <section className="card pstep-build" hidden={pane !== "build"}>
-          <h2>3 · Open it in Studio-ide</h2>
+          <h2>3 · Save and build</h2>
           <p className="subtitle">
-            Saves <code>product.gdl</code> in Studio if it changed, and opens the desktop Studio on it, in its Gearbox view,
-            where it is built.
+            Studio keeps <code>product.gdl</code> as the project&apos;s revision, and every build takes it from there:
+            in Studio or Constructor Research from Builds, or in the desktop app.
           </p>
           {verdict.resolves !== true ? (
             <p>
@@ -373,8 +373,23 @@ export function ProjectKits({
             </p>
           ) : (
             <div className="dm-actions">
-              <button type="button" className="primary" onClick={() => setCommand({ kind: "build", at: Date.now() })}>
-                Open in Studio-ide →
+              {onOpenTab && (
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!product.record?.description}
+                  title={product.record?.description ? undefined : "Save the product first (step 2)"}
+                  onClick={() => onOpenTab("builds")}
+                >
+                  Build in Studio →
+                </button>
+              )}
+              <button
+                type="button"
+                className={onOpenTab ? "ghost" : "primary"}
+                onClick={() => setCommand({ kind: "build", at: Date.now() })}
+              >
+                Open in the desktop app →
               </button>
               {product.record?.description ? (
                 <span className="hint">Saved in Studio as revision {product.record.description.revision}.</span>
@@ -612,8 +627,9 @@ function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextActi
     "take-from-code": "Take the product from the code",
     preview: "Check it",
     fix: "Show the fixes",
-    build: "Open in Studio-ide →",
-    open: "Open in Studio-ide",
+    save: "Save",
+    build: "Open in the desktop app →",
+    open: "Open in the desktop app",
     builds: "Builds →",
   };
   return (
@@ -1252,8 +1268,6 @@ type ProductState = {
   completedAt: number;
   /** Start the product from these picks, completed into a set that resolves. */
   seed: (picks: string[]) => Promise<void>;
-  /** Complete the current picks. */
-  complete: () => Promise<void>;
   saveError: string | null;
 };
 
@@ -1380,7 +1394,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
     adjustments,
     completedAt,
     seed: (start) => completeInto(start),
-    complete: () => completeInto(picks),
   };
 }
 
@@ -1609,6 +1622,7 @@ function ProductCard({
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (command.kind === "preview") void run(false);
     if (command.kind === "fix" && fixes && fixes.length > 0) document.getElementById("product-fixes")?.focus();
+    if (command.kind === "save") void run(true);
     if (command.kind === "build") void buildInTheia();
     if (command.kind === "open") openOnDesktop();
     if (command.kind === "take-from-code") setFromCode(true);
@@ -1640,7 +1654,7 @@ function ProductCard({
           </h2>
           <p className="subtitle">
             The components this project ships as one product, composed and checked by the Gearbox
-            engine, which checks it on every change. Save it, then open it in Studio-ide to build it.
+            engine, which checks it on every change. Save it, then open it in the desktop app to build it.
           </p>
         </div>
         <span className="hint" style={{ fontSize: 11 }}>
@@ -1659,7 +1673,6 @@ function ProductCard({
           preview={preview}
           stale={stale}
           busy={busy !== null}
-          onBuild={() => void buildInTheia()}
           onOpen={nav ? (name) => nav.openComponent(name) : undefined}
           kept={kept}
           running={running}
@@ -1765,7 +1778,7 @@ function ProductCard({
             onClick={() => void buildInTheia()}
             data-product-open
           >
-            Open in Studio-ide →
+            Open in the desktop app →
           </button>
           <details className="menu" style={{ position: "relative" }} data-product-more>
             <summary className="ghost" aria-label="More" style={{ listStyle: "none", cursor: "pointer", padding: "4px 8px" }}>

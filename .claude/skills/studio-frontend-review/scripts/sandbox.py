@@ -64,8 +64,9 @@ def setup(workdir, no_sandbox=False):
     if os.path.exists(mark):
         return True
     log = []
+    # `build:packages` only exists on a PR head from before #946, which still vendors `packages/`.
     for cmd, timeout in ((["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], 900),
-                         (["npm", "run", "build:package"], 600), (["npm", "run", "build:packages"], 900)):
+                         (["npm", "run", "build:package"], 600), (["npm", "run", "build:packages", "--if-present"], 900)):
         code, out = run(cmd, fe, workdir, network=cmd[1] == "ci", no_sandbox=no_sandbox, timeout=timeout)
         log.append(f"$ {' '.join(cmd)}  -> exit {code}\n{out[-4000:]}")
         if code != 0:

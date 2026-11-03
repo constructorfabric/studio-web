@@ -47,7 +47,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   useEffect(() => {
     if (!auth) {
       // No auth runtime at all (e.g. the no-uikit scaffold entry builds
-      // createFrontXApp() without an auth plugin): render ungated instead of
+      // presets.full() without an auth plugin): render ungated instead of
       // crashing on mount. This cannot happen silently in a misconfigured
       // real app — there is no login screen and every API call fails
       // without a bearer, and the warning below names the cause.

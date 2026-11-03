@@ -27,9 +27,9 @@ working starting point; what you build on top is yours.
   Profile, Current Theme, UIKit Elements, Widgets Host), a minimal `_blank-mfe`
   to copy from, and two widget fixtures. A shell-only seed has zero MFEs; the
   host, build, and manifest pipeline all work with none present.
-- **Solution packages** (`packages/`) — `react`, `framework`, `state`, `i18n`,
-  `studio`, `auth`: the application-layer libraries the FrontX ecosystem
-  deliberately does not bundle.
+- **Solution packages** — `@gears-frontx/react`, `framework`, `state`, `i18n`,
+  `studio`, `auth`, from npm: the application-layer libraries the FrontX
+  ecosystem deliberately does not bundle.
 - **Theming, i18n, and a dev Studio** — CSS-variable theme tokens, translation
   scaffolding, and an in-app FrontX Studio panel for toggling mock APIs, themes,
   and language during development.
@@ -103,8 +103,8 @@ code.
 # 1. Install dependencies
 npm install
 
-# 2. Build the library + solution packages
-npm run build:package && npm run build:packages
+# 2. Build the library
+npm run build:package
 
 # 3. Start everything — host + any MFE dev servers present
 npm run dev:all
@@ -121,8 +121,9 @@ errors. Add MFE packages with `frontx add frontx-template-mfe` (see
 regenerated — before their preview ports (`:3001` demo, `:3099` blank,
 `:3201`/`:3202` widget fixtures) come up alongside the host.
 
-The FrontX ecosystem packages (`@gears-frontx/mfes`, `@gears-frontx/gts-plugin`,
-`@gears-frontx/api`) resolve from the npm registry at exact pinned versions.
+Every `@gears-frontx/*` package resolves from the npm registry at an exact pinned
+version, the same one in the root, every MFE and mfe-shared. Install them with the
+version: npm's `latest` tag of several of them is still 0.1.0.
 
 See **[QUICK_START.md](QUICK_START.md)** for the hands-on development workflow —
 creating screens and microfrontends, layout, state, styling, and commands.
@@ -185,7 +186,6 @@ my-app/
 │   │   └── globals.css      # Tailwind entry; imports ui-kit theme.css
 │   └── mfe_packages/        # Microfrontends (empty until `frontx add frontx-template-mfe`)
 ├── src/                     # Shared solution lib (api, build, gts)
-├── packages/                # Solution packages: react, framework, state, i18n, studio, auth
 ├── public/                  # Static assets + generated-mfe-manifests.json
 ├── scripts/                 # dev-all, build-mfes, manifest generation
 ├── tailwind.config.ts       # TailwindCSS configuration
@@ -198,13 +198,12 @@ my-app/
 | Script | What it does |
 |--------|--------------|
 | `npm run dev:all` | Build MFEs, then run the host + every MFE preview server together |
-| `npm run dev` | Host only (rebuilds packages + MFEs, then Vite dev server) |
+| `npm run dev` | Host only (rebuilds the library + MFEs, then Vite dev server) |
 | `npm run build` | Full production build |
-| `npm run build:packages` | Build the solution workspace packages |
 | `npm run build:mfes` | Build all microfrontend packages |
 | `npm run generate:mfe-manifests` | Regenerate the host's MFE manifest index |
 | `npm run preview` | Preview a production build |
-| `npm run type-check` | Type-check the host app, packages, and MFEs |
+| `npm run type-check` | Type-check the library, host app, MFEs and e2e |
 | `npm run lint` | ESLint across the project |
 | `npm run arch:deps` | Dependency-boundary rules check |
 | `npm run test:unit` | Unit tests (package + host app + workspace MFEs) |

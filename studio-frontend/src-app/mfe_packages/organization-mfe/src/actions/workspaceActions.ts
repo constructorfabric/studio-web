@@ -9,7 +9,7 @@
 import { FRONTX_SCREEN_DOMAIN, type ChildMfeBridge } from '@gears-frontx/react';
 import {
   STUDIO_ACTION_WORKSPACES_PUBLISH,
-  sendAndForget,
+  sendToHost,
   type WorkspaceRef,
 } from '@constructor-studio/mfe-shared';
 
@@ -18,13 +18,9 @@ export function requestWorkspace(
   workspace: WorkspaceRef,
   organizationId: string
 ): void {
-  sendAndForget(
-    bridge,
-    {
-      type: STUDIO_ACTION_WORKSPACES_PUBLISH,
-      target: FRONTX_SCREEN_DOMAIN,
-      payload: { kind: 'selected', workspace, organizationId },
-    },
-    'organization'
-  );
+  sendToHost(bridge, {
+    type: STUDIO_ACTION_WORKSPACES_PUBLISH,
+    target: FRONTX_SCREEN_DOMAIN,
+    payload: { kind: 'selected', workspace, organizationId },
+  });
 }

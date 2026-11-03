@@ -8,7 +8,7 @@
  */
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-declared:p1
-import type { ScreenExtension } from '@gears-frontx/react';
+import type { ExtensionPresentation, ScreenExtension } from '@gears-frontx/react';
 
 export const SCREEN_LEVELS = ['organization', 'workspace', 'project'] as const;
 
@@ -28,8 +28,12 @@ export interface LeveledPresentation {
   parentSection?: string;
 }
 
-export type LeveledScreenExtension = ScreenExtension & {
-  presentation: ScreenExtension['presentation'] & LeveledPresentation;
+/**
+ * A screen extension as Studio declares it: `route` stays in `presentation`
+ * (ADR-0028), where mfes 0.4 moved it out to the extension itself.
+ */
+export type StudioScreenExtension = Omit<ScreenExtension, 'route' | 'presentation'> & {
+  presentation: ExtensionPresentation & { route: string } & LeveledPresentation;
 };
 
 const DEFAULT_LEVEL: ScreenLevel = 'organization';
@@ -40,40 +44,40 @@ function isScreenLevel(value: unknown): value is ScreenLevel {
 
 // @cpt-begin:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-2
 // @cpt-begin:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-3
-export function levelOf(extension: ScreenExtension): ScreenLevel {
-  const declared = (extension as LeveledScreenExtension).presentation.level;
+export function levelOf(extension: StudioScreenExtension): ScreenLevel {
+  const declared = extension.presentation.level;
   return isScreenLevel(declared) ? declared : DEFAULT_LEVEL;
 }
 // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-3
 // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-2
 
 // The MFE's own token for this item, when the item is a section of a screen.
-export function sectionOf(extension: ScreenExtension): string | undefined {
-  return (extension as LeveledScreenExtension).presentation.section;
+export function sectionOf(extension: StudioScreenExtension): string | undefined {
+  return extension.presentation.section;
 }
 
 // For a hidden screen: the section whose tab stays active while it is mounted.
-export function parentSectionOf(extension: ScreenExtension): string | undefined {
-  return (extension as LeveledScreenExtension).presentation.parentSection;
+export function parentSectionOf(extension: StudioScreenExtension): string | undefined {
+  return extension.presentation.parentSection;
 }
 
-export function placementOf(extension: ScreenExtension): ScreenPlacement {
-  const declared = (extension as LeveledScreenExtension).presentation.placement;
+export function placementOf(extension: StudioScreenExtension): ScreenPlacement {
+  const declared = extension.presentation.placement;
   return declared === 'settings' || declared === 'hidden' ? declared : 'main';
 }
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-entry-point:p1
 export function entryPointOf(
-  extensions: readonly ScreenExtension[],
+  extensions: readonly StudioScreenExtension[],
   level: ScreenLevel,
-): ScreenExtension | undefined {
+): StudioScreenExtension | undefined {
   return resolveLevelMenu(extensions, level)[0];
 }
 
 export function resolveLevelMenu(
-  extensions: readonly ScreenExtension[],
+  extensions: readonly StudioScreenExtension[],
   level: ScreenLevel,
-): ScreenExtension[] {
+): StudioScreenExtension[] {
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-1
   const ofLevel = extensions.filter((extension) => levelOf(extension) === level);
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-1

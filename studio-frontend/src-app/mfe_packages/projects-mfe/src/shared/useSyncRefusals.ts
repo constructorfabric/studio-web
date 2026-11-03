@@ -6,7 +6,7 @@ import type { RepoRefusal } from '../events/artifactEvents';
 
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-refusals:p1
 export function useSyncRefusals(projectId: string): void {
-  const notify = useNotify('projects');
+  const notify = useNotify();
   const t = useSourcesText();
 
   useEffect(() => {

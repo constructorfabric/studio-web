@@ -83,13 +83,16 @@ import { pointKey, pointsOf } from "../../common/extension-points";
 import type { Message } from "@theia/core/shared/@lumino/messaging";
 
 /** One product workspace; old section names remain accepted by command adapters. */
-export type ProductSection = "composition" | "topology" | "checks" | "generate" | "settings";
+export type ProductSection = "composition" | "topology" | "checks" | "generate" | "deploy" | "settings";
 export type ProductSectionInput = ProductSection | "overview" | "validation";
 const SECTIONS: readonly { readonly id: ProductSection; readonly label: string }[] = [
   { id: "composition", label: "Composition" },
   { id: "topology", label: "Topology" },
   { id: "checks", label: "Checks" },
   { id: "generate", label: "Generate" },
+  // Constructor Studio: what comes after Generate -- build, run, deploy --
+  // drawn by the same Generate widget (`setView`), on a stage of its own.
+  { id: "deploy", label: "Run & Deploy" },
 ];
 
 @injectable()
@@ -788,7 +791,7 @@ export class ProductWidget extends ReactWidget {
               else return;
               event.preventDefault(); tabs[next]?.focus(); tabs[next]?.click();
             }}>
-            {SECTIONS.filter(section => section.id !== "generate" || this.catalogue.engineCapabilities?.generate !== false).map(section =>
+            {SECTIONS.filter(section => (section.id !== "generate" && section.id !== "deploy") || this.catalogue.engineCapabilities?.generate !== false).map(section =>
               <button type="button" key={section.id} role="tab" aria-selected={this.section === section.id}
                 tabIndex={this.section === section.id || (this.section === "settings" && section.id === "composition") ? 0 : -1}
                 className={`gbx-view-tab ${this.section === section.id ? "gbx-view-tab-on" : ""}`}
@@ -846,8 +849,8 @@ export class ProductWidget extends ReactWidget {
             </section>
           : this.section === "topology" && product ? this.renderTopology(product) : undefined}
         {/* No React children: the Generate widget's own node is attached here. */}
-        {this.generateVisited && <div className="gbx-embedded-generate" hidden={this.section !== "generate"}
-          ref={(host) => this.mountGenerate(host)} />}
+        {this.generateVisited && <div className="gbx-embedded-generate" hidden={this.section !== "generate" && this.section !== "deploy"}
+          ref={this.generateHost} />}
         </div>
       </div>
     );
@@ -919,33 +922,68 @@ export class ProductWidget extends ReactWidget {
    * parent first: a layout saved before Generate moved here may still hold it
    * in the shell, and Lumino attaches only a widget without one.
    */
+  /**
+   * The host's ref: one function for the widget's life, so React calls it
+   * when the host is mounted and unmounted, not on every render. An inline
+   * arrow was a new ref each render -- harmless while unmounting did nothing,
+   * but the host does unmount (the opening screen has none), and the Generate
+   * widget then stayed "attached" to a node gone from the document: closing
+   * the product failed with "Widget is not attached" and left it blank.
+   */
+  protected readonly generateHost = (host: HTMLDivElement | null): void => this.mountGenerate(host);
+
+  /** The node the Generate widget goes into, while it is mounted. */
+  protected generateHostNode: HTMLDivElement | null = null;
+
   protected mountGenerate(host: HTMLDivElement | null): void {
-    if (host === null) return;
+    this.generateHostNode = host;
     const widget = this.generateWidget;
+    if (host === null) {
+      // React clears the ref before it removes the node: detach while the
+      // node is still in the document.
+      if (widget !== undefined && !widget.isDisposed && widget.isAttached && widget.parent === null && widget.node.isConnected) {
+        Widget.detach(widget);
+      }
+      return;
+    }
     if (widget === undefined || widget.isDisposed) {
       void this.widgets.getOrCreateWidget(GENERATE_WIDGET_ID).then((created) => {
         if (this.isDisposed) return;
         this.generateWidget = created;
+        // The ref is not called again on the next render: attach it to the
+        // host that asked for it, if that host is still there.
+        if (this.generateHostNode !== null) this.mountGenerate(this.generateHostNode);
         this.update();
       });
       return;
     }
+    this.syncGenerateView();
     if (widget.node.parentElement === host) return;
     if (widget.parent !== null) widget.parent = null;
-    else if (widget.isAttached) Widget.detach(widget);
-    Widget.attach(widget, host);
+    else if (widget.isAttached && widget.node.isConnected) Widget.detach(widget);
+    if (!widget.isAttached) Widget.attach(widget, host);
+    else host.appendChild(widget.node);
+  }
+
+  /** One widget, two stages: the code on Generate, what comes after it on Run & Deploy. */
+  protected syncGenerateView(): void {
+    const widget = this.generateWidget as unknown as { setView?: (view: "generate" | "deploy") => void } | undefined;
+    widget?.setView?.(this.section === "deploy" ? "deploy" : "generate");
   }
 
   override dispose(): void {
     const widget = this.generateWidget;
-    if (widget !== undefined && !widget.isDisposed && widget.isAttached && widget.parent === null) Widget.detach(widget);
+    if (widget !== undefined && !widget.isDisposed && widget.isAttached && widget.parent === null && widget.node.isConnected) {
+      Widget.detach(widget);
+    }
     super.dispose();
   }
 
   /** Move to a stage, from somewhere other than the strip. */
   public showSection(section: ProductSectionInput): void {
     this.section = section === "overview" ? "settings" : section === "validation" ? "checks" : section;
-    if (this.section === "generate") this.generateVisited = true;
+    if (this.section === "generate" || this.section === "deploy") this.generateVisited = true;
+    this.syncGenerateView();
     this.update();
   }
 
@@ -1357,6 +1395,7 @@ export class ProductWidget extends ReactWidget {
       case "composition":
       case "checks":
       case "generate":
+      case "deploy":
         return undefined;
     }
   }

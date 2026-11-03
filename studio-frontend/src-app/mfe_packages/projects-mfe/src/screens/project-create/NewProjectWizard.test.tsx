@@ -1,7 +1,8 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
+import { FrontXProvider } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -12,6 +13,8 @@ import {
 const { translations } = vi.hoisted(() => ({
   translations: { current: { isLoaded: true, error: null as Error | null } },
 }));
+
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
@@ -38,7 +41,6 @@ vi.mock('./steps/RepositoriesStep', () => ({ RepositoriesStep: () => null }));
 vi.mock('./steps/RepositoriesFooterNote', () => ({ RepositoriesFooterNote: () => null }));
 
 async function mountWizard() {
-  createFrontXApp({});
   const { mfeApp } = await import('../../init');
   const { NewProjectWizard } = await import('./NewProjectWizard');
   const { bridge } = createMfeBridgeFixture({ domainId: 'overlay', instanceId: 'inst' });

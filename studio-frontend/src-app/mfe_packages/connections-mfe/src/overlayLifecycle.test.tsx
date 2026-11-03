@@ -2,26 +2,27 @@
  * The overlay entry has to hand the re-anchored ui-kit theme to the base class
  * exactly the way the screenset entry does (`lifecycle.tsx`) and the sibling
  * overlay in projects-mfe does (`overlayLifecycle.tsx`).
- *
- * It used to publish that sheet from an `initializeStyles` override — a hook
- * `ThemeAwareReactLifecycle` does not have any more; the base class takes the
- * sheet at construction now. Nothing called the override, so the dialog's
- * shadow root came up without a single kit token and every ui-kit control in
- * it rendered against unresolved custom properties.
  */
-import { describe, expect, it } from 'vitest';
-import { anchorKitThemeOnShadowHost } from '@gears-frontx/react';
+import { describe, expect, it, vi } from 'vitest';
+import { anchorKitThemeOnShadowHost } from '@constructor-studio/mfe-shared';
 import kitTheme from '@gears-frontx/ui-kit/theme.css?inline';
 
-describe('connections-mfe dialog lifecycle', () => {
-  it('hands the re-anchored kit theme to ThemeAwareReactLifecycle', async () => {
-    const module = await import('./overlayLifecycle');
-    const lifecycle = module.default;
-    const additionalStyles = Reflect.get(lifecycle, 'additionalStyles') as
-      | (() => readonly string[])
-      | undefined;
+const constructed = vi.hoisted(() => [] as unknown[][]);
 
-    expect(typeof additionalStyles).toBe('function');
-    expect(additionalStyles?.call(lifecycle)).toEqual([anchorKitThemeOnShadowHost(kitTheme)]);
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  StudioMfeLifecycle: class StudioMfeLifecycle {
+    constructor(...args: unknown[]) {
+      constructed.push(args);
+    }
+  },
+}));
+
+describe('connections-mfe dialog lifecycle', () => {
+  it('hands the re-anchored kit theme to StudioMfeLifecycle', async () => {
+    await import('./overlayLifecycle');
+
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0][1]).toBe(anchorKitThemeOnShadowHost(kitTheme));
   });
 });
