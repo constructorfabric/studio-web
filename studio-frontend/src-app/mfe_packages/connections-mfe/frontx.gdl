@@ -1,0 +1,11 @@
+# What this micro-frontend needs from a product's backend, for the tools that
+# assemble one (Gearbox, Constructor Studio). Its screens and extensions stay
+# in mfe.json.
+gdl_version = "1.6"
+
+mfe(
+    # The backend gears its screens call, by gear id (the `<gear>` of a
+    # `/cf/<gear>/v1` base URL), its own and those it calls through
+    # @constructor-studio/mfe-shared: ConnectorsApiService.
+    requires = ["studio-connector"],
+)

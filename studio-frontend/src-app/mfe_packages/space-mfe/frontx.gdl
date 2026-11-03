@@ -1,0 +1,10 @@
+# What this micro-frontend needs from a product's backend, for the tools that
+# assemble one (Gearbox, Constructor Studio). Its screens and extensions stay
+# in mfe.json.
+gdl_version = "1.6"
+
+mfe(
+    # The backend gears its screens call, by gear id. None: it frames the
+    # editor at the URL the shell hands it and makes no API call of its own.
+    requires = [],
+)
