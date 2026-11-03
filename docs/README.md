@@ -64,6 +64,7 @@ repository.
 - [spec-domain-model.md](spec-domain-model.md) — a proposal: the domain model read from a project's documents, and where they disagree about it.
 - [spec-findings.md](spec-findings.md) — a proposal: what Studio reports about a specification, where in the text, and what a person can do with it.
 - [probe-calibration.md](probe-calibration.md) — measuring a findings producer against the fixes maintainers made after a snapshot (PROBE).
+- [mcp.md](mcp.md) — Studio over MCP: its domain model, requirements and spec-quality detectors as tools in an MCP client, with sign-in from the agent.
 - [desktop-studio.md](desktop-studio.md) — the desktop Studio: how it works and how to run it (ADR-0027).
 - [desktop-release-notes.md](desktop-release-notes.md) — what a member notices in each desktop release, and what does not work yet.
 - [sharing-documents-without-git.md](sharing-documents-without-git.md) — *Share with the team*, saves that change only what was edited, and why the assistant panel no longer opens on its own.

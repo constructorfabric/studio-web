@@ -38,6 +38,8 @@ fn person(n: u128) -> SecurityContext {
 
 /* ── An identity provider and the service behind it ── */
 
+const CALLBACK: &str = "https://studio.example.com/connections/oauth/callback";
+
 #[derive(Default)]
 struct SignedIn {
     /// The challenge the person was sent with, by state.
@@ -61,16 +63,31 @@ impl ConnectorDriver for SignedIn {
     fn signs_in(&self) -> bool {
         true
     }
-    fn sign_in_url(&self, state: &str, pkce: &Pkce) -> anyhow::Result<String> {
+    fn sign_in_url(
+        &self,
+        state: &str,
+        pkce: &Pkce,
+        redirect_uri: Option<&str>,
+    ) -> anyhow::Result<(String, String)> {
         self.challenges
             .lock()
             .unwrap()
             .insert(state.to_owned(), pkce.challenge.clone());
-        Ok(format!(
-            "https://idp.example.com/connect/authorize?state={state}"
+        Ok((
+            format!("https://idp.example.com/connect/authorize?state={state}"),
+            redirect_uri.unwrap_or(CALLBACK).to_owned(),
         ))
     }
-    async fn exchange_code(&self, code: &str, verifier: &str) -> anyhow::Result<Tokens> {
+    async fn exchange_code(
+        &self,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> anyhow::Result<Tokens> {
+        // The provider checks the callback is the one it sent the person to.
+        if redirect_uri != CALLBACK {
+            return Err(anyhow!("the identity provider refused: invalid_grant"));
+        }
         // The provider checks the verifier against the challenge it was sent.
         let challenge = Pkce::from_verifier(verifier.to_owned()).challenge;
         if code != "good"
@@ -425,6 +442,7 @@ fn sign_in() -> NewSignIn<'static> {
         label: "My Research",
         base_url: None,
         scope: "personal",
+        redirect_uri: None,
     }
 }
 
@@ -457,6 +475,30 @@ async fn a_sign_in_ends_as_a_personal_connection_holding_the_refresh_token() {
         vec![c.secret_ref.clone()],
         "nothing of the sign-in is left behind"
     );
+}
+
+#[tokio::test]
+async fn the_code_is_exchanged_with_the_callback_the_sign_in_started_with() {
+    let w = world();
+    let ada = person(1);
+    let from_portal = NewSignIn {
+        redirect_uri: Some(CALLBACK),
+        ..sign_in()
+    };
+    let state = state_of(&w.svc.oauth_start(&ada, from_portal).await.unwrap());
+    w.svc.oauth_complete(&ada, &state, "good").await.unwrap();
+
+    let from_elsewhere = NewSignIn {
+        redirect_uri: Some("https://studio-poc.example.com/connections/oauth/callback"),
+        ..sign_in()
+    };
+    let state = state_of(&w.svc.oauth_start(&ada, from_elsewhere).await.unwrap());
+    let refused = w
+        .svc
+        .oauth_complete(&ada, &state, "good")
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("invalid_grant"), "{refused}");
 }
 
 #[tokio::test]

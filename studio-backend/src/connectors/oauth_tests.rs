@@ -7,7 +7,10 @@ fn client() -> OAuthClient {
         client_id: "constructor-studio".into(),
         client_secret: "s3cret".into(),
         scope: "openid offline_access research-integration".into(),
-        redirect_uri: "https://studio.example.com/connections/oauth/callback".into(),
+        redirect_uris: vec![
+            "https://studio.example.com/connections/oauth/callback".into(),
+            "https://studio-poc.example.com/connections/oauth/callback".into(),
+        ],
     }
 }
 
@@ -31,7 +34,16 @@ fn a_fresh_verifier_is_43_characters_and_never_repeats() {
 #[test]
 fn the_authorize_address_carries_the_client_the_state_and_the_challenge() {
     let pkce = Pkce::from_verifier("v".into());
-    let url = reqwest::Url::parse(&client().authorize("st4te", &pkce).unwrap()).unwrap();
+    let url = reqwest::Url::parse(
+        &client()
+            .authorize(
+                "st4te",
+                &pkce,
+                "https://studio.example.com/connections/oauth/callback",
+            )
+            .unwrap(),
+    )
+    .unwrap();
     let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
     assert_eq!(url.path(), "/idp/connect/authorize");
     assert_eq!(q["response_type"], "code");
@@ -47,6 +59,29 @@ fn the_authorize_address_carries_the_client_the_state_and_the_challenge() {
     assert!(
         !q.contains_key("client_secret"),
         "the secret never travels with the person"
+    );
+}
+
+#[test]
+fn a_sign_in_comes_back_to_the_portal_it_started_from_if_that_is_configured() {
+    let c = client();
+    assert_eq!(
+        c.redirect_uri(None).unwrap(),
+        "https://studio.example.com/connections/oauth/callback"
+    );
+    assert_eq!(
+        c.redirect_uri(Some(
+            "https://studio-poc.example.com/connections/oauth/callback"
+        ))
+        .unwrap(),
+        "https://studio-poc.example.com/connections/oauth/callback"
+    );
+    let foreign = c
+        .redirect_uri(Some("https://evil.example.com/connections/oauth/callback"))
+        .unwrap_err();
+    assert!(
+        foreign.to_string().contains("not a callback address"),
+        "{foreign}"
     );
 }
 

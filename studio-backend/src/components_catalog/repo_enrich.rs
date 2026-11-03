@@ -593,6 +593,41 @@ impl RepoEnricher {
                 Value::Array(dep_keys.into_iter().map(Value::String).collect()),
             );
         }
+        // The versions it asks for: the frontend constructor holds a
+        // micro-frontend's FrontX pins against what the shell carries.
+        let wants = package_json_dep_versions(pkg);
+        if !wants.is_empty() {
+            f.insert("deps_versions".into(), Value::Object(wants));
+        }
+        // A shell is a workspace that carries FrontX packages of its own
+        // (`template-shell/packages/framework`, …): their versions are what a
+        // micro-frontend mounted in it gets, whatever it pinned.
+        let carried: Vec<&str> = rel
+            .iter()
+            .copied()
+            .filter(|q| is_carried_package(q))
+            .collect();
+        if !carried.is_empty() {
+            let mut carries = serde_json::Map::new();
+            for q in carried {
+                if let Some(body) = self.read_file(src, &format!("{dir}/{q}")).await
+                    && let (Some(n), _, Some(v), _) = parse_package_json(&body)
+                {
+                    carries.insert(n, Value::String(v));
+                }
+            }
+            if !carries.is_empty() {
+                f.insert("carries".into(), Value::Object(carries));
+            }
+            // What the shell does for a running product beyond mounting
+            // screens: sign its users in, and read where the product is at
+            // start (`/env.js`) rather than at build.
+            f.insert("shell_signin".into(), Value::Bool(shell_signs_in(&rel)));
+            f.insert(
+                "shell_runtime_env".into(),
+                Value::Bool(rel.contains(&"public/env.js")),
+            );
+        }
         let tests = rel
             .iter()
             .filter(|q| {
@@ -2657,6 +2692,42 @@ fn package_json_dep_keys(body: &str) -> Vec<String> {
     out
 }
 
+/// Scoped dependencies with the version each asks for, across the three
+/// sections; a later section does not replace an earlier one's.
+fn package_json_dep_versions(body: &str) -> serde_json::Map<String, Value> {
+    let mut out = serde_json::Map::new();
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return out;
+    };
+    for section in ["dependencies", "devDependencies", "peerDependencies"] {
+        if let Some(obj) = v.get(section).and_then(|x| x.as_object()) {
+            for (k, spec) in obj {
+                if k.starts_with('@')
+                    && let Some(spec) = spec.as_str()
+                {
+                    out.entry(k.clone())
+                        .or_insert_with(|| Value::String(spec.to_string()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A package a shell carries in its own workspace: `packages/<name>/package.json`,
+/// one level down. Micro-frontends (`src-app/…`) are mounted, not carried.
+fn is_carried_package(rel: &str) -> bool {
+    rel.strip_prefix("packages/")
+        .and_then(|r| r.strip_suffix("/package.json"))
+        .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+}
+
+/// Whether a shell signs its users in: it has an `auth` module in its app
+/// (`src-app/app/auth/`), as Studio's portal does and the stock template does not.
+fn shell_signs_in(rel: &[&str]) -> bool {
+    rel.iter().any(|q| q.starts_with("src-app/app/auth/"))
+}
+
 /// What a `package.json` (and the files beside it) say about the package's
 /// kind: whether it ships a command (`bin`), builds a module-federation remote
 /// (a federation plugin among its dependencies, or a federation config file
@@ -3449,6 +3520,35 @@ has_extension_point = true
 ",
         );
         assert_eq!(parsed.plugins, Some(true));
+    }
+
+    #[test]
+    fn a_package_says_which_versions_it_asks_for() {
+        let wants = package_json_dep_versions(
+            r#"{"dependencies":{"@gears-frontx/react":"0.2.0-alpha.0","react":"19.0.0"},
+                "peerDependencies":{"@gears-frontx/react":"*","@gears-frontx/api":">=0.2.0-0"}}"#,
+        );
+        assert_eq!(
+            wants.get("@gears-frontx/react"),
+            Some(&json!("0.2.0-alpha.0"))
+        );
+        assert_eq!(wants.get("@gears-frontx/api"), Some(&json!(">=0.2.0-0")));
+        assert!(!wants.contains_key("react"));
+        assert!(package_json_dep_versions("not json").is_empty());
+    }
+
+    #[test]
+    fn a_shell_carries_the_packages_one_level_under_its_own_packages() {
+        assert!(is_carried_package("packages/framework/package.json"));
+        assert!(!is_carried_package("packages/framework/src/package.json"));
+        assert!(!is_carried_package(
+            "src-app/mfe_packages/people-mfe/package.json"
+        ));
+        assert!(!is_carried_package("package.json"));
+        assert!(shell_signs_in(&[
+            "src-app/app/auth/keycloakOidcProvider.ts"
+        ]));
+        assert!(!shell_signs_in(&["src-app/app/main.tsx"]));
     }
 
     /// Every `package.json` in `constructorfabric/gears-frontx` at `develop`,

@@ -270,7 +270,7 @@ backend:
   research:
     issuer: ""        # https://<stand>/idp
     clientId: ""      # constructor-studio
-    redirectUri: ""   # https://<portal>/connections/oauth/callback
+    redirectUri: ""   # https://<portal>/connections/oauth/callback; several comma-separated, the first the default
     apiUrl: ""        # https://<stand>/api/platform-account/v1
   resources:
     requests: { cpu: 200m, memory: 256Mi }

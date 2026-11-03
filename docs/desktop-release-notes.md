@@ -9,6 +9,29 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## Next release
+
+### Doc editing
+
+- **The project's domain model beside the documents.** *Specs → Domain
+  model* shows what the documents say the application is and where they
+  disagree, the document in front first. Findings take ✓/✗, every passage
+  opens in your own file at its quote, and the findings show in Problems and
+  in the files they are about. A passage you edited since the model read it
+  is marked, not pinned to a stale line. (#972)
+
+### Known not to work
+
+- **The domain model view was not tried signed in** before this release: its
+  calls are the portal's, checked by tests, and the view was seen only
+  without a project.
+- **In Doc editing a passage is found in the rendered text.** The product's
+  Markdown editor takes no place to open at, so the view looks for the quote
+  in what the editor shows and selects it; that was checked against a
+  rendered document in tests, not in the running editor. The findings are in
+  the Problems view in every mode, but underlined in the text only in Monaco
+  (Development).
+
 ## 0.3.0-beta.14
 
 Run & Deploy as its own stage, a deploy that says why it failed, a sign-in

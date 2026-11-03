@@ -29,9 +29,11 @@ pub struct OAuthClient {
     /// Space-separated. A driver that keeps the refresh token needs
     /// `offline_access` in it, or the connection lasts one access token.
     pub scope: String,
-    /// Where the provider sends the person back: the portal's callback page,
-    /// fixed by configuration so a request cannot name another.
-    pub redirect_uri: String,
+    /// Where the provider may send the person back: the callback page of each
+    /// portal that signs in (the portal and its prototype), fixed by
+    /// configuration so a request cannot name another. The first is the
+    /// default. The provider's client must allow every one of them.
+    pub redirect_uris: Vec<String>,
 }
 
 impl std::fmt::Debug for OAuthClient {
@@ -98,15 +100,41 @@ struct TokenError {
 }
 
 impl OAuthClient {
+    /// The callback a sign-in comes back to: the one the portal asked for, if
+    /// it is configured, or the default when it asked for none.
+    pub fn redirect_uri(&self, requested: Option<&str>) -> anyhow::Result<String> {
+        match requested.map(str::trim).filter(|r| !r.is_empty()) {
+            None => self
+                .redirect_uris
+                .first()
+                .cloned()
+                .ok_or_else(|| anyhow!("no callback address is configured")),
+            Some(r) => self
+                .redirect_uris
+                .iter()
+                .find(|allowed| allowed.as_str() == r)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow!("{r} is not a callback address this deployment signs in from")
+                }),
+        }
+    }
+
     /// Where to send the person: the provider's sign-in page, asking for a
-    /// code for this client, bound to `state` and to `pkce`'s challenge.
-    pub fn authorize(&self, state: &str, pkce: &Pkce) -> anyhow::Result<String> {
+    /// code for this client, bound to `state` and to `pkce`'s challenge, to
+    /// come back to `redirect_uri` (one [`Self::redirect_uri`] chose).
+    pub fn authorize(
+        &self,
+        state: &str,
+        pkce: &Pkce,
+        redirect_uri: &str,
+    ) -> anyhow::Result<String> {
         let url = reqwest::Url::parse_with_params(
             &self.authorize_url,
             &[
                 ("response_type", "code"),
                 ("client_id", self.client_id.as_str()),
-                ("redirect_uri", self.redirect_uri.as_str()),
+                ("redirect_uri", redirect_uri),
                 ("scope", self.scope.as_str()),
                 ("state", state),
                 ("code_challenge", pkce.challenge.as_str()),
@@ -117,19 +145,21 @@ impl OAuthClient {
         Ok(url.into())
     }
 
-    /// The code the provider sent back, for tokens.
+    /// The code the provider sent back, for tokens. `redirect_uri` is the one
+    /// the sign-in was started with: the provider checks they are the same.
     pub async fn exchange_code(
         &self,
         http: &reqwest::Client,
         code: &str,
         verifier: &str,
+        redirect_uri: &str,
     ) -> anyhow::Result<Tokens> {
         self.token(
             http,
             &[
                 ("grant_type", "authorization_code"),
                 ("code", code),
-                ("redirect_uri", self.redirect_uri.as_str()),
+                ("redirect_uri", redirect_uri),
                 ("code_verifier", verifier),
             ],
         )

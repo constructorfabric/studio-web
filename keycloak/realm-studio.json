@@ -140,6 +140,42 @@
       ]
     },
     {
+      "clientId": "studio-mcp",
+      "name": "Constructor Studio MCP",
+      "description": "An agent (Claude Code, Codex, Cursor) signing its person in for Studio's MCP endpoint (docs/mcp.md). Public client with PKCE and a loopback redirect, like studio-desktop: the agent listens on a free port of its own.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "tenant-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
       "clientId": "mini-chat",
       "name": "mini-chat S2S (OAGW provisioning)",
       "enabled": true,

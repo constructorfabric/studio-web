@@ -40,7 +40,12 @@ export async function startConnectionSignIn(
   token: string,
   body: { provider: string; label: string; base_url?: string; scope?: string; owner_tenant_id?: string },
 ): Promise<void> {
-  const { authorize_url } = await api.startSignIn(token, body);
+  // Come back to this portal's own callback page: the portal and the
+  // prototype sign in side by side, and each keeps its own session.
+  const { authorize_url } = await api.startSignIn(token, {
+    ...body,
+    redirect_uri: window.location.origin + SIGN_IN_CALLBACK_PATH,
+  });
   try {
     sessionStorage.setItem(RETURN_KEY, window.location.pathname + window.location.search);
   } catch {
