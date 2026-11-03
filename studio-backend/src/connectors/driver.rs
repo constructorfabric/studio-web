@@ -570,7 +570,8 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     /// Human label for the provider picker.
     fn display_name(&self) -> &'static str;
 
-    /// Default installation root, offered as a placeholder in the UI.
+    /// Default installation root, offered as a placeholder in the UI. Empty
+    /// when there is none: a connection then has to name its address.
     fn default_base_url(&self) -> &'static str;
 
     /// What a configured address for this provider may point at.

@@ -7966,11 +7966,14 @@ function AddConnector({
           <label>Instance URL</label>
           <input
             placeholder={
-              picked.category === "ai"
-                ? `Leave empty for ${picked.default_base_url} — or any compatible endpoint`
-                : picked.category === "notification"
-                  ? `Leave empty for ${picked.default_base_url} — or your own installation`
-                  : `Leave empty for ${picked.default_base_url} — or your self-hosted installation`
+              // A provider without a default (a gear repository) needs one.
+              !picked.default_base_url
+                ? "Required: e.g. https://github.com/<owner>/<repo>"
+                : picked.category === "ai"
+                  ? `Leave empty for ${picked.default_base_url} — or any compatible endpoint`
+                  : picked.category === "notification"
+                    ? `Leave empty for ${picked.default_base_url} — or your own installation`
+                    : `Leave empty for ${picked.default_base_url} — or your self-hosted installation`
             }
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}

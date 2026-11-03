@@ -711,7 +711,8 @@ pub struct SetProjectRepoRequest {
     pub connection_id: Option<Uuid>,
     /// `owner/name` of the repository.
     pub repo: String,
-    /// Branch scaffolded gears are written to (default `main`).
+    /// Branch scaffolded gears are written to (default the repository's
+    /// default branch, `main` when it cannot be read).
     pub branch: Option<String>,
 }
 
@@ -739,25 +740,35 @@ async fn set_project_repo(
 ) -> ApiResult<JsonBody<ProductRecordDto>> {
     // Every write to it would go through this connection: refuse one the
     // organization does not own before it is recorded.
+    let target = super::port::RepositoryTarget {
+        tenant: body.tenant,
+        connection_id: body.connection_id,
+        repo: body.repo.clone(),
+        base_branch: String::new(),
+    };
     product
         .service
-        .ensure_owned(
-            &ctx,
-            project_id,
-            &super::port::RepositoryTarget {
-                tenant: body.tenant,
-                connection_id: body.connection_id,
-                repo: body.repo.clone(),
-                base_branch: String::new(),
-            },
-        )
+        .ensure_owned(&ctx, project_id, &target)
         .await
         .map_err(|e| write_problem("invalid gear repo", &e))?;
+    // Not every repository's branch is `main`: ask the host which it is.
+    let branch = match body
+        .branch
+        .map(|b| b.trim().to_owned())
+        .filter(|b| !b.is_empty())
+    {
+        Some(b) => b,
+        None => product
+            .service
+            .default_branch_of(&ctx, &target)
+            .await
+            .unwrap_or_else(|| "main".to_string()),
+    };
     let repo = serde_json::json!({
         "tenant": body.tenant,
         "connection_id": body.connection_id,
         "repo": body.repo,
-        "branch": body.branch.unwrap_or_else(|| "main".to_string()),
+        "branch": branch,
     });
     let node = product
         .service
