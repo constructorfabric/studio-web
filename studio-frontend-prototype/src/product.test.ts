@@ -11,6 +11,7 @@ import type { Candidate, PlanRow } from "./api";
 import {
   corpusErrors,
   defaultPicks,
+  diagnosticsByCode,
   groupDiagnostics,
   isPickable,
   productIdFrom,
@@ -129,6 +130,29 @@ describe("groupDiagnostics", () => {
     expect(grouped.map((g) => [g.code, g.message, g.profiles])).toEqual([
       ["GBX0511", "gear `authn-resolver` has no implementation", ["dev", "local", "prod"]],
       ["GBX0120", "`event-broker` requires `mode`", []],
+    ]);
+  });
+});
+
+describe("diagnosticsByCode", () => {
+  it("holds one warning said once per gear as one group, errors first", () => {
+    const authz = (gear: string) => ({
+      code: "GBX0215",
+      severity: "warning",
+      message: `\`${gear}\` resolves \`dyn AuthZResolverApi\``,
+      file: "gear.gdl",
+    });
+    const groups = diagnosticsByCode([
+      authz("a"),
+      { code: "GBX0517", severity: "info", message: "two plugins share a vendor" },
+      authz("b"),
+      { code: "GBX0511", severity: "error", message: "no implementation" },
+      authz("c"),
+    ]);
+    expect(groups.map((g) => [g.code, g.items.length])).toEqual([
+      ["GBX0511", 1],
+      ["GBX0215", 3],
+      ["GBX0517", 1],
     ]);
   });
 });

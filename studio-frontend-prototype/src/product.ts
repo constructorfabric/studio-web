@@ -105,6 +105,26 @@ export function groupDiagnostics(ds: readonly GearboxDiagnostic[]): GroupedDiagn
   return groups;
 }
 
+/** Findings of one code, for reading: the engine says the same thing once per
+ *  gear -- forty plugins that resolve AuthZ without linking it are forty rows
+ *  of one warning. One group per code and severity, errors first, in the
+ *  engine's order; `items` are the findings it holds. */
+export interface DiagnosticGroup {
+  code: string;
+  severity: string;
+  items: GroupedDiagnostic[];
+}
+
+export function diagnosticsByCode(ds: readonly GearboxDiagnostic[]): DiagnosticGroup[] {
+  const groups: DiagnosticGroup[] = [];
+  for (const d of groupDiagnostics(ds)) {
+    const same = groups.find((g) => g.code === d.code && g.severity === d.severity);
+    if (same) same.items.push(d);
+    else groups.push({ code: d.code, severity: d.severity, items: [d] });
+  }
+  return groups;
+}
+
 /** The errors that are not about this product at all: a corpus `gear.gdl`
  *  the engine could not read. They block the resolve, and no change to the
  *  gears picked here can clear them -- they mean the engine and the gear

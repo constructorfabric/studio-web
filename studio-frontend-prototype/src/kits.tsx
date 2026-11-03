@@ -32,7 +32,7 @@ import {
   isPickable,
   productIdFrom,
   corpusErrors,
-  groupDiagnostics,
+  diagnosticsByCode,
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
 import { ScaffoldModal } from "./documents";
@@ -1720,25 +1720,22 @@ function ProductCard({
             </span>
           ) : null}
         </span>
+        {stale && preview && <span className="badge warn">the product changed since — preview again</span>}
+        {/* Saving is the page's, step 2 of the strip above: it shows what
+            changes and keeps the revision. Here only whether there is
+            anything to save. */}
+        {picks.length > 0 && preview && !stale && (
+          <span className="hint" style={{ fontSize: 12 }} data-product-save-hint>
+            {changed
+              ? record?.description
+                ? `Changed since revision ${record.description.revision}: save it in step 2 above, Save to product.gdl.`
+                : "Not saved yet: save it in step 2 above, Save to product.gdl."
+              : record?.description
+                ? `Saved as revision ${record.description.revision}.`
+                : null}
+          </span>
+        )}
         <span style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            className={changed ? "primary" : "ghost"}
-            disabled={busy !== null || picks.length === 0 || !preview || stale || !changed}
-            title="Keep this product.gdl in Studio as the project's next revision: builds and the desktop take it from there. Nothing is written to the repository."
-            onClick={() => void run(true)}
-            data-product-save
-          >
-            {busy === "save" ? "Saving…" : changed ? "Save" : "Saved"}
-          </button>
-          <button
-            className={changed ? "ghost" : "primary"}
-            disabled={busy !== null || picks.length === 0}
-            title="Open the desktop Studio on this project, in its Gearbox view; an unsaved product is saved first"
-            onClick={() => void buildInTheia()}
-            data-product-open
-          >
-            Open in the desktop app →
-          </button>
           <details className="menu" style={{ position: "relative" }} data-product-more>
             <summary className="ghost" aria-label="More" style={{ listStyle: "none", cursor: "pointer", padding: "4px 8px" }}>
               ⋯
@@ -1747,6 +1744,15 @@ function ProductCard({
               className="card"
               style={{ position: "absolute", right: 0, zIndex: 5, padding: 6, minWidth: 220, display: "grid", gap: 4 }}
             >
+              <button
+                className="ghost"
+                disabled={busy !== null || picks.length === 0}
+                title="Open the desktop Studio on this project, in its Gearbox view; an unsaved product is saved first"
+                onClick={() => void buildInTheia()}
+                data-product-open
+              >
+                Open in the desktop app →
+              </button>
               <button
                 className="ghost"
                 disabled={busy !== null || !preview || stale}
@@ -1909,16 +1915,6 @@ function ProductCard({
 
       {preview && (
         <div style={{ marginTop: 10, opacity: stale ? 0.55 : 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span className={`badge ${preview.ok ? "ok" : "failed"}`}>
-              {preview.ok ? `resolves for ${preview.profile}` : `does not resolve for ${preview.profile}`}
-            </span>
-            <span style={{ fontSize: 12, opacity: 0.75 }}>
-              {errors} error{errors === 1 ? "" : "s"} · {warnings} warning{warnings === 1 ? "" : "s"}
-            </span>
-            {stale && <span className="badge warn">the product changed since — preview again</span>}
-          </div>
-
           <details open={!map} style={{ margin: "8px 0" }} data-engine-details>
             <summary style={{ fontSize: 12, cursor: "pointer" }}>
               Engine details: {errors} error{errors === 1 ? "" : "s"}, {warnings} warning{warnings === 1 ? "" : "s"},{" "}
@@ -1990,24 +1986,38 @@ function ProductCard({
             )}
 
             {preview.diagnostics.length > 0 && (
-              <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", fontSize: 12 }}>
-                {groupDiagnostics(preview.diagnostics).map((d, i) => (
-                  <li key={`${d.code}-${i}`} style={{ margin: "0 0 6px" }}>
-                    <span className={`badge ${d.severity === "error" ? "danger" : d.severity === "warning" ? "warn" : "info"}`}>
-                      {d.code}
-                    </span>{" "}
-                    {d.message}
-                    {d.profiles.length > 0 && <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>}
-                    {d.file && (
-                      <span style={{ opacity: 0.6 }}>
-                        {" "}
-                        — {d.file}
-                        {d.line ? `:${d.line}` : ""}
-                      </span>
-                    )}
-                    {d.help && <div style={{ opacity: 0.7, marginLeft: 8 }}>{d.help}</div>}
-                  </li>
-                ))}
+              <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", fontSize: 12 }} data-diagnostic-groups>
+                {/* One row per code: errors open, a code said once per gear
+                    folded to its count and first finding. */}
+                {diagnosticsByCode(preview.diagnostics).map((g) => {
+                  const tone = g.severity === "error" ? "danger" : g.severity === "warning" ? "warn" : "info";
+                  const row = (d: (typeof g.items)[number], i: number) => (
+                    <li key={`${d.code}-${i}`} style={{ margin: "0 0 6px" }}>
+                      {d.message}
+                      {d.profiles.length > 0 && <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>}
+                      {d.file && (
+                        <span style={{ opacity: 0.6 }}>
+                          {" "}
+                          — {d.file}
+                          {d.line ? `:${d.line}` : ""}
+                        </span>
+                      )}
+                      {d.help && <div style={{ opacity: 0.7, marginLeft: 8 }}>{d.help}</div>}
+                    </li>
+                  );
+                  return (
+                    <li key={`${g.code}-${g.severity}`} style={{ margin: "0 0 6px" }} data-diagnostic-group={g.code}>
+                      <details open={g.severity === "error"}>
+                        <summary style={{ cursor: "pointer" }}>
+                          <span className={`badge ${tone}`}>{g.code}</span>
+                          {g.items.length > 1 && <b> × {g.items.length}</b>} {g.items[0].message}
+                          {g.items.length > 1 && <span style={{ opacity: 0.6 }}> and {g.items.length - 1} more like it</span>}
+                        </summary>
+                        <ul style={{ listStyle: "none", padding: "4px 0 0 12px", margin: 0 }}>{g.items.map(row)}</ul>
+                      </details>
+                    </li>
+                  );
+                })}
               </ul>
             )}
 
@@ -2109,30 +2119,12 @@ function ProductCard({
           )}
         </p>
       )}
-      {!record?.description && record?.written && (
-        <p className="hint" style={{ fontSize: 12 }}>
-          {record.written.pr_url ? (
-            <>
-              product.gdl is in a pull request:{" "}
-              <a href={record.written.pr_url} target="_blank" rel="noreferrer">
-                {record.written.pr_url}
-              </a>
-            </>
-          ) : (
-            <>
-              product.gdl is committed on <code>{record.written.branch}</code> as{" "}
-              <code>{record.written.commit_sha.slice(0, 7)}</code>.
-            </>
-          )}
-        </p>
-      )}
       <DescriptionInRepository
         token={token}
         projectId={projectId}
         onTaken={() => void product.refresh()}
         showBranches={showBranches}
       />
-      <p className="hint" data-deploys-moved>Where the product runs and its deploys: the project's Deploys tab.</p>
     </section>
   );
 }
