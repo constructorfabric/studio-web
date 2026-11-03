@@ -63,7 +63,6 @@ import {
   productionFixes,
   nextStep,
   productSteps,
-  type ProductStep,
   plainText,
   rowShortlist,
   type Fix,
@@ -92,7 +91,8 @@ export function ProjectKits({
   onOpenTab?: (tab: "builds") => void;
 }) {
   /** Which part of the journey is shown. */
-  const [pane, setPane] = useState<ProductPane>("needs");
+  /** Whether Specs coverage is open; `null` until the person toggles it. */
+  const [specsOpen, setSpecsOpen] = useState<boolean | null>(null);
   const [catalog, setCatalog] = useState<StudioKit[] | null>(null);
   const [installed, setInstalled] = useState<KitInstallation[]>([]);
   const [versions, setVersions] = useState<Record<string, string>>({});
@@ -300,6 +300,7 @@ export function ProjectKits({
     composing: product.composing,
   };
   const steps = productSteps(flowState);
+  const next = nextStep(flowState);
 
   return (
     <section className="kits-view">
@@ -310,8 +311,11 @@ export function ProjectKits({
           button further down, which is the answer before the question. */}
       {section === "components" && (
         <>
+      {/* Building is the page strip's next step: a line that only says so is
+          the strip said twice. */}
+      {next.action !== "builds" && (
       <NextStepBar
-        step={nextStep(flowState)}
+        step={next}
         onAct={(action) => {
           if (action === "add-recommended") {
             product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
@@ -319,33 +323,31 @@ export function ProjectKits({
             if (onOpenTab) onOpenTab("builds");
             else setCommand({ kind: "build", at: Date.now() });
           } else {
-            setPane("product");
             setCommand({ kind: action, at: Date.now() });
           }
         }}
       />
+      )}
       {product.gearbox && !product.gearbox.enabled && (
         <p className="hint" style={{ fontSize: 12 }}>
           Composing a product from gears needs the Gearbox engine, which is off in this deployment
           {product.gearbox.problem ? ` (${product.gearbox.problem})` : ""}.
         </p>
       )}
-      <ol className="psteps" aria-label="From the specs to a product that resolves">
-        {steps.map((st, i) => (
-          <li key={st.id} className={`pstep ${st.state}${pane === st.id ? " on" : ""}`}>
-            <button type="button" aria-current={pane === st.id ? "step" : undefined} disabled={st.state === "off"} onClick={() => setPane(st.id)}>
-              <span className="pstep-n">{st.state === "done" ? "✓" : i + 1}</span>
-              <span>
-                <span className="pstep-title">{st.title}</span>
-                <span className="pstep-status">{st.status}</span>
-              </span>
-            </button>
-          </li>
-        ))}
-      </ol>
-      {/* Every pane stays mounted: each reads on arrival and keeps what the
-          person did in it while another is shown. */}
-      <div hidden={pane !== "needs"}>
+      {/* What the specs ask for is advice: it changes the product only by
+          what is added from it. Folded above the product once it has gears,
+          open while it has none -- that is where a product starts. Mounted
+          either way: it reads on arrival and keeps what was done in it. */}
+      <details
+        className="card"
+        open={specsOpen ?? product.picks.length === 0}
+        onToggle={(e) => setSpecsOpen((e.target as HTMLDetailsElement).open)}
+        data-specs-coverage
+        style={{ marginBottom: 12 }}
+      >
+        <summary style={{ cursor: "pointer" }}>
+          <b>Specs coverage</b> <span className="muted">· {steps[0].status}</span>
+        </summary>
         <SuggestedComponents
           token={token}
           projectId={projectId}
@@ -353,12 +355,9 @@ export function ProjectKits({
           code={code}
           onFlow={setFlow}
         />
-      </div>
-      <p className="hint" hidden={pane !== "needs"} style={{ fontSize: 12 }}>
-        The services and applications in the repositories that are not gears, and everything else the project has: Parts.
-      </p>
+      </details>
       {product.composing && (
-        <div hidden={pane !== "product"}>
+        <div>
         <ProductCard
           token={token}
           projectId={projectId}
@@ -618,7 +617,6 @@ function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextActi
   );
 }
 
-type ProductPane = ProductStep["id"];
 
 function SuggestedComponents({
   token,
