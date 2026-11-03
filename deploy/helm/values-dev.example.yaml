@@ -116,7 +116,10 @@ backend:
   research:
     issuer: "https://dev-constructor.dev/idp"
     clientId: "constructor-studio"
-    redirectUri: "https://studio-dev.cfabric.org/connections/oauth/callback"
+    # The portal's callback first (the default), then the prototype's: each
+    # sign-in comes back to the portal it started from. The IdP client
+    # constructor-studio must allow both.
+    redirectUri: "https://studio-dev.cfabric.org/connections/oauth/callback,https://studio-dev-poc.cfabric.org/connections/oauth/callback"
     apiUrl: "https://dev-constructor.dev/api/platform-account/v1"
   fileStorage:
     enabled: true

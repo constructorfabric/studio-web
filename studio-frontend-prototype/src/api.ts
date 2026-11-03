@@ -4772,7 +4772,15 @@ export const api = {
    *  They come back to `/connections/oauth/callback` with `state` and `code`. */
   startSignIn: (
     token: string,
-    body: { provider: string; label: string; base_url?: string; scope?: string; owner_tenant_id?: string },
+    body: {
+      provider: string;
+      label: string;
+      base_url?: string;
+      scope?: string;
+      owner_tenant_id?: string;
+      /** This portal's callback page; it must be one the backend allows. */
+      redirect_uri?: string;
+    },
   ) =>
     request<{ authorize_url: string }>("/studio-connector/v1/oauth/start", token, {
       method: "POST",

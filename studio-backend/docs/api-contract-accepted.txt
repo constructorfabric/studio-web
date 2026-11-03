@@ -312,6 +312,7 @@ request	POST /studio-connector/v1/oauth/start	base_url	String	optional
 request	POST /studio-connector/v1/oauth/start	label	String	required
 request	POST /studio-connector/v1/oauth/start	owner_tenant_id	Uuid	optional
 request	POST /studio-connector/v1/oauth/start	provider	String	required
+request	POST /studio-connector/v1/oauth/start	redirect_uri	String	optional
 request	POST /studio-connector/v1/oauth/start	scope	String	optional
 request	POST /studio-connector/v1/probe	base_url	String	optional
 request	POST /studio-connector/v1/probe	provider	String	required

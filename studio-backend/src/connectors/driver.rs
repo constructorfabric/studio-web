@@ -632,22 +632,30 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     }
 
     /// Where to send the person to sign in, bound to `state` and the PKCE
-    /// challenge.
-    fn sign_in_url(&self, state: &str, pkce: &super::oauth::Pkce) -> anyhow::Result<String> {
-        let _ = (state, pkce);
+    /// challenge, and the callback they come back to: `redirect_uri` when the
+    /// portal named one this driver allows, its default when it named none.
+    fn sign_in_url(
+        &self,
+        state: &str,
+        pkce: &super::oauth::Pkce,
+        redirect_uri: Option<&str>,
+    ) -> anyhow::Result<(String, String)> {
+        let _ = (state, pkce, redirect_uri);
         Err(anyhow::anyhow!(
             "{} is not signed in to -- its credential is pasted",
             self.display_name()
         ))
     }
 
-    /// The code the identity provider sent back, for tokens.
+    /// The code the identity provider sent back, for tokens. `redirect_uri` is
+    /// the callback [`Self::sign_in_url`] chose.
     async fn exchange_code(
         &self,
         code: &str,
         verifier: &str,
+        redirect_uri: &str,
     ) -> anyhow::Result<super::oauth::Tokens> {
-        let _ = (code, verifier);
+        let _ = (code, verifier, redirect_uri);
         Err(anyhow::anyhow!(
             "{} is not signed in to -- its credential is pasted",
             self.display_name()
