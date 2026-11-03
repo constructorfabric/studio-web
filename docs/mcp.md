@@ -26,17 +26,16 @@ your agent asks you first, and every change they make is a model version
 ## 1. Sign in
 
 **By the agent itself (OAuth).** An agent that supports MCP's authorization
-needs nothing but the URL. Without a token the endpoint answers `401` with
+needs the URL and the client id `studio-mcp`. Without a token the endpoint answers `401` with
 `WWW-Authenticate: Bearer resource_metadata="…/oauth-protected-resource"`; the
 metadata names Studio's Keycloak realm, and the agent opens your browser there
 and keeps the token itself. In Claude Code that is `/mcp`, then *Authenticate*.
 
-The agent needs a client in the realm:
-
-- an agent that takes a client id is given `studio-mcp`, a public client with
-  PKCE and a loopback redirect (`keycloak/realm-studio.json`);
-- an agent that registers itself (dynamic client registration) needs the realm
-  to allow it: *Clients → Client registration → Anonymous access policies*.
+The agent signs in as the realm's client `studio-mcp`: public, with PKCE and a
+loopback redirect on any port (`keycloak/realm-studio.json`; on dev it exists).
+Give the agent that client id. The realm does not let an agent register a
+client of its own (anonymous dynamic client registration answers `403`), so an
+agent that only knows how to register cannot sign in and takes a token by hand.
 
 **By hand**, when the agent cannot sign in or the realm does not have the
 client yet. The server takes the same access token the portal uses; tokens of
@@ -65,7 +64,8 @@ the agent's MCP connection.
 With OAuth:
 
 ```sh
-claude mcp add --transport http studio https://studio-dev.cfabric.org/cf/studio-mcp/v1/messages
+claude mcp add --transport http --scope user --client-id studio-mcp \
+  studio https://studio-dev.cfabric.org/cf/studio-mcp/v1/messages
 ```
 
 then `/mcp`, *studio*, *Authenticate*. With a token by hand:
@@ -196,20 +196,43 @@ Things to ask:
 | `Studio answered 503: … is not part of this deployment` | the gear the tool needs is not running here |
 | `spec_check` fails with `upstream not configured` | the spec-quality service has no key on this deployment |
 | `you have reached the limit of 60 spec_check calls an hour` | the per-person limit; wait the minutes it names |
-| the agent's sign-in page says the client is unknown | the realm has no `studio-mcp` client and allows no registration; see *Sign in* |
+| the agent's sign-in page says the client is unknown | the agent was not given `--client-id studio-mcp`, or the realm has no such client; see *Sign in* |
+| the agent says the authorization server's metadata is not JSON | something in front answers `/.well-known/…` with a page; the portal's nginx returns 404 there |
 
 ## Setting it up on a deployment
 
 | Setting (`gears.studio-mcp.config`) | Variable | Default |
 | --- | --- | --- |
 | `api_url`: where tools send requests | `STUDIO_MCP_API_URL` | `http://127.0.0.1:8090/cf` |
-| `authorization_server`: the issuer in the metadata | `STUDIO_OIDC_ISSUER` | the OIDC plugin's issuer |
+| `authorization_server`: the issuer in the metadata | `STUDIO_OIDC_ISSUER` (the Helm chart sets it) | empty: no issuer is named, and a token is given by hand (Compose) |
 | `public_url`: the endpoint's base as seen from outside | `STUDIO_MCP_PUBLIC_URL` | the request's forwarded host and scheme |
 | `spec_checks_per_hour` | | `60` (0: no limit) |
 
-A realm imported before this change has no `studio-mcp` client: create it as
-in `keycloak/realm-studio.json` (public, standard flow, PKCE S256, redirects
-`http://127.0.0.1/*` and `http://localhost/*`, the `tenant-id` mapper).
+A realm imported before this change has no `studio-mcp` client: the realm
+file is read on Keycloak's first boot only. Create it from the definition in
+`keycloak/realm-studio.json` (public, standard flow, PKCE S256, redirects
+`http://127.0.0.1/*` and `http://localhost/*`, the `tenant-id` mapper), with
+the admin from the `studio-web-keycloak-admin` Secret:
+
+```sh
+# the client's JSON, from the repository
+python -c "import json;r=json.load(open('keycloak/realm-studio.json',encoding='utf-8'));print(json.dumps(next(c for c in r['clients'] if c['clientId']=='studio-mcp')))" > mcp-client.json
+NS=studio-dev; K="kubectl -n $NS"
+U=$($K get secret studio-web-keycloak-admin -o jsonpath='{.data.username}' | base64 -d)
+P=$($K get secret studio-web-keycloak-admin -o jsonpath='{.data.password}' | base64 -d)
+$K exec -i deploy/studio-studio-web-keycloak -- env U="$U" P="$P" sh -c '
+  cat > /tmp/c.json; K=/opt/keycloak/bin/kcadm.sh; C="--config /tmp/kc"
+  $K config credentials $C --server http://localhost:8080/auth --realm master --user "$U" --password "$P"
+  $K create clients $C -r studio -f /tmp/c.json; rm -f /tmp/c.json /tmp/kc' < mcp-client.json
+```
+
+Dev has it (created 2026-11-03). A redirect to `127.0.0.1` or `localhost` on
+any port is accepted; any other host is refused.
+
+The portal's nginx answers `/.well-known/` with 404 rather than the portal's
+page, because an MCP client asks
+`/.well-known/oauth-authorization-server/auth/realms/studio` on the portal's
+host before Keycloak's own discovery document.
 
 Every tool call is logged as `studio-mcp: tool call` with the tool, the
 caller's subject id, whether it answered and how long it took; the requests a

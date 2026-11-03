@@ -65,6 +65,15 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # Well-known URIs are asked by programs, never by a person, and the SPA
+    # fallback would answer every one of them 200 with the portal's HTML. An
+    # MCP client signing in for /cf/studio-mcp asks
+    # /.well-known/oauth-authorization-server/auth/realms/studio first (RFC
+    # 8414) and must get a 404 to go on to Keycloak's own discovery document.
+    location ^~ /.well-known/ {
+        try_files $uri =404;
+    }
+
 
     # Server-sent events, and the one place compression must not reach. The
     # gzip filter buffers until it has enough bytes to be worth compressing,

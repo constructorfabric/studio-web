@@ -183,6 +183,53 @@ Pick the snapshot with `STUDIO_IMAGE_TAG`:
 Keep `--no-build`: without it a missing tag is silently rebuilt from source
 ([why](#a-published-run-rebuilds-images)).
 
+## Studio in your agent (MCP)
+
+Studio's domain model, the requirements its specifications state and the
+spec-quality checks are also MCP tools, for the agent a developer already works
+in: Claude Code, Codex, Cursor. It is another way into Studio, not a
+replacement for the portal: every call acts as you, with your token, and can
+do only what you can do in the portal. The full guide is
+[`docs/mcp.md`](docs/mcp.md).
+
+| | |
+|---|---|
+| Endpoint (dev) | `https://studio-dev.cfabric.org/cf/studio-mcp/v1/messages` |
+| Endpoint (Compose) | `http://localhost:8090/cf/studio-mcp/v1/messages` |
+| Sign-in | OAuth through Keycloak with the client `studio-mcp`, or `Authorization: Bearer <token>` |
+
+**Use it.** In Claude Code, add the server once, then run `/mcp`, pick
+*studio*, *Authenticate*, and sign in in the browser it opens:
+
+```bash
+claude mcp add --transport http --scope user --client-id studio-mcp \
+  studio https://studio-dev.cfabric.org/cf/studio-mcp/v1/messages
+```
+
+Then ask the agent, for example: "check docs/PRD.md with the purpose detector
+before I commit it" or "which fields does the `project` type have?". Codex,
+Cursor and any agent without OAuth take a token by hand in an environment
+variable; [`docs/mcp.md`](docs/mcp.md) has their configs and how to get one.
+The tools that change the domain model are marked so the agent asks first, and
+each change is a version `domain_model_revert` undoes.
+
+**Set it up.** The server is the `studio-mcp` gear of the backend and needs no
+setting on Kubernetes:
+
+- the Helm chart already gives the backend `STUDIO_OIDC_ISSUER`, which the
+  server names as where to sign in;
+- Keycloak needs the public client `studio-mcp` (PKCE, redirects to
+  `127.0.0.1` and `localhost` on any port). A new realm gets it from
+  `keycloak/realm-studio.json`; an existing one, which read that file only on
+  first boot, gets it by the `kcadm.sh` commands in
+  [`docs/mcp.md`](docs/mcp.md#setting-it-up-on-a-deployment). Dev has it;
+- `gears.studio-mcp.config.spec_checks_per_hour` (default 60) limits spec
+  checks per person.
+
+Under Compose no issuer is named, so the agent takes a token by hand: a
+password grant against `https://localhost:8443/realms/studio` with
+`client_id=studio-portal` and the `admin` or `demo` user.
+
 ## Deployment
 
 Kubernetes is the shared deployment mode. The Helm chart
@@ -312,6 +359,7 @@ sides of that mount or neither.
 | IDE session | [`theia/README.md`](theia/README.md) |
 | Desktop Studio | [`docs/desktop-studio.md`](docs/desktop-studio.md), [release notes](docs/desktop-release-notes.md) |
 | Keycloak | [`keycloak/README.md`](keycloak/README.md) |
+| Studio over MCP, for an agent | [`docs/mcp.md`](docs/mcp.md) |
 | Deployment and pipelines | [`deploy/README.md`](deploy/README.md), [`deploy/PIPELINES.md`](deploy/PIPELINES.md) |
 
 ## Contributing
