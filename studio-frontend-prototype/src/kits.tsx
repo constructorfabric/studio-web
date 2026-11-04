@@ -363,7 +363,12 @@ export function ProjectKits({
       <details
         className="card"
         open={specsOpen ?? product.picks.length === 0}
-        onToggle={(e) => setSpecsOpen((e.target as HTMLDetailsElement).open)}
+        onToggle={(e) => {
+          // The browser also fires `toggle` for the state React rendered
+          // (on mount, and when the picks arrive); only a change is a choice.
+          const now = (e.target as HTMLDetailsElement).open;
+          if (now !== (specsOpen ?? product.picks.length === 0)) setSpecsOpen(now);
+        }}
         data-specs-coverage
         style={{ marginBottom: 12 }}
       >
