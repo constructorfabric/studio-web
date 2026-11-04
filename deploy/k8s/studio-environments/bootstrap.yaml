@@ -16,6 +16,15 @@
 # the preview ends. Needs Kubernetes 1.30 or newer
 # (ValidatingAdmissionPolicy).
 #
+# Studio checks it rather than assuming it. Testing the cluster connection
+# reports whether the account holds each right the ClusterRole below gives
+# (create namespaces, create rolebindings, bind clusterroles/admin), one
+# SelfSubjectAccessReview each, without failing the test. A build or a deploy
+# into a namespace that is not there yet is refused before it is queued,
+# CLUSTER_CANNOT_CREATE_NAMESPACE naming this file, when one of them is
+# missing; into one that is there, when the account may not create secrets,
+# Jobs and Deployments in it (studio-backend/src/environments/README.md).
+#
 # The Studio prototype shows this file, as it is, in its "Connect a cluster"
 # form (studio-frontend-prototype/src/kubeconfig-field.tsx reads it at build
 # time).

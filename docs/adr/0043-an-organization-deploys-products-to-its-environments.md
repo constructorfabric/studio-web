@@ -103,6 +103,8 @@ machine, built and run by the desktop.
 
 ### 3. A deploy runs on the server, as the organization
 
+> Amended by ADR-0059 ([a build or a deploy names its cause before it starts](0059-a-build-or-deploy-names-its-cause-before-it-starts.md)): the cluster's bootstrap (`deploy/k8s/studio-environments/bootstrap.yaml`) is checked, not trusted to have been applied once. Before a build or an install is queued, the connections are read as the run reads them, and the cluster is asked whether the project's namespace exists and what the connection may do there; a connection test reports the bootstrap's rights.
+
 **Deploy** is a request to the backend: this product, at this commit, built
 into these images, to this environment. The backend runs it as a background
 run (ADR-0038). It uses the environment's connection: `helm upgrade

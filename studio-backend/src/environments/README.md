@@ -22,10 +22,17 @@ All under `/studio-environments/v1`. An organization is named with
 | `POST /environments` | admin | add one |
 | `PUT`/`DELETE /environments/{environment_id}` | admin | change or remove one |
 | `POST /environments/{environment_id}/test` | admin | ask the cluster for its version with the environment's connection |
+
+Testing a `kubernetes` connection (studio-connector) also asks the cluster,
+with a SelfSubjectAccessReview each, whether the connection holds the rights
+`deploy/k8s/studio-environments/bootstrap.yaml` gives (`create namespaces`,
+`create rolebindings`, `bind clusterroles/admin`), and reports each in the
+answer's `checks`. A missing one does not fail the test.
 | `GET /targets?project_id=` | member | the environments the project may deploy to, its namespace in each, its bindings |
 | `PUT /bindings?project_id=` | member | bind each environment to the kubernetes profile it runs (a profile may run in several; ADR-0057) |
 | `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64), a published one (`chart_ref` `oci://<registry prefix>/…` and `chart_version`), or a build by id alone (`build`: its chart, images, commit and lock come from its record), or an earlier deployment again (`redeploy_of`), or `action: uninstall` of the release (`product`); refused into an environment with `promote_from` until the release succeeded there (ADR-0048); with `preview` (`name`, `ttl_hours`), into a namespace of its own that the sweep removes when it expires (ADR-0055); 202 `queued` or `awaiting_approval` |
-| `POST /builds?project_id=` | member | build the product in the environment's cluster: a Job in the project's namespace (prepare, rootless BuildKit, publish), watched until it ends and recorded as a `studio` build (ADR-0048 §9); naming neither `product_file` nor `ref` builds what the Product step last wrote, on its branch; 202 with `build_id` |
+| `POST /builds?project_id=` | member | build the product in the environment's cluster: a Job in the project's namespace (prepare, rootless BuildKit, publish), watched until it ends and recorded as a `studio` build (ADR-0048 §9); naming neither `product_file` nor `ref` builds what the Product step last wrote, on its branch; refused before it is queued when a connection or the cluster would stop it (see "Before a build or a deploy is queued"); 202 with `build_id` |
+| `GET /builds/{build_id}/log?project_id=` | member | a Studio build's steps and the end of each one's log, read from its pod; a build that failed as it started (`failure_step` `start`) never had a pod, and answers one failed `start` step whose log is the reason its record keeps |
 | `POST /build-workflows?project_id=` | member | propose `.github/workflows/studio-build-<product>.yml` for the product `product_file` describes (default the path the product record gives, `products/<id>/product.gdl`) to the project's repository as a pull request (ADR-0048 §5) |
 | `POST /environments/{environment_id}/push-tokens?project_id=` | member | a push-only token for named repositories under the environment's registry prefix, from the registry's token service (ADR-0048 §1); 201 |
 | `PUT`/`DELETE /config-secrets/{key}?project_id=&environment_id=` | member | set or remove a secret of the release's configuration there; the value goes to credstore and never comes back |
@@ -99,6 +106,41 @@ of studio-user through `OrgAuthority`.
   more run. Deleting a namespace needs the current bootstrap manifest, which
   allows it for preview namespaces only.
 
+## Before a build or a deploy is queued
+
+`readiness.rs`. A build (and an install, before it is recorded) reads every
+connection its run will read, the way the run reads it, and asks the cluster,
+so a run that could only fail is refused with its cause instead of failing in
+the middle of a Job with a 403 or "no pod left". Each refusal is a
+`failed_precondition` whose violation carries the code:
+
+| Code | When |
+|---|---|
+| `REPOSITORY_CONNECTION_PERSONAL` | the project's repository is reached through a personal connection: a build clones as the organization's service, which cannot read a person's token, even when the person asking owns it |
+| `REPOSITORY_CONNECTION_UNREADABLE` | the repository's connection could not be read as the organization's service (removed token, a connection the organization does not reach) |
+| `REGISTRY_CONNECTION_UNREADABLE` | the environment's registry connection could not be read as the run reads it (the service of the tenant it is found from, ADR-0054 §5) |
+| `CLUSTER_CONNECTION_UNREADABLE` | the same, for the cluster connection, or its credential is not a usable token or kubeconfig |
+| `ENVIRONMENT_CLUSTER_UNREACHABLE` | the cluster did not answer within 20 seconds |
+| `CLUSTER_CANNOT_READ_NAMESPACE` | the connection may not read the project's namespace, so whether it exists cannot be told |
+| `CLUSTER_CANNOT_CREATE_NAMESPACE` | the namespace does not exist, and the connection lacks a right the bootstrap manifest gives (`create namespaces`, `create rolebindings`, `bind clusterroles/admin`); names the namespace and the manifest |
+| `CLUSTER_NAMESPACE_RIGHTS_MISSING` | the namespace exists, and the connection may not `create` secrets, Jobs or Deployments in it |
+
+The rights are asked with SelfSubjectAccessReviews made with the cluster
+connection's own credential. A namespace the connection may not read used to
+be assumed to exist (`deploy.rs`); the run now fails there with the same
+reason, should the cluster change between the check and the run.
+
+## A Studio build's record
+
+Each `studio` build node keeps, beside what every build keeps, where it ran
+and with what (`artifact_ingest::port::BuildPlace`): `environment_id`,
+`environment`, `namespace`, `git_ref`, `repository`, `source_connection_id`
+and `source_connection` (its label), `builder_image`, and `gearbox_version`,
+the engine's commit `publish` reads in its image (the manifest's `gearbox`).
+The start writes all but the engine; a later record keeps what an earlier one
+said unless it says it again. Each is absent from a record written before it
+was kept.
+
 ## Where things are kept
 
 Account-management metadata, declared in every `config/*.yaml`:
@@ -125,6 +167,9 @@ once the run ends.
   pattern, registry, the history's trimming, image values). No I/O.
 - `store.rs` — the metadata rows and the service identity.
 - `service.rs` — who may, in which order.
+- `readiness.rs` — what a build or a deploy checks before it is queued: the
+  connections read as the run reads them, the cluster's namespace and rights
+  asked of the cluster; the decisions are plain functions.
 - `deploy.rs` — the run: namespace, the pull secret, configuration secrets,
   the database step, `helm upgrade --install --wait` (or `helm uninstall`) with
   a kubeconfig (and a registry login for a published chart) in a scratch
@@ -137,7 +182,12 @@ once the run ends.
 - `build.rs` — a build in the organization's cluster: the Job, the start and
   watch runs, and the Job's own steps (`studio-backend build-prepare`,
   `build-publish`), which run in this Studio's backend image
-  (`STUDIO_BUILDER_IMAGE`, else `…/studio-backend:sha-<commit>`); BuildKit
+  (`STUDIO_BUILDER_IMAGE`, else `…/studio-backend:sha-<commit>`). The image
+  must start as uid 1000, since the Job's pod is `runAsNonRoot` with every
+  capability dropped: the published image does, and so does
+  `studio-backend/Dockerfile`'s `builder` target (the binary, git, Gearbox,
+  helm; `scripts/check-builder-image.sh` checks it); the stand's
+  `Dockerfile.src` image switches user through gosu and cannot. BuildKit
   runs in `STUDIO_BUILDKIT_IMAGE`, else `moby/buildkit:v0.20.0-rootless`. The
   chart sets both (`backend.image`, `backend.builds.buildkitImage`).
 - `rest.rs` — the routes.

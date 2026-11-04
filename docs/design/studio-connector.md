@@ -357,7 +357,10 @@ key can reach. The three chat drivers share rendering in `notify.rs`. The Kubern
 (`kubernetes.rs`) is a cluster an organization's environments deploy into
 (ADR-0043): its credential is a service-account token or a kubeconfig with
 inline data only, and `ClusterAccess` is what `studio-environments` reaches the
-cluster with. The registry driver (`registry.rs`, category `registry`) is an
+cluster with. Its test also asks the cluster, with one SelfSubjectAccessReview
+each, whether the connection holds the rights the cluster's bootstrap manifest
+gives (`BOOTSTRAP_RIGHTS`), and reports them in the answer's `checks` without
+failing (ADR-0059). The registry driver (`registry.rs`, category `registry`) is an
 OCI registry a product's images and chart are published to (ADR-0048): its
 credential is `username:token` (a token alone logs in as `studio`), its test
 logs in to `/v2/` and follows the registry's bearer challenge, its token

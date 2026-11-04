@@ -201,6 +201,8 @@ protected environment and the same record as a deploy.
 
 ### 9. Studio builds in the organization's cluster
 
+> Amended by ADR-0059 ([a build or a deploy names its cause before it starts](0059-a-build-or-deploy-names-its-cause-before-it-starts.md)): the image `prepare` and `publish` run in starts as uid 1000 with no capability (`studio-backend/Dockerfile`'s `builder` target, checked by `scripts/check-builder-image.sh`); a build is refused before it is queued when its connections or the cluster would stop it, and its record says where it ran and with what.
+
 A build need not wait for a pipeline. **Build in Studio** (portal or
 desktop) asks the server, which starts a Kubernetes Job in the project's
 namespace of the chosen environment: the organization's nodes do the work,
