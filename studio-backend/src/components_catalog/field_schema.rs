@@ -328,6 +328,10 @@ pub fn builtin_schemas() -> Vec<TypeFieldSchema> {
                     own("ports", "Ports", "text", "service.gdl"),
                     own("health", "Health route", "label", "service.gdl"),
                     own("env", "Environment", "text", "service.gdl"),
+                    // `own` or `infra` (ADR-0064): an infra service is
+                    // deployed with the product, its facts under `infra`.
+                    own("service_kind", "Service kind", "label", "service.gdl"),
+                    own("infra", "Infra service", "text", "service.gdl"),
                 ],
             ),
             group(
@@ -579,7 +583,7 @@ mod tests {
             .collect();
         assert_eq!(by_type[FRONTX_TYPE].fields().count(), 11);
         assert_eq!(by_type[KIT_TYPE].fields().count(), 5);
-        assert_eq!(by_type[SERVICE_TYPE].fields().count(), 11);
+        assert_eq!(by_type[SERVICE_TYPE].fields().count(), 13);
         assert_eq!(by_type[DOCUMENT_TYPE].fields().count(), 3);
     }
 

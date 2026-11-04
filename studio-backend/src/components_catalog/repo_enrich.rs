@@ -2893,10 +2893,11 @@ fn passport_component(
     let (name, description, kind, payload) = if path.ends_with(super::service_gdl::FILE) {
         let s = super::service_gdl::read(body)?;
         let docs = docs_of(dir, &s.docs, paths);
-        let payload = json!({
+        let mut payload = json!({
             "title": s.name,
             "name": s.name,
             "kind": "service",
+            "service_kind": if s.infra.is_some() { "infra" } else { "own" },
             "version": s.version,
             "description": s.description,
             "image": s.image,
@@ -2918,6 +2919,24 @@ fn passport_component(
             "git_ref": git_ref,
             "passport_path": path,
         });
+        // An infra service's facts (ADR-0064 §1): what a project adds to
+        // its product and deploys with it.
+        if let (Some(i), Some(obj)) = (&s.infra, payload.as_object_mut()) {
+            obj.insert(
+                "infra".into(),
+                json!({
+                    "args": i.args,
+                    "config": i.config,
+                    "secrets": i.secrets,
+                    "provides": i.provides,
+                    "stateful": i.stateful,
+                    "storage": i.storage,
+                    "data_path": i.data_path,
+                    "chart": i.chart,
+                    "chart_version": i.chart_version,
+                }),
+            );
+        }
         (s.name, s.description, "service", payload)
     } else {
         let k = super::kit_gdl::read(body)?;
