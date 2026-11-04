@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { ArtifactNode } from "./api";
 import {
+  BUILD_REFUSALS,
+  buildRefusalCode,
+  buildRefusalText,
+  placeLines,
+  placeOf,
   buildDuration,
   stepToShow,
   buildStatus,
@@ -184,5 +189,48 @@ describe("stepToShow", () => {
   it("is nothing before any step started", () => {
     expect(stepToShow([s("prepare", "waiting")])).toBeNull();
     expect(stepToShow([])).toBeNull();
+  });
+});
+
+describe("where a Studio build ran, and why one was refused", () => {
+  it("reads the record's place and leaves an older record without one", () => {
+    const place = placeOf({
+      environment_id: "e1",
+      environment: "dev",
+      namespace: "shop-dev",
+      git_ref: "main",
+      repository: "acme/shop",
+      source_connection: "GitHub (acme)",
+      builder_image: "ghcr.io/acme/studio-backend:sha-1",
+      gearbox_version: "361e703",
+    });
+    expect(place?.namespace).toBe("shop-dev");
+    expect(placeLines(place!).map((l) => l.label)).toEqual(["where", "code", "cloned through", "builder", "Gearbox"]);
+    expect(placeLines(place!)[0].value).toBe("dev · namespace shop-dev");
+    expect(placeOf({ repository: "acme/shop", status: "passed" })).toBeUndefined();
+  });
+
+  it("names a refusal by its code with what to do, and leaves any other failure to errText", () => {
+    const refused = {
+      status: 400,
+      problem: {
+        context: {
+          violations: [
+            { type: "environment", subject: "REPOSITORY_CONNECTION_PERSONAL", description: "connection 'GitHub (alice)' is personal" },
+          ],
+        },
+      },
+    };
+    expect(buildRefusalCode(refused)).toBe("REPOSITORY_CONNECTION_PERSONAL");
+    const text = buildRefusalText(refused, () => "fallback");
+    expect(text).toContain("personal connection");
+    expect(text).toContain("GitHub (alice)");
+    expect(text).toContain("workspace or organization connection");
+    expect(buildRefusalCode({ status: 500 })).toBeNull();
+    expect(buildRefusalText({ status: 500 }, () => "fallback")).toBe("fallback");
+  });
+
+  it("names the bootstrap manifest when the namespace cannot be made", () => {
+    expect(BUILD_REFUSALS.CLUSTER_CANNOT_CREATE_NAMESPACE.next).toContain("deploy/k8s/studio-environments/bootstrap.yaml");
   });
 });

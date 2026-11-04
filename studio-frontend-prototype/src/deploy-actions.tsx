@@ -15,7 +15,7 @@ import {
   type EnvironmentBinding,
   type ProjectBuildSetting,
 } from "./api";
-import type { IdeBuild } from "./builds";
+import { type IdeBuild, buildRefusalText } from "./builds";
 import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { ownBuildSummary } from "./project-build";
 import { errText, relTime } from "./format";
@@ -604,7 +604,7 @@ function BuildForResearch({
       const b = await api.startBuild(token, projectId, { environment_id: env.id, profile: profileFor(targets.bindings, env.id) });
       onChanged?.(`Build ${b.build_id} started for ${env.name} in Research; it shows under Build as it goes.`);
     } catch (e) {
-      setError(errText(e));
+      setError(buildRefusalText(e, errText));
     } finally {
       setBusy(false);
     }
@@ -897,7 +897,7 @@ export function BuildInStudio({
               });
               onChanged?.(`Build ${b.build_id} started in ${b.namespace}; it shows below as it goes.`);
             } catch (e) {
-              setError(errText(e));
+              setError(buildRefusalText(e, errText));
             } finally {
               setBuilding(false);
             }

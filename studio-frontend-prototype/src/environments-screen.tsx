@@ -1003,7 +1003,15 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
       setHealth((h) => ({ ...h, [id]: { state: "checking", text: "Checking…", at: Date.now() } }));
       api
         .testConnection(token, id, org.id)
-        .then((t) => setHealth((h) => ({ ...h, [id]: { state: "ok", text: t.account, at: Date.now() } })))
+        .then((t) => {
+          // A cluster that answers but lacks the bootstrap's rights still
+          // answers: say what it may not do, so a build is not the first to.
+          const missing = (t.checks ?? []).filter((c) => !c.ok);
+          const text = missing.length
+            ? `${t.account} · may not ${missing.map((c) => c.name).join(", ")}: ${missing[0].detail}`
+            : t.account;
+          setHealth((h) => ({ ...h, [id]: { state: "ok", text, at: Date.now() } }));
+        })
         .catch((e) => setHealth((h) => ({ ...h, [id]: { state: "bad", text: errText(e), at: Date.now() } })));
     },
     [token, org.id],

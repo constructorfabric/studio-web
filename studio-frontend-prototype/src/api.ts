@@ -2016,6 +2016,9 @@ export interface WrittenFile {
 export interface ConnectorIdentity {
   account: string;
   display_name?: string;
+  /** What else the test looked at: for a cluster, each right the bootstrap
+   *  manifest gives (ADR-0043). Reported only; the test passed regardless. */
+  checks?: { name: string; ok: boolean; detail: string }[];
 }
 
 export interface ConnectionTest extends ConnectorIdentity {

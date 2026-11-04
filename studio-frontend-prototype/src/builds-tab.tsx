@@ -41,6 +41,7 @@ import {
   isBuildWorkflow,
   isLost,
   openingScenario,
+  placeLines,
   productBuildsOf,
   repoPathsOf,
   statusTone,
@@ -767,6 +768,18 @@ function BuildDetails({
         <div className="sub">
           from <code>{b.branch}</code>
         </div>
+      )}
+      {b.place && placeLines(b.place).length > 0 && (
+        <dl className="sub" style={{ margin: "4px 0 0", display: "grid", gridTemplateColumns: "max-content 1fr", gap: "2px 8px" }} data-build-place>
+          {placeLines(b.place).map((l) => (
+            <div key={l.label} style={{ display: "contents" }}>
+              <dt>{l.label}</dt>
+              <dd style={{ margin: 0, overflowWrap: "anywhere" }}>
+                <code>{l.value}</code>
+              </dd>
+            </div>
+          ))}
+        </dl>
       )}
       {lost && (
         <p className="hint" data-build-lost>
