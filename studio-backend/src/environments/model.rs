@@ -746,7 +746,7 @@ pub fn deploy_values(
         .unwrap_or_else(|| serde_json::json!({}));
     merge(&mut values, image_values(env, images));
     if !secret_keys.is_empty() {
-        for i in images {
+        for i in images.iter().filter(|i| !is_generated_ui(i)) {
             merge(
                 &mut values,
                 serde_json::json!({ i.app.clone(): {
@@ -1350,6 +1350,13 @@ pub fn image_values(env: &Environment, images: &[DeployImage]) -> serde_json::Va
         );
     }
     for i in images {
+        if is_generated_ui(i) {
+            values.insert(
+                i.app.clone(),
+                serde_json::json!({ "image": env.image(&i.image) }),
+            );
+            continue;
+        }
         let (repository, tag) = split_image(&env.image(&i.image));
         let mut image = serde_json::Map::new();
         image.insert("repository".into(), repository.into());
@@ -1359,6 +1366,18 @@ pub fn image_values(env: &Environment, images: &[DeployImage]) -> serde_json::Va
         values.insert(i.app.clone(), serde_json::json!({ "image": image }));
     }
     serde_json::Value::Object(values)
+}
+
+/// A generated product's UI image: Gearbox's chart reads it as one string,
+/// `ui.image`, and takes no configuration secret (its values allow nothing
+/// else). Told apart from a repository's own `ui` image by Gearbox's `gbx-`
+/// image names.
+fn is_generated_ui(i: &DeployImage) -> bool {
+    i.app == super::build::UI_APP
+        && i.image
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("gbx-"))
 }
 
 /// The pull secret a deploy writes into the namespace (ADR-0048 §2).
@@ -1722,6 +1741,36 @@ mod tests {
         e.projects = Some(vec![Uuid::from_u128(2)]);
         assert!(!e.admits(Uuid::from_u128(1)));
         assert!(e.admits(Uuid::from_u128(2)));
+    }
+
+    #[test]
+    fn a_generated_ui_image_is_one_string_and_takes_no_secret() {
+        let e = env("prod");
+        let images = [
+            DeployImage {
+                app: "api".into(),
+                image: "studio/gbx-api:sha-1".into(),
+            },
+            DeployImage {
+                app: "ui".into(),
+                image: "studio/gbx-shop-frontend:sha-1".into(),
+            },
+        ];
+        let v = deploy_values(&e, &images, None, &["K".into()], "shop");
+        assert_eq!(
+            v["ui"],
+            serde_json::json!({ "image": "ghcr.io/acme/studio/gbx-shop-frontend:sha-1" })
+        );
+        assert_eq!(v["api"]["existingSecret"], "shop-config");
+        // A repository's own `ui` image keeps the usual keys.
+        let own = image_values(
+            &e,
+            &[DeployImage {
+                app: "ui".into(),
+                image: "studio/web:1".into(),
+            }],
+        );
+        assert_eq!(own["ui"]["image"]["repository"], "ghcr.io/acme/studio/web");
     }
 
     #[test]

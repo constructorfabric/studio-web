@@ -1204,6 +1204,25 @@ pub fn chart_base_version(chart_yaml: &str) -> String {
         .unwrap_or_else(|| "0.1.0".to_owned())
 }
 
+/// The values key, and the app name, of a generated product's UI image: a
+/// Gearbox chart keeps it under `ui` (`ui.image`, one string), never under an
+/// application's name (Gearbox refuses an application called `ui`).
+pub const UI_APP: &str = "ui";
+
+/// The generated UI image, when the tree has one: the folder its Dockerfile
+/// is in (a FrontX `frontend/`, or a `ui/`), which is also its build context,
+/// and the image name the chart's `ui.image` gives it, without its tag.
+pub fn ui_image(out: &Path, values_yaml: &str) -> Option<(PathBuf, String)> {
+    let dir = ["frontend", "ui"]
+        .iter()
+        .map(|d| out.join(d))
+        .find(|d| d.join("Dockerfile").is_file())?;
+    let values: serde_yaml::Value = serde_yaml::from_str(values_yaml).ok()?;
+    let image = values.get("ui")?.get("image")?.as_str()?;
+    let name = image.split(':').next().unwrap_or(image).trim();
+    (!name.is_empty()).then(|| (dir, name.to_owned()))
+}
+
 /// A path inside `root`, `rel` resolved without touching the disk; `None`
 /// when it would leave `root`.
 pub fn inside(root: &Path, rel: &Path) -> Option<PathBuf> {
@@ -1804,11 +1823,23 @@ pub fn prepare_as(
         ));
         named.push((app.clone(), name));
     }
+    let chart_dir = out.join("helm").join(&product);
+    // The product's screens: one image beside the applications, built from
+    // the generated frontend's own folder, and named as the chart's `ui`
+    // values name it. `docker/build.sh` builds only the Rust applications.
+    let values = std::fs::read_to_string(chart_dir.join("values.yaml")).unwrap_or_default();
+    if let Some((dir, name)) = ui_image(&out, &values) {
+        list.push_str(&format!(
+            "{UI_APP} {name} {} {}\n",
+            dir.display(),
+            dir.display()
+        ));
+        named.push((UI_APP.to_owned(), name));
+    }
     std::fs::write(work.join("apps"), list)?;
     let short: String = commit.chars().take(12).collect();
     std::fs::write(work.join("tag"), format!("sha-{short}"))?;
 
-    let chart_dir = out.join("helm").join(&product);
     let chart_base = chart_base_version(
         &std::fs::read_to_string(chart_dir.join("Chart.yaml"))
             .context("the generated chart has no Chart.yaml")?,
@@ -2210,6 +2241,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         assert_eq!(lines[1], "FROM rust:1.97.0-bookworm AS build");
         assert!(lines[2].contains("protobuf-compiler libprotobuf-dev cmake"));
         assert_eq!(with_build_tools(&fixed), fixed);
+    }
+
+    #[test]
+    fn the_generated_ui_is_built_from_its_own_folder_under_the_charts_name() {
+        let out = std::env::temp_dir().join(format!("bdb-ui-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        let values = "ui:\n  image: gbx-shop-frontend:0.1.0\n  pullPolicy: IfNotPresent\n";
+        assert_eq!(ui_image(&out, values), None, "no frontend folder");
+        std::fs::create_dir_all(out.join("frontend")).unwrap();
+        std::fs::write(out.join("frontend").join("Dockerfile"), "FROM x\n").unwrap();
+        assert_eq!(
+            ui_image(&out, values),
+            Some((out.join("frontend"), "gbx-shop-frontend".to_owned()))
+        );
+        assert_eq!(ui_image(&out, "api: {}\n"), None, "a chart without `ui`");
+        let _ = std::fs::remove_dir_all(&out);
     }
 
     #[test]
