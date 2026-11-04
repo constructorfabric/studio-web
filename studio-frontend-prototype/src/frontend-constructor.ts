@@ -141,7 +141,10 @@ export function isTemplateMfe(
   m: Pick<Mfe, "kind" | "repo">,
   templateRepo: string = SUGGESTED_FRONTX_SOURCE.repo,
 ): boolean {
-  return TEMPLATE_KINDS.has(m.kind ?? "") || repoKey(m.repo ?? "").includes(repoKey(templateRepo));
+  // The same repository, not one whose name merely contains it: `acme/ui`
+  // is not `acme/ui-shop`.
+  const key = (r: string) => repoKey(ownerRepo(r) ?? r);
+  return TEMPLATE_KINDS.has(m.kind ?? "") || (!!m.repo && key(m.repo) === key(templateRepo));
 }
 
 /** The micro-frontends a product can add, and the templates to start a new

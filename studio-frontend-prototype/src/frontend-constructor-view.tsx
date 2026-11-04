@@ -236,10 +236,15 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     if (selected === name) setSelected(null);
   };
   const dirty = !inProduct || JSON.stringify(picks) !== JSON.stringify(saved) || shellRef !== savedShell;
+  // Picks the catalogue does not list (a legacy project's, or one removed
+  // since) are not on the page; saving must not drop them silently.
+  const unknown = picks.filter((n) => !data.mfes.some((m) => m.name === n));
   async function save() {
     setBusy(true);
     setErr(null);
     try {
+      if (unknown.length > 0)
+        throw new Error(`The catalogue does not list ${unknown.join(", ")}; sync the catalogue, then save.`);
       const chosen = picks.map((n) => data?.mfes.find((m) => m.name === n)).filter((m): m is Mfe => !!m);
       const { pick, unplaced } = frontendPick(shellRef, chosen, data?.libraries ?? [], data?.gears ?? []);
       if (!pick) throw new Error(`The shell \`${shellRef}\` is not a repository and directory.`);
@@ -303,10 +308,20 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
             {cover.unseen.length} gear{cover.unseen.length === 1 ? " has" : "s have"} no screen {showUnseen ? "▾" : "▸"}
           </button>
         )}
-        <button type="button" className="primary" disabled={!dirty || busy} onClick={save}>
+        <button type="button" className="primary" disabled={!dirty || busy || unknown.length > 0} onClick={save}>
           {busy ? "Saving…" : !inProduct ? "Save to the product" : dirty ? "Save" : "Saved"}
         </button>
       </div>
+      {unknown.length > 0 && (
+        <p className="muted" style={{ margin: 0, fontSize: 12 }} data-frontend-unknown-picks>
+          The catalogue does not list {unknown.join(", ")}, so {unknown.length === 1 ? "it is" : "they are"} not on the
+          page. Sync the catalogue to bring {unknown.length === 1 ? "it" : "them"} back, or{" "}
+          <button type="button" className="link" onClick={() => unknown.forEach(remove)}>
+            drop {unknown.length === 1 ? "it" : "them"}
+          </button>{" "}
+          before saving.
+        </p>
+      )}
       <p className="muted" style={{ margin: 0, fontSize: 12 }} data-frontend-gdl-note>
         {inProduct ? (
           <>

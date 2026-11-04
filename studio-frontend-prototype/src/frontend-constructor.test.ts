@@ -518,4 +518,14 @@ describe("the deployment's FrontX starting points", () => {
     expect(addable.map((m) => m.repo)).toEqual(["acme/shop"]);
     expect(withSuggestedFrontx([], { repo: "acme/ui", git_ref: "v2" })?.[0]).toMatchObject({ repo: "acme/ui", git_ref: "v2" });
   });
+
+  it("take only the template repository itself, not one whose name starts with it", () => {
+    const mfe = (repo: string) => ({ name: "x", repo, kind: "mfe" }) as unknown as Parameters<typeof splitTemplates>[0][number];
+    const { templates, addable } = splitTemplates(
+      [mfe("acme/ui"), mfe("acme/ui-shop"), mfe("https://github.com/acme/ui.git"), mfe("git@github.com:acme/ui")],
+      "acme/ui",
+    );
+    expect(templates.map((m) => m.repo)).toEqual(["acme/ui", "https://github.com/acme/ui.git", "git@github.com:acme/ui"]);
+    expect(addable.map((m) => m.repo)).toEqual(["acme/ui-shop"]);
+  });
 });
