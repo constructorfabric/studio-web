@@ -2629,6 +2629,8 @@ div.dm-block { padding-left: 0; }
 .pcell .pico.ticon-mark .level-mark { width: 26px; height: 26px; }
 .ticon-picker .ticon-swatch, .ticon-picker .ticon-swatch:hover, .ticon-picker .ticon-swatch.on { background: var(--tc); }
 .dash-context .ticon-anchor button { margin-left: 0; }
+.nav-pin .ico .level-mark { width: 18px; height: 18px; font-size: 10px; }
+.nav-pin .ico .level-mark .icon { width: 12px; height: 12px; }
 .logo-control { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; flex-wrap: wrap; }
 .error-inline { color: var(--destructive); font-size: 12.5px; }
 
