@@ -52,10 +52,10 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 # merges, the engine is the snapshot of that PR's branch on its author's fork;
 # move back to a constructorfabric/gearbox release once it does.
 ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-361e703
-ARG STUDIO_GEARBOX_VERSION=0.1.0-361e703
-ARG STUDIO_GEARBOX_REF=361e70390d1001a5e0a11ed5dbdfdefa761cd7a6
-ARG STUDIO_GEARBOX_SHA256=27d1dd882fe178a37098b74870398ad3b63dea18686415f20cb4408953ea7fa2
+ARG STUDIO_GEARBOX_RELEASE=snapshot-a2a7d53
+ARG STUDIO_GEARBOX_VERSION=0.1.0-a2a7d53
+ARG STUDIO_GEARBOX_REF=a2a7d53dd15d8b5cc66be13bfc7391ae2af1631d
+ARG STUDIO_GEARBOX_SHA256=b84580ccdc8cd4be9e788f94f9e307f3a4805027bb77b8be3cbff2329c8a7b69
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \
