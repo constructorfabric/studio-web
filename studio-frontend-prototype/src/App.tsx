@@ -5387,7 +5387,7 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string; experimental?: b
   // Everything to decide about the project in one place: what stops a build,
   // what to look at, how the documentation could be better. A question about
   // the whole project, so a tab of the project, not of one of its sections.
-  { id: "issues", icon: "alert", label: "Issues" },
+  { id: "issues", icon: "alert", label: "Issues", experimental: true },
   // Specs first, because everything after it is downstream of a document: the
   // components a product is composed from are matched against what its specs
   // declare, and the artifacts are what came out. Reading the row left to right
@@ -5430,12 +5430,12 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string; experimental?: b
   // the CI jobs of the mainline and of the open pull requests, and a summary
   // of spec against code that opens Specs. After Releases, which builds what
   // it reads.
-  { id: "tests", icon: "check", label: "Tests" },
+  { id: "tests", icon: "check", label: "Tests", experimental: true },
   // Experimental: a kit installs through the IDE's runner and adds check
   // methods to Domain model › Hypotheses; the flow works, its place does not
   // settle yet (ADR-0056 may move it beside the repositories).
   { id: "kits", icon: "grid", label: "Kits", experimental: true },
-  { id: "artifacts", icon: "file", label: "Artifacts" },
+  { id: "artifacts", icon: "file", label: "Artifacts", experimental: true },
   // Sources sits after them because it is where they come from: a sync run
   // here is what puts anything in Artifacts at all. It was a card near the
   // bottom of Overview, which buried the project's only long-running action
@@ -5444,7 +5444,7 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string; experimental?: b
   { id: "sources", icon: "plug", label: "Sources" },
   // The project's connections are managed from Sources, where they are used:
   // a tab of their own was the organization's page again (MOVED_PROJECT_TABS).
-  { id: "activity", icon: "activity", label: "Activity" },
+  { id: "activity", icon: "activity", label: "Activity", experimental: true },
   { id: "people", icon: "users", label: "Team" },
   // Ours, kept after the product's list rather than interleaved with it.
 ];
