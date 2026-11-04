@@ -2012,11 +2012,13 @@ impl EnvironmentService {
         let product = workflow::product_id(&gdl)
             .ok_or_else(|| Refusal::Invalid(format!("{product_file} names no product id")))?;
         let (engine_repo, engine_rev) = crate::product::sdk::engine_pin();
+        // The pipeline pushes under the project's own path (ADR-0062 §2).
+        let slug = self.slug(ctx, org, project).await?;
         let params = workflow::Params {
             product_file: product_file.clone(),
             product,
             profile: profile.trim().to_owned(),
-            prefix: env.registry.clone(),
+            prefix: super::images::project_prefix(&env.registry, &slug),
             engine_repo,
             engine_rev: engine_rev.unwrap_or_default(),
         };
