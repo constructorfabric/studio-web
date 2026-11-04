@@ -262,11 +262,55 @@ impl RepoEnricher {
             }
         };
         let paths: Vec<&str> = listing.iter().map(String::as_str).collect();
-        match self.mode {
+        let mut found = match self.mode {
             RepoMode::Gears => self.discover_gears(&src, &paths).await,
             RepoMode::Frontx => self.discover_frontx(&src, &paths).await,
             RepoMode::Kits => self.discover_kits(&src, &paths).await,
+        }?;
+        // Whatever the mode, a repository's own services and kits are found
+        // by their passports (ADR-0061): a `service.gdl` or `kit.gdl` is one
+        // component wherever it sits. A kit both a manifest and a passport
+        // describe is one kit, the passport's.
+        let passports = self.discover_passports(&src, &paths).await;
+        found.retain(|c| {
+            c.payload.is_none()
+                || !passports
+                    .iter()
+                    .any(|p| p.crate_name == c.crate_name && p.kind == c.kind)
+        });
+        found.extend(passports);
+        Ok(found)
+    }
+
+    /// Own services and kits, one per `service.gdl` or `kit.gdl` (ADR-0061).
+    /// A passport that does not read is skipped with its reason in the log:
+    /// one bad file must not cost the catalogue the rest.
+    async fn discover_passports(&self, src: &Repository, paths: &[&str]) -> Vec<RepoGear> {
+        let mut out: Vec<RepoGear> = Vec::new();
+        for path in passport_paths(paths) {
+            let Some(body) = self.read_file(src, path).await else {
+                warn!(repo = %self.repo, path, "studio-gears-catalog: a passport is listed but unreadable, skipped");
+                continue;
+            };
+            let dir = parent_dir(path);
+            match passport_component(&self.repo, &self.git_ref, path, &dir, &body, paths) {
+                Ok(gear) => {
+                    if !out
+                        .iter()
+                        .any(|g| g.crate_name == gear.crate_name && g.kind == gear.kind)
+                    {
+                        out.push(gear);
+                    }
+                }
+                Err(e) => {
+                    warn!(repo = %self.repo, path, error = %e, "studio-gears-catalog: a passport does not read, skipped");
+                }
+            }
         }
+        if !out.is_empty() {
+            info!(components = out.len(), repo = %self.repo, git_ref = %self.git_ref, "studio-gears-catalog: services and kits found by their passports");
+        }
+        out
     }
 
     /// Kits: one component per `.cf-studio-kit.toml`.
@@ -410,6 +454,13 @@ impl RepoEnricher {
                 Some("yes") => Some("plugin".to_string()),
                 _ => None,
             };
+            let mut fields = fields;
+            let docs = docs_of(dir, &[], paths);
+            if !docs.is_empty()
+                && let Some(o) = fields.as_object_mut()
+            {
+                o.insert("docs".into(), json!(docs));
+            }
             out.push(RepoGear {
                 crate_name,
                 description,
@@ -747,6 +798,16 @@ impl RepoEnricher {
             );
         }
         apply_frontx_description(&mut f, described.as_ref(), rel.contains(&"mfe.json"), pkg);
+        let docs = docs_of(
+            dir,
+            declared
+                .map(|d| d.identity().docs.as_slice())
+                .unwrap_or(&[]),
+            paths,
+        );
+        if !docs.is_empty() {
+            f.insert("docs".into(), json!(docs));
+        }
 
         RepoGear {
             crate_name: comp,
@@ -820,7 +881,7 @@ impl RepoEnricher {
         // in it say whether any of them changed since the last read. A
         // checkout is read from disk and costs no requests, so it is read as
         // it is rather than trusted to match the API's tree.
-        let key = self.repo_key();
+        let key = self.cache_key();
         let print = cargo_fingerprint(&manifests);
         if self.checkout.is_none()
             && let Some(found) = CARGO_DEPS.get(&key, &print)
@@ -899,16 +960,18 @@ impl RepoEnricher {
         }
     }
 
-    /// Where this reader reads: the tenant, the connection, the repository and
-    /// the ref, as one key.
+    /// What this reader reads, by address: the repository and the ref, as one
+    /// key (issue 11). Not the connection: re-pointing a source to another
+    /// connection is the same repository, and keying a registry read on the
+    /// connection made such a move drop every component found there.
     pub fn repo_key(&self) -> String {
-        format!(
-            "{}/{:?}/{}@{}",
-            self.tenant,
-            self.connection_id,
-            self.repo.to_ascii_lowercase(),
-            self.git_ref
-        )
+        address_key(&self.repo, &self.git_ref)
+    }
+
+    /// [`Self::repo_key`] scoped to the tenant that reads it, for the
+    /// in-memory caches: no tenant is answered from another's read.
+    fn cache_key(&self) -> String {
+        format!("{}/{}", self.tenant, self.repo_key())
     }
 
     /// The ref this reader reads.
@@ -961,7 +1024,7 @@ impl RepoEnricher {
         if project_gears::unchanged(known, &print) {
             return Ok(ProjectGearsRead::Unchanged);
         }
-        let key = self.repo_key();
+        let key = self.cache_key();
         if let Some((gears, candidates)) = cache.get_found(&key, &print, with_candidates) {
             return Ok(ProjectGearsRead::Read {
                 fingerprint: print,
@@ -2768,6 +2831,165 @@ fn is_carried_package(rel: &str) -> bool {
 /// A FrontX package's own description, at its root beside `package.json`.
 const FRONTX_GDL: &str = "frontx.gdl";
 
+/// A repository read's key by its address: `owner/name@ref`, the name
+/// lower-cased (GitHub's are case-insensitive), the ref as the reader
+/// normalises it.
+pub(crate) fn address_key(repo: &str, git_ref: &str) -> String {
+    format!(
+        "{}@{}",
+        repo.trim().trim_start_matches('/').to_ascii_lowercase(),
+        normalize_ref(git_ref)
+    )
+}
+
+/// A stored read key in the address form [`address_key`] writes. Keys
+/// written before it led with the tenant and the connection,
+/// `<tenant>/<Some(uuid)|None>/owner/name@ref`: those two parts are dropped,
+/// so a read stored under the old form is the same read after the upgrade.
+pub(crate) fn canonical_repo_key(key: &str) -> String {
+    let mut parts = key.splitn(3, '/');
+    let (Some(tenant), Some(connection), Some(rest)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return key.to_string();
+    };
+    let old_form = Uuid::parse_str(tenant).is_ok()
+        && (connection == "None" || connection.starts_with("Some("));
+    if !old_form {
+        return key.to_string();
+    }
+    match rest.rsplit_once('@') {
+        Some((repo, git_ref)) => address_key(repo, git_ref),
+        None => rest.to_ascii_lowercase(),
+    }
+}
+
+/// Every `service.gdl` and `kit.gdl` in the tree, outside vendored and built
+/// output, shallowest first.
+fn passport_paths<'a>(paths: &[&'a str]) -> Vec<&'a str> {
+    let mut out: Vec<&str> = paths
+        .iter()
+        .copied()
+        .filter(|p| {
+            let name = p.rsplit('/').next().unwrap_or(p);
+            (name == super::service_gdl::FILE || name == super::kit_gdl::FILE) && !skip_path(p)
+        })
+        .collect();
+    out.sort_by_key(|p| (p.matches('/').count(), *p));
+    out
+}
+
+/// One own service or kit from its passport at `path` (in directory `dir`)
+/// of `repo` at `git_ref`: its node payload, as the catalogue stores it.
+fn passport_component(
+    repo: &str,
+    git_ref: &str,
+    path: &str,
+    dir: &str,
+    body: &str,
+    paths: &[&str],
+) -> std::result::Result<RepoGear, String> {
+    let resolve = |p: &str| super::gdl_literal::resolve(dir, p);
+    let tree = format!("https://github.com/{repo}/tree/{git_ref}/{dir}");
+    let (name, description, kind, payload) = if path.ends_with(super::service_gdl::FILE) {
+        let s = super::service_gdl::read(body)?;
+        let docs = docs_of(dir, &s.docs, paths);
+        let payload = json!({
+            "title": s.name,
+            "name": s.name,
+            "kind": "service",
+            "version": s.version,
+            "description": s.description,
+            "image": s.image,
+            "dockerfile": s.dockerfile.as_deref().and_then(resolve),
+            "context": s
+                .context
+                .as_deref()
+                .and_then(resolve)
+                .map(|c| if c.is_empty() { ".".to_string() } else { c }),
+            "ports": s.ports,
+            "health": s.health,
+            "env": s.env,
+            "requires": s.requires,
+            "provides": s.provides,
+            "docs": docs,
+            "source": "github",
+            "repository": format!("https://github.com/{repo}"),
+            "repository_path": tree,
+            "git_ref": git_ref,
+            "passport_path": path,
+        });
+        (s.name, s.description, "service", payload)
+    } else {
+        let k = super::kit_gdl::read(body)?;
+        let docs = docs_of(dir, &k.docs, paths);
+        let manifest = k.manifest.as_deref().and_then(resolve).or_else(|| {
+            let beside = if dir.is_empty() {
+                KIT_MANIFEST.to_string()
+            } else {
+                format!("{dir}/{KIT_MANIFEST}")
+            };
+            paths.contains(&beside.as_str()).then_some(beside)
+        });
+        let payload = json!({
+            "title": k.title.clone().unwrap_or_else(|| k.name.clone()),
+            "name": k.name,
+            "slug": k.name,
+            "kind": "kit",
+            "description": k.description,
+            "publisher": k.publisher,
+            "visibility": k.visibility,
+            "version": k.version,
+            "kinds": k.kinds,
+            "docs": docs,
+            "source": "github",
+            "repository": format!("https://github.com/{repo}"),
+            "repository_path": tree,
+            "git_ref": git_ref,
+            "manifest_path": manifest,
+            "passport_path": path,
+        });
+        (k.name, k.description, "kit", payload)
+    };
+    Ok(RepoGear {
+        crate_name: name,
+        description,
+        source_repo: repo.to_string(),
+        fields: Value::Null,
+        uml: Vec::new(),
+        kind: Some(kind.to_string()),
+        category: Some(kind.to_string()),
+        payload: Some(payload),
+        dir: (!dir.is_empty()).then(|| dir.to_string()),
+        crates: Vec::new(),
+    })
+}
+
+/// A component's documents as paths from the repository root: what its
+/// passport lists (relative to its directory `dir`, each kept inside the
+/// repository), or, when it lists none, the README beside it.
+pub(crate) fn docs_of(dir: &str, declared: &[String], paths: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = declared
+        .iter()
+        .filter_map(|d| super::gdl_literal::resolve(dir, d))
+        .filter(|d| !d.is_empty())
+        .collect();
+    if out.is_empty() {
+        let prefix = if dir.is_empty() {
+            String::new()
+        } else {
+            format!("{dir}/")
+        };
+        if let Some(readme) = paths.iter().find(|p| {
+            p.strip_prefix(prefix.as_str())
+                .is_some_and(|rest| rest.eq_ignore_ascii_case("README.md"))
+        }) {
+            out.push((*readme).to_string());
+        }
+    }
+    out.dedup();
+    out
+}
+
 /// Lay what a package's `frontx.gdl` — its passport — declares over what the
 /// scan guessed.
 ///
@@ -4085,9 +4307,47 @@ mfe(frontx = "0.2.0-alpha.15", screens = ["Persons"], mounts = ["/people"], role
         assert_eq!(
             frontx_gdl::read(&shell).unwrap(),
             FrontxDescription::Shell(Box::new(frontx_gdl::ShellPassport {
+                identity: frontx_gdl::Identity {
+                    name: Some("@gears-frontx/frontx-template-shell".into()),
+                    version: Some("0.1.0-alpha.2".into()),
+                    description: Some(
+                        "Standard FrontX application template — target scaffold for template-side code relocation".into(),
+                    ),
+                    docs: Vec::new(),
+                },
                 signs_in: true,
+                sign_in_redirect: vec!["/".into()],
                 runtime_env: Some("public/env.js".into()),
-                ..Default::default()
+                env: std::collections::BTreeMap::from([
+                    ("DISCORD_URL".to_string(), "discord.url".to_string()),
+                    ("OIDC_CLIENT_ID".to_string(), "oidc.client_id".to_string()),
+                    ("OIDC_ISSUER".to_string(), "oidc.issuer".to_string()),
+                ]),
+                build_env: vec![
+                    "VITE_DISCORD_URL".into(),
+                    "VITE_OIDC_CLIENT_ID".into(),
+                    "VITE_OIDC_ISSUER".into(),
+                ],
+                node: Some("24".into()),
+                package_manager: Some("npm".into()),
+                build: Some("npm run build".into()),
+                output: Some("dist".into()),
+                base: Some("/".into()),
+                api_prefix: Some("/cf/".into()),
+                carries: Some(std::collections::BTreeMap::from([
+                    ("@gears-frontx/api".to_string(), "0.3.0".to_string()),
+                    ("@gears-frontx/auth".to_string(), "0.2.0-alpha.3".to_string()),
+                    ("@gears-frontx/framework".to_string(), "0.2.0-alpha.16".to_string()),
+                    ("@gears-frontx/frontx-template-shell".to_string(), "0.1.0-alpha.2".to_string()),
+                    ("@gears-frontx/gts-plugin".to_string(), "0.4.0".to_string()),
+                    ("@gears-frontx/i18n".to_string(), "0.2.0-alpha.2".to_string()),
+                    ("@gears-frontx/mfes".to_string(), "0.4.0".to_string()),
+                    ("@gears-frontx/react".to_string(), "0.2.0-alpha.15".to_string()),
+                    ("@gears-frontx/routing".to_string(), "0.4.0".to_string()),
+                    ("@gears-frontx/state".to_string(), "0.2.0-alpha.4".to_string()),
+                    ("@gears-frontx/studio".to_string(), "0.2.0-alpha.3".to_string()),
+                    ("@gears-frontx/ui-kit".to_string(), "0.4.10".to_string()),
+                ])),
             }))
         );
         let packages = root.join("src-app/mfe_packages");
@@ -4832,6 +5092,77 @@ gear(
         assert_eq!(merged.maturity.as_deref(), Some("experimental"));
         // The gdl implements nothing, and the gdl is the description.
         assert_eq!(merged.is_plugin, Some(false));
+    }
+
+    #[test]
+    fn a_read_is_keyed_by_its_address_and_old_keys_become_the_same_key() {
+        let new = address_key("Constructorfabric/Studio-Web", "main");
+        assert_eq!(new, "constructorfabric/studio-web@main");
+        for old in [
+            "a9e9f2c4-b9c7-4023-8ab0-69d3c1d46362/Some(2aaca5b5-0000-4000-8000-000000000001)/constructorfabric/studio-web@main",
+            "a9e9f2c4-b9c7-4023-8ab0-69d3c1d46362/Some(a8bf6f82-c3ea-4641-8ec5-ff5d815abded)/constructorfabric/studio-web@main",
+            "a9e9f2c4-b9c7-4023-8ab0-69d3c1d46362/None/constructorfabric/studio-web@main",
+        ] {
+            assert_eq!(canonical_repo_key(old), new, "{old}");
+        }
+        assert_eq!(canonical_repo_key(&new), new);
+        assert_eq!(canonical_repo_key("k"), "k");
+    }
+
+    #[test]
+    fn a_service_passport_is_a_component_with_its_paths_from_the_root() {
+        let tree = ["theia/service.gdl", "theia/Dockerfile", "theia/README.md"];
+        let body = "gdl_version = \"1.6\"\nservice(name = \"studio-theia\", dockerfile = \"Dockerfile\", context = \"..\", ports = {\"http\": 3000})\n";
+        let g =
+            passport_component("o/r", "main", "theia/service.gdl", "theia", body, &tree).unwrap();
+        assert_eq!(g.crate_name, "studio-theia");
+        assert_eq!(g.kind.as_deref(), Some("service"));
+        let p = g.payload.unwrap();
+        assert_eq!(p["dockerfile"], "theia/Dockerfile");
+        assert_eq!(p["context"], ".");
+        assert_eq!(p["ports"]["http"], 3000);
+        assert_eq!(p["docs"], json!(["theia/README.md"]));
+        assert_eq!(p["passport_path"], "theia/service.gdl");
+    }
+
+    #[test]
+    fn a_kit_passport_finds_the_manifest_beside_it() {
+        let tree = ["kits/sdlc/kit.gdl", "kits/sdlc/.cf-studio-kit.toml"];
+        let body = "gdl_version = \"1.6\"\nkit(name = \"sdlc\", version = \"1.0.0\", docs = [\"../../README.md\"])\n";
+        let g = passport_component("o/r", "main", "kits/sdlc/kit.gdl", "kits/sdlc", body, &tree)
+            .unwrap();
+        let p = g.payload.unwrap();
+        assert_eq!(p["slug"], "sdlc");
+        assert_eq!(p["manifest_path"], "kits/sdlc/.cf-studio-kit.toml");
+        assert_eq!(p["docs"], json!(["README.md"]));
+        assert_eq!(p["version"], "1.0.0");
+    }
+
+    #[test]
+    fn passports_are_found_anywhere_but_in_vendored_trees() {
+        let tree = [
+            "a/b/service.gdl",
+            "kit.gdl",
+            "node_modules/x/service.gdl",
+            "a/service.gdl.bak",
+        ];
+        assert_eq!(passport_paths(&tree), vec!["kit.gdl", "a/b/service.gdl"]);
+    }
+
+    #[test]
+    fn documents_fall_back_to_the_readme_beside_the_component() {
+        let tree = ["pkg/README.md", "pkg/docs/x.md", "README.md"];
+        assert_eq!(docs_of("pkg", &[], &tree), vec!["pkg/README.md"]);
+        assert_eq!(docs_of("", &[], &tree), vec!["README.md"]);
+        assert_eq!(
+            docs_of(
+                "pkg",
+                &["docs/x.md".into(), "../../escape.md".into()],
+                &tree
+            ),
+            vec!["pkg/docs/x.md"]
+        );
+        assert!(docs_of("other", &[], &tree).is_empty());
     }
 
     #[test]

@@ -609,6 +609,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/components/{name}/docs",
+      "operation_id": "studio_components_catalog.get_component_doc",
+      "tag": "StudioComponentsCatalog",
+      "summary": "One of a component's documents, read from its repository",
+      "authenticated": true,
+      "responses": [
+        "CatalogueComponentDocDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/field-schemas",
       "operation_id": "studio_components_catalog.list_field_schemas",
       "tag": "StudioComponentsCatalog",
@@ -664,6 +681,21 @@
       "errors": [
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/platform/pins",
+      "operation_id": "studio_components_catalog.list_platform_pins",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The organization's platform release: every platform source and its pin",
+      "authenticated": true,
+      "responses": [
+        "CataloguePlatformPinsDto"
+      ],
+      "errors": [
+        "401",
         "500"
       ]
     },
@@ -727,6 +759,23 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/publications",
+      "operation_id": "studio_components_catalog.list_publications",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Projects' requests to publish a component into the organization's catalogue",
+      "authenticated": true,
+      "responses": [
+        "CataloguePublicationsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -3612,6 +3661,60 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/project-catalogue/sync",
+      "operation_id": "studio_components_catalog.sync_project_catalogue",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Read a project's repositories into its own catalogue now",
+      "authenticated": true,
+      "responses": [
+        "CatalogSyncEnqueued"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/publications",
+      "operation_id": "studio_components_catalog.create_publication",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Propose a project's component to the organization at a version",
+      "authenticated": true,
+      "request": "CatalogueRequestPublicationRequest",
+      "responses": [
+        "CataloguePublicationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/publications/{id}/decisions",
+      "operation_id": "studio_components_catalog.decide_publication",
+      "tag": "StudioComponentsCatalog",
+      "summary": "An organization administrator approves or declines a publication",
+      "authenticated": true,
+      "request": "CataloguePublicationDecisionRequest",
+      "responses": [
+        "CataloguePublicationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/registry/gear-repository/create",
       "operation_id": "studio_components_catalog.create_registry_gear_repository",
       "tag": "StudioComponentsCatalog",
@@ -5930,6 +6033,24 @@
       "request": "SetCuratorsRequest",
       "responses": [
         "CuratorsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/platform/pins",
+      "operation_id": "studio_components_catalog.update_platform_pins",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Hold platform sources at versions of the organization's own",
+      "authenticated": true,
+      "request": "CatalogueSetPinsRequest",
+      "responses": [
+        "CataloguePlatformPinsDto"
       ],
       "errors": [
         "400",

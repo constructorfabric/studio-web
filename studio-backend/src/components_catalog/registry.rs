@@ -1040,6 +1040,88 @@ pub fn plan(
     out
 }
 
+/// What moving the stored reads and occurrences to address keys writes
+/// (issue 11): a read under its new id, the old id retired, and an
+/// occurrence rewritten in place (its id never named the connection).
+#[derive(Debug, Default)]
+pub(super) struct KeyMigration {
+    pub upsert: Vec<GtsNode>,
+    pub retire: Vec<String>,
+}
+
+/// Move every stored read and occurrence of `org` to the address form of its
+/// repository key ([`super::repo_enrich::canonical_repo_key`]), in memory and
+/// as the nodes to write. Two reads of one repository through two
+/// connections become one, the latest kept. Idempotent: a store already
+/// migrated yields nothing to write.
+pub(super) fn migrate_repo_keys(
+    org: Uuid,
+    occurrences: &mut [(String, OccurrenceRecord)],
+    reads: &mut Vec<(String, ReadRecord)>,
+) -> KeyMigration {
+    use super::repo_enrich::canonical_repo_key;
+    let mut out = KeyMigration::default();
+    for (id, o) in occurrences
+        .iter_mut()
+        .filter(|(_, o)| o.organization_id == org)
+    {
+        let key = canonical_repo_key(&o.repo_key);
+        if key != o.repo_key {
+            o.repo_key = key;
+            if let Ok(value) = serde_json::to_value(&*o) {
+                out.upsert.push(gts::occurrence_node(id.clone(), value));
+            }
+        }
+    }
+    // Each read by (organization, project, address): the latest one, with
+    // the id it is stored under. Another organization's are left as they are.
+    let mut kept: BTreeMap<(Uuid, Uuid, String), (String, ReadRecord)> = BTreeMap::new();
+    let mut others: Vec<(String, ReadRecord)> = Vec::new();
+    for (id, mut r) in std::mem::take(reads) {
+        if r.organization_id != org {
+            others.push((id, r));
+            continue;
+        }
+        r.repo_key = canonical_repo_key(&r.repo_key);
+        if key_moved(&id, &r) {
+            out.retire.push(id.clone());
+        }
+        let slot = (r.organization_id, r.project_id, r.repo_key.clone());
+        let newer = kept
+            .get(&slot)
+            .is_none_or(|(_, have)| r.read_at > have.read_at);
+        if newer {
+            kept.insert(slot, (id, r));
+        }
+    }
+    for (id, r) in kept.values_mut() {
+        let at = gts::registry_read_instance_id(
+            &r.organization_id.to_string(),
+            &r.project_id.to_string(),
+            &r.repo_key,
+        );
+        if *id != at {
+            *id = at;
+            if let Ok(value) = serde_json::to_value(&*r) {
+                out.upsert.push(gts::registry_read_node(id.clone(), value));
+            }
+        }
+    }
+    out.retire
+        .retain(|old| !kept.values().any(|(id, _)| id == old));
+    *reads = kept.into_values().chain(others).collect();
+    out
+}
+
+/// Whether a read stored under `id` is not stored under its address's id.
+fn key_moved(id: &str, r: &ReadRecord) -> bool {
+    *id != gts::registry_read_instance_id(
+        &r.organization_id.to_string(),
+        &r.project_id.to_string(),
+        &r.repo_key,
+    )
+}
+
 /// The registry narrowed as `GET /registry` asks: by state, by a project the
 /// entry was found in, and by text in its name or description. Sorted by
 /// name.
@@ -1168,6 +1250,18 @@ pub(super) struct SettingsRecord {
     /// administrators (`platform-gear-curator`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) gear_curators: Vec<super::registry_curation::Curator>,
+    /// The organization's platform release (ADR-0061): the version it holds
+    /// each platform source at. A source not pinned follows the platform.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) platform_pins: Vec<super::catalogue_levels::PlatformPin>,
+    /// Its projects' requests to put a component into its catalogue, and
+    /// their answers (ADR-0061).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) publications: Vec<super::catalogue_levels::Publication>,
+    /// Each project's own catalogue: the fingerprint of its repositories it
+    /// was last synced at, so a walk queues a project sync only on a change.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) project_catalogues: BTreeMap<Uuid, String>,
 }
 
 /// The organization's gear repository, as stored (ADR-0042 §2).
@@ -2230,10 +2324,23 @@ impl CatalogService {
 
         let entries =
             records::<EntryRecord>(self.sink.list(ctx, Some(gts::REGISTRY_ENTRY_TYPE)).await?);
-        let occurrences =
+        let mut occurrences =
             records::<OccurrenceRecord>(self.sink.list(ctx, Some(gts::OCCURRENCE_TYPE)).await?);
-        let reads =
+        let mut reads =
             records::<ReadRecord>(self.sink.list(ctx, Some(gts::REGISTRY_READ_TYPE)).await?);
+        // Reads and occurrences stored under a connection-keyed repository
+        // key move to the address form first (issue 11), so this walk
+        // compares like with like and a re-pointed source keeps what it found.
+        let migration = migrate_repo_keys(org, &mut occurrences, &mut reads);
+        if !migration.upsert.is_empty() || !migration.retire.is_empty() {
+            tracing::info!(organization_id = %org, rewritten = migration.upsert.len(), retired = migration.retire.len(), "components-catalog: registry: repository keys moved to the address form");
+            self.sink.upsert(ctx, &migration.upsert, &[]).await?;
+            for id in &migration.retire {
+                if let Err(e) = self.sink.delete(ctx, id).await {
+                    tracing::warn!(instance_id = %id, error = %format!("{e:#}"), "components-catalog: registry: a read under its old key could not be retired");
+                }
+            }
+        }
         let stored: HashMap<(Uuid, String), String> = reads
             .iter()
             .filter(|(_, r)| r.organization_id == org)
@@ -2475,6 +2582,10 @@ impl CatalogService {
                 tracing::warn!(instance_id = %id, error = %format!("{e:#}"), "components-catalog: registry: a gone node could not be retired");
             }
         }
+        // Each walked project whose repositories moved has its own catalogue
+        // synced (ADR-0061): queued behind this walk, in the same partition.
+        let walked = super::catalogue_levels::walked_projects(&statuses, org);
+        self.queue_changed_project_catalogues(ctx, &walked).await;
         // What each project's read came to, for the page's project list.
         let mut settings = self.settings(ctx).await?;
         settings.organization_id = Some(org);

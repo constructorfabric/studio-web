@@ -371,6 +371,7 @@ impl SyncRequestDto {
             roadmaps,
             registry: false,
             platform: false,
+            project: None,
         }
     }
 }
@@ -695,16 +696,29 @@ async fn list_project_components(
 async fn list_gears(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
+    access: Option<Extension<crate::org_scope::OrgAccess>>,
+    Query(scope): Query<catalogue_levels_routes::OptionalProject>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
+    // A project's catalogue is the organization's and its own (ADR-0061);
+    // without `project_id`, the organization's, its platform pins laid on.
+    let tiered = match scope.project_id.as_deref().filter(|p| !p.trim().is_empty()) {
+        Some(raw) => {
+            let pctx = catalogue_levels_routes::project_ctx(
+                &catalog,
+                &ctx,
+                access.as_ref().map(|a| &a.0),
+                raw,
+            )
+            .await?;
+            catalog.service.project_catalogue(&ctx, &pctx).await
+        }
+        None => catalog.service.org_catalogue(&ctx).await,
+    };
     let super::service::TieredNodes {
         nodes,
         truncated,
         shadowed,
-    } = catalog
-        .service
-        .list_component_nodes_tiered(&ctx)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    } = tiered.map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     // The reference's classification, laid onto each node: what it is, what
     // it is filed under, and why it is not a component when it is not. A
     // node another supersedes is left out, so the portal's list is clean
@@ -1619,12 +1633,30 @@ async fn component_reference(
 async fn list_profiles(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
+    access: Option<Extension<crate::org_scope::OrgAccess>>,
+    Query(scope): Query<catalogue_levels_routes::OptionalProject>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
-    let nodes = catalog
+    let mut nodes = catalog
         .service
         .list_profiles(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // A project's own components' profiles, over the organization's (ADR-0061).
+    if let Some(raw) = scope.project_id.as_deref().filter(|p| !p.trim().is_empty()) {
+        let pctx = catalogue_levels_routes::project_ctx(
+            &catalog,
+            &ctx,
+            access.as_ref().map(|a| &a.0),
+            raw,
+        )
+        .await?;
+        let own = catalog
+            .service
+            .project_profiles(&pctx)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        nodes = super::catalogue_levels::join_project_profiles(nodes, own);
+    }
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(nodes),
         truncated: false,
@@ -3348,6 +3380,9 @@ mod publish;
 #[path = "registry_curation_rest.rs"]
 mod curation;
 
+#[path = "catalogue_levels_rest.rs"]
+mod catalogue_levels_routes;
+
 #[path = "registry_readiness_rest.rs"]
 mod readiness_routes;
 
@@ -3368,6 +3403,7 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
     let router = gear_repository::register(router, openapi);
     let router = publish::register(router, openapi);
     let router = curation::register(router, openapi);
+    let router = catalogue_levels_routes::register(router, openapi);
     let router = readiness_routes::register(router, openapi);
     let router = OperationBuilder::get("/studio-components-catalog/v1/sources")
         .operation_id("studio_components_catalog.list_sources")
@@ -3906,6 +3942,11 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .query_param(
+            "project_id",
+            false,
+            "A project: its catalogue, the organization's components and its own (`tier: project`, ADR-0061)",
+        )
         .handler(list_gears)
         .json_response_with_schema::<CatalogNodeListResponse>(openapi, StatusCode::OK, "Components")
         .error_401(openapi)
@@ -3941,6 +3982,11 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .query_param(
+            "project_id",
+            false,
+            "A project: its own components' profiles over the organization's (ADR-0061)",
+        )
         .handler(list_profiles)
         .json_response_with_schema::<CatalogNodeListResponse>(
             openapi,

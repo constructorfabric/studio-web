@@ -50,6 +50,13 @@ pub const KIT_TYPE: &str = "gts.cf.studio.catalog.kit.v1~";
 /// than a shape and left every reader to guess which fields applied.
 pub const FRONTX_TYPE: &str = "gts.cf.studio.catalog.frontx.v1~";
 
+/// An own service that is not a gear: its own image from its own Dockerfile,
+/// described by a `service.gdl` beside it (ADR-0061).
+///
+/// Its own type for the reason a kit has one: an image, ports, a health route
+/// and the variables it reads are a different shape from a crate's versions.
+pub const SERVICE_TYPE: &str = "gts.cf.studio.catalog.service.v1~";
+
 /// The presentation of one component type: which fields a page shows for it,
 /// grouped, and where each one is read from.
 ///
@@ -120,7 +127,7 @@ pub const REGISTRY_SETTINGS_TYPE: &str = "gts.cf.studio.catalog.registry_setting
 pub const REGISTRY_DECISION_TYPE: &str = "gts.cf.studio.catalog.registry_decision.v1~";
 
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 15] = [
+pub const ALL_NODE_TYPES: [&str; 16] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
@@ -128,6 +135,7 @@ pub const ALL_NODE_TYPES: [&str; 15] = [
     PROJECT_PRODUCT_TYPE,
     KIT_TYPE,
     FRONTX_TYPE,
+    SERVICE_TYPE,
     FIELD_SCHEMA_TYPE,
     ROADMAP_ITEM_TYPE,
     SOURCE_TYPE,
@@ -221,7 +229,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 15] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 16] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -251,6 +259,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 15] = [
         KIT_TYPE,
         "Kit",
         "A set of files a project installs into its repositories, discovered from a source repository.",
+    ),
+    (
+        SERVICE_TYPE,
+        "Service",
+        "An own service that is not a gear: an image built from its own Dockerfile, described by its service.gdl.",
     ),
     (
         FRONTX_TYPE,
@@ -529,6 +542,20 @@ pub fn kit_node(slug: &str, value: Value) -> GtsNode {
     GtsNode {
         type_id: KIT_TYPE,
         instance_id: kit_instance_id(slug),
+        value,
+    }
+}
+
+/// Instance id of an own service, keyed on its name.
+pub fn service_instance_id(name: &str) -> String {
+    anon_id(&["service", name])
+}
+
+/// An own service node. `value` is the payload built from its `service.gdl`.
+pub fn service_node(name: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: SERVICE_TYPE,
+        instance_id: service_instance_id(name),
         value,
     }
 }

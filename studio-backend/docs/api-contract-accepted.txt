@@ -222,6 +222,16 @@ request	POST /studio-components-catalog/v1/platform/publication-requests/{}/deci
 request	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions	replaced_by	String	optional
 request	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions	target	String	optional
 request	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions	version	String	optional
+request	POST /studio-components-catalog/v1/publications	artifact	{}	optional
+request	POST /studio-components-catalog/v1/publications	artifact.kind	String	optional
+request	POST /studio-components-catalog/v1/publications	artifact.reference	String	optional
+request	POST /studio-components-catalog/v1/publications	commit	String	optional
+request	POST /studio-components-catalog/v1/publications	git_ref	String	optional
+request	POST /studio-components-catalog/v1/publications	name	String	required
+request	POST /studio-components-catalog/v1/publications	reason	String	optional
+request	POST /studio-components-catalog/v1/publications	type_id	String	optional
+request	POST /studio-components-catalog/v1/publications/{}/decisions	action	String	required
+request	POST /studio-components-catalog/v1/publications/{}/decisions	reason	String	optional
 request	POST /studio-components-catalog/v1/registry/gear-repository/create	connection_id	Uuid	required
 request	POST /studio-components-catalog/v1/registry/gear-repository/create	is_org	bool	optional
 request	POST /studio-components-catalog/v1/registry/gear-repository/create	name	String	required
@@ -825,6 +835,13 @@ request	PUT /studio-components-catalog/v1/field-schemas/{}	schema	Value	required
 request	PUT /studio-components-catalog/v1/platform/curators	items	Vec<{}>	required
 request	PUT /studio-components-catalog/v1/platform/curators	items.id	String	required
 request	PUT /studio-components-catalog/v1/platform/curators	items.name	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items	Vec<{}>	required
+request	PUT /studio-components-catalog/v1/platform/pins	items.at	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items.git_ref	String	required
+request	PUT /studio-components-catalog/v1/platform/pins	items.note	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items.pinned_by	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items.pinned_by_name	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items.repo	String	required
 request	PUT /studio-components-catalog/v1/platform/sources	crates_io	String	optional
 request	PUT /studio-components-catalog/v1/platform/sources	items	Vec<{}>	required
 request	PUT /studio-components-catalog/v1/platform/sources	items.connection_id	Uuid	optional
@@ -1241,6 +1258,13 @@ response	GET /studio-components-catalog/v1/components	nodes.type_id	String	alway
 response	GET /studio-components-catalog/v1/components	nodes.value	Value	always
 response	GET /studio-components-catalog/v1/components	shadowed	Vec<String>	always
 response	GET /studio-components-catalog/v1/components	truncated	bool	always
+response	GET /studio-components-catalog/v1/components/{}/docs	git_ref	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	name	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	path	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	repo	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	text	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	truncated	bool	always
+response	GET /studio-components-catalog/v1/components/{}/docs	url	String	always
 response	GET /studio-components-catalog/v1/field-schemas	schemas	Vec<Value>	always
 response	GET /studio-components-catalog/v1/gearbox/catalogue	catalogue	Value	always
 response	GET /studio-components-catalog/v1/gearbox/catalogue	corpus	String	always
@@ -1266,6 +1290,17 @@ response	GET /studio-components-catalog/v1/platform/curators	items.id	String	alw
 response	GET /studio-components-catalog/v1/platform/curators	items.name	String	optional
 response	GET /studio-components-catalog/v1/platform/curators	may_manage	bool	always
 response	GET /studio-components-catalog/v1/platform/curators	total	u32	always
+response	GET /studio-components-catalog/v1/platform/pins	items	Vec<{}>	always
+response	GET /studio-components-catalog/v1/platform/pins	items.git_ref	String	always
+response	GET /studio-components-catalog/v1/platform/pins	items.mode	String	always
+response	GET /studio-components-catalog/v1/platform/pins	items.note	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.pinned_at	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.pinned_by	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.pinned_by_name	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.pinned_ref	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.repo	String	always
+response	GET /studio-components-catalog/v1/platform/pins	may_manage	bool	always
+response	GET /studio-components-catalog/v1/platform/pins	total	u32	always
 response	GET /studio-components-catalog/v1/platform/publication-requests	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/platform/publication-requests	items.at	String	always
 response	GET /studio-components-catalog/v1/platform/publication-requests	items.name	String	always
@@ -1308,6 +1343,33 @@ response	GET /studio-components-catalog/v1/project-components	items.reasons	Vec<
 response	GET /studio-components-catalog/v1/project-components	items.repo	String	always
 response	GET /studio-components-catalog/v1/project-components	repos	u32	always
 response	GET /studio-components-catalog/v1/project-components	total	u32	always
+response	GET /studio-components-catalog/v1/publications	items	Vec<{}>	always
+response	GET /studio-components-catalog/v1/publications	items.artifact	{}	optional
+response	GET /studio-components-catalog/v1/publications	items.artifact.kind	String	optional
+response	GET /studio-components-catalog/v1/publications	items.artifact.reference	String	optional
+response	GET /studio-components-catalog/v1/publications	items.at	String	always
+response	GET /studio-components-catalog/v1/publications	items.commit	String	optional
+response	GET /studio-components-catalog/v1/publications	items.decided_at	String	optional
+response	GET /studio-components-catalog/v1/publications	items.decided_by	String	optional
+response	GET /studio-components-catalog/v1/publications	items.decided_by_name	String	optional
+response	GET /studio-components-catalog/v1/publications	items.decline_reason	String	optional
+response	GET /studio-components-catalog/v1/publications	items.git_ref	String	always
+response	GET /studio-components-catalog/v1/publications	items.id	Uuid	always
+response	GET /studio-components-catalog/v1/publications	items.kind	String	optional
+response	GET /studio-components-catalog/v1/publications	items.name	String	always
+response	GET /studio-components-catalog/v1/publications	items.organization_id	Uuid	always
+response	GET /studio-components-catalog/v1/publications	items.path	String	optional
+response	GET /studio-components-catalog/v1/publications	items.project_id	Uuid	always
+response	GET /studio-components-catalog/v1/publications	items.project_name	String	optional
+response	GET /studio-components-catalog/v1/publications	items.reason	String	optional
+response	GET /studio-components-catalog/v1/publications	items.repo	String	optional
+response	GET /studio-components-catalog/v1/publications	items.requested_by	String	always
+response	GET /studio-components-catalog/v1/publications	items.requested_by_name	String	optional
+response	GET /studio-components-catalog/v1/publications	items.state	String	always
+response	GET /studio-components-catalog/v1/publications	items.type_id	String	always
+response	GET /studio-components-catalog/v1/publications	items.version	String	optional
+response	GET /studio-components-catalog/v1/publications	may_decide	bool	always
+response	GET /studio-components-catalog/v1/publications	total	u32	always
 response	GET /studio-components-catalog/v1/reference	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/reference	items.activity	{}	optional
 response	GET /studio-components-catalog/v1/reference	items.activity.authors	u64	optional
@@ -3959,6 +4021,56 @@ response	POST /studio-components-catalog/v1/platform/publication-requests/{}/dec
 response	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions	version	String	optional
 response	POST /studio-components-catalog/v1/platform/sync	run_id	String	always
 response	POST /studio-components-catalog/v1/platform/sync	status	String	always
+response	POST /studio-components-catalog/v1/project-catalogue/sync	run_id	String	always
+response	POST /studio-components-catalog/v1/project-catalogue/sync	status	String	always
+response	POST /studio-components-catalog/v1/publications	artifact	{}	optional
+response	POST /studio-components-catalog/v1/publications	artifact.kind	String	optional
+response	POST /studio-components-catalog/v1/publications	artifact.reference	String	optional
+response	POST /studio-components-catalog/v1/publications	at	String	always
+response	POST /studio-components-catalog/v1/publications	commit	String	optional
+response	POST /studio-components-catalog/v1/publications	decided_at	String	optional
+response	POST /studio-components-catalog/v1/publications	decided_by	String	optional
+response	POST /studio-components-catalog/v1/publications	decided_by_name	String	optional
+response	POST /studio-components-catalog/v1/publications	decline_reason	String	optional
+response	POST /studio-components-catalog/v1/publications	git_ref	String	always
+response	POST /studio-components-catalog/v1/publications	id	Uuid	always
+response	POST /studio-components-catalog/v1/publications	kind	String	optional
+response	POST /studio-components-catalog/v1/publications	name	String	always
+response	POST /studio-components-catalog/v1/publications	organization_id	Uuid	always
+response	POST /studio-components-catalog/v1/publications	path	String	optional
+response	POST /studio-components-catalog/v1/publications	project_id	Uuid	always
+response	POST /studio-components-catalog/v1/publications	project_name	String	optional
+response	POST /studio-components-catalog/v1/publications	reason	String	optional
+response	POST /studio-components-catalog/v1/publications	repo	String	optional
+response	POST /studio-components-catalog/v1/publications	requested_by	String	always
+response	POST /studio-components-catalog/v1/publications	requested_by_name	String	optional
+response	POST /studio-components-catalog/v1/publications	state	String	always
+response	POST /studio-components-catalog/v1/publications	type_id	String	always
+response	POST /studio-components-catalog/v1/publications	version	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	artifact	{}	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	artifact.kind	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	artifact.reference	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	at	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	commit	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	decided_at	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	decided_by	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	decided_by_name	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	decline_reason	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	git_ref	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	id	Uuid	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	kind	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	name	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	organization_id	Uuid	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	path	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	project_id	Uuid	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	project_name	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	reason	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	repo	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	requested_by	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	requested_by_name	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	state	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	type_id	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	version	String	optional
 response	POST /studio-components-catalog/v1/registry/gear-repository/create	gear_repository	{}	optional
 response	POST /studio-components-catalog/v1/registry/gear-repository/create	gear_repository.branch	String	optional
 response	POST /studio-components-catalog/v1/registry/gear-repository/create	gear_repository.connection_id	Uuid	optional
@@ -5336,6 +5448,17 @@ response	PUT /studio-components-catalog/v1/platform/curators	items.id	String	alw
 response	PUT /studio-components-catalog/v1/platform/curators	items.name	String	optional
 response	PUT /studio-components-catalog/v1/platform/curators	may_manage	bool	always
 response	PUT /studio-components-catalog/v1/platform/curators	total	u32	always
+response	PUT /studio-components-catalog/v1/platform/pins	items	Vec<{}>	always
+response	PUT /studio-components-catalog/v1/platform/pins	items.git_ref	String	always
+response	PUT /studio-components-catalog/v1/platform/pins	items.mode	String	always
+response	PUT /studio-components-catalog/v1/platform/pins	items.note	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.pinned_at	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.pinned_by	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.pinned_by_name	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.pinned_ref	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.repo	String	always
+response	PUT /studio-components-catalog/v1/platform/pins	may_manage	bool	always
+response	PUT /studio-components-catalog/v1/platform/pins	total	u32	always
 response	PUT /studio-components-catalog/v1/platform/sources	crates_io	String	optional
 response	PUT /studio-components-catalog/v1/platform/sources	items	Vec<{}>	always
 response	PUT /studio-components-catalog/v1/platform/sources	items.connection_id	Uuid	optional
@@ -5832,14 +5955,17 @@ route	GET /studio-components-catalog/v1/activity
 route	GET /studio-components-catalog/v1/component-history
 route	GET /studio-components-catalog/v1/component-values
 route	GET /studio-components-catalog/v1/components
+route	GET /studio-components-catalog/v1/components/{}/docs
 route	GET /studio-components-catalog/v1/field-schemas
 route	GET /studio-components-catalog/v1/gearbox/catalogue
 route	GET /studio-components-catalog/v1/gearbox/corpus/info/refs
 route	GET /studio-components-catalog/v1/platform/curators
+route	GET /studio-components-catalog/v1/platform/pins
 route	GET /studio-components-catalog/v1/platform/publication-requests
 route	GET /studio-components-catalog/v1/platform/sources
 route	GET /studio-components-catalog/v1/profiles
 route	GET /studio-components-catalog/v1/project-components
+route	GET /studio-components-catalog/v1/publications
 route	GET /studio-components-catalog/v1/reference
 route	GET /studio-components-catalog/v1/registry
 route	GET /studio-components-catalog/v1/registry/excluded-projects
@@ -6021,6 +6147,9 @@ route	POST /studio-components-catalog/v1/components/{}/profile
 route	POST /studio-components-catalog/v1/gearbox/corpus/git-upload-pack
 route	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions
 route	POST /studio-components-catalog/v1/platform/sync
+route	POST /studio-components-catalog/v1/project-catalogue/sync
+route	POST /studio-components-catalog/v1/publications
+route	POST /studio-components-catalog/v1/publications/{}/decisions
 route	POST /studio-components-catalog/v1/registry/gear-repository/create
 route	POST /studio-components-catalog/v1/registry/scaffold
 route	POST /studio-components-catalog/v1/registry/{}/decisions
@@ -6159,6 +6288,7 @@ route	POST <dynamic@src/studio_session/rest.rs>
 route	POST <dynamic@src/studio_theia/rest.rs>
 route	PUT /studio-components-catalog/v1/field-schemas/{}
 route	PUT /studio-components-catalog/v1/platform/curators
+route	PUT /studio-components-catalog/v1/platform/pins
 route	PUT /studio-components-catalog/v1/platform/sources
 route	PUT /studio-components-catalog/v1/registry/excluded-projects
 route	PUT /studio-components-catalog/v1/registry/gear-repository

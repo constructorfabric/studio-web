@@ -368,3 +368,13 @@ fn a_later_minor_is_read_and_another_major_is_not() {
     assert!(read(&shell("1.4")).is_err());
     assert!(read(&shell("2.0")).is_err());
 }
+
+#[test]
+fn a_passport_names_its_documents() {
+    let d = read(
+        "gdl_version = \"1.5\"\nmfe(requires = [], docs = [\"README.md\", \"docs/screens.md\"])\n",
+    )
+    .unwrap();
+    assert_eq!(d.identity().docs, vec!["README.md", "docs/screens.md"]);
+    assert!(read("gdl_version = \"1.5\"\nlibrary(docs = [\"../outside.md\"])\n").is_err());
+}

@@ -9,10 +9,13 @@
 
 mod activity;
 mod candidates;
+mod catalogue_levels;
 mod cratesio;
 pub(crate) mod field_schema;
 mod frontx_gdl;
+mod gdl_literal;
 mod history;
+mod kit_gdl;
 mod memo;
 mod ownership;
 pub mod port;
@@ -36,6 +39,7 @@ pub(crate) mod roadmap;
 mod screen_previews;
 pub mod sdk;
 mod service;
+mod service_gdl;
 mod services;
 mod sync_task;
 mod taxonomy;

@@ -69,6 +69,7 @@ pub fn board_sync_payload(board: BoardSource) -> anyhow::Result<Value> {
         roadmaps: vec![board],
         registry: false,
         platform: false,
+        project: None,
     })?)
 }
 

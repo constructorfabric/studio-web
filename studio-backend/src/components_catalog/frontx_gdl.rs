@@ -26,6 +26,11 @@ pub(crate) struct Identity {
     pub name: Option<String>,
     pub version: Option<String>,
     pub description: Option<String>,
+    /// Its documents, relative to the package (`docs = ["README.md"]`,
+    /// ADR-0061). Studio reads it; Gearbox's vocabulary does not take it yet,
+    /// so a package Gearbox also generates from leaves it out and the
+    /// catalogue falls back to the package's README.
+    pub docs: Vec<String>,
 }
 
 /// A shell's passport.
@@ -508,7 +513,7 @@ pub(crate) fn read(src: &str) -> Result<FrontxDescription, String> {
     declaration(&name, args, line)
 }
 
-const IDENTITY: [&str; 3] = ["name", "version", "description"];
+const IDENTITY: [&str; 4] = ["name", "version", "description", "docs"];
 const SHELL_ARGS: [&str; 12] = [
     "signs_in",
     "sign_in_redirect",
@@ -600,6 +605,11 @@ impl Args {
             name: self.string("name", word)?,
             version: self.string("version", word)?,
             description: self.string("description", one_line)?,
+            docs: self
+                .list("docs", |p| {
+                    package_path(p).map(|_| ()).map_err(str::to_string)
+                })?
+                .unwrap_or_default(),
         })
     }
 }

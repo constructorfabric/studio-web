@@ -157,6 +157,11 @@ pub struct SyncSources {
     /// platform's tenant. The other fields are then ignored.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub platform: bool,
+    /// Sync this project's own catalogue (ADR-0061): its repositories, read
+    /// when the run starts, into the project's tenant. Queued in the
+    /// organization's tenant; the other fields are then ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<Uuid>,
 }
 
 impl SyncSources {
@@ -288,6 +293,7 @@ impl CatalogService {
             roadmaps: Vec::new(),
             registry: false,
             platform: false,
+            project: None,
         })
     }
 }
@@ -852,6 +858,9 @@ impl CatalogService {
         // that renders their component page -- only their node type differs, so
         // the catalogue can be asked for them by type rather than by label.
         let mut frontx_values: BTreeMap<String, Value> = BTreeMap::new();
+        // Own services (ADR-0061), keyed by name: like a kit, the passport is
+        // the payload.
+        let mut service_values: BTreeMap<String, Value> = BTreeMap::new();
         let mut version_nodes: Vec<GtsNode> = Vec::new();
         let mut version_edges: Vec<GtsEdge> = Vec::new();
         let mut profile_nodes: Vec<GtsNode> = Vec::new();
@@ -934,7 +943,11 @@ impl CatalogService {
                                         Value::String(rg.source_repo.clone()),
                                     );
                                 }
-                                kit_values.insert(rg.crate_name.clone(), payload);
+                                if rg.kind.as_deref() == Some("service") {
+                                    service_values.insert(rg.crate_name.clone(), payload);
+                                } else {
+                                    kit_values.insert(rg.crate_name.clone(), payload);
+                                }
                                 continue;
                             }
                             let kind = rg
@@ -984,6 +997,11 @@ impl CatalogService {
                                     && let Some(d) = &rg.description
                                 {
                                     obj.insert("description".to_string(), Value::String(d.clone()));
+                                }
+                                // Its documents (ADR-0061), from the repository
+                                // root: what the Components page links.
+                                if let Some(docs) = rg.fields.get("docs") {
+                                    obj.insert("docs".to_string(), docs.clone());
                                 }
                             }
                             // A micro-frontend is its own type. The payload and
@@ -1093,6 +1111,12 @@ impl CatalogService {
                 .into_iter()
                 .map(|(name, value)| gts::frontx_node(name.as_str(), value)),
         );
+        let services_total = service_values.len();
+        all_nodes.extend(
+            service_values
+                .into_iter()
+                .map(|(name, value)| gts::service_node(name.as_str(), value)),
+        );
         all_nodes.extend(version_nodes);
         all_nodes.extend(profile_nodes);
         all_nodes.extend(planned_nodes);
@@ -1161,6 +1185,9 @@ impl CatalogService {
                 (gts::GEAR_TYPE, false),
                 (gts::KIT_TYPE, read_modes.contains("kits")),
                 (gts::FRONTX_TYPE, read_modes.contains("frontx")),
+                // Every mode reads passports, so a run that read a repository
+                // is the one that clears its gone services.
+                (gts::SERVICE_TYPE, true),
             ] {
                 let existing = match self.sink.list(ctx, Some(type_id)).await {
                     Ok(nodes) => nodes,
@@ -1218,6 +1245,7 @@ impl CatalogService {
             gears = gears_total,
             kits = kits_total,
             micro_frontends = frontx_total,
+            services = services_total,
             versions = versions_total,
             stored,
             pruned,
@@ -2086,10 +2114,30 @@ impl CatalogService {
             Some(products) => products.gear_repo(ctx, project_id).await?,
             None => None,
         };
+        // The project's sources are its repositories (one repository, one
+        // source); the gear repository, while it is still recorded apart, is
+        // one more of them, read first. One repository is read once, by its
+        // address, whichever connection each record names.
+        let sources = self.source_repos(ctx, project_id).await;
         let Some(v) = gear_repo else {
-            return Ok(self.source_repos(ctx, project_id).await);
+            return Ok(sources);
         };
-        let v = &v;
+        let mut out = self.gear_repo_target(ctx, &v).await?;
+        for source in sources {
+            if !out.iter().any(|r| same_repository(&r.repo, &source.repo)) {
+                out.push(source);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The project's recorded gear repository as a read target; none when it
+    /// names no repository.
+    async fn gear_repo_target(
+        &self,
+        ctx: &SecurityContext,
+        v: &Value,
+    ) -> anyhow::Result<Vec<ProjectRepo>> {
         let text = |k: &str| {
             v.get(k)
                 .and_then(Value::as_str)
@@ -2160,9 +2208,16 @@ impl CatalogService {
             }
         }
         let mut seen = std::collections::HashSet::new();
-        out.retain(|r| seen.insert((r.connection_id, r.repo.to_ascii_lowercase())));
+        out.retain(|r| seen.insert(r.repo.trim().to_ascii_lowercase()));
         out
     }
+}
+
+/// Whether two `owner/name` spellings are one repository.
+fn same_repository(a: &str, b: &str) -> bool {
+    a.trim()
+        .trim_matches('/')
+        .eq_ignore_ascii_case(b.trim().trim_matches('/'))
 }
 
 /// The tenant tree as `ctx` reads it ([`CatalogService::parent_of`]).
@@ -2200,7 +2255,7 @@ fn log_refused(project_id: &str, refused: &[RepoWalk]) {
 }
 
 /// One repository a project's code is in.
-pub(super) struct ProjectRepo {
+pub(crate) struct ProjectRepo {
     /// The tenant the read starts from: its catalogue (possibly inherited)
     /// lists the connection.
     pub(super) tenant: Uuid,
@@ -2800,8 +2855,9 @@ mod field_schema_tests {
 
     // ── which types are components ────────────────────────────────────────
 
-    /// The five the deployment ships a page for, and nothing else -- a gear,
-    /// a micro-frontend, a kit, a document type and a planned gear. A graph
+    /// The six the deployment ships a page for, and nothing else -- a gear,
+    /// a micro-frontend, a kit, an own service, a document type and a planned
+    /// gear. A graph
     /// full of files and commits does not become a catalogue of components
     /// because it is a graph.
     #[tokio::test]
@@ -2814,7 +2870,8 @@ mod field_schema_tests {
             .filter(|t| t.component)
             .map(|t| t.leaf_id)
             .collect();
-        assert_eq!(marked.len(), 5, "{marked:?}");
+        assert_eq!(marked.len(), 6, "{marked:?}");
+        assert!(marked.iter().any(|m| m == gts::SERVICE_TYPE));
         assert!(marked.iter().any(|m| m == GEAR_TYPE));
         assert!(marked.iter().any(|m| m == FRONTX_TYPE));
         assert!(marked.iter().any(|m| m == gts::ROADMAP_ITEM_TYPE));
