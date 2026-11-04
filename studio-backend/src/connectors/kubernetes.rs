@@ -412,6 +412,189 @@ impl ClusterAccess {
     }
 }
 
+/* ── how far a cluster is bootstrapped (ADR-0062 §6) ── */
+
+/// The label the bootstrap manifest puts on its ClusterRole, with its version.
+pub const BOOTSTRAP_VERSION_LABEL: &str = "studio.constructor.tech/bootstrap-version";
+/// The version of `deploy/k8s/studio-environments/bootstrap.yaml` this Studio
+/// needs: 2 lets the account read its own ClusterRole, so the version can be
+/// told at all.
+pub const BOOTSTRAP_VERSION: u32 = 2;
+/// The ClusterRole the manifest makes.
+pub const BOOTSTRAP_CLUSTER_ROLE: &str = "constructor-studio-environments";
+
+/// How far a cluster lets Studio go, as its connection is asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Readiness {
+    /// The current manifest is applied: Studio makes each project's namespace,
+    /// and the admission policy holds it to Studio's own.
+    Bootstrapped { version: u32 },
+    /// Studio may not make namespaces, but works in these, which the cluster
+    /// gives it: each project is assigned one of them.
+    NamespaceLimited { namespaces: Vec<String> },
+    /// Something the manifest gives is missing, each said as what to do.
+    Partial { missing: Vec<String> },
+}
+
+impl Readiness {
+    pub fn level(&self) -> &'static str {
+        match self {
+            Self::Bootstrapped { .. } => "bootstrapped",
+            Self::NamespaceLimited { .. } => "namespace_limited",
+            Self::Partial { .. } => "partial",
+        }
+    }
+}
+
+/// What [`cluster_readiness`] found, beside the level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadinessReport {
+    pub readiness: Readiness,
+    /// The version the ClusterRole's label says; `None` when it could not
+    /// be read or has none.
+    pub version: Option<u32>,
+    /// Whether the admission policy refused a namespace without Studio's
+    /// label, asked as a dry run.
+    pub policy_enforced: bool,
+}
+
+/// What a cluster says to each question [`cluster_readiness`] asks: the
+/// decision, apart from the asking, so it is tested without a cluster.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadinessFacts {
+    /// The bootstrap rights the connection lacks, described.
+    pub denied: Vec<String>,
+    /// Whether a dry-run create of an unlabelled namespace was refused by the
+    /// policy; `None` when it was not asked (no create right).
+    pub policy_refused_unlabelled: Option<bool>,
+    pub version: Option<u32>,
+    /// The namespaces the environment says the cluster gives, with whether
+    /// the connection may work in each.
+    pub given: Vec<(String, bool)>,
+}
+
+/// The level `f` comes to.
+pub fn readiness_of(f: &ReadinessFacts) -> ReadinessReport {
+    let usable: Vec<String> = f
+        .given
+        .iter()
+        .filter(|(_, ok)| *ok)
+        .map(|(n, _)| n.clone())
+        .collect();
+    let readiness = if f.denied.is_empty() {
+        let mut missing = Vec::new();
+        if f.policy_refused_unlabelled != Some(true) {
+            missing.push(format!(
+                "the admission policy of {BOOTSTRAP_FILE}: a namespace without Studio's label was \
+                 not refused, so the account could take a namespace that is not Studio's"
+            ));
+        }
+        match f.version {
+            Some(v) if v >= BOOTSTRAP_VERSION => {}
+            Some(v) => missing.push(format!(
+                "bootstrap version {BOOTSTRAP_VERSION} (the cluster has {v}): apply the current \
+                 {BOOTSTRAP_FILE}"
+            )),
+            None => missing.push(format!(
+                "the bootstrap version label on ClusterRole {BOOTSTRAP_CLUSTER_ROLE}: apply the \
+                 current {BOOTSTRAP_FILE}"
+            )),
+        }
+        if missing.is_empty() {
+            Readiness::Bootstrapped {
+                version: f.version.unwrap_or(BOOTSTRAP_VERSION),
+            }
+        } else {
+            Readiness::Partial { missing }
+        }
+    } else if !usable.is_empty() {
+        Readiness::NamespaceLimited { namespaces: usable }
+    } else {
+        let mut missing: Vec<String> = f.denied.clone();
+        for (n, ok) in &f.given {
+            if !ok {
+                missing.push(format!("create secrets, jobs and deployments in {n}"));
+            }
+        }
+        Readiness::Partial { missing }
+    };
+    ReadinessReport {
+        readiness,
+        version: f.version,
+        policy_enforced: f.policy_refused_unlabelled == Some(true),
+    }
+}
+
+/// Ask the cluster how far it is bootstrapped: the manifest's rights (one
+/// SelfSubjectAccessReview each), a dry-run create of a namespace without
+/// Studio's label (which the policy must refuse), and the version label on
+/// the manifest's ClusterRole. `given` are the namespaces an environment says
+/// the cluster gives without a create right.
+pub async fn cluster_readiness(
+    client: &kube::Client,
+    given: &[String],
+) -> anyhow::Result<ReadinessReport> {
+    use k8s_openapi::api::core::v1::Namespace;
+    use k8s_openapi::api::rbac::v1::ClusterRole;
+    let mut facts = ReadinessFacts::default();
+    for right in BOOTSTRAP_RIGHTS {
+        if !right.allowed(client, None).await? {
+            facts.denied.push(right.describe(None));
+        }
+    }
+    if facts.denied.is_empty() {
+        let probe = Namespace {
+            metadata: kube::api::ObjectMeta {
+                name: Some(format!(
+                    "studio-readiness-{}",
+                    &uuid::Uuid::new_v4().simple().to_string()[..8]
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let dry = kube::api::PostParams {
+            dry_run: true,
+            ..Default::default()
+        };
+        facts.policy_refused_unlabelled = Some(
+            match kube::Api::<Namespace>::all(client.clone())
+                .create(&dry, &probe)
+                .await
+            {
+                Ok(_) => false,
+                // The policy's own refusal: a plain RBAC 403 was ruled out by
+                // the access review above.
+                Err(kube::Error::Api(s)) => matches!(s.code, 400 | 403 | 422),
+                Err(e) => return Err(anyhow!("the cluster did not answer: {e}")),
+            },
+        );
+    }
+    facts.version = match kube::Api::<ClusterRole>::all(client.clone())
+        .get_opt(BOOTSTRAP_CLUSTER_ROLE)
+        .await
+    {
+        Ok(Some(role)) => role
+            .metadata
+            .labels
+            .as_ref()
+            .and_then(|l| l.get(BOOTSTRAP_VERSION_LABEL))
+            .and_then(|v| v.parse().ok()),
+        _ => None,
+    };
+    for ns in given {
+        let mut ok = true;
+        for right in NAMESPACE_RIGHTS {
+            if !right.allowed(client, Some(ns)).await? {
+                ok = false;
+                break;
+            }
+        }
+        facts.given.push((ns.clone(), ok));
+    }
+    Ok(readiness_of(&facts))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,6 +697,61 @@ mod tests {
             "{}",
             missing.detail
         );
+    }
+
+    #[test]
+    fn a_cluster_is_bootstrapped_only_with_the_policy_and_the_current_version() {
+        let full = ReadinessFacts {
+            policy_refused_unlabelled: Some(true),
+            version: Some(BOOTSTRAP_VERSION),
+            ..ReadinessFacts::default()
+        };
+        assert_eq!(
+            readiness_of(&full).readiness,
+            Readiness::Bootstrapped {
+                version: BOOTSTRAP_VERSION
+            }
+        );
+        let no_policy = ReadinessFacts {
+            policy_refused_unlabelled: Some(false),
+            ..full.clone()
+        };
+        let Readiness::Partial { missing } = readiness_of(&no_policy).readiness else {
+            panic!("partial");
+        };
+        assert!(missing[0].contains("admission policy"), "{missing:?}");
+        let old = ReadinessFacts {
+            version: Some(1),
+            ..full.clone()
+        };
+        let Readiness::Partial { missing } = readiness_of(&old).readiness else {
+            panic!("partial");
+        };
+        assert!(missing[0].contains("the cluster has 1"), "{missing:?}");
+    }
+
+    #[test]
+    fn without_a_create_right_the_namespaces_the_cluster_gives_are_listed() {
+        let limited = ReadinessFacts {
+            denied: vec!["create namespaces".into()],
+            given: vec![("shop-dev".into(), true), ("shop-test".into(), false)],
+            ..ReadinessFacts::default()
+        };
+        assert_eq!(
+            readiness_of(&limited).readiness,
+            Readiness::NamespaceLimited {
+                namespaces: vec!["shop-dev".into()]
+            }
+        );
+        let none = ReadinessFacts {
+            denied: vec!["create namespaces".into()],
+            given: vec![("shop-test".into(), false)],
+            ..ReadinessFacts::default()
+        };
+        let Readiness::Partial { missing } = readiness_of(&none).readiness else {
+            panic!("partial");
+        };
+        assert_eq!(missing.len(), 2, "{missing:?}");
     }
 
     #[test]

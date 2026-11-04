@@ -38,10 +38,14 @@ pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
 /// Whether a name is a gear repository's source id, as the engine takes it.
 pub use super::gear_repository::is_source_id;
 pub use super::kubernetes::{
-    BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterAccess, ClusterRight, NAMESPACE_RIGHTS,
+    BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterAccess, ClusterRight, NAMESPACE_RIGHTS, Readiness,
+    ReadinessReport, cluster_readiness,
 };
 pub use super::references::{Mention, NumberRef, Relation, find as find_references};
-pub use super::registry::{RegistryAccess, same_registry};
+pub use super::registry::{
+    CatalogVersion, Oci, RegistryAccess, RegistryCatalog, TokenScopes, catalog_for, same_registry,
+    token_scopes, too_broad,
+};
 pub use super::research::PROVIDER as RESEARCH_PROVIDER;
 /// The Research connector's calls to Research's public API (ADR-0049 §6).
 pub mod research {
