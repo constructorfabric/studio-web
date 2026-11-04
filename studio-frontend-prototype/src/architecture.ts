@@ -684,7 +684,7 @@ export const SURFACES: Surface[] = [
     id: "project-artifacts",
     area: "project",
     title: "Artifacts",
-    does: "Take what the project produced: the files its CI builds kept, under the build, and its releases, downloaded straight from the provider; see the repository documents Studio has typed and the files kept in Studio, and add one.",
+    does: "Take what the project produced: the files its CI builds kept, by the version built -- passed builds only unless all are asked for -- and its releases, downloaded straight from the provider; see the repository documents Studio has typed and the files kept in Studio, and add one.",
     components: ["ProjectOutputs", "ProjectFiles"],
     gears: ["file-storage", "studio-artifact-ingest"],
   },
@@ -692,7 +692,7 @@ export const SURFACES: Surface[] = [
     id: "project-sources",
     area: "project",
     title: "Sources",
-    does: "Attach repositories, choose how shared edits land, run a sync.",
+    does: "Attach repositories, choose how shared edits land, run a sync; see which connector each came from, and manage the connections they are picked from -- the project's own, or with the organization's it inherits (the project's Connections tab was this; its address opens here).",
     components: ["ProjectSources", "RepoBrowser", "SourceAttachPicker"],
     gears: [
       "account-management",

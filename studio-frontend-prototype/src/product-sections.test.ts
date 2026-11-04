@@ -7,6 +7,7 @@ import {
   comesWith,
   hasFrontend,
   infrastructureOf,
+  currentProjectTab,
   openingSection,
   productHeader,
   productSummary,
@@ -264,5 +265,11 @@ describe("the Product page's header line", () => {
     const none = productSummary(null, null);
     expect(productHeader(none, null, null)).toEqual({ verdict: null, kept: null, action: "pick" });
     expect(productHeader(none, "take-from-code", null).action).toBe("take-from-code");
+  });
+});
+
+describe("the project's Connections tab", () => {
+  it("is gone: an old address opens Sources, where connections are managed", () => {
+    expect(currentProjectTab("connections")).toBe("sources");
   });
 });

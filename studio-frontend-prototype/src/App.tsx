@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PageHeader, StatusChip } from "./ui-standard";
 import { useDismiss } from "./use-dismiss";
 import { LevelBadge, LevelMark, LogoControl, OrgMark } from "./level-marks";
 import { HeaderIcon, TenantMark } from "./tenant-icon-view";
@@ -134,6 +135,7 @@ import { OrgDashboard } from "./org-dashboard";
 import { OrgInfrastructure } from "./environments-screen";
 import { ProjectReleases } from "./releases-tab";
 import { currentProjectTab } from "./product-sections";
+import { sourcesByConnector } from "./project-sources";
 import { KubeconfigField } from "./kubeconfig-field";
 import { kubeconfigServer } from "./kubeconfig";
 import { environmentsByConnection } from "./environments";
@@ -5428,9 +5430,8 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string; experimental?: b
   // under six panels people read and then leave. The shipped sidebar has since
   // grown the same section, in the same place.
   { id: "sources", icon: "plug", label: "Sources" },
-  // What the project connects to: its own connections and the organization's
-  // it inherits. A person's own are on their profile.
-  { id: "connections", icon: "plug", label: "Connections" },
+  // The project's connections are managed from Sources, where they are used:
+  // a tab of their own was the organization's page again (MOVED_PROJECT_TABS).
   { id: "activity", icon: "activity", label: "Activity" },
   { id: "people", icon: "users", label: "Team" },
   // Ours, kept after the product's list rather than interleaved with it.
@@ -5802,22 +5803,8 @@ function ProjectScreen({
             section="kits"
           />
         )}
-        {tab === "connections" && <ConnectorsView token={token} workspace={proj} owner="project" />}
         {tab === "sources" && (
-          <>
-            <h1>Sources</h1>
-            <p className="subtitle">
-              The repositories this project is built from. A session clones them when you open it;
-              a sync pulls their issues, pull requests and files into the artifact graph — which is
-              where every artifact number in this project comes from.
-            </p>
-            <ProjectSources
-              token={token}
-              workspace={proj}
-              parentWorkspaceId={workspace.id}
-              onOpenStudio={onOpenStudio}
-            />
-          </>
+          <ProjectSources token={token} workspace={proj} parentWorkspaceId={workspace.id} onOpenStudio={onOpenStudio} />
         )}
         {tab === "issues" && (
           <SpecModelTab
@@ -6685,13 +6672,47 @@ function ArtifactsView({
   /** What the project produced, or what it holds. Outputs first: they are
    *  what nobody can see anywhere else in the portal. */
   const [view, setView] = useState<"outputs" | "documents">("outputs");
+  const [counts, setCounts] = useState<{ versions: number; releases: number } | null>(null);
   return (
     <>
-      <h1>Artifacts</h1>
-      <p className="subtitle">
-        What the project produced — the files its builds kept and its releases — and the documents and files it
-        holds. Its issues, pull requests and commits are on Issues and Activity.
-      </p>
+      <PageHeader
+        title="Artifacts"
+        info={
+          <>
+            <p>
+              What the project produced -- the files its CI builds kept, by the version built, and its releases -- and
+              the documents and files it holds. A download is a link the provider signs for a minute.
+            </p>
+            <p>
+              The CI runs are on Tests and Releases, the container images the builds published are deployed from
+              Releases, and the issues, pull requests and commits are on Issues and Activity.
+            </p>
+          </>
+        }
+        status={
+          counts && (
+            <>
+              <StatusChip tone={counts.versions > 0 ? "ok" : "neutral"} data-artifacts-versions>
+                {counts.versions} version{counts.versions === 1 ? "" : "s"} passed with files
+              </StatusChip>
+              <StatusChip tone="neutral" data-artifacts-releases>
+                {counts.releases} release{counts.releases === 1 ? "" : "s"}
+              </StatusChip>
+            </>
+          )
+        }
+        actions={
+          <button
+            className="ghost"
+            onClick={() => void studio?.openGraph(workspace)}
+            disabled={!studio || studio.opening === workspace.id}
+            title="Every node the syncs keep, in the Workspace Graph of the Studio IDE"
+            data-raw-graph
+          >
+            {studio?.opening === workspace.id ? "Opening Studio…" : "Open graph in Studio"}
+          </button>
+        }
+      />
       {/* It used to be the artifact graph as six tables: ~9,000 issues, pull
           requests, commits, comments, files and authors, each already shown
           where it means something. The raw graph is one click away in the IDE
@@ -6715,7 +6736,7 @@ function ArtifactsView({
         </button>
       </div>
       {view === "outputs" ? (
-        <ProjectOutputs token={token} projectId={workspace.id} onOpenTab={onOpenTab} />
+        <ProjectOutputs token={token} projectId={workspace.id} onOpenTab={onOpenTab} onCounts={setCounts} />
       ) : (
         <>
           <ProjectDocuments
@@ -6728,18 +6749,6 @@ function ArtifactsView({
           <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
         </>
       )}
-      <p className="hint" data-raw-graph>
-        Every node the syncs keep is in the IDE&apos;s graph:{" "}
-        <button
-          className="linklike"
-          onClick={() => void studio?.openGraph(workspace)}
-          disabled={!studio || studio.opening === workspace.id}
-          title="Open the Workspace Graph in the Studio IDE"
-        >
-          {studio?.opening === workspace.id ? "opening Studio…" : "open graph in Studio"}
-        </button>
-        .
-      </p>
     </>
   );
 }
@@ -7024,6 +7033,8 @@ function ProjectSources({
   const [err, setErr] = useState<string | null>(null);
   // Per-repo artifact-sync progress, keyed by repo name.
   const [sync, setSync] = useState<Record<string, SyncProgress>>({});
+  /** The project's connections, opened from the header. */
+  const [managing, setManaging] = useState(false);
 
   const syncRepo = async (r: RepoEntry) => {
     // Nodes land in the graph as the sync runs, so refresh the ingested list
@@ -7144,13 +7155,65 @@ function ProjectSources({
     return live?.running ? "…" : graphRepo(r) ? "Re-sync" : "Sync";
   };
   const repoUrl = (r: RepoEntry) => (r.url && /^https?:\/\//.test(r.url) ? r.url.replace(/\.git$/, "") : undefined);
+  /** The repositories by the connector they were picked from. */
+  const byConnector = sourcesByConnector(repos ?? []);
+  const unsynced = (repos ?? []).filter((r) => !graphRepo(r)).length;
 
   return (
+    <>
+      <PageHeader
+        title="Sources"
+        info={
+          <p>
+            The repositories this project is built from. A session clones them when you open it; a sync pulls their
+            issues, pull requests and files into the artifact graph, which is where every artifact number in this
+            project comes from. Add one by picking it from a connector; the connections it is picked from are under
+            Manage connections.
+          </p>
+        }
+        status={
+          <>
+            {repos === null ? (
+              <span>Reading the sources…</span>
+            ) : repos.length === 0 ? (
+              <span>no repository yet</span>
+            ) : (
+              <>
+                {byConnector.map((c) => (
+                  <StatusChip key={c.source} tone="neutral" data-sources-connector={c.source}>
+                    from connector {c.label} · {c.count}
+                  </StatusChip>
+                ))}
+                <StatusChip tone={unsynced === 0 ? "ok" : "warn"} data-sources-synced>
+                  {unsynced === 0 ? "all synced" : `${unsynced} never synced`}
+                </StatusChip>
+              </>
+            )}
+            <button
+              type="button"
+              className="linklike"
+              aria-expanded={managing}
+              onClick={() => setManaging((m) => !m)}
+              data-manage-connections
+            >
+              {managing ? "Hide connections" : "Manage connections"}
+            </button>
+          </>
+        }
+        actions={
+          (repos?.length ?? 0) > 0 && onOpenStudio ? (
+            <button className="primary" onClick={() => onOpenStudio(ws)}>
+              Open in Web IDE
+            </button>
+          ) : null
+        }
+      />
+      {managing && (
+        <div className="card" data-project-connections>
+          <ConnectorsView token={token} workspace={ws} owner="project" embedded />
+        </div>
+      )}
     <div className="card">
-      <p className="hint">
-        Repositories cloned into the workspace when a session launches. Add one by picking it from a
-        connector — connectors are set up in Connections.
-      </p>
       <DataTable<RepoEntry>
         list="sources"
         title="Repositories"
@@ -7161,16 +7224,8 @@ function ProjectSources({
         rowLabel={(r) => r.name}
         onOpen={(r) => window.open(repoUrl(r), "_blank", "noreferrer")}
         canOpen={(r) => !!repoUrl(r)}
-        primary={
-          (repos?.length ?? 0) > 0 && onOpenStudio ? (
-            <button className="primary" onClick={() => onOpenStudio(ws)}>
-              Open in Web IDE
-            </button>
-          ) : null
-        }
         empty={{
-          title: "No repositories attached yet.",
-          body: "Pick one from a connector below. It is the project's first step: its sync brings in the documents to type.",
+          title: "No repositories attached yet: pick one from a connector below.",
         }}
         columns={[
           {
@@ -7329,6 +7384,7 @@ function ProjectSources({
 
       <SourceAttachPicker token={token} workspace={ws} onAttached={() => void reload()} />
     </div>
+    </>
   );
 }
 
@@ -7513,11 +7569,14 @@ function ConnectorsView({
   token,
   workspace: ws,
   owner = "organization",
+  embedded = false,
 }: {
   token: string;
   /** From the account switcher — this page no longer asks again. */
   workspace: Workspace;
   owner?: ConnectionOwner;
+  /** Inside another screen (a project's Sources): no heading of its own. */
+  embedded?: boolean;
   /** The side panel's filters. Not read: the connection list searches itself. */
   filters?: Filters;
 }) {
@@ -7576,17 +7635,32 @@ function ConnectorsView({
     void reload();
   }, [reload]);
 
-  const shown = useMemo(
+  /** A project's: only its own connections, or the organization's it
+   *  inherits as well. */
+  const [ownOnly, setOwnOnly] = useState(true);
+  const listed = useMemo(
     () =>
       connections === null
         ? null
         : connections.filter((c) => (owner === "personal" ? c.scope === "personal" && c.mine : c.scope !== "personal")),
     [connections, owner],
   );
+  const own = listed?.filter((c) => c.owner_tenant_id === ws.id) ?? null;
+  const shown = owner === "project" && ownOnly ? own : listed;
 
   return (
     <>
-      {owner === "personal" ? (
+      {owner === "project" && listed && (
+        <div className="doc-views" role="tablist" aria-label="Which connections" data-connections-filter>
+          <button role="tab" aria-selected={ownOnly} className={ownOnly ? "doc-view on" : "doc-view"} onClick={() => setOwnOnly(true)}>
+            This project&apos;s own · {own?.length ?? 0}
+          </button>
+          <button role="tab" aria-selected={!ownOnly} className={!ownOnly ? "doc-view on" : "doc-view"} onClick={() => setOwnOnly(false)}>
+            With the organization&apos;s · {listed.length}
+          </button>
+        </div>
+      )}
+      {embedded ? null : owner === "personal" ? (
         <>
           <h2>My connections</h2>
           <p className="subtitle">

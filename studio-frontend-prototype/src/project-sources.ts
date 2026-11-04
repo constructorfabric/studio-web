@@ -169,3 +169,17 @@ export async function projectRepoRows(token: string, tenantId: string): Promise<
   ]);
   return asRows(config?.sources, connections);
 }
+
+const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", gitlab: "GitLab", git: "Git" };
+
+/** The repositories by the connector they were picked from, for Sources'
+ *  header: "from connector GitHub · 2". In the order first seen. */
+export function sourcesByConnector(rows: readonly Pick<RepoEntry, "source">[]): { source: string; label: string; count: number }[] {
+  const out: { source: string; label: string; count: number }[] = [];
+  for (const r of rows) {
+    const at = out.find((o) => o.source === r.source);
+    if (at) at.count += 1;
+    else out.push({ source: r.source, label: PROVIDER_NAMES[r.source] ?? r.source, count: 1 });
+  }
+  return out;
+}

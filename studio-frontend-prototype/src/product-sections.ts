@@ -44,11 +44,16 @@ export const PRODUCT_SECTIONS: readonly { id: ProductSectionId; title: string; h
 export { FRONTX_SHELL_TEMPLATE } from "./frontend-constructor";
 
 /** Project tabs that moved, by their old id: Frontend became a section of
- *  Product, and Builds and Deploys became Releases (ADR-0056 §4). */
-export const MOVED_PROJECT_TABS: Readonly<Record<string, { tab: "components" | "releases"; section?: ProductSectionId }>> = {
+ *  Product, Builds and Deploys became Releases (ADR-0056 §4), and the
+ *  project's Connections -- the organization's page again, plus the
+ *  project's own -- are managed from Sources, where they are used. */
+export const MOVED_PROJECT_TABS: Readonly<
+  Record<string, { tab: "components" | "releases" | "sources"; section?: ProductSectionId }>
+> = {
   frontend: { tab: "components", section: "frontend" },
   builds: { tab: "releases" },
   deploys: { tab: "releases" },
+  connections: { tab: "sources" },
 };
 
 /** The tab an id names now: a moved one's new tab, any other unchanged. For
