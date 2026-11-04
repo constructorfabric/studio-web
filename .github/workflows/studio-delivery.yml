@@ -1033,6 +1033,17 @@ jobs:
           docker buildx build $(ci-cache-buildx-args studio-backend) --push \
             -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-backend:$tag" studio-backend
 
+      # The builder target (a build Job's prepare and publish steps) must run
+      # as the Job's pod runs it: uid 1000, no capabilities (ADR-0048 §9). Its
+      # stages are the server's, already built above.
+      - name: Check the builder image runs non-root
+        if: needs.build-require-ci.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          docker buildx build --load --target builder \
+            -f studio-backend/Dockerfile -t studio-backend-builder:check studio-backend
+          bash studio-backend/scripts/check-builder-image.sh studio-backend-builder:check
+
       - name: Build and push file-storage sidecar image
         if: needs.build-require-ci.outputs.backend == 'true'
         run: |

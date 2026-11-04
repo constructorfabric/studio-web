@@ -225,6 +225,12 @@ services:
       # without them a session launch fails with a bare "unauthorized".
       STUDIO_REGISTRY_USER: ${STUDIO_REGISTRY_USER:-}
       STUDIO_REGISTRY_TOKEN: ${STUDIO_REGISTRY_TOKEN:-}
+      # A build Studio runs in an environment's cluster (ADR-0048 §9) runs its
+      # prepare and publish steps in Studio's own image, pulled by that cluster:
+      # a published studio-backend image, since this stand's image is local.
+      # Without it, Build in Studio answers 503 naming this variable.
+      STUDIO_BUILDER_IMAGE: ${STUDIO_BUILDER_IMAGE:-}
+      STUDIO_BUILDKIT_IMAGE: ${STUDIO_BUILDKIT_IMAGE:-}
       # Read by the container ENTRYPOINT, not by any gear: it makes the
       # bind-mount below writable for the unprivileged server user. Keep it
       # equal to studio-session.workspaces_root in config/docker.yaml and to

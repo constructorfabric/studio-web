@@ -69,18 +69,43 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && rm -rf /tmp/gearbox.tar.gz "/tmp/${name}" \
  && gearbox --version
 
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
-
+# What both the server and the builder below run on.
 # git: the artifact-ingest gear shells out to it to clone repositories into
 # STUDIO_ARTIFACT_WORKDIR and walk their files — the same reason Dockerfile.src
 # installs it. Without it a sync in the cluster falls back to the connector's
 # tree API, so File nodes carry paths and sizes but no content, and everything
-# built on document text (the Specs tab) has nothing to read.
+# built on document text (the Specs tab) has nothing to read. A build's
+# `prepare` step clones with it too.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 1000 studio \
  && useradd --system --uid 1000 --gid 1000 --home /app studio
+
+# `--target builder`: the image a build Job's `prepare` and `publish` steps run
+# in (ADR-0048 §9, STUDIO_BUILDER_IMAGE). The same binary as the server, with
+# what those two steps call -- git, the Gearbox engine, helm -- and nothing the
+# server alone needs (its config, ONNX Runtime). It runs as uid 1000 from its
+# first instruction: the Job's pod is `runAsNonRoot` with every capability
+# dropped, so an image that starts as root and switches user (the stand's
+# Dockerfile.src, through gosu) fails there with "operation not permitted".
+# Checked by scripts/check-builder-image.sh.
+FROM base AS builder
+WORKDIR /app
+COPY .release/studio-backend /app/studio-backend
+COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
+COPY --from=gearbox /usr/local/share/gearbox/REVISION /usr/local/share/gearbox/REVISION
+COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
+ENV STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox \
+    STUDIO_GEARBOX_FRONTX=1
+RUN chmod +x /app/studio-backend && chown -R studio:studio /app
+USER 1000
+ENTRYPOINT ["/app/studio-backend"]
+CMD ["--help"]
+
+# The server: the default target, so it stays the last stage.
+FROM base AS server
 
 WORKDIR /app
 COPY .release/studio-backend /app/studio-backend
