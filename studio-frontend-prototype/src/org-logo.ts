@@ -1,6 +1,10 @@
 // An organization's logo, read once and shared: the path bar, the
 // organization switcher and the organization's overview all show it, and a
 // new one set on the overview appears in the other two at once.
+//
+// A workspace's or a project's uploaded icon is the same thing on another
+// tenant (`useTenantIcon`), kept by the same endpoint and in the same cache:
+// tenant ids do not collide.
 
 import { useEffect, useSyncExternalStore } from "react";
 
@@ -41,11 +45,10 @@ export function rememberLogo(orgId: string, src: string | null) {
   changed();
 }
 
-function read(token: string, orgId: string) {
+function read(token: string, orgId: string, anyTenant = false) {
   if (logos.has(orgId) || reading.has(orgId)) return;
   reading.add(orgId);
-  api
-    .organizationLogo(token, orgId)
+  (anyTenant ? api.tenantIcon(token, orgId) : api.organizationLogo(token, orgId))
     .then((logo) => rememberLogo(orgId, logoSrc(logo)))
     // None (404), or not readable here: the initial is shown either way, and
     // it is not asked again on every render.
@@ -55,6 +58,16 @@ function read(token: string, orgId: string) {
 
 /** The organization's logo as an `<img>` source, or null: read on first use. */
 export function useOrgLogo(token: string, orgId: string | null | undefined): string | null {
+  return useLogo(token, orgId, false);
+}
+
+/** A workspace's or a project's uploaded icon as an `<img>` source, or null
+ *  when it has none: read on first use. It wins over the chosen glyph. */
+export function useTenantIcon(token: string, tenantId: string | null | undefined): string | null {
+  return useLogo(token, tenantId, true);
+}
+
+function useLogo(token: string, orgId: string | null | undefined, anyTenant: boolean): string | null {
   useSyncExternalStore(
     (l) => {
       listeners.add(l);
@@ -63,7 +76,7 @@ export function useOrgLogo(token: string, orgId: string | null | undefined): str
     () => version,
   );
   useEffect(() => {
-    if (orgId) read(token, orgId);
-  }, [token, orgId]);
+    if (orgId) read(token, orgId, anyTenant);
+  }, [token, orgId, anyTenant]);
   return orgId ? (logos.get(orgId) ?? null) : null;
 }

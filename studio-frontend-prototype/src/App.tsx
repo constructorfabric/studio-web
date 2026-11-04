@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDismiss } from "./use-dismiss";
 import { LevelBadge, LevelMark, LogoControl, OrgMark } from "./level-marks";
+import { HeaderIcon, TenantMark } from "./tenant-icon-view";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent } from "react";
@@ -2390,6 +2391,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     the band above the work area, so the rail is theirs to
                     fill -- or to hide, in the profile. */}
                 <PinnedSection
+                  token={token}
                   pins={pins}
                   setPins={setPinned}
                   picker={pinPicker}
@@ -3503,7 +3505,6 @@ export function PathBar({
   const barRef = useRef<HTMLDivElement | null>(null);
   const closeMenu = useCallback(() => setOpen(null), []);
   useDismiss(barRef, open !== null, closeMenu);
-  const initial = (s: string) => (s || "?").slice(0, 1).toUpperCase();
   const currentWs = workspaces.find((w) => w.id === currentWorkspaceId) ?? null;
 
   return (
@@ -3587,7 +3588,7 @@ export function PathBar({
           title={currentWs?.name ?? "All workspaces"}
           onClick={() => setOpen((o) => (o === "ws" ? null : "ws"))}
         >
-          <LevelMark level="workspace" name={currentWs ? currentWs.name : "▤"} />
+          <TenantMark token={token} level="workspace" id={currentWs?.id} name={currentWs ? currentWs.name : "▤"} />
           <span className="path-text">
             <span className="path-level">Workspace</span>
             <span className="org-select-name">{currentWs?.name ?? "All workspaces"}</span>
@@ -3617,7 +3618,7 @@ export function PathBar({
                   setOpen(null);
                 }}
               >
-                <span className="account-avatar small">{initial(w.name)}</span>
+                <TenantMark token={token} level="workspace" id={w.id} name={w.name} />
                 {w.name}
               </button>
             ))}
@@ -3636,7 +3637,7 @@ export function PathBar({
               title={currentProjectName ?? "All projects"}
               onClick={() => setOpen((o) => (o === "proj" ? null : "proj"))}
             >
-              <LevelMark level="project" name={currentProjectName ?? "▦"} />
+              <TenantMark token={token} level="project" id={currentProjectId} name={currentProjectName ?? "▦"} />
               <span className="path-text">
                 <span className="path-level">Project</span>
                 <span className="org-select-name">{currentProjectName ?? "All projects"}</span>
@@ -3666,7 +3667,7 @@ export function PathBar({
                       setOpen(null);
                     }}
                   >
-                    <span className="account-avatar small">{initial(p.name)}</span>
+                    <TenantMark token={token} level="project" id={p.id} name={p.name} />
                     {p.name}
                   </button>
                 ))}
@@ -3790,7 +3791,7 @@ function ProjectsView({
         />
       ) : (
         <>
-          <WorkspaceHeader workspace={root} />
+          <WorkspaceHeader token={token} workspace={root} />
           <WorkspaceCatalogue
             token={token}
             workspace={root}
@@ -3833,9 +3834,11 @@ type WorkspaceTab = "projects" | "ptypes" | "types";
  *  itself as soon as you change section. Only the actions differ: creating a
  *  project belongs to the Projects section and nowhere else. */
 function WorkspaceHeader({
+  token,
   workspace,
   actions,
 }: {
+  token: string;
   workspace: Workspace;
   actions?: React.ReactNode;
 }) {
@@ -3843,6 +3846,7 @@ function WorkspaceHeader({
     <div className="topbar">
       <div>
         <div className="level-head">
+          <HeaderIcon token={token} level="workspace" id={workspace.id} name={workspace.name} />
           <LevelBadge level="workspace" />
           <h1>{workspace.name}</h1>
         </div>
@@ -4597,7 +4601,7 @@ function WorkspaceProjects({
 
   return (
     <>
-      <WorkspaceHeader workspace={workspace} />
+      <WorkspaceHeader token={token} workspace={workspace} />
       {err && <div className="error">{err}</div>}
       {creating && (
         <div className="card">
@@ -5212,9 +5216,7 @@ function WorkspaceProjects({
               compare: projectComparator<ProjectListRow>("name"),
               cell: (p) => (
                 <div className="pcell">
-                  <span className={`pkind pkind-${p.row?.project_kind ?? "none"}`} aria-hidden>
-                    {p.row?.project_kind === "product" ? "◈" : p.row?.project_kind === "existing" ? "⌘" : "▦"}
-                  </span>
+                  <TenantMark token={token} level="project" id={p.id} name={p.name} kind={p.row?.project_kind} className="pico ticon-mark" />
                   <div style={{ minWidth: 0 }}>
                     {editingId === p.id ? (
                       <input
@@ -5459,6 +5461,7 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string; experimental?: b
  *  rather than dropped: losing somebody's row to a rename they never saw is
  *  worse than one row that says something unfamiliar. */
 function PinnedSection({
+  token,
   pins,
   setPins,
   picker,
@@ -5470,6 +5473,7 @@ function PinnedSection({
   onOpenView,
   onOpenProject,
 }: {
+  token: string;
   pins: Pin[];
   setPins: (next: Pin[]) => void;
   picker: boolean;
@@ -5516,7 +5520,11 @@ function PinnedSection({
               onClick={() => (pin.kind === "view" ? onOpenView(pin.id as View) : onOpenProject(pin))}
             >
               <span className="ico">
-                <NavIcon name={icon} />
+                {pin.kind === "project" ? (
+                  <TenantMark token={token} level="project" id={pin.projectId} name={pin.name} />
+                ) : (
+                  <NavIcon name={icon} />
+                )}
               </span>
               <span className="nav-pin-name">{label}</span>
               {pin.kind === "project" && <span className="nav-pin-tab">{pin.tab}</span>}

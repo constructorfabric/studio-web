@@ -947,6 +947,8 @@ export interface ProjectConfig {
    *  (`github:owner/repo//template-shell@ref`). Read when the product has
    *  none; the Frontend section writes the product's. */
   frontend?: { mfes?: string[]; shell?: string };
+  /** The icon somebody chose (`tenant-icon.ts`); absent: the kind's. */
+  icon?: import("./tenant-icon").TenantIcon;
 }
 
 /** Where a FrontX package is: `owner/name`, its directory there, the ref it is
@@ -2299,6 +2301,8 @@ export interface WorkspaceSettings {
   root_token_ref?: string;
   /** Workspace sources: multiple repositories/folders per workspace. */
   repos?: RepoEntry[];
+  /** The icon somebody chose (`tenant-icon.ts`); absent: a folder. */
+  icon?: import("./tenant-icon").TenantIcon;
 }
 
 /** A versioned capability bundle published in the Studio kit registry. */
@@ -3364,6 +3368,9 @@ export interface RollupRow {
   /** Projects: `new_gears` | `product` | `existing`, and the project's brief. */
   project_kind?: string | null;
   brief?: string | null;
+  /** The icon chosen for it, both halves or neither; null: none chosen. */
+  icon_glyph?: string | null;
+  icon_color?: string | null;
   /** Findings still to fix (`high`, `gate-failed`, `some`); `findings` counts every verdict. */
   open_findings?: number | null;
   /** Unresolved threads the repositories report. */
@@ -4263,6 +4270,21 @@ export const api = {
   /** Remove an organization's logo. */
   deleteOrganizationLogo: (token: string, orgId: string) =>
     request<void>(`/studio-organizations/v1/logo?organization_id=${encodeURIComponent(orgId)}`, token, { method: "DELETE" }),
+
+  /** A workspace's or a project's uploaded icon (the organization logo's
+   *  endpoint, by `tenant_id`); 404 when it has none. */
+  tenantIcon: (token: string, tenantId: string) =>
+    request<OrganizationLogo>(`/studio-organizations/v1/logo?tenant_id=${encodeURIComponent(tenantId)}`, token),
+  /** Upload one: PNG, JPEG, WebP or GIF, at most 256 KiB. Whoever
+   *  administers access there may. */
+  setTenantIcon: (token: string, tenantId: string, contentType: string, base64: string) =>
+    request<OrganizationLogo>(`/studio-organizations/v1/logo?tenant_id=${encodeURIComponent(tenantId)}`, token, {
+      method: "PUT",
+      body: JSON.stringify({ content_type: contentType, data: base64 }),
+    }),
+  /** Remove it: the chosen glyph shows again. */
+  deleteTenantIcon: (token: string, tenantId: string) =>
+    request<void>(`/studio-organizations/v1/logo?tenant_id=${encodeURIComponent(tenantId)}`, token, { method: "DELETE" }),
 
   /** Store the caller's photo: PNG, JPEG, WebP or GIF, at most 1 MiB. */
   uploadMyAvatar: (token: string, contentType: string, base64: string) =>

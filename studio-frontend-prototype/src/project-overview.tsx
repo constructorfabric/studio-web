@@ -23,6 +23,7 @@
  */
 
 import { LevelBadge } from "./level-marks";
+import { HeaderIcon } from "./tenant-icon-view";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import type {
@@ -464,6 +465,7 @@ export function ProjectOverview({
           the reader twice what they could already see, and buried the part only
           it knows — kind, status — behind that. */}
       <div className="dash-context">
+        <HeaderIcon token={token} level="project" id={project.id} name={project.name} kind={config?.kind} />
         <LevelBadge level="project" />
         <h1 className="level-title">{project.name}</h1>
         {config?.kind && <span className="badge info">{config.kind.replace("_", " ")}</span>}

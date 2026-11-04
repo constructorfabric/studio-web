@@ -506,7 +506,7 @@ export const SURFACES: Surface[] = [
     area: "portal",
     title: "Sign-in, navigation and notifications",
     does: "Sign in, switch organization and workspace, get notified, see who is online, open a project in the IDE or the desktop app.",
-    components: ["App", "Login", "Shell", "ContextPane", "ChatNotifier", "EditorNotifier", "OpenInDesktop", "StudioLauncher", "WhoIsOnline", "OrgMark"],
+    components: ["App", "Login", "Shell", "ContextPane", "ChatNotifier", "EditorNotifier", "OpenInDesktop", "StudioLauncher", "WhoIsOnline", "OrgMark", "TenantMark", "IconPicker"],
     gears: [
       "account-management",
       "studio-connector",

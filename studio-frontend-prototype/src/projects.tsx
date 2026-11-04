@@ -18,6 +18,7 @@ import { DataTable } from "./data-table";
 import { errText } from "./format";
 import { Modal } from "./modal";
 import { portfolioRollups, rollupText, type WorkspaceRollup } from "./rollups";
+import { TenantMark } from "./tenant-icon-view";
 import { Tile } from "./view-mode";
 
 /** Initials + a stable hue from a name — the mockups' colored member discs. */
@@ -53,20 +54,6 @@ function Avatars({ users }: { users?: User[] }) {
       })}
       {users.length > 3 && <span className="avatars-more">+{users.length - 3}</span>}
     </span>
-  );
-}
-
-/** A small folder glyph for the workspace name cell. */
-function FolderIcon() {
-  return (
-    <svg className="folder" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M1.6 4.4A1.4 1.4 0 0 1 3 3h2.8l1.4 1.4H13A1.4 1.4 0 0 1 14.4 5.8v5.0A1.4 1.4 0 0 1 13 12.2H3A1.4 1.4 0 0 1 1.6 10.8z"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }
 
@@ -330,9 +317,7 @@ export function ProjectsPortfolio({
               compare: (a, b) => a.name.localeCompare(b.name),
               cell: (r) => (
                 <div className="pcell">
-                  <span className="pico" aria-hidden>
-                    <FolderIcon />
-                  </span>
+                  <TenantMark token={token} level="workspace" id={r.id} name={r.name} className="pico ticon-mark" />
                   <div>
                     <div className="pname">{r.name}</div>
                     <div className="sub">{r.self_managed ? "self-managed" : "workspace"}</div>
@@ -377,7 +362,7 @@ export function ProjectsPortfolio({
             /* The tree does not come with: a card that unfolds into other
                cards is a table with extra steps. */
             <Tile
-              icon={<FolderIcon />}
+              icon={<TenantMark token={token} level="workspace" id={r.id} name={r.name} />}
               title={r.name}
               subtitle={r.self_managed ? "self-managed" : "workspace"}
               onClick={open}

@@ -2925,6 +2925,8 @@ response	GET /studio-organizations/v1/rollups	items.activity_days	u32	optional
 response	GET /studio-organizations/v1/rollups	items.brief	String	optional
 response	GET /studio-organizations/v1/rollups	items.documents	u32	optional
 response	GET /studio-organizations/v1/rollups	items.findings	u32	optional
+response	GET /studio-organizations/v1/rollups	items.icon_color	String	optional
+response	GET /studio-organizations/v1/rollups	items.icon_glyph	String	optional
 response	GET /studio-organizations/v1/rollups	items.id	String	always
 response	GET /studio-organizations/v1/rollups	items.kind	String	always
 response	GET /studio-organizations/v1/rollups	items.last_at	String	optional

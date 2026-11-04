@@ -2572,6 +2572,50 @@ div.dm-block { padding-left: 0; }
 .level-head h1 { margin: 0; }
 .dash-context .level-title { font-size: 20px; font-weight: 600; margin: 0; }
 .dash-context .level-mark { width: 28px; height: 28px; font-size: 13px; }
+
+/* A workspace's or a project's chosen icon (tenant-icon.ts): a glyph in a
+   colour, the colour a token per name. The first four are the levels' own. */
+:root {
+  --ticon-violet: #6d28d9; --ticon-blue: #1d4ed8; --ticon-green: #15803d; --ticon-slate: #475569;
+  --ticon-teal: #0f766e; --ticon-amber: #b45309; --ticon-red: #b91c1c; --ticon-pink: #be185d;
+}
+.ticon-violet { --tc: var(--ticon-violet); } .ticon-blue { --tc: var(--ticon-blue); }
+.ticon-green { --tc: var(--ticon-green); } .ticon-slate { --tc: var(--ticon-slate); }
+.ticon-teal { --tc: var(--ticon-teal); } .ticon-amber { --tc: var(--ticon-amber); }
+.ticon-red { --tc: var(--ticon-red); } .ticon-pink { --tc: var(--ticon-pink); }
+.level-mark.has-icon { background: var(--tc); color: #fff; }
+.level-mark.has-icon .icon { display: block; }
+.ticon-large .level-mark { width: 32px; height: 32px; font-size: 14px; }
+.ticon-large .level-mark.has-icon .icon { width: 18px; height: 18px; }
+.ticon-anchor { position: relative; display: inline-flex; align-items: center; gap: 2px; }
+.ticon-mark-button { border: 0; background: none; padding: 2px; border-radius: 10px; cursor: pointer; line-height: 0; }
+.ticon-mark-button:hover, .ticon-mark-button[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--ring, var(--primary)); }
+.ticon-more { padding: 2px 8px; font-size: 16px; line-height: 1; }
+.ticon-menu { right: auto; left: 0; min-width: 140px; }
+.ticon-picker {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 292px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.14); padding: 10px; display: flex; flex-direction: column; gap: 10px;
+}
+.ticon-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+.ticon-tabs button { border: 0; background: none; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.ticon-tabs button.on { color: var(--foreground); border-bottom-color: var(--primary); }
+.ticon-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.ticon-cell { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--tc); padding: 0; cursor: pointer; }
+.ticon-cell:hover { border-color: var(--tc); }
+.ticon-cell.on { background: var(--tc); border-color: var(--tc); color: #fff; }
+.ticon-colors { display: flex; gap: 6px; flex-wrap: wrap; }
+.ticon-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--card); background: var(--tc); box-shadow: 0 0 0 1px var(--border); padding: 0; cursor: pointer; }
+.ticon-swatch.on { box-shadow: 0 0 0 2px var(--tc); }
+.ticon-actions { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.ticon-preview { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; min-width: 0; }
+.ticon-preview .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted-foreground); }
+.ticon-upload { display: flex; flex-direction: column; gap: 8px; }
+.ticon-note { margin: 0; font-size: 12px; color: var(--muted-foreground); }
+.pcell .pico.ticon-mark { width: auto; flex: none; line-height: 0; }
+.pcell .pico.ticon-mark .level-mark { width: 26px; height: 26px; }
+.ticon-picker .ticon-swatch, .ticon-picker .ticon-swatch:hover, .ticon-picker .ticon-swatch.on { background: var(--tc); }
+.dash-context .ticon-anchor button { margin-left: 0; }
 .logo-control { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; flex-wrap: wrap; }
 .error-inline { color: var(--destructive); font-size: 12.5px; }
 
