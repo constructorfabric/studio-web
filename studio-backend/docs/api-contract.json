@@ -206,6 +206,39 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-environments/v1/images/{image_id}",
+      "operation_id": "studio_environments.delete_image",
+      "tag": "",
+      "summary": "Delete one of a project's images from its registry",
+      "authenticated": true,
+      "responses": [
+        "ImageRunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-environments/v1/images/{image_id}/pin",
+      "operation_id": "studio_environments.delete_image_pin",
+      "tag": "",
+      "summary": "Let an image go by its retention policy again",
+      "authenticated": true,
+      "responses": [
+        "ImageDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-environments/v1/previews/{deployment_id}",
       "operation_id": "studio_environments.delete_preview",
       "tag": "",
@@ -231,6 +264,24 @@
       "authenticated": true,
       "errors": [
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-environments/v1/registries/{connection_id}/repositories/{repository}/versions/{digest}",
+      "operation_id": "studio_environments.delete_registry_version",
+      "tag": "",
+      "summary": "Delete one digest from an organization's registry",
+      "authenticated": true,
+      "responses": [
+        "RunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "404",
         "500"
       ]
@@ -1958,6 +2009,90 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/environments/{environment_id}/readiness",
+      "operation_id": "studio_environments.get_environment_readiness",
+      "tag": "",
+      "summary": "How far an environment's cluster is bootstrapped for Studio",
+      "authenticated": true,
+      "responses": [
+        "ReadinessDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/image-retention",
+      "operation_id": "studio_environments.get_image_retention",
+      "tag": "",
+      "summary": "How long a project's, or an organization's, images are kept",
+      "authenticated": true,
+      "responses": [
+        "RetentionDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/images",
+      "operation_id": "studio_environments.list_images",
+      "tag": "",
+      "summary": "A project's images and charts, and where each runs",
+      "authenticated": true,
+      "responses": [
+        "ImageListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/images/{image_id}",
+      "operation_id": "studio_environments.get_image",
+      "tag": "",
+      "summary": "One of a project's images, and where it runs",
+      "authenticated": true,
+      "responses": [
+        "ImageDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/namespace-assignments",
+      "operation_id": "studio_environments.list_namespace_assignments",
+      "tag": "",
+      "summary": "The namespace each project was given in each environment",
+      "authenticated": true,
+      "responses": [
+        "AssignmentListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/project-build",
       "operation_id": "studio_environments.get_project_build",
       "tag": "",
@@ -1984,6 +2119,74 @@
       ],
       "errors": [
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/registries",
+      "operation_id": "studio_environments.list_registries",
+      "tag": "",
+      "summary": "The registries an organization's environments push to and pull from",
+      "authenticated": true,
+      "responses": [
+        "RegistryListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/registries/{connection_id}/orphans",
+      "operation_id": "studio_environments.list_registry_orphans",
+      "tag": "",
+      "summary": "What a registry holds that nothing accounts for, and records it lost",
+      "authenticated": true,
+      "responses": [
+        "OrphanListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/registries/{connection_id}/repositories",
+      "operation_id": "studio_environments.list_registry_repositories",
+      "tag": "",
+      "summary": "The repositories a registry holds under the organization's prefixes",
+      "authenticated": true,
+      "responses": [
+        "RepositoryListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/registries/{connection_id}/repositories/{repository}/tags",
+      "operation_id": "studio_environments.list_registry_tags",
+      "tag": "",
+      "summary": "The versions one repository holds, with their records",
+      "authenticated": true,
+      "responses": [
+        "VersionListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
         "404",
         "500"
       ]
@@ -4749,6 +4952,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-environments/v1/builds/plan",
+      "operation_id": "studio_environments.create_build_plan",
+      "tag": "",
+      "summary": "Say what a build would do, without starting it",
+      "authenticated": true,
+      "request": "StudioBuildRequest",
+      "responses": [
+        "BuildPlanDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-environments/v1/deployments",
       "operation_id": "studio_environments.create_deployment",
       "tag": "",
@@ -4831,6 +5053,44 @@
       "authenticated": true,
       "responses": [
         "EnvironmentTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/images/imports",
+      "operation_id": "studio_environments.create_image_import",
+      "tag": "",
+      "summary": "Import an external image or chart into the project's own path",
+      "authenticated": true,
+      "request": "ImportRequest",
+      "responses": [
+        "ImageRunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/images/{image_id}/promotions",
+      "operation_id": "studio_environments.create_image_promotion",
+      "tag": "",
+      "summary": "Copy an image by digest into another environment's registry",
+      "authenticated": true,
+      "request": "PromotionRequest",
+      "responses": [
+        "ImageRunDto"
       ],
       "errors": [
         "400",
@@ -6283,6 +6543,60 @@
       "request": "EnvironmentRequest",
       "responses": [
         "EnvironmentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/image-retention",
+      "operation_id": "studio_environments.upsert_image_retention",
+      "tag": "",
+      "summary": "Set how long a project's, or an organization's, images are kept",
+      "authenticated": true,
+      "request": "RetentionDto",
+      "responses": [
+        "RetentionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/images/{image_id}/pin",
+      "operation_id": "studio_environments.upsert_image_pin",
+      "tag": "",
+      "summary": "Keep an image past its retention policy",
+      "authenticated": true,
+      "responses": [
+        "ImageDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/namespace-assignments",
+      "operation_id": "studio_environments.upsert_namespace_assignment",
+      "tag": "",
+      "summary": "Give a project a namespace in an environment",
+      "authenticated": true,
+      "request": "AssignmentDto",
+      "responses": [
+        "AssignmentDto"
       ],
       "errors": [
         "400",
