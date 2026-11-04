@@ -129,6 +129,12 @@ gears:
 
   api-gateway:
     config:
+      # Request timeout: 30 s, fixed in cf-gears-api-gateway 0.5.2 (a tower
+      # TimeoutLayer; "Request exceeded 30s timeout"). It is not configurable
+      # there, and this block denies unknown keys, so a `request_timeout` here
+      # would stop the boot. Studio works inside it: a product save answers
+      # within 20 s and its engine check carries on in the background
+      # (product/rest.rs SAVE_ANSWERS_WITHIN, ADR-0053, amendment 2026-11-04).
       # Throttling zones the mini-chat create-chat route names (its ThrottlingSpec);
       # api-gateway refuses to start when a route references an undefined zone.
       # Values follow gears-rust config/mini-chat.yaml. `ip` keys everyone behind

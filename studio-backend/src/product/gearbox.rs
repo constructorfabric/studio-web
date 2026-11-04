@@ -2366,11 +2366,20 @@ fn within_product_repo<'a>(
 
 pub struct Preview {
     pub product_gdl: String,
-    pub composition: Composition,
     pub resolution: Resolution,
     pub corpus_commit: Option<String>,
     /// What the resolved gears run on besides the product's own binaries.
     pub infrastructure: Vec<Technology>,
+}
+
+/// A description [`Gearbox::describe`] rendered, not yet checked: what
+/// [`Gearbox::check`] hands the engine.
+pub struct Described {
+    pub product_gdl: String,
+    pub composition: Composition,
+    pub corpus_commit: Option<String>,
+    loaded: Loaded,
+    corpus_ms: u128,
 }
 
 /// Something a product's gears need running beside them: the profile's
@@ -3776,7 +3785,11 @@ impl Gearbox {
         answer_gdl(&result)
     }
 
-    pub async fn preview(&self, scope: Scope, input: PreviewInput) -> anyhow::Result<Preview> {
+    /// The description `input` makes, without asking the engine about it:
+    /// the corpus's catalogue composes the picks and the text is rendered from
+    /// that alone. What a save keeps (ADR-0053), so a save need not wait for
+    /// the check ([`Gearbox::check`]), which takes minutes for a large product.
+    pub async fn describe(&self, scope: Scope, input: &PreviewInput) -> anyhow::Result<Described> {
         if !is_kebab_id(&input.product_id) {
             bail!(
                 "product id `{}` is not a kebab-case id (lowercase letters, digits, single hyphens)",
@@ -3790,18 +3803,10 @@ impl Gearbox {
                 PROFILES.join(", ")
             );
         }
-        // One preview at a time: a product of some sixty gears takes about
-        // 1.5 GB to resolve, and the Product page asks again as picks change,
-        // so two at once took the backend past its 4 GiB limit on dev
-        // (OOMKilled). The next waits; a repeat is answered from `evaluations`.
-        let turn = PREVIEW_TURNS
-            .acquire()
-            .await
-            .context("the preview queue is closed")?;
         let started = Instant::now();
         let loaded = self.ensure(scope).await?;
         let corpus_ms = started.elapsed().as_millis();
-        let (named, commit, catalogue) = (loaded.named(), loaded.commit(), &loaded.catalogue);
+        let catalogue = &loaded.catalogue;
         let composition = compose(catalogue, &input.gears);
         // Each root at the commit it was read at, so the description says by
         // itself what it was built from.
@@ -3860,19 +3865,51 @@ impl Gearbox {
                 .as_ref()
                 .map(|pick| (pick, input.repo.as_deref())),
         );
+        Ok(Described {
+            corpus_commit: loaded.commit(),
+            product_gdl,
+            composition,
+            loaded,
+            corpus_ms,
+        })
+    }
+
+    /// The engine's check of a description [`Gearbox::describe`] made, for
+    /// `input.profile`. One check at a time.
+    pub async fn check(
+        &self,
+        scope: Scope,
+        input: PreviewInput,
+        described: Described,
+    ) -> anyhow::Result<Preview> {
+        let Described {
+            product_gdl,
+            corpus_commit: commit,
+            loaded,
+            corpus_ms,
+            ..
+        } = described;
         // A product at its project's birth names no gears yet. There is nothing
         // for the engine to resolve, and the description is still the file the
         // project starts from: picking gears later rewrites it.
         if input.gears.is_empty() {
             return Ok(Preview {
                 product_gdl,
-                composition,
                 resolution: Resolution::default(),
                 corpus_commit: commit,
                 infrastructure: Vec::new(),
             });
         }
 
+        // One check at a time: a product of some sixty gears takes about
+        // 1.5 GB to resolve, and the Product page asks again as picks change,
+        // so two at once took the backend past its 4 GiB limit on dev
+        // (OOMKilled). The next waits; a repeat is answered from `evaluations`.
+        let turn = PREVIEW_TURNS
+            .acquire()
+            .await
+            .context("the preview queue is closed")?;
+        let (named, catalogue) = (loaded.named(), &loaded.catalogue);
         let key = input
             .reuse
             .then(|| {
@@ -3903,8 +3940,8 @@ impl Gearbox {
                 let product_path = input.product_path.clone();
                 let profile = input.profile.clone();
                 let evaluations = Arc::clone(&self.evaluations);
-                // The engine outlives a request the gateway gave up on (its
-                // limit is 30 s; a product of sixty gears can take longer):
+                // The engine outlives a request the gateway gave up on (a
+                // product of sixty gears can take longer than its limit):
                 // the run keeps its turn and its answer, so the person's
                 // retry is answered from `evaluations` instead of starting over.
                 tokio::task::spawn_blocking(move || {
@@ -3933,7 +3970,6 @@ impl Gearbox {
         let infrastructure = infrastructure(catalogue, &gears);
         Ok(Preview {
             product_gdl,
-            composition,
             resolution,
             corpus_commit: commit,
             infrastructure,

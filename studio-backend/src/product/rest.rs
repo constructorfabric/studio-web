@@ -657,6 +657,11 @@ pub struct ProductPreviewDto {
     pub written: Option<ProductWriteDto>,
     /// Set when `write` saved it as a revision Studio keeps (ADR-0053).
     pub description_revision: Option<ProductPreviewRevisionDto>,
+    /// A save answered before the engine finished checking it: `ok`,
+    /// `diagnostics`, `applications` and `gears` are not known yet (and
+    /// `ok` is false). The check carries on and is kept under the product's
+    /// `checks.<profile>` when it finishes.
+    pub checking: bool,
 }
 
 /// Where the scaffold landed, and what it wrote.
@@ -1737,6 +1742,7 @@ async fn preview_product(
     Path(project_id): Path<Uuid>,
     Json(body): Json<ProductPreviewRequest>,
 ) -> ApiResult<Response> {
+    let started = std::time::Instant::now();
     let gearbox = product.gearbox()?;
     let invalid = |e: anyhow::Error| {
         StudioProductError::invalid_argument()
@@ -1784,28 +1790,28 @@ async fn preview_product(
     } else {
         None
     };
-    let preview = gearbox
-        .preview(
-            scope,
-            PreviewInput {
-                product_id: body.product_id.clone(),
-                product_path: product_path.clone(),
-                name,
-                gears: body.gears.clone(),
-                profile: profile.clone(),
-                config: config.clone(),
-                repo,
-                // A save may take the answer of an earlier check of the same
-                // text against the same commits (the key holds both): it is
-                // the answer a fresh run gives. Asking afresh put a save of a
-                // large product behind the checks in the queue and past the
-                // gateway's 30 s.
-                reuse: true,
-                frontend,
-            },
-        )
-        .await
-        .map_err(invalid)?;
+    let input = PreviewInput {
+        product_id: body.product_id.clone(),
+        product_path: product_path.clone(),
+        name,
+        gears: body.gears.clone(),
+        profile: profile.clone(),
+        config: config.clone(),
+        repo,
+        // A check may take the answer of an earlier check of the same text
+        // against the same commits (the key holds both): it is the answer a
+        // fresh run gives.
+        reuse: true,
+        frontend,
+    };
+    // The text first, without the engine: it is all a save keeps, so a save
+    // never waits on a check to be kept (the check of a product of sixty
+    // gears outlasted the gateway, and the save was lost with it).
+    let described = gearbox.describe(scope, &input).await.map_err(invalid)?;
+    let product_gdl = described.product_gdl.clone();
+    let gdl_sha256 = super::descriptions::digest(&product_gdl);
+    let composition = described.composition.clone();
+    let corpus_commit = described.corpus_commit.clone();
 
     // ADR-0053 §1: a save is a revision Studio keeps; the repository is
     // written only when the person publishes (§3). A deployment whose gear
@@ -1829,7 +1835,7 @@ async fn preview_product(
                 &ctx,
                 project_id,
                 base,
-                &preview.product_gdl,
+                &product_gdl,
                 super::descriptions::SOURCE_STUDIO,
                 Some(&product_path),
             )
@@ -1850,7 +1856,7 @@ async fn preview_product(
                 return Ok(descriptions_rest::conflict_response(
                     body.base_revision,
                     latest,
-                    preview.product_gdl,
+                    product_gdl,
                 ));
             }
         });
@@ -1898,12 +1904,8 @@ async fn preview_product(
             None
         };
         let (open_pr, onto_base) = save_mode(body.open_pr, body.onto_base, share);
-        let branch = (!onto_base).then(|| {
-            use sha2::Digest as _;
-            let hash = sha2::Sha256::digest(preview.product_gdl.as_bytes());
-            let digest: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
-            format!("product/{}-{digest}", body.product_id)
-        });
+        let branch =
+            (!onto_base).then(|| format!("product/{}-{}", body.product_id, &gdl_sha256[..8]));
         let pr_title = open_pr.then(|| format!("Describe the {} product", body.product_id));
         let w = product
             .service
@@ -1913,7 +1915,7 @@ async fn preview_product(
                 branch.as_deref(),
                 &[super::scaffold::ScaffoldFile {
                     path: product_path.clone(),
-                    content: preview.product_gdl.clone(),
+                    content: product_gdl.clone(),
                 }],
                 &format!("product: describe {} for Gearbox", body.product_id),
                 pr_title.as_deref(),
@@ -1929,17 +1931,9 @@ async fn preview_product(
         None
     };
 
-    let r = preview.resolution;
-
     // The preview is the project's product now: what was asked, what the
     // engine said, and where it was saved. Recorded on every run, so the
     // project remembers its product without anybody pressing a second button.
-    let errors = r.diagnostics.iter().filter(|d| d.is_error()).count();
-    let warnings = r
-        .diagnostics
-        .iter()
-        .filter(|d| d.severity == "warning")
-        .count();
     let mut record = serde_json::Map::new();
     record.insert("product_id".into(), body.product_id.clone().into());
     record.insert("name".into(), name_for_record.into());
@@ -1948,29 +1942,6 @@ async fn preview_product(
         "config".into(),
         serde_json::to_value(&config).unwrap_or(Value::Null),
     );
-    // The verdict is kept per profile (ADR-0057): checking `local` leaves
-    // `prod`'s standing, and the description's hash says whether it is still
-    // about the product as it is now. `last_preview` stays for older readers
-    // and says which check ran last.
-    let gdl_sha256 = super::descriptions::digest(&preview.product_gdl);
-    let check = serde_json::json!({
-        "ok": errors == 0,
-        "errors": errors,
-        "warnings": warnings,
-        "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
-        "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
-        "infrastructure": preview.infrastructure,
-        "corpus_commit": preview.corpus_commit,
-        "gdl_sha256": gdl_sha256,
-    });
-    let mut last = check.clone();
-    if let Some(o) = last.as_object_mut() {
-        o.insert("profile".into(), profile.clone().into());
-    }
-    record.insert("last_preview".into(), last);
-    let mut checks = serde_json::Map::new();
-    checks.insert(profile.clone(), check);
-    record.insert("checks".into(), Value::Object(checks));
     if let Some(w) = &written {
         record.insert(
             "written".into(),
@@ -1982,22 +1953,115 @@ async fn preview_product(
             }),
         );
     }
-    if let Err(e) = product
-        .service
-        .update_project_product(&ctx, &project_id.to_string(), record)
-        .await
-    {
-        // The preview itself stands; only its memory is lost.
-        tracing::warn!(error = %format!("{e:#}"), "gearbox: could not record the project's product");
+    // A save is recorded now, before its check: what was saved stands
+    // whatever the check says and however long it takes. A check alone is
+    // recorded with its verdict, as before.
+    if write {
+        record_product(
+            &product.service,
+            &ctx,
+            project_id,
+            std::mem::take(&mut record),
+        )
+        .await;
     }
 
+    // The check runs on a task of its own, so it finishes -- and its verdict
+    // is kept under `checks.<profile>` -- even when nobody waits for it any
+    // more: a save answers by `SAVE_ANSWERS_WITHIN` whether or not it is done, and
+    // the gateway may give up on a check alone.
+    let check = tokio::spawn(check_and_record(
+        Arc::clone(gearbox),
+        Arc::clone(&product.service),
+        ctx.clone(),
+        project_id,
+        scope,
+        input,
+        described,
+        record,
+    ));
+    let checked = if write {
+        let left = SAVE_ANSWERS_WITHIN.saturating_sub(started.elapsed());
+        tokio::time::timeout(left, check).await.ok()
+    } else {
+        Some(check.await)
+    };
+    let verdict = match checked {
+        Some(Ok(Ok(preview))) => Verdict::Checked(preview.resolution),
+        Some(Ok(Err(e))) if !write => return Err(invalid(e)),
+        Some(Ok(Err(e))) => {
+            tracing::warn!(%project_id, error = %format!("{e:#}"), "gearbox: the check of a saved description failed");
+            Verdict::Failed(format!("{e:#}"))
+        }
+        Some(Err(e)) => {
+            return Err(CanonicalError::internal(format!("the check task failed: {e}")).create());
+        }
+        None => {
+            tracing::info!(%project_id, %profile, "gearbox: the save answers before its check; the check is kept when it finishes");
+            Verdict::Checking
+        }
+    };
+
     Ok(axum::response::IntoResponse::into_response(axum::Json(
-        ProductPreviewDto {
-            ok: !r.diagnostics.iter().any(|d| d.is_error()),
-            product_gdl: preview.product_gdl,
-            gdl_sha256,
-            profile,
-            diagnostics: r
+        preview_dto(
+            ProductPreviewDto {
+                ok: false,
+                product_gdl,
+                gdl_sha256,
+                profile,
+                diagnostics: Vec::new(),
+                applications: Vec::new(),
+                gears: Vec::new(),
+                added: composition
+                    .added_hosts
+                    .into_iter()
+                    .map(|(host, plugin)| GearboxAddedDto {
+                        reason: format!("host of {plugin}"),
+                        id: host,
+                    })
+                    .collect(),
+                plugin_options: composition
+                    .plugin_options
+                    .into_iter()
+                    .map(|(host, available)| GearboxPluginOptionDto { host, available })
+                    .collect(),
+                not_described: composition.not_described,
+                corpus_commit,
+                written,
+                description_revision,
+                checking: false,
+            },
+            verdict,
+        ),
+    )))
+}
+
+/// The api-gateway's request timeout: fixed at 30 s in cf-gears-api-gateway
+/// 0.5.2, which has no setting for it (config/*.yaml say so).
+const GATEWAY_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// By when, from its start, a save answers: with its check when the check is
+/// done by then, else without it. Well inside [`GATEWAY_REQUEST_TIMEOUT`], so
+/// a save is never lost to the gateway; the check carries on and is kept
+/// under the product's `checks.<profile>`.
+const SAVE_ANSWERS_WITHIN: std::time::Duration = std::time::Duration::from_secs(20);
+const _: () = assert!(SAVE_ANSWERS_WITHIN.as_secs() + 5 < GATEWAY_REQUEST_TIMEOUT.as_secs());
+
+/// What the engine said of a description, as far as the request knows.
+enum Verdict {
+    Checked(super::gearbox::Resolution),
+    /// Still running: kept on the product's record when it finishes.
+    Checking,
+    /// The engine could not check it (a save stands regardless).
+    Failed(String),
+}
+
+/// `dto` with the engine's verdict in it.
+fn preview_dto(mut dto: ProductPreviewDto, verdict: Verdict) -> ProductPreviewDto {
+    match verdict {
+        Verdict::Checked(r) => {
+            dto.ok = !r.diagnostics.iter().any(|d| d.is_error());
+            dto.diagnostics = r
                 .diagnostics
                 .into_iter()
                 .map(|d| GearboxDiagnosticDto {
@@ -2008,8 +2072,8 @@ async fn preview_product(
                     file: d.file,
                     line: d.line,
                 })
-                .collect(),
-            applications: r
+                .collect();
+            dto.applications = r
                 .applications
                 .into_iter()
                 .map(|a| GearboxApplicationDto {
@@ -2028,8 +2092,8 @@ async fn preview_product(
                         })
                         .collect(),
                 })
-                .collect(),
-            gears: r
+                .collect();
+            dto.gears = r
                 .gears
                 .into_iter()
                 .map(|g| GearboxGearDto {
@@ -2037,28 +2101,98 @@ async fn preview_product(
                     crate_name: g.crate_name,
                     reasons: g.reasons,
                 })
-                .collect(),
-            added: preview
-                .composition
-                .added_hosts
-                .into_iter()
-                .map(|(host, plugin)| GearboxAddedDto {
-                    reason: format!("host of {plugin}"),
-                    id: host,
-                })
-                .collect(),
-            plugin_options: preview
-                .composition
-                .plugin_options
-                .into_iter()
-                .map(|(host, available)| GearboxPluginOptionDto { host, available })
-                .collect(),
-            not_described: preview.composition.not_described,
-            corpus_commit: preview.corpus_commit,
-            written,
-            description_revision,
-        },
-    )))
+                .collect();
+        }
+        Verdict::Checking => {
+            dto.ok = false;
+            dto.checking = true;
+        }
+        Verdict::Failed(why) => {
+            dto.ok = false;
+            dto.diagnostics = vec![GearboxDiagnosticDto {
+                code: "check-failed".to_owned(),
+                severity: "error".to_owned(),
+                message: format!("the engine could not check the description: {why}"),
+                help: Some("the description is saved; check it again".to_owned()),
+                file: None,
+                line: None,
+            }];
+        }
+    }
+    dto
+}
+
+/// Merge `patch` into the project's product record. A failure is logged,
+/// not the request's: what was asked stands, only its memory is lost.
+async fn record_product(
+    service: &ProductService,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+    patch: serde_json::Map<String, Value>,
+) {
+    if patch.is_empty() {
+        return;
+    }
+    if let Err(e) = service
+        .update_project_product(ctx, &project_id.to_string(), patch)
+        .await
+    {
+        tracing::warn!(error = %format!("{e:#}"), "gearbox: could not record the project's product");
+    }
+}
+
+/// The engine's check of `described` for its profile, kept on the project's
+/// product record -- with `record`, what else the request records -- under
+/// `checks.<profile>` (ADR-0057) and `last_preview`. Run on a task of its
+/// own, so the verdict is kept whether or not anybody still waits for it.
+#[allow(clippy::too_many_arguments)]
+async fn check_and_record(
+    gearbox: Arc<Gearbox>,
+    service: Arc<ProductService>,
+    ctx: SecurityContext,
+    project_id: Uuid,
+    scope: Scope,
+    input: PreviewInput,
+    described: super::gearbox::Described,
+    mut record: serde_json::Map<String, Value>,
+) -> anyhow::Result<super::gearbox::Preview> {
+    let profile = input.profile.clone();
+    let preview = gearbox.check(scope, input, described).await?;
+    let (check, last) = check_record(&preview, &profile);
+    record.insert("last_preview".into(), last);
+    let mut checks = serde_json::Map::new();
+    checks.insert(profile, check);
+    record.insert("checks".into(), Value::Object(checks));
+    record_product(&service, &ctx, project_id, record).await;
+    Ok(preview)
+}
+
+/// A profile's kept check (ADR-0057), and `last_preview`: the same with the
+/// profile in it, for older readers. The description's hash says whether the
+/// check is still about the product as it is now.
+fn check_record(preview: &super::gearbox::Preview, profile: &str) -> (Value, Value) {
+    let r = &preview.resolution;
+    let errors = r.diagnostics.iter().filter(|d| d.is_error()).count();
+    let warnings = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == "warning")
+        .count();
+    let check = serde_json::json!({
+        "ok": errors == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
+        "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
+        "infrastructure": preview.infrastructure,
+        "corpus_commit": preview.corpus_commit,
+        "gdl_sha256": super::descriptions::digest(&preview.product_gdl),
+    });
+    let mut last = check.clone();
+    if let Some(o) = last.as_object_mut() {
+        o.insert("profile".into(), profile.into());
+    }
+    (check, last)
 }
 
 async fn create_repo(
@@ -2549,7 +2683,11 @@ pub fn register_routes(
          the resolution arrived at. With `write`, also saves product.gdl as the \
          project's next description revision, which Studio keeps (ADR-0053): \
          made against `base_revision`, a 409 with both texts when that is not \
-         the latest. With `publish` (or `open_pr` / `onto_base`) it is also \
+         the latest -- unless the text is the latest's already, which is that \
+         revision (`created: false`), so a save sent again is safe. A save \
+         answers within 20 s: with the engine's verdict when it is done by then, \
+         else `checking: true` and none, the check carrying on. With `publish` \
+         (or `open_pr` / `onto_base`) it is also \
          published to the repository, onto `product/<id>` with one pull request \
          or onto the base branch. A deployment whose product gear has no \
          database commits it onto a branch instead, as before. `write` with no \
@@ -2557,7 +2695,7 @@ pub fn register_routes(
          resolving it. A write through a connection the organization does not \
          own is a 400 `CONNECTION_NOT_OWNED`. The verdict is kept on the \
          product under `checks.<profile>` with the description's hash, beside \
-         the other profiles' (ADR-0057).",
+         the other profiles' (ADR-0057), whenever the check finishes.",
         )
         .tag("StudioProduct")
         .authenticated()

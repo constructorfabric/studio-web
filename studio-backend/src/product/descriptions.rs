@@ -14,7 +14,9 @@
 //! no longer the latest, nothing is written and the caller gets the latest
 //! back ([`Saved::Stale`]): the REST layer answers 409 with both texts. Two
 //! saves racing for the same number collide on the primary key; the loser is
-//! told the same way.
+//! told the same way. A save whose text is the latest revision's already is
+//! that revision ([`Saved::Unchanged`]) whatever its base, so a save repeated
+//! after a lost answer is idempotent ([`settled`]).
 //!
 //! PostgreSQL only, like every gear table here (studio-backend/AGENTS.md).
 
@@ -134,6 +136,25 @@ pub fn is_current(base: Option<i64>, latest: Option<&Revision>) -> bool {
     base.unwrap_or(0) == latest.map_or(0, |l| l.revision)
 }
 
+/// What a save of text hashing to `sha256`, made against `base`, comes to
+/// without writing anything: `None` when it is a new revision.
+///
+/// The latest revision's text again is that revision, whatever the base
+/// (`Unchanged`, `created: false`): nothing anybody saved is lost by it. So a
+/// save repeated -- a retry after the gateway gave up on a request that had
+/// saved -- answers the revision the first attempt made, rather than a
+/// conflict with it. Any other text made against a revision that is no
+/// longer the latest is refused with the latest (`Stale`), as before.
+pub fn settled(base: Option<i64>, latest: Option<&Revision>, sha256: &str) -> Option<Saved> {
+    let l = latest?;
+    if l.sha256 == sha256 {
+        return Some(Saved::Unchanged(l.clone()));
+    }
+    // A base past a project with no revision at all is a first save: there
+    // is nothing it could have missed.
+    (!is_current(base, Some(l))).then(|| Saved::Stale(l.clone()))
+}
+
 /// A refusal of a text before anything is stored: empty, too large, or not a
 /// description's characters.
 pub fn checked_text(text: &str) -> Result<(), String> {
@@ -225,18 +246,9 @@ impl DescriptionStore {
         new: &NewRevision<'_>,
     ) -> anyhow::Result<Saved> {
         let latest = self.latest(tenant, project).await?;
-        // A base past a project with no revision at all is a first save: there
-        // is nothing it could have missed.
-        if let Some(l) = &latest
-            && !is_current(new.base_revision, Some(l))
-        {
-            return Ok(Saved::Stale(l.clone()));
-        }
         let sha256 = digest(new.text);
-        if let Some(l) = &latest
-            && l.sha256 == sha256
-        {
-            return Ok(Saved::Unchanged(l.clone()));
+        if let Some(settled) = settled(new.base_revision, latest.as_ref(), &sha256) {
+            return Ok(settled);
         }
         let made = Revision {
             revision: latest.as_ref().map_or(1, |l| l.revision + 1),
@@ -267,8 +279,10 @@ impl DescriptionStore {
         match inserted {
             Ok(_) => Ok(Saved::Created(made)),
             // Another save took this number first: it is the latest now, and
-            // this one was made against the one before it.
+            // this one was made against the one before it -- unless it saved
+            // this very text (the same save, sent twice at once).
             Err(e) => match self.latest(tenant, project).await? {
+                Some(l) if l.sha256 == made.sha256 => Ok(Saved::Unchanged(l)),
                 Some(l) if l.revision >= made.revision => Ok(Saved::Stale(l)),
                 _ => Err(e.into()),
             },
@@ -315,6 +329,39 @@ mod tests {
         assert!(is_current(Some(3), Some(&rev(3))));
         assert!(!is_current(Some(2), Some(&rev(3))));
         assert!(!is_current(None, Some(&rev(1))));
+    }
+
+    #[test]
+    fn a_save_repeated_is_the_revision_it_made() {
+        let sha = digest("product shop {}");
+        // The first attempt made revision 3 from base 2; the retry, still
+        // made against 2, is revision 3 again rather than a conflict.
+        assert_eq!(
+            settled(Some(2), Some(&rev(3)), &sha),
+            Some(Saved::Unchanged(rev(3)))
+        );
+        // The same against the latest is unchanged, as it always was.
+        assert_eq!(
+            settled(Some(3), Some(&rev(3)), &sha),
+            Some(Saved::Unchanged(rev(3)))
+        );
+    }
+
+    #[test]
+    fn another_text_against_an_old_revision_is_still_a_conflict() {
+        let other = digest("product shop { gears {} }");
+        assert_eq!(
+            settled(Some(2), Some(&rev(3)), &other),
+            Some(Saved::Stale(rev(3)))
+        );
+        assert_eq!(
+            settled(None, Some(&rev(1)), &other),
+            Some(Saved::Stale(rev(1)))
+        );
+        // Against the latest, or a project's first: a new revision.
+        assert_eq!(settled(Some(3), Some(&rev(3)), &other), None);
+        assert_eq!(settled(None, None, &other), None);
+        assert_eq!(settled(Some(5), None, &other), None);
     }
 
     #[test]

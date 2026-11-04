@@ -60,7 +60,15 @@ This README is what you need to work in the directory.
   `from_file`). No second "gear repository" connection for a project that
   holds its gears. Read with the organization's roots (`gear_roots::scope_for`).
 - `gearbox.rs` — the corpus checkout, the engine catalogue, extension points,
-  completion, the preview, the corpus relay's upstream.
+  completion, the preview, the corpus relay's upstream. The preview is two
+  steps: `describe` renders the text from the catalogue alone, `check` runs
+  the engine on it (one at a time). A save keeps what `describe` made before
+  `check` runs, and `rest.rs` runs the check on a task of its own that keeps
+  the verdict under `checks.<profile>`; a save answers within
+  `SAVE_ANSWERS_WITHIN` (20 s), inside the gateway's fixed 30 s, with
+  `checking: true` if the check is still running (ADR-0053, amendment
+  2026-11-04). The same text saved again is the latest revision, never a
+  conflict (`descriptions::settled`), so a client may resend a lost save.
 - `explanations.rs` — gears in plain words: the stored row, the model's
   question and the cleanup of its answer, and the rule that a model never
   writes over a person's words unless asked. `explanations_rest.rs` (a child of

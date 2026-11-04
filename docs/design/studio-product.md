@@ -395,7 +395,7 @@ which calls this engine; moving it here is a follow-up.
 | `POST` | `/projects/{project_id}/scaffold` | Write a gear skeleton on a branch, optionally as a pull request: into the project's gear repository, else the organization's, else the project's sources; answers `repo` and `target` (`project`, `organization`, `sources`), on a dry run too | unstable |
 | `GET` | `/projects/{project_id}/product` | The product being composed | unstable |
 | `PUT` | `/projects/{project_id}/product` | Merge fields into it | unstable |
-| `POST` | `/projects/{project_id}/product/preview` | Compose `product.gdl` and resolve it; `write` saves it as the next description revision (409 with both texts against a stale `base_revision`), `publish` also writes it to the repository (ADR-0053) | unstable |
+| `POST` | `/projects/{project_id}/product/preview` | Compose `product.gdl` and resolve it; `write` saves it as the next description revision (409 with both texts against a stale `base_revision`, unless the text is the latest's: then that revision, `created: false`) and answers within 20 s, `checking: true` while its check still runs (kept under `checks.<profile>`), `publish` also writes it to the repository (ADR-0053) | unstable |
 | `GET` | `/product-description?project_id=` | The latest description revision Studio keeps (the first read of a project with none takes the text from where its record says it was last saved, as revision 1), its path, where it was published, and a change made to the published file in the repository since | unstable |
 | `POST` | `/product-description-revisions?project_id=` | A new revision against `base_revision`; 409 `DESCRIPTION_REVISION_STALE` with both texts when that is not the latest | unstable |
 | `GET` | `/product-description-revisions?project_id=` | The revisions, newest first, without their text | unstable |
@@ -499,9 +499,24 @@ in, so the portal (`?organization_id=`) and the desktop (the member's home
 tenant) reach one description; a caller who cannot read the project gets 404.
 The primary key is the save's lock: a
 save names the revision it started from, and two saves from one revision both
-try the next number -- the second is answered 409 with both texts. The product
+try the next number -- the second is answered 409 with both texts. A save whose
+text is the latest revision's already is that revision (`created: false`)
+whatever it started from, so the same save sent twice -- a retry after the
+gateway lost the first answer -- never conflicts with itself nor makes a second
+revision (ADR-0053, amendment 2026-11-04). The product
 record keeps `description` (the latest revision and its path) and `published`
 (the revision last published, its branch, commit, pull request and digest).
+
+A save does not wait for the engine. A preview with `write` composes the text
+from the catalogue (`Gearbox::describe`), keeps the revision and records the
+product first, then runs the check (`Gearbox::check`) on a task of its own: the
+answer carries the check when it is done within 20 s of the request's start
+(`SAVE_ANSWERS_WITHIN`, inside the api-gateway's fixed 30 s), else
+`checking: true` with no verdict. The task keeps the verdict under the record's
+`checks.<profile>` with the description's hash whenever it finishes, and the
+portal reads the record again until it lands. A check alone (no `write`) runs
+on the same task, so its verdict is kept even when the gateway gave up on the
+request; the portal asks again on 504 and the engine's cache answers.
 
 How the description travels (ADR-0053):
 

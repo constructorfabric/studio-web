@@ -7,7 +7,8 @@
 //!   it is published, and a change made to it in the repository since (§3).
 //! - `GET  product-description-revisions` and `…/{revision}`.
 //! - `POST product-description-revisions` -- a new revision, made against
-//!   `base_revision`; 409 with both texts when that is not the latest.
+//!   `base_revision`; 409 with both texts when that is not the latest and
+//!   the text is not the latest's already.
 //! - `POST product-description-publications` -- the latest revision onto
 //!   `product/<id>` with one pull request, or onto the base branch (§3).
 //! - `GET  product-description-branches` -- the `product/*` branches from
@@ -497,7 +498,8 @@ pub fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
              saved and the answer is 409 with both texts \
              (`DESCRIPTION_REVISION_STALE`): keep yours by saving again against the \
              latest, or take it. The same text as the latest's is no new revision \
-             (`created: false`). 400 for an empty text or one over 512 KiB.",
+             but that one (`created: false`), whatever its base: a save sent again \
+             after a lost answer is not a conflict with itself. 400 for an empty text or one over 512 KiB.",
         )
         .tag("StudioProduct")
         .authenticated()

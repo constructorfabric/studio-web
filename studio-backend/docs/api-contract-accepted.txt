@@ -5012,6 +5012,7 @@ response	POST /studio-product/v1/projects/{}/product/preview	applications.listen
 response	POST /studio-product/v1/projects/{}/product/preview	applications.listens.name	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	applications.name	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	applications.replicas	u32	always
+response	POST /studio-product/v1/projects/{}/product/preview	checking	bool	always
 response	POST /studio-product/v1/projects/{}/product/preview	corpus_commit	String	optional
 response	POST /studio-product/v1/projects/{}/product/preview	description_revision	{}	optional
 response	POST /studio-product/v1/projects/{}/product/preview	description_revision.created	bool	optional
