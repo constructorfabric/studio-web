@@ -2541,7 +2541,7 @@
       "path": "/studio-product/v1/projects/{project_id}/gear-repo",
       "operation_id": "studio_product.get_project_repo",
       "tag": "StudioProduct",
-      "summary": "The gear repository connected to a project (0 or 1 node)",
+      "summary": "The project source new gears go to (0 or 1 node)",
       "authenticated": true,
       "responses": [
         "ProductRecordListDto"
@@ -5345,7 +5345,7 @@
       "path": "/studio-product/v1/projects/{project_id}/gear-repo",
       "operation_id": "studio_product.set_project_repo",
       "tag": "StudioProduct",
-      "summary": "Connect (or update) the gear repository for a project",
+      "summary": "Mark the project source new gears go to",
       "authenticated": true,
       "request": "SetProjectRepoRequest",
       "responses": [
