@@ -604,18 +604,20 @@ impl Metrics {
             Scope::Project(p) => p,
         };
 
-        // The repositories the scope's projects are made of.
+        // The repositories the scope's projects are made of: their sources,
+        // and the upstream a fork was seeded from, which is where Insight
+        // keeps the work.
         let reads = futures_util::future::join_all(
             in_scope
                 .iter()
-                .map(|p| crate::project_sources::read(am.as_ref(), ctx, p.id)),
+                .map(|p| crate::project_sources::read_repositories(am.as_ref(), ctx, p.id)),
         )
         .await;
         let repositories: Vec<String> = reads
             .into_iter()
             .flatten()
             .flatten()
-            .filter_map(|s| crate::insight::port::repository_key(&s.full_path))
+            .filter_map(|r| crate::insight::port::repository_key(&r))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();

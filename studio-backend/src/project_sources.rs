@@ -207,6 +207,56 @@ pub async fn read(
     Some(parse(&entry.value))
 }
 
+/// Every repository the project's config names, as `owner/name` paths: its
+/// sources (path and clone url), the git url it was seeded from, and the
+/// repository its build runs in. A project working on a fork names the fork
+/// as its source and the upstream as `source_git_url`; analytics keyed by
+/// repository (Insight) hold the upstream, so a reader asking about the
+/// project's work wants both.
+pub fn repositories(config: &Value) -> Vec<String> {
+    let str_at = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
+    let mut out: Vec<String> = Vec::new();
+    for s in parse(config) {
+        out.push(s.full_path);
+        out.extend(url_path(&s.clone_url));
+    }
+    out.extend(str_at(config, "source_git_url").and_then(|u| url_path(&u)));
+    out.extend(config.get("build").and_then(|b| str_at(b, "repo")));
+    let mut seen = HashSet::new();
+    out.into_iter()
+        .map(|r| r.trim().trim_matches('/').to_ascii_lowercase())
+        .filter(|r| r.contains('/') && seen.insert(r.clone()))
+        .collect()
+}
+
+/// The `owner/name` path of a git url: `https://host/owner/name(.git)` or
+/// `git@host:owner/name(.git)`. `None` for anything without a path.
+fn url_path(url: &str) -> Option<String> {
+    let url = url.trim();
+    let rest = if let Some((_, after)) = url.split_once("://") {
+        after.split_once('/')?.1
+    } else {
+        url.split_once(':')?.1
+    };
+    let path = rest.split(['?', '#']).next()?.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    path.contains('/').then(|| path.to_owned())
+}
+
+/// The repositories the project is made of ([`repositories`]), read under the
+/// caller's identity. `None` when its config cannot be read.
+pub async fn read_repositories(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    project: Uuid,
+) -> Option<Vec<String>> {
+    let entry = am
+        .get_metadata(ctx, project, GtsTypeId::new(PROJECT_CONFIG_TYPE))
+        .await
+        .ok()?;
+    Some(repositories(&entry.value))
+}
+
 /// The workflow that builds the project's product (ADR-0045): `build` in
 /// `project.config`, `{ "repo": "acme/api", "workflow": "build.yml" }`, set
 /// from the project's Builds tab. Build starts it, and the tab speaks of it.

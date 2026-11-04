@@ -160,3 +160,40 @@ fn a_share_mode_is_spelled_as_the_config_spells_it() {
     }
     assert_eq!(ShareMode::default(), ShareMode::Branch);
 }
+
+#[test]
+fn a_fork_names_its_upstream_among_the_project_repositories() {
+    let config = json!({
+        "sources": [{
+            "full_path": "AndrejK666/studio-web",
+            "clone_url": "https://github.com/AndrejK666/studio-web.git",
+        }],
+        "source_git_url": "https://github.com/constructorfabric/studio-web.git",
+        "build": { "repo": "constructorfabric/studio-web", "workflow": "build.yml" },
+    });
+    assert_eq!(
+        repositories(&config),
+        vec![
+            "andrejk666/studio-web".to_owned(),
+            "constructorfabric/studio-web".to_owned()
+        ],
+    );
+}
+
+#[test]
+fn a_git_url_gives_its_owner_and_name() {
+    assert_eq!(
+        url_path("https://github.com/acme/api.git").as_deref(),
+        Some("acme/api")
+    );
+    assert_eq!(
+        url_path("git@github.com:acme/api.git").as_deref(),
+        Some("acme/api")
+    );
+    assert_eq!(
+        url_path("https://gitlab.example/group/sub/api/").as_deref(),
+        Some("group/sub/api")
+    );
+    assert_eq!(url_path("https://github.com/acme").as_deref(), None);
+    assert_eq!(url_path("").as_deref(), None);
+}
