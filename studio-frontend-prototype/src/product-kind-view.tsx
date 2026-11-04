@@ -102,7 +102,7 @@ export function ProductKindStep({ token, projectId }: { token: string; projectId
   };
 
   return (
-    <section className="card pkind" data-product-kind={choice?.kind ?? "undecided"}>
+    <section className="card product-kind-step" data-product-kind={choice?.kind ?? "undecided"}>
       <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
         <b>What the product is</b>
         <StatusChip tone="warn" className="badge-experimental" title="Experimental: Studio reads the proposal from the specs by word matches and counts">
@@ -125,10 +125,10 @@ export function ProductKindStep({ token, projectId }: { token: string; projectId
         </button>
       </div>
       {open && (
-        <div className="pkind-body" style={{ display: "grid", gap: 10, marginTop: 10 }}>
+        <div className="product-kind-step-body" style={{ display: "grid", gap: 10, marginTop: 10 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Why Studio proposes {KIND_TITLE[proposal.kind]}</div>
-            <ul className="pkind-reasons" style={{ margin: 0, paddingLeft: 18, fontSize: 12 }} data-product-kind-reasons>
+            <ul className="product-kind-step-reasons" style={{ margin: 0, paddingLeft: 18, fontSize: 12 }} data-product-kind-reasons>
               {proposal.reasons.map((r) => (
                 <li key={r}>{r}</li>
               ))}
