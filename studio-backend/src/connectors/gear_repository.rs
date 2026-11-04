@@ -309,6 +309,7 @@ impl ConnectorDriver for GearRepositoryDriver {
             .count();
         let more = if tree.truncated { "+" } else { "" };
         Ok(DriverIdentity {
+            checks: Vec::new(),
             account: info.full_name,
             display_name: Some(format!("{gears}{more} gear.gdl files at {git_ref}")),
         })

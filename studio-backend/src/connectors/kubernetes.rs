@@ -23,7 +23,9 @@ use anyhow::{Context, anyhow, bail};
 use async_trait::async_trait;
 use serde_yaml::Value;
 
-use super::driver::{ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity};
+use super::driver::{
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverCheck, DriverIdentity,
+};
 
 pub struct KubernetesDriver;
 
@@ -60,10 +62,157 @@ impl ConnectorDriver for KubernetesDriver {
             .apiserver_version()
             .await
             .map_err(|e| anyhow!("the cluster did not answer: {e}"))?;
+        // What the cluster's bootstrap manifest gives (ADR-0043): reported,
+        // so a half-bootstrapped cluster says so here rather than with a 403
+        // in the middle of a build. A missing right does not fail the test.
+        let mut checks = Vec::new();
+        for right in BOOTSTRAP_RIGHTS {
+            checks.push(match right.allowed(&client, None).await {
+                Ok(ok) => bootstrap_check(&right, ok),
+                Err(e) => DriverCheck {
+                    name: right.describe(None),
+                    ok: false,
+                    detail: format!("the cluster did not say ({e:#})"),
+                },
+            });
+        }
         Ok(DriverIdentity {
+            checks,
             account: format!("Kubernetes {}", version.git_version),
             display_name: Some(access.server.clone()),
         })
+    }
+}
+
+/// The manifest a cluster administrator applies so Studio can make each
+/// project's namespace (ADR-0043), as the repository keeps it.
+pub const BOOTSTRAP_FILE: &str = "deploy/k8s/studio-environments/bootstrap.yaml";
+
+/// One thing a cluster connection may or may not do, as a
+/// SelfSubjectAccessReview asks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClusterRight {
+    pub verb: &'static str,
+    /// The API group: `""` for the core one.
+    pub group: &'static str,
+    pub resource: &'static str,
+    /// One object of the resource, when the right is for it alone.
+    pub name: Option<&'static str>,
+}
+
+/// What [`BOOTSTRAP_FILE`] gives the connection's account cluster-wide: make
+/// a project's namespace and give itself `admin` inside it.
+pub const BOOTSTRAP_RIGHTS: [ClusterRight; 3] = [
+    ClusterRight {
+        verb: "create",
+        group: "",
+        resource: "namespaces",
+        name: None,
+    },
+    ClusterRight {
+        verb: "create",
+        group: "rbac.authorization.k8s.io",
+        resource: "rolebindings",
+        name: None,
+    },
+    ClusterRight {
+        verb: "bind",
+        group: "rbac.authorization.k8s.io",
+        resource: "clusterroles",
+        name: Some("admin"),
+    },
+];
+
+/// What a build and a deploy create in a project's namespace: the
+/// repository token and the pull secret, the build's Job, the product's
+/// Deployments.
+pub const NAMESPACE_RIGHTS: [ClusterRight; 3] = [
+    ClusterRight {
+        verb: "create",
+        group: "",
+        resource: "secrets",
+        name: None,
+    },
+    ClusterRight {
+        verb: "create",
+        group: "batch",
+        resource: "jobs",
+        name: None,
+    },
+    ClusterRight {
+        verb: "create",
+        group: "apps",
+        resource: "deployments",
+        name: None,
+    },
+];
+
+impl ClusterRight {
+    /// `create namespaces`, `create jobs.batch in shop-dev`,
+    /// `bind clusterroles/admin`.
+    pub fn describe(&self, namespace: Option<&str>) -> String {
+        let resource = if self.group.is_empty() {
+            self.resource.to_owned()
+        } else if self.group.contains('.') {
+            // rbac.authorization.k8s.io: the resource alone reads better.
+            self.resource.to_owned()
+        } else {
+            format!("{}.{}", self.resource, self.group)
+        };
+        let what = match self.name {
+            Some(name) => format!("{} {resource}/{name}", self.verb),
+            None => format!("{} {resource}", self.verb),
+        };
+        match namespace {
+            Some(ns) => format!("{what} in {ns}"),
+            None => what,
+        }
+    }
+
+    /// Whether the connection may: asked of the cluster as the connection
+    /// itself, in `namespace` or cluster-wide.
+    pub async fn allowed(
+        &self,
+        client: &kube::Client,
+        namespace: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        use k8s_openapi::api::authorization::v1::{
+            ResourceAttributes, SelfSubjectAccessReview, SelfSubjectAccessReviewSpec,
+        };
+        let review = SelfSubjectAccessReview {
+            spec: SelfSubjectAccessReviewSpec {
+                resource_attributes: Some(ResourceAttributes {
+                    verb: Some(self.verb.to_owned()),
+                    group: Some(self.group.to_owned()),
+                    resource: Some(self.resource.to_owned()),
+                    name: self.name.map(str::to_owned),
+                    namespace: namespace.map(str::to_owned),
+                    ..ResourceAttributes::default()
+                }),
+                ..SelfSubjectAccessReviewSpec::default()
+            },
+            ..SelfSubjectAccessReview::default()
+        };
+        let answer = kube::Api::<SelfSubjectAccessReview>::all(client.clone())
+            .create(&kube::api::PostParams::default(), &review)
+            .await
+            .map_err(|e| anyhow!("the cluster did not answer an access review: {e}"))?;
+        Ok(answer.status.map(|s| s.allowed).unwrap_or(false))
+    }
+}
+
+/// A connection test's line for one bootstrap right.
+fn bootstrap_check(right: &ClusterRight, ok: bool) -> DriverCheck {
+    DriverCheck {
+        name: right.describe(None),
+        ok,
+        detail: if ok {
+            String::new()
+        } else {
+            format!(
+                "Studio cannot make a project's namespace on its own: a cluster administrator                  applies {BOOTSTRAP_FILE}, or prepares each namespace and gives this account                  admin in it"
+            )
+        },
     }
 }
 
@@ -334,6 +483,37 @@ mod tests {
     fn a_user_without_credentials_is_refused() {
         let e = ClusterAccess::parse(SERVER, &kubeconfig("", "    {}\n")).unwrap_err();
         assert!(e.to_string().contains("neither a token"), "{e}");
+    }
+
+    #[test]
+    fn a_right_reads_as_what_it_lets_the_connection_do() {
+        assert_eq!(BOOTSTRAP_RIGHTS[0].describe(None), "create namespaces");
+        assert_eq!(BOOTSTRAP_RIGHTS[1].describe(None), "create rolebindings");
+        assert_eq!(
+            BOOTSTRAP_RIGHTS[2].describe(None),
+            "bind clusterroles/admin"
+        );
+        assert_eq!(
+            NAMESPACE_RIGHTS[0].describe(Some("shop-dev")),
+            "create secrets in shop-dev"
+        );
+        assert_eq!(
+            NAMESPACE_RIGHTS[1].describe(Some("shop-dev")),
+            "create jobs.batch in shop-dev"
+        );
+    }
+
+    #[test]
+    fn a_missing_bootstrap_right_is_reported_with_the_manifest_not_failed() {
+        let held = bootstrap_check(&BOOTSTRAP_RIGHTS[0], true);
+        assert!(held.ok && held.detail.is_empty());
+        let missing = bootstrap_check(&BOOTSTRAP_RIGHTS[0], false);
+        assert!(!missing.ok);
+        assert!(
+            missing.detail.contains(BOOTSTRAP_FILE),
+            "{}",
+            missing.detail
+        );
     }
 
     #[test]

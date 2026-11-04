@@ -112,6 +112,7 @@ impl ConnectorDriver for RegistryDriver {
             s => bail!("the registry answered {s} at {v2}"),
         }
         Ok(DriverIdentity {
+            checks: Vec::new(),
             account: access.username.clone(),
             display_name: Some(access.host.clone()),
         })

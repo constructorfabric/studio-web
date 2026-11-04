@@ -96,6 +96,21 @@ impl ConnectorCategory {
 pub struct DriverIdentity {
     pub account: String,
     pub display_name: Option<String>,
+    /// What else the test looked at, beside the credential working: a
+    /// cluster's rights the bootstrap manifest gives (ADR-0043). Reported,
+    /// never a failed test. Empty for most providers.
+    pub checks: Vec<DriverCheck>,
+}
+
+/// One thing a connection test looked at, and what it found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverCheck {
+    /// What was asked, in a sentence's words: `create namespaces`.
+    pub name: String,
+    /// Whether it holds.
+    pub ok: bool,
+    /// Why it does not, or what to do; empty when it holds.
+    pub detail: String,
 }
 
 /// The credential one call is made with ([`ConnectorDriver::access_token`]).

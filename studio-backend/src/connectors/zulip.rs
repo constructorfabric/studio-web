@@ -208,6 +208,7 @@ impl ConnectorDriver for ZulipDriver {
         let me: Me = zulip_envelope(res, "users/me").await?;
         let account = me.email.unwrap_or_else(|| email.to_string());
         Ok(DriverIdentity {
+            checks: Vec::new(),
             display_name: Some(match (me.full_name, me.is_bot) {
                 (Some(name), true) => format!("{name} (bot)"),
                 (Some(name), false) => {
@@ -401,6 +402,7 @@ impl ConnectorDriver for ZulipWebhookDriver {
     async fn test(&self, auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity> {
         let url = self.post(auth, &render(&probe(), "**")).await?;
         Ok(DriverIdentity {
+            checks: Vec::new(),
             account: "Zulip incoming webhook".into(),
             display_name: Some(match Self::channel_of(&url) {
                 Some(channel) => format!("posts to #{channel}"),

@@ -277,6 +277,21 @@ pub struct IdentityDto {
     /// Account the credential belongs to, as reported by the provider.
     pub account: String,
     pub display_name: Option<String>,
+    /// What else the test looked at: for a cluster, each right the bootstrap
+    /// manifest gives (ADR-0043). Reported only; the test passed regardless.
+    #[serde(default)]
+    pub checks: Vec<ConnectionTestCheckDto>,
+}
+
+/// One thing a connection test looked at.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConnectionTestCheckDto {
+    /// `create namespaces`.
+    pub name: String,
+    pub ok: bool,
+    /// Why it does not hold, and what to do; empty when it holds.
+    pub detail: String,
 }
 
 #[derive(Debug)]
@@ -320,6 +335,9 @@ pub struct ConnectionTestDto {
     /// Account the credential belongs to, as reported by the provider.
     pub account: String,
     pub display_name: Option<String>,
+    /// See [`IdentityDto::checks`].
+    #[serde(default)]
+    pub checks: Vec<ConnectionTestCheckDto>,
 }
 
 #[derive(Debug)]
@@ -598,11 +616,20 @@ fn to_dto(c: Connection, mine: bool) -> ConnectionDto {
     }
 }
 
+fn check_dto(c: super::driver::DriverCheck) -> ConnectionTestCheckDto {
+    ConnectionTestCheckDto {
+        name: c.name,
+        ok: c.ok,
+        detail: c.detail,
+    }
+}
+
 fn to_test_dto(c: Connection, id: DriverIdentity, mine: bool) -> ConnectionTestDto {
     ConnectionTestDto {
         connection: to_dto(c, mine),
         account: id.account,
         display_name: id.display_name,
+        checks: id.checks.into_iter().map(check_dto).collect(),
     }
 }
 
@@ -776,6 +803,7 @@ async fn probe_connection(
     Ok(Json(IdentityDto {
         account: identity.account,
         display_name: identity.display_name,
+        checks: identity.checks.into_iter().map(check_dto).collect(),
     }))
 }
 

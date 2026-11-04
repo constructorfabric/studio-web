@@ -114,6 +114,7 @@ impl ConnectorDriver for BitbucketDriver {
         }
         let user: BbUser = res.json().await?;
         Ok(DriverIdentity {
+            checks: Vec::new(),
             account: user
                 .username
                 .or(user.nickname)
