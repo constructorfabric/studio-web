@@ -2288,6 +2288,16 @@ export interface ComponentPullRequestsRow {
   authors: number;
 }
 
+/** `POST /studio-insight/v1/query`: one read-only statement's answer, rows
+ *  keyed by column name exactly as Insight returned them (a count may arrive
+ *  as a string). `truncated`: the rows are a prefix. */
+export interface InsightQueryResult {
+  columns: { name: string; type: string }[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  truncated: boolean;
+}
+
 export interface ComponentPullRequests {
   repository: string;
   from: string;
@@ -5982,6 +5992,13 @@ export const api = {
     request<ComponentPullRequests>("/studio-insight/v1/components/pull-requests", token, {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  /** One read-only `SELECT` against Insight's warehouse (studio-insight). The
+   *  caller builds the statement and escapes what it interpolates. */
+  insightQuery: (token: string, sql: string) =>
+    request<InsightQueryResult>("/studio-insight/v1/query", token, {
+      method: "POST",
+      body: JSON.stringify({ sql }),
     }),
   /** Delivery metrics for one repository, sliced by component (studio-insight). */
   insightComponentMetrics: (token: string, body: ComponentMetricsQuery) =>

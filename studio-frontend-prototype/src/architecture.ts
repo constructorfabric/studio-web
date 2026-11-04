@@ -718,7 +718,18 @@ export const SURFACES: Surface[] = [
     title: "Team",
     does: "See who works on the project and with which role; add someone from the organization in a dialog, change a role, remove one.",
     components: ["PeopleView"],
-    gears: ["account-management", "studio-organizations", "studio-user"],
+    // The same component is the organization's People page, which also reads
+    // where each person works: open pull requests and feeds, presence,
+    // desktop sessions and Insight (people-org.tsx).
+    gears: [
+      "account-management",
+      "studio-artifact-ingest",
+      "studio-insight",
+      "studio-organizations",
+      "studio-presence",
+      "studio-session",
+      "studio-user",
+    ],
   },
   {
     id: "publication-requests",

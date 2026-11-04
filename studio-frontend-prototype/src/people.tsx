@@ -21,7 +21,7 @@
  * which is not membership.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { api, type Colleague } from "./api";
 import { DataTable, When } from "./data-table";
@@ -35,20 +35,35 @@ import {
   type RoleDef,
 } from "./access";
 import type { RootProject } from "./projects";
-import { holderName, orgPeople, projectGrantsOf, withColleagues, type Member, type PersonRow } from "./org-people";
+import { holderName, orgPeople, withColleagues, type Member, type PersonRow } from "./org-people";
 import { PersonPhoto, directoryLine } from "./people-profile";
+import { accessOf, gitHandles, lastSeenOf, onlineNow, personProjects, projectStack, type OrgProject } from "./people-activity";
+import { PeopleMatrix, PersonPanel, ProjectLegend, ProjectStackCell, openTeam, useOrgActivity } from "./people-org";
 
 const ROLE_LABEL: Record<string, string> = { owner: "Owner", admin: "Admin", member: "Member" };
 
 /** When somebody was last seen, as a date the list can sort and show. */
 const seen = (ms: number | undefined) => (ms == null ? null : new Date(ms).toISOString());
 
+/** How many project marks a row shows before "+N". */
+const STACK_MAX = 4;
+
+/** The org list's layout, remembered for the tab. */
+type Layout = "list" | "matrix";
+const LAYOUT_KEY = "people.layout";
+function storedLayout(): Layout {
+  try {
+    return sessionStorage.getItem(LAYOUT_KEY) === "matrix" ? "matrix" : "list";
+  } catch {
+    return "list";
+  }
+}
+
 export function PeopleView({
   token,
   org,
   roots,
   mode,
-  onOpenProject,
 }: {
   token: string;
   /** Organization these people belong to. */
@@ -65,8 +80,17 @@ export function PeopleView({
   const [people, setPeople] = useState<Member[] | null>(null);
   /** Photos, descriptions and last-seen, joined to the members by person id. */
   const [colleagues, setColleagues] = useState<Colleague[]>([]);
-  /** The person whose contact card is open. */
+  /** The person whose side panel is open. */
   const [contact, setContact] = useState<PersonRow | null>(null);
+  const [layout, setLayoutState] = useState<Layout>(storedLayout);
+  const setLayout = (l: Layout) => {
+    setLayoutState(l);
+    try {
+      sessionStorage.setItem(LAYOUT_KEY, l);
+    } catch {
+      /* the choice just is not remembered */
+    }
+  };
   const [cfg, setCfg] = useState<AccessConfig | null>(null);
   const [email, setEmail] = useState("");
   const [inviting, setInviting] = useState(false);
@@ -114,8 +138,6 @@ export function PeopleView({
     void load();
   }, [load]);
 
-  const rootName = (id: string): string => roots.find((r) => r.id === id)?.name ?? id.slice(0, 8);
-  const roleName = (key: string): string => cfg?.roles.find((r) => r.key === key)?.name ?? key;
 
   /** Member grants that apply to a project: those scoped to it, plus org-wide. */
   function grantsForProject(projectId: string): GrantDef[] {
@@ -125,15 +147,6 @@ export function PeopleView({
         g.subjectType === "member" &&
         (g.scopeType === "org" || (g.scopeType === "project" && g.scopeId === projectId)),
     );
-  }
-
-  /** Projects a member holds a project role on. */
-  function projectsOf(m: Member): { id: string; name: string; role: string }[] {
-    return projectGrantsOf(m.id, cfg?.grants ?? []).map((g) => ({
-      id: g.scopeId,
-      name: g.scopeName || rootName(g.scopeId),
-      role: roleName(g.roleKey),
-    }));
   }
 
   /* ── Organization invite: a Studio invitation, accepted by the person ── */
@@ -208,7 +221,29 @@ export function PeopleView({
 
   const all = people ?? [];
   const personName = (g: GrantDef) => holderName(g, all);
-  const rows = orgId ? withColleagues(all, colleagues, orgId) : all;
+  const rows = useMemo(
+    () => (orgId ? withColleagues(people ?? [], colleagues, orgId) : (people ?? [])),
+    [people, colleagues, orgId],
+  );
+  /* Where each person works: only the org page reads it. */
+  const activity = useOrgActivity(
+    token,
+    mode === "org" ? orgId : null,
+    roots,
+    mode === "org" && people !== null ? rows : null,
+  );
+  const model = cfg?.model ?? "tenant";
+  const orgProjects: OrgProject[] = activity.projects ?? [];
+  const projectRowsOf = (p: PersonRow) =>
+    personProjects(orgProjects, accessOf(p.id, p.role, cfg, orgProjects), activity.index.get(p.id));
+  const online = onlineNow(activity.dir, activity.presence);
+  const lastSeen = (p: PersonRow) => lastSeenOf(p.id, p.lastSeenMs, activity.dir, activity.presence, activity.desktops);
+  /** Last seen is a column only when some source has it for somebody. */
+  const anySeen = rows.some((p) => lastSeen(p) !== undefined);
+  const openProject = (project: OrgProject) => {
+    setContact(null);
+    openTeam(project, orgId);
+  };
   /** How the organization describes a person: title, department, company, manager. */
   const describe = (p: PersonRow) =>
     directoryLine(p.directory, (id) => all.find((m) => m.id === id)?.name);
@@ -225,14 +260,36 @@ export function PeopleView({
                 <StatusChip tone="neutral">
                   {rows.length} {rows.length === 1 ? "person" : "people"}
                 </StatusChip>
+                {activity.projects && (
+                  <StatusChip tone="neutral">
+                    {activity.projects.length} {activity.projects.length === 1 ? "project" : "projects"}
+                  </StatusChip>
+                )}
+                {cfg && (
+                  <StatusChip tone="info" title={model === "roles" ? "Grants say who can access which project" : "Everyone can access every project"}>
+                    {model === "roles" ? "role-based access" : "tenant access"}
+                  </StatusChip>
+                )}
+                {activity.loading && people.length > 0 && <StatusChip tone="running">reading activity</StatusChip>}
+                {!activity.loading && activity.missing.length > 0 && (
+                  <StatusChip tone="warn" title={`Could not read: ${activity.missing.join(", ")}`}>
+                    some sources unread
+                  </StatusChip>
+                )}
                 {org && <span>in {org.name}</span>}
               </>
             )
           }
           info={
             <>
-              Everyone in {org?.name ?? "your organization"}. Invite a person to add them to the organization; put them on
-              specific projects from a project&apos;s Team tab.
+              <p>
+                Everyone in {org?.name ?? "your organization"}, and where they work: the projects each person can access,
+                with their role, and the ones they were seen active in. The matrix shows the same for everyone at once.
+              </p>
+              <p>
+                Invite a person to add them to the organization; put them on specific projects from a project&apos;s
+                Team tab.
+              </p>
             </>
           }
           actions={
@@ -245,9 +302,38 @@ export function PeopleView({
         {error && <div className="error">{error}</div>}
         {notice && <div className="hint">{notice}</div>}
 
+        <div className="pp-bar">
+          <div className="pp-toggle" role="group" aria-label="Layout">
+            <button type="button" className={layout === "list" ? "on" : ""} aria-pressed={layout === "list"} onClick={() => setLayout("list")} data-people-layout="list">
+              List
+            </button>
+            <button type="button" className={layout === "matrix" ? "on" : ""} aria-pressed={layout === "matrix"} onClick={() => setLayout("matrix")} data-people-layout="matrix">
+              Matrix
+            </button>
+          </div>
+          <ProjectLegend model={model} />
+        </div>
+
         <div className="card">
           {!org && people !== null ? (
             <p className="empty">No organization in context.</p>
+          ) : layout === "matrix" ? (
+            people === null || activity.projects === null ? (
+              <p className="hint">Loading…</p>
+            ) : (
+              <PeopleMatrix
+                token={token}
+                people={rows}
+                projects={orgProjects}
+                model={model}
+                rowsOf={(id) => {
+                  const p = rows.find((r) => r.id === id);
+                  return p ? projectRowsOf(p) : [];
+                }}
+                onCell={(project) => openTeam(project, orgId)}
+                onPerson={(p) => setContact(p)}
+              />
+            )
           ) : (
             <DataTable<PersonRow>
               list="people"
@@ -284,55 +370,55 @@ export function PeopleView({
                 },
                 {
                   id: "role",
-                  header: "Role",
+                  header: "Membership",
                   cell: (p) => <span className="sub">{ROLE_LABEL[p.role] ?? p.role}</span>,
                 },
                 {
                   id: "projects",
-                  header: "On projects",
-                  cell: (p) => {
-                    const on = projectsOf(p);
-                    return (
-                      <div className="chips">
-                        {on.map((o) => (
-                          <button
-                            key={o.id}
-                            type="button"
-                            className="chip on"
-                            title={`${o.role} · open`}
-                            onClick={() => onOpenProject(o.id)}
-                          >
-                            {o.name} · {o.role}
-                          </button>
-                        ))}
-                        {on.length === 0 && (
-                          <span className="sub">
-                            {cfg?.model === "roles" ? "not on a project" : "every project"}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  },
+                  header: model === "roles" ? "Projects · can access / active in" : "Projects · active in",
+                  cell: (p) => (
+                    <ProjectStackCell
+                      token={token}
+                      stack={projectStack(projectRowsOf(p), model, STACK_MAX)}
+                      model={model}
+                      projectCount={orgProjects.length}
+                      hasHandle={gitHandles(activity.identities.get(p.id)?.aliases ?? []).length > 0}
+                      loading={activity.loading}
+                      onOpen={(r) => openProject(r.project)}
+                      onMore={() => setContact(p)}
+                    />
+                  ),
                 },
-                {
-                  id: "seen",
-                  header: "Last seen",
-                  compare: (a, b) => (b.lastSeenMs ?? 0) - (a.lastSeenMs ?? 0),
-                  cell: (p) => <When iso={seen(p.lastSeenMs)} className="sub" />,
-                },
+                ...(anySeen
+                  ? [
+                      {
+                        id: "seen",
+                        header: "Last seen",
+                        compare: (a: PersonRow, b: PersonRow) => (lastSeen(b) ?? 0) - (lastSeen(a) ?? 0),
+                        cell: (p: PersonRow) =>
+                          online.has(p.id) ? (
+                            <StatusChip tone="ok">online now</StatusChip>
+                          ) : (
+                            <When iso={seen(lastSeen(p))} className="sub" />
+                          ),
+                      },
+                    ]
+                  : []),
               ]}
             />
           )}
           {contact && (
-            <ContactCard
+            <PersonPanel
+              token={token}
               person={contact}
               describe={describe(contact)}
-              projects={projectsOf(contact)}
-              everyProject={cfg?.model !== "roles"}
-              onOpenProject={(id) => {
-                setContact(null);
-                onOpenProject(id);
-              }}
+              membershipLabel={ROLE_LABEL[contact.role] ?? contact.role}
+              model={model}
+              rows={projectRowsOf(contact)}
+              activity={activity}
+              lastSeenMs={lastSeen(contact)}
+              online={online.has(contact.id)}
+              onOpenProject={openProject}
               onClose={() => setContact(null)}
             />
           )}
@@ -562,83 +648,5 @@ export function PeopleView({
         </Modal>
       )}
     </>
-  );
-}
-
-/** One person's contact card: who they are, how to reach them, where they
- *  work here, and when they were last seen. */
-function ContactCard({
-  person,
-  describe,
-  projects,
-  everyProject,
-  onOpenProject,
-  onClose,
-}: {
-  person: PersonRow;
-  describe: string;
-  projects: { id: string; name: string; role: string }[];
-  /** Tenant access: everyone works on every project. */
-  everyProject: boolean;
-  onOpenProject: (id: string) => void;
-  onClose: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const copy = (text: string) => {
-    navigator.clipboard
-      ?.writeText(text)
-      .then(() => setCopied(true))
-      .catch(() => setCopied(false));
-  };
-  return (
-    <Modal label={`Contact: ${person.name}`} onClose={onClose}>
-      <div className="contact-card">
-        <div className="contact-head">
-          <PersonPhoto name={person.name} url={person.avatarUrl} size="large" />
-          <div className="grow">
-            <h2 style={{ margin: 0 }}>{person.name}</h2>
-            <div className="sub">
-              {[ROLE_LABEL[person.role] ?? person.role, describe].filter(Boolean).join(" · ")}
-            </div>
-          </div>
-          <button type="button" className="ghost" onClick={onClose} aria-label="Close">
-            ×
-          </button>
-        </div>
-        <dl className="contact-facts">
-          <dt>Email</dt>
-          <dd>
-            {person.email ? (
-              <>
-                <a href={`mailto:${person.email}`}>{person.email}</a>{" "}
-                <button type="button" className="ghost" onClick={() => copy(person.email!)}>
-                  {copied ? "Copied" : "Copy"}
-                </button>
-              </>
-            ) : (
-              <span className="sub">Only administrators see addresses.</span>
-            )}
-          </dd>
-          <dt>Projects</dt>
-          <dd>
-            {projects.length > 0 ? (
-              <div className="chips">
-                {projects.map((o) => (
-                  <button key={o.id} type="button" className="chip on" onClick={() => onOpenProject(o.id)}>
-                    {o.name} · {o.role}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <span className="sub">{everyProject ? "every project" : "not on a project"}</span>
-            )}
-          </dd>
-          <dt>Last seen</dt>
-          <dd>
-            <When iso={seen(person.lastSeenMs)} />
-          </dd>
-        </dl>
-      </div>
-    </Modal>
   );
 }

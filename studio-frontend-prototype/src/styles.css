@@ -3239,3 +3239,83 @@ div.dm-block { padding-left: 0; }
 .ws-tree-title .ui-chip { flex: none; font-size: 11px; }
 .ws-tree-brief { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
 .ws-tree-empty .dt-state { padding: 14px 16px 14px 46px; text-align: left; }
+
+/* wave 4F */
+/* The organization's People: where each person works. A project mark with
+   the person's role on it; "active in" is solid, "can access" is dashed;
+   a shade from 1 to 4 says how much was seen. */
+.pp-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 10px; }
+.pp-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.pp-toggle button { border: 0; border-radius: 0; background: transparent; padding: 5px 14px; font-size: 13px; color: var(--muted-foreground); cursor: pointer; }
+.pp-toggle button + button { border-left: 1px solid var(--border); }
+.pp-toggle button.on { background: var(--accent); color: var(--foreground); font-weight: 600; }
+.pp-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted-foreground); }
+.pp-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.pp-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; }
+.pp-swatch.active { background: color-mix(in srgb, var(--success) 35%, transparent); border: 1.5px solid var(--success); }
+.pp-swatch.access { border: 1.5px dashed var(--muted-foreground); }
+.pp-legend-scale { gap: 3px; }
+.pp-cellswatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.pp-cellswatch.i1, .pp-mx-cell.i1 { background: color-mix(in srgb, var(--success) 14%, transparent); }
+.pp-cellswatch.i2, .pp-mx-cell.i2 { background: color-mix(in srgb, var(--success) 32%, transparent); }
+.pp-cellswatch.i3, .pp-mx-cell.i3 { background: color-mix(in srgb, var(--success) 55%, transparent); }
+.pp-cellswatch.i4, .pp-mx-cell.i4 { background: color-mix(in srgb, var(--success) 80%, transparent); color: #fff; }
+
+/* The list's Projects cell. */
+.pp-stack { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.pp-proj { display: inline-flex; align-items: center; gap: 5px; max-width: 190px; padding: 2px 8px 2px 2px; border-radius: 999px; font-size: 12px; line-height: 18px; background: var(--card); color: var(--foreground); cursor: pointer; }
+.pp-proj.active { border: 1.5px solid var(--success); }
+.pp-proj.active.i1 { background: color-mix(in srgb, var(--success) 6%, var(--card)); }
+.pp-proj.active.i2 { background: color-mix(in srgb, var(--success) 12%, var(--card)); }
+.pp-proj.active.i3, .pp-proj.active.i4 { background: color-mix(in srgb, var(--success) 20%, var(--card)); }
+.pp-proj.access { border: 1.5px dashed var(--border); color: var(--muted-foreground); }
+.pp-proj:hover, .pp-proj:focus-visible { border-color: var(--primary); }
+.pp-proj-mark .level-mark { width: 18px; height: 18px; font-size: 9px; border-radius: 50%; }
+.pp-proj-mark .level-mark svg { width: 11px; height: 11px; }
+.pp-proj-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pp-proj-role { flex: none; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 600; background: var(--muted); color: var(--muted-foreground); }
+.pp-more { padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: transparent; font-size: 12px; color: var(--muted-foreground); cursor: pointer; }
+.pp-of { font-size: 11.5px; }
+.pp-none { font-size: 12px; }
+.pp-nohandle { opacity: 0.8; }
+
+/* The matrix: people down, projects across under their workspace. */
+.pp-matrix-wrap { overflow-x: auto; }
+.pp-matrix { border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.pp-matrix th, .pp-matrix td { padding: 3px; border-bottom: 1px solid var(--border); }
+.pp-matrix thead th { font-weight: 600; color: var(--muted-foreground); text-align: center; vertical-align: bottom; }
+.pp-matrix .ws-first { border-left: 1px solid var(--border); }
+.pp-mx-corner { text-align: left !important; position: sticky; left: 0; background: var(--card); z-index: 1; min-width: 180px; }
+.pp-mx-ws { border-left: 1px solid var(--border); padding: 6px 8px !important; }
+.pp-mx-ws-name { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--foreground); }
+.pp-mx-ws-mark .level-mark { width: 18px; height: 18px; font-size: 9px; }
+.pp-mx-proj { width: 64px; min-width: 64px; max-width: 64px; }
+.pp-mx-proj .pp-mx-proj-mark { display: flex; justify-content: center; margin-bottom: 2px; }
+.pp-mx-proj-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.pp-mx-person { position: sticky; left: 0; background: var(--card); z-index: 1; text-align: left; font-weight: 400; }
+.pp-mx-person-btn { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 2px; cursor: pointer; color: var(--foreground); }
+.pp-mx-person-btn:hover .pp-mx-person-name { text-decoration: underline; }
+.pp-mx-cell { display: grid; place-items: center; width: 58px; height: 30px; margin: 0 auto; border: 1px solid transparent; border-radius: 6px; background: transparent; font-size: 11px; font-weight: 600; color: var(--foreground); cursor: pointer; }
+.pp-mx-cell.i0 { border-color: color-mix(in srgb, var(--border) 60%, transparent); }
+.pp-mx-cell.granted { border: 1.5px dashed var(--muted-foreground); }
+.pp-mx-cell.granted.i1, .pp-mx-cell.granted.i2, .pp-mx-cell.granted.i3, .pp-mx-cell.granted.i4 { border-style: solid; border-color: var(--success); }
+.pp-mx-cell:hover, .pp-mx-cell:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.pp-mx-int { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* The side panel for one person. */
+.pp-panel-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; justify-content: flex-end; background: rgba(0, 0, 0, 0.3); }
+.pp-panel { width: min(520px, 100%); height: 100%; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; background: var(--card); color: var(--foreground); border-left: 1px solid var(--border); box-shadow: var(--shadow-lg); }
+.pp-panel-head { display: flex; align-items: flex-start; gap: 12px; }
+.pp-panel-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.pp-panel-sec { border-top: 1px solid var(--border); padding-top: 12px; }
+.pp-panel-sec h3 { margin: 0 0 8px; font-size: 14px; }
+.pp-panel-sec h3 .sub { font-weight: 400; font-size: 12px; }
+.pp-panel-sec h4 { margin: 12px 0 6px; font-size: 13px; display: flex; align-items: center; gap: 4px; }
+.pp-panel-projects, .pp-panel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pp-panel-list li { font-size: 12.5px; line-height: 1.5; }
+.pp-panel-proj { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; text-align: left; color: var(--foreground); cursor: pointer; }
+.pp-panel-proj:hover { background: var(--accent); }
+.pp-panel-proj-name { font-weight: 600; }
+.pp-panel-proj-what { display: block; font-size: 12px; }
+.pp-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pp-metrics-slot { opacity: 0.85; }
