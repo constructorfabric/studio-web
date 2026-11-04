@@ -29,7 +29,9 @@ describe("a registry's repositories and versions", () => {
   });
 
   it("refuses to delete a version that runs, saying where", () => {
-    expect(versionDeletion({ running_in: [] })).toEqual({ allowed: true, reason: null });
+    expect(versionDeletion({ running_in: [], digest: "sha256:a" })).toEqual({ allowed: true, reason: null });
+    // A listing that gives no digest has nothing to delete by.
+    expect(versionDeletion({ running_in: [], digest: null }).allowed).toBe(false);
     const r = versionDeletion({
       running_in: [{ environment_id: "e", environment_name: "prod", deployment_id: "d", namespace: "web-prod", deployed_at: "" }],
     });

@@ -1901,7 +1901,8 @@ export interface RegistryRepository {
 }
 
 export interface RegistryTag {
-  digest: string;
+  /** Absent where the registry's listing does not say it (`VersionDto`). */
+  digest?: string | null;
   tags: string[];
   size_bytes?: number | null;
   pushed_at?: string | null;

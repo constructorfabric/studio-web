@@ -13,6 +13,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import {
   PRODUCT_CHANGED_EVENT,
   api,
+  type CatalogNode,
   type FrontendPick,
   type ProductChange,
   type ProjectProduct,
@@ -29,6 +30,7 @@ import {
   MAP_LAYERS,
   MISSING_GROUP,
   catalogueMfe,
+  frontendAbsence,
   frontendWith,
   frontendWithout,
   gearsWith,
@@ -55,6 +57,10 @@ type Read = {
   mfes: Mfe[];
   shells: Shell[];
   libraries: Library[];
+  /** The project's catalogue: what describes a gear the engine does not hold. */
+  components: CatalogNode[];
+  /** Why the Frontend lane is empty, when it is (`frontendAbsence`). */
+  absence: { text: string; tone: "none" | "warn" };
 };
 
 const SECTION_TITLE: Record<"frontend" | "backend" | "infrastructure", string> = {
@@ -166,8 +172,10 @@ export function ProductMap({
       // Studio's, for Studioweb -- is found and keeps its screen previews.
       api.listComponents(token, projectId).catch(() => ({ nodes: [] })),
       api.listComponentProfiles(token, projectId).catch(() => ({ nodes: [] })),
+      api.projectConfig(token, projectId).catch(() => null),
+      api.productDescription(token, projectId).catch(() => null),
     ])
-      .then(([p, targets, components, profiles]) => {
+      .then(([p, targets, components, profiles, cfg, description]) => {
         if (!live) return;
         const byName: Record<string, Record<string, unknown>> = {};
         for (const n of profiles.nodes ?? []) {
@@ -181,6 +189,11 @@ export function ProductMap({
           mfes: splitTemplates(mfesFrom(nodes, byName)).addable,
           shells: shellsFrom(nodes, byName),
           libraries: librariesFrom(nodes, byName),
+          components: nodes,
+          absence: frontendAbsence({
+            picked: !!cfg?.frontend && typeof cfg.frontend === "object",
+            described: description?.latest ? { revision: description.latest.revision, text: description.latest.text } : null,
+          }),
         });
         setProduct(p);
         setReadErr(null);
@@ -209,6 +222,7 @@ export function ProductMap({
             mfes: read.mfes,
             shells: read.shells,
             catalogue: index,
+            components: read.components,
           })
         : null,
     [read, product, index],
@@ -470,6 +484,8 @@ export function ProductMap({
             collapsed={collapsed}
             overlay={overlay}
             hasFrontend={!!product?.frontend}
+            absence={read.absence}
+            onFrontend={() => onSection("frontend")}
             token={token}
             pictured={pictured}
             onSelect={select}
@@ -682,6 +698,8 @@ function Canvas({
   collapsed,
   overlay,
   hasFrontend,
+  absence,
+  onFrontend,
   token,
   pictured,
   onSelect,
@@ -700,6 +718,8 @@ function Canvas({
   collapsed: Set<string>;
   overlay?: MapOverlay;
   hasFrontend: boolean;
+  absence: { text: string; tone: "none" | "warn" };
+  onFrontend: () => void;
   token: string;
   pictured: Map<string, { component: string; version: string | null }>;
   onSelect: (id: string | null) => void;
@@ -1008,8 +1028,23 @@ function Canvas({
                     </div>
                   </div>
                 ) : (
-                  <p className="muted pmap-empty">
-                    {hasFrontend ? "Reading the frontend…" : "No frontend: the product is its gears and their APIs. Drag a screen here to start one from the FrontX shell template."}
+                  <p className={`pmap-empty${absence.tone === "warn" && !hasFrontend ? " warn" : " muted"}`} data-pmap-frontend-absence={hasFrontend ? "reading" : absence.tone}>
+                    {hasFrontend ? "Reading the frontend…" : absence.text}
+                    {!hasFrontend && absence.tone === "warn" && (
+                      <>
+                        {" "}
+                        <button
+                          type="button"
+                          className="linklike"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onFrontend();
+                          }}
+                        >
+                          Open Frontend
+                        </button>
+                      </>
+                    )}
                   </p>
                 )
               ) : groups.length === 0 ? (

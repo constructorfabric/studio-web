@@ -4,6 +4,7 @@ import type { FrontendPick, ProductTechnology } from "./api";
 import type { Mfe, Shell } from "./frontend-constructor";
 import {
   authGear,
+  frontendAbsence,
   frontendWith,
   frontendWithout,
   gearsWith,
@@ -317,5 +318,54 @@ product(
     const plain = gdl.replace(/ {4}frontend = frontx_product\([\s\S]*?\n {4}\),\n/, "");
     const { byNode } = productGdlLines(plain, ["shell", "gear:studio-documents"]);
     expect([...byNode.keys()]).toEqual(["gear:studio-documents"]);
+  });
+});
+
+describe("a gear the engine's corpus does not hold", () => {
+  const own = {
+    type_id: "gts.cf.studio.catalog.gear.v1~",
+    instance_id: "kits",
+    value: {
+      name: "cf-studio-kits",
+      kind: "gear",
+      description: "Kits a project installs.",
+      category: "studio",
+      tier: "project" as const,
+      synced_from: "acme/studio-web",
+      repo_path: "studio-backend/src/kits",
+      declared_in: "gear.gdl",
+      version: "0.4.0",
+    },
+  };
+
+  it("is described from the project's catalogue: its description, subsystem and version", () => {
+    const m = productMap(facts({ catalogue: indexCatalogue({ gears: [] } as never), components: [own] }));
+    const kits = byId(m, "gear:studio-kits")!;
+    expect(kits.detail.what).toBe("Kits a project installs.");
+    expect(kits.group).toBe("Studio");
+    expect(kits.detail.facts.join(" ")).toMatch(/gear\.gdl in acme\/studio-web, studio-backend\/src\/kits: this project's catalogue/);
+    expect(kits.detail.facts).toContain("Version 0.4.0.");
+  });
+
+  it("keeps the crate name alone when nothing describes it", () => {
+    const m = productMap(facts({ components: [] }));
+    expect(byId(m, "gear:studio-kits")!.detail.facts).toContain("Crate cf-studio-kits.");
+  });
+});
+
+describe("an empty Frontend lane", () => {
+  it("says there is no frontend only when nothing says there is one", () => {
+    expect(frontendAbsence({ picked: false, described: null }).tone).toBe("none");
+    expect(frontendAbsence({ picked: false, described: { revision: 3, text: 'use_gear("x")' } }).tone).toBe("none");
+  });
+
+  it("names a frontend the saved description has and the record lost", () => {
+    const a = frontendAbsence({ picked: false, described: { revision: 4, text: "frontend = frontx_product(shell = path(...))" } });
+    expect(a.tone).toBe("warn");
+    expect(a.text).toMatch(/Revision 4 of product.gdl has a FrontX frontend/);
+  });
+
+  it("names a frontend picked before the product kept it", () => {
+    expect(frontendAbsence({ picked: true, described: null }).text).toMatch(/picked before the product kept it/);
   });
 });

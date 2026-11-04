@@ -35,7 +35,8 @@
  * Pure, so it is tested without a backend; product-map-view.tsx reads the
  * facts and draws them. */
 
-import type { FrontendPick, FrontxPlace, ProductTechnology, ProjectProduct } from "./api";
+import type { CatalogNode, FrontendPick, FrontxPlace, ProductTechnology, ProjectProduct } from "./api";
+import { GEAR_TYPE, TIER_LABEL, tierOf } from "./catalogue-levels";
 import {
   chosenShell,
   coverage,
@@ -143,6 +144,57 @@ export interface MapFacts {
   /** The engine's catalogue, for subsystems, names and gear dependencies;
    *  the map is drawn without it. */
   catalogue?: CatalogueIndex | null;
+  /** The project's catalogue (ADR-0061): the organization's components and
+   *  the project's own, read from their passports. A gear the engine's
+   *  corpus does not hold -- one in the project's own repository, Studio's
+   *  for Studioweb -- is described from here, so its card keeps its
+   *  description, subsystem and version rather than only its crate name. */
+  components?: readonly CatalogNode[];
+}
+
+const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+/** The project catalogue's gear node for a gear, by key. */
+function passportGear(components: readonly CatalogNode[] | undefined, key: string): CatalogNode | null {
+  return (
+    (components ?? []).find(
+      (n) => n.type_id === GEAR_TYPE && gearKey(text(n.value.name) ?? n.instance_id) === key,
+    ) ?? null
+  );
+}
+
+/** A passport's subsystem: its category, as the engine's are named. */
+function passportSubsystem(n: CatalogNode): string {
+  const c = text(n.value.category) ?? (Array.isArray(n.value.categories) ? text(n.value.categories[0]) : null);
+  return subsystemOf({ category: c ?? undefined });
+}
+
+/** Why the map's Frontend lane is empty, in a line. "No frontend" is said
+ *  only when nothing says there is one: a frontend picked before the product
+ *  kept it (the configuration's), or one the saved description names that the
+ *  product record no longer has -- a save that dropped it -- is named as such,
+ *  so a FrontX product does not read as one without screens. */
+export function frontendAbsence(f: {
+  /** The project's configuration still holds a frontend picked before the
+   *  product kept it. */
+  picked: boolean;
+  /** The newest saved description, when it could be read. */
+  described: { revision: number; text: string } | null;
+}): { text: string; tone: "none" | "warn" } {
+  if (f.picked)
+    return {
+      tone: "warn",
+      text: "A frontend was picked before the product kept it: open Frontend and save it to the product to see it here.",
+    };
+  if (f.described && /\bfrontx_product\(/.test(f.described.text))
+    return {
+      tone: "warn",
+      text: `Revision ${f.described.revision} of product.gdl has a FrontX frontend that the product record does not: open Frontend to put it back, or save again to drop it.`,
+    };
+  return {
+    tone: "none",
+    text: "No frontend: the product is its gears and their APIs. Drag a screen here to start one from the FrontX shell template.",
+  };
 }
 
 export const SHELL_NODE = "shell";
@@ -216,16 +268,34 @@ export function productMap(f: MapFacts): ProductMap {
       if (index) facts.push(`It is the ${index.origin(cat)}'s.`);
       if (cat.runtime_caps?.length) facts.push(`It declares ${cat.runtime_caps.join(", ")}.`);
       if (cat.maturity) facts.push(`Maturity: ${cat.maturity}.`);
-    } else facts.push(`Crate ${name}.`);
+    }
+    // Not in the engine's corpus: what its own passport says, from the
+    // project's catalogue.
+    const own = cat ? null : passportGear(f.components, key);
+    if (own) {
+      const repo = text(own.value.synced_from) ?? text(own.value.source_repo);
+      const path = text(own.value.repo_path) ?? text(own.value.path);
+      const version = text(own.value.max_version) ?? text(own.value.newest_version) ?? text(own.value.version);
+      facts.push(
+        `Described by its ${text(own.value.declared_in) ?? "passport"}${repo ? ` in ${repo}${path ? `, ${path}` : ""}` : ""}: ${TIER_LABEL[tierOf(own)].toLowerCase()}'s catalogue.`,
+      );
+      if (version) facts.push(`Version ${version}.`);
+      const caps = Array.isArray(own.value.runtime_capabilities) ? own.value.runtime_capabilities.filter((x): x is string => typeof x === "string") : [];
+      if (caps.length) facts.push(`It declares ${caps.join(", ")}.`);
+    } else if (!cat) facts.push(`Crate ${name}.`);
+    const ownPlugin = own ? text(own.value.kind) === "plugin" : false;
     nodes.push({
       id: gearNode(key),
       layer: "backend",
-      label: cat ? partLabel(cat) : gearKey(name),
+      label: cat ? partLabel(cat) : own ? (text(own.value.display_name) ?? text(own.value.title) ?? gearKey(name)) : gearKey(name),
       state: "ok",
-      group: index ? subsystemOf(cat ?? {}) : isPicked ? PICKED : PULLED_IN,
+      group: cat || !own ? (index ? subsystemOf(cat ?? {}) : isPicked ? PICKED : PULLED_IN) : passportSubsystem(own),
       detail: {
-        kind: plugin ? "plugin" : "gear",
-        what: cat?.description?.trim() || (plugin ? `The ${key} plugin.` : `The ${key} gear.`),
+        kind: plugin || ownPlugin ? "plugin" : "gear",
+        what:
+          cat?.description?.trim() ||
+          text(own?.value.description) ||
+          (plugin || ownPlugin ? `The ${key} plugin.` : `The ${key} gear.`),
         facts,
         problem: null,
         section: "backend",

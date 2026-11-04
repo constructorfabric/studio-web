@@ -3101,6 +3101,7 @@ div.dm-block { padding-left: 0; }
 .pmap-lane-body { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
 .pmap-lane button, .pmap-lane .pmap-shell, .pmap-lane .pmap-group, .pmap-lane .pmap-empty { pointer-events: auto; }
 .pmap-empty { margin: 0; font-size: 12px; }
+.pmap-empty.warn { color: var(--warning-foreground, #b45309); }
 
 .pmap-group { border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px 6px; background: color-mix(in oklab, var(--card) 80%, transparent); max-width: 100%; }
 .pmap-group.folded { padding-bottom: 4px; }

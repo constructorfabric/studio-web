@@ -233,11 +233,11 @@ function RepositoryTags({
           {tags.map((t) => {
             const deletion = versionDeletion(t);
             return (
-              <li key={t.digest} data-registry-version={t.digest}>
+              <li key={t.digest ?? t.tags.join(",")} data-registry-version={t.digest ?? undefined}>
                 <div className="env-head">
                   {t.tags.length > 0 ? t.tags.map((x) => <code key={x}>{x}</code>) : <span className="sub">no tag</span>}
                   <span className="sub">
-                    <code>{shortDigest(t.digest)}</code>
+                    {t.digest ? <code>{shortDigest(t.digest)}</code> : "no digest"}
                     {t.size_bytes != null ? ` · ${sizeText(t.size_bytes)}` : ""}
                     {t.pushed_at ? (
                       <>
@@ -279,7 +279,7 @@ function RepositoryTags({
       {deleting && (
         <ConfirmDialog
           spec={{
-            title: `Delete ${deleting.tags[0] ?? shortDigest(deleting.digest)} of ${repository}?`,
+            title: `Delete ${deleting.tags[0] ?? (deleting.digest ? shortDigest(deleting.digest) : "this version")} of ${repository}?`,
             body: "It is deleted from the registry, every tag of it with it. A deploy that names it cannot pull it again.",
             confirmLabel: "Delete",
           }}
@@ -290,6 +290,7 @@ function RepositoryTags({
             setBusy(true);
             setDeleteError(null);
             try {
+              if (!deleting.digest) throw new Error("The registry's listing gives no digest for it.");
               await api.deleteRegistryVersion(token, org, connectionId, repository, deleting.digest);
               setDeleting(null);
               setNotice("Deleting it from the registry.");

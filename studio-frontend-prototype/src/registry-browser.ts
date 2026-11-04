@@ -33,10 +33,11 @@ export function sortTags(tags: readonly RegistryTag[]): RegistryTag[] {
 }
 
 /** Whether a version may be deleted from the registry, and why not. */
-export function versionDeletion(t: Pick<RegistryTag, "running_in">): { allowed: boolean; reason: string | null } {
-  return t.running_in.length > 0
-    ? { allowed: false, reason: `${whereItRuns(t.running_in)} Deploy something else there first.` }
-    : { allowed: true, reason: null };
+export function versionDeletion(t: Pick<RegistryTag, "running_in" | "digest">): { allowed: boolean; reason: string | null } {
+  if (t.running_in.length > 0) return { allowed: false, reason: `${whereItRuns(t.running_in)} Deploy something else there first.` };
+  // A version is deleted by its digest; one the listing gave none for cannot be.
+  if (!t.digest) return { allowed: false, reason: "The registry's listing gives no digest for it, and a version is deleted by its digest." };
+  return { allowed: true, reason: null };
 }
 
 /** Why something is an orphan, and what to do about it. */
