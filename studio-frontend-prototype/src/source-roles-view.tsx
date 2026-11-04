@@ -112,123 +112,89 @@ export function useSourceRoles(
   };
 }
 
-function FlagBox({
+/** One flag as a small toggle chip: checked, it marks this source. */
+function FlagChip({
   roles,
   row,
   flag,
-  label,
+  text,
+  title,
 }: {
   roles: SourceRoles;
   row: RepoEntry;
   flag: SourceFlag;
-  label: string;
+  text: string;
+  title: string;
 }) {
   const source = roles.byDir.get(row.name);
   const key = `${row.name}:${flag}`;
+  const on = !!source?.[flag];
   return (
-    <label className="src-flag" data-source-flag={flag}>
+    <label
+      data-source-flag={flag}
+      title={roles.failed === key ? `${title} (not saved)` : title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        whiteSpace: "nowrap",
+        fontSize: 12,
+        opacity: on ? 1 : 0.7,
+      }}
+    >
       <input
         type="checkbox"
-        aria-label={`${label}: ${row.name}`}
-        checked={!!source?.[flag]}
+        aria-label={`${title}: ${row.name}`}
+        checked={on}
         disabled={!source || roles.saving === key}
-        onChange={(e) =>
-          void roles.toggle(row.name, flag, e.currentTarget.checked)
-        }
+        onChange={(e) => void roles.toggle(row.name, flag, e.currentTarget.checked)}
+        style={{ margin: 0 }}
       />
-      {roles.failed === key ? <span className="sub"> not saved</span> : null}
+      {text}
+      {roles.failed === key ? <span className="error"> !</span> : null}
     </label>
   );
 }
 
-/** The role columns of the Sources tab's table: connection, "gears here",
- *  "publish product.gdl here", the commit the latest revision pins, and the
- *  components found. */
+/** What a source is for, in one cell of the Sources table: the two flags as
+ *  toggles, "home" when the description travels with it, and below them the
+ *  connection, the commit the latest revision pins and the components found.
+ *  One column, wrapping, so the table keeps its width. */
 export function sourceRoleColumns(roles: SourceRoles): {
   id: string;
   header: string;
-  num?: boolean;
   cell: (r: RepoEntry) => ReactNode;
 }[] {
   return [
     {
-      id: "connection",
-      header: "Connection",
+      id: "use",
+      header: "Used for",
       cell: (r) => {
         const s = roles.byDir.get(r.name);
-        const c = s?.connection_id
-          ? roles.connections.get(s.connection_id)
-          : undefined;
-        if (!s?.connection_id)
-          return <span className="sub">none: cloned without credentials</span>;
-        return c ? (
-          <span title={c.account}>
-            {c.label} <span className="sub">· {c.scope}</span>
-          </span>
-        ) : (
-          <span className="sub">not visible from here</span>
-        );
-      },
-    },
-    {
-      id: "gears_here",
-      header: "Gears here",
-      cell: (r) => (
-        <FlagBox
-          roles={roles}
-          row={r}
-          flag="gears_here"
-          label='"Create a gear" puts new gears here'
-        />
-      ),
-    },
-    {
-      id: "publish_here",
-      header: "Publish product.gdl here",
-      cell: (r) => (
-        <>
-          <FlagBox
-            roles={roles}
-            row={r}
-            flag="publish_here"
-            label="A published product.gdl goes here"
-          />
-          {roles.home === r.name ? (
-            <span
-              className="sub"
-              title="The description travels with this source: its path(...) sources resolve here"
-            >
-              {" "}
-              home
-            </span>
-          ) : null}
-        </>
-      ),
-    },
-    {
-      id: "pinned",
-      header: "Pinned by the latest revision",
-      cell: (r) => {
-        const s = roles.byDir.get(r.name);
-        if (!s || roles.lock === null)
-          return <span className="ing-dash">—</span>;
-        const pin = pinnedCommit(roles.lock, s);
-        if (pin === undefined) return <span className="sub">not used</span>;
-        return pin ? (
-          <code title={pin}>{shortCommit(pin)}</code>
-        ) : (
-          <span className="sub">not pinned</span>
-        );
-      },
-    },
-    {
-      id: "components",
-      header: "Components",
-      num: true,
-      cell: (r) => {
-        const s = roles.byDir.get(r.name);
+        const c = s?.connection_id ? roles.connections.get(s.connection_id) : undefined;
+        const pin = s && roles.lock !== null ? pinnedCommit(roles.lock, s) : undefined;
         const n = s ? componentsIn(roles.components, s) : null;
-        return n === null ? <span className="ing-dash">—</span> : n;
+        const facts = [
+          !s?.connection_id ? "no connection" : c ? c.label : "connection not visible",
+          pin ? `pinned ${shortCommit(pin)}` : pin === null ? "not pinned" : null,
+          n === null ? null : `${n} component${n === 1 ? "" : "s"}`,
+        ].filter(Boolean);
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+              <FlagChip roles={roles} row={r} flag="gears_here" text="gears" title='"Create a gear" puts new gears here' />
+              <FlagChip roles={roles} row={r} flag="publish_here" text="publish" title="A published product.gdl goes here" />
+              {roles.home === r.name ? (
+                <span className="sub" title="The description travels with this source: its path(...) sources resolve here">
+                  home
+                </span>
+              ) : null}
+            </div>
+            <span className="sub" style={{ overflowWrap: "anywhere" }} title={pin ?? undefined}>
+              {facts.join(" · ")}
+            </span>
+          </div>
+        );
       },
     },
   ];
@@ -236,7 +202,7 @@ export function sourceRoleColumns(roles: SourceRoles): {
 
 /** The latest revision's sources: which a product uses, the branch a dev
  *  build takes and the commit a protected environment takes. On the Product
- *  page (`compact`) and in the Release step. */
+ *  page (`compact`: one line) and in the Release step. */
 export function ProductSources({
   token,
   projectId,
@@ -246,9 +212,7 @@ export function ProductSources({
   projectId: string;
   compact?: boolean;
 }) {
-  const [lock, setLock] = useState<LockedSource[] | null | undefined>(
-    undefined,
-  );
+  const [lock, setLock] = useState<LockedSource[] | null | undefined>(undefined);
   const [revision, setRevision] = useState<number | null>(null);
   useEffect(() => {
     let live = true;
@@ -266,72 +230,45 @@ export function ProductSources({
   }, [token, projectId]);
   if (lock === undefined || lock === null || revision === null) return null;
   const lines = releaseSources(lock);
-  if (lines.length === 0) {
+  const ready = protectedReady(lines);
+  const row = { display: "flex", flexWrap: "wrap" as const, gap: 8, alignItems: "center", minWidth: 0 };
+  if (compact) {
     return (
-      <div className="card" data-product-sources>
-        <h3>Sources</h3>
-        <p className="sub">
-          Revision {revision} pins no source: save the product again so Studio
-          records each source's commit. A protected environment builds only a
-          pinned revision.
-        </p>
+      <div data-product-sources className="sub" style={{ ...row, margin: "4px 0" }}>
+        <span>Sources:</span>
+        {lines.length === 0 ? (
+          <span>revision {revision} pins none -- save again to pin them</span>
+        ) : (
+          lines.map((l) => (
+            <span key={l.repository} data-product-source={l.id} title={l.pinned ?? undefined} style={{ whiteSpace: "nowrap" }}>
+              <code>{l.repository.split("/").pop()}</code> {l.pinned ? shortCommit(l.pinned) : "not pinned"}
+            </span>
+          ))
+        )}
       </div>
     );
   }
-  const ready = protectedReady(lines);
   return (
-    <div className="card" data-product-sources>
-      <h3>
-        Sources{" "}
+    <div data-product-sources style={{ display: "flex", flexDirection: "column", gap: 4, margin: "0 0 12px" }}>
+      <div style={row}>
+        <strong>Sources</strong>
         <StatusChip tone={ready ? "ok" : "warn"}>
-          {ready
-            ? `revision ${revision} pinned`
-            : `revision ${revision} not fully pinned`}
+          {lines.length === 0
+            ? `revision ${revision} pins none`
+            : ready
+              ? `revision ${revision} pinned`
+              : `revision ${revision} not fully pinned`}
         </StatusChip>
-      </h3>
-      {compact ? null : (
-        <p className="sub">
-          A dev build takes each source at its branch and records the commit it
-          got; a protected environment builds only the commits revision{" "}
-          {revision} pinned when it was saved.
-        </p>
-      )}
-      <table className="src-pins">
-        <thead>
-          <tr>
-            <th>Source</th>
-            <th>Repository</th>
-            <th>Dev: branch</th>
-            <th>Protected: pinned</th>
-          </tr>
-        </thead>
-        <tbody>
-          {lines.map((l) => (
-            <tr key={l.repository} data-product-source={l.id}>
-              <td>
-                <code>{l.id}</code>{" "}
-                <span className="sub">
-                  {l.kind === "path" ? "path" : "git"}
-                </span>
-              </td>
-              <td>
-                {l.repository}
-                {l.external ? (
-                  <span className="sub"> · named by the description</span>
-                ) : null}
-              </td>
-              <td>{l.branch ?? <span className="sub">—</span>}</td>
-              <td>
-                {l.pinned ? (
-                  <code title={l.pinned}>{shortCommit(l.pinned)}</code>
-                ) : (
-                  <span className="sub">not pinned</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+        <span className="sub">dev builds each branch; a protected environment builds the pins</span>
+      </div>
+      {lines.map((l) => (
+        <div key={l.repository} data-product-source={l.id} className="sub" style={row}>
+          <code>{l.repository}</code>
+          <span>dev: {l.branch ?? "—"}</span>
+          <span title={l.pinned ?? undefined}>protected: {l.pinned ? shortCommit(l.pinned) : "not pinned"}</span>
+          {l.external ? <span>named by the description</span> : null}
+        </div>
+      ))}
     </div>
   );
 }
