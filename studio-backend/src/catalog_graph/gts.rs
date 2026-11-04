@@ -73,6 +73,15 @@ pub const FIELD_SCHEMA_TYPE: &str = "gts.cf.studio.catalog.field_schema.v1~";
 /// `component` and `day`.
 pub const COMPONENT_SNAPSHOT_TYPE: &str = "gts.cf.studio.catalog.component_snapshot.v1~";
 
+/// What one screen of a micro-frontend looked like in one build: a small
+/// picture a build took of the screen running in the built shell, with the
+/// route it was taken at and the commit it was built from.
+///
+/// Kept out of [`ALL_NODE_TYPES`] for the reason a component snapshot is: it
+/// is not a component, and nothing that lists the catalogue may see one. Read
+/// only through the preview queries, which filter on its indexed `component`.
+pub const SCREEN_PREVIEW_TYPE: &str = "gts.cf.studio.catalog.screen_preview.v1~";
+
 /// A gear on a roadmap board: planned, whether or not its code exists yet.
 ///
 /// One per gear the board plans, keyed on the board and the issue. Its
@@ -296,6 +305,12 @@ const SNAPSHOT_DOC: (&str, &str, &str) = (
     "What one component's fields said on one day, kept so a later sync can be compared with it.",
 );
 
+const SCREEN_PREVIEW_DOC: (&str, &str, &str) = (
+    SCREEN_PREVIEW_TYPE,
+    "Screen preview",
+    "A picture of one micro-frontend screen as a build of the shell rendered it, at one commit.",
+);
+
 /// The relation types as catalog entries. Registered alongside the nodes so
 /// the platform registry catalogs everything this gear puts in the graph (see
 /// `crate::gts_inventory`).
@@ -341,7 +356,7 @@ pub fn type_schemas() -> Vec<Value> {
     NODE_TYPE_DOCS
         .into_iter()
         .filter(|(id, _, _)| !PRODUCT_NODE_TYPES.contains(id))
-        .chain([SNAPSHOT_DOC])
+        .chain([SNAPSHOT_DOC, SCREEN_PREVIEW_DOC])
         .chain(EDGE_TYPE_DOCS)
         .map(registry_schema)
         .collect()
@@ -390,7 +405,10 @@ pub fn graph_node_type_schemas() -> Vec<Value> {
                 "allOf": [{ "$ref": format!("gts://{OWNED_NODE_FAMILY}") }],
             })
         })
-        .chain([graph_snapshot_type_schema()])
+        .chain([
+            graph_snapshot_type_schema(),
+            graph_screen_preview_type_schema(),
+        ])
         .collect()
 }
 
@@ -420,6 +438,34 @@ pub fn graph_snapshot_type_schema() -> Value {
                     "day": { "type": "integer" },
                     "date": { "type": "string" },
                     "fields": { "type": "object" },
+                },
+            } } },
+        ],
+    })
+}
+
+/// The screen preview type as a graph-storage ontology entry, indexed on the
+/// component a map asks about and the commit a build wrote it at.
+pub fn graph_screen_preview_type_schema() -> Value {
+    json!({
+        "$id": format!("gts://{}", graph_type_id(SCREEN_PREVIEW_TYPE)),
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": SCREEN_PREVIEW_DOC.1,
+        "description": SCREEN_PREVIEW_DOC.2,
+        "type": "object",
+        "x-gts-traits": {
+            "index": ["/payload/component", "/payload/commit"],
+        },
+        "allOf": [
+            { "$ref": format!("gts://{OWNED_NODE_FAMILY}") },
+            { "type": "object", "properties": { "payload": {
+                "type": "object",
+                "properties": {
+                    "component": { "type": "string" },
+                    "commit": { "type": "string" },
+                    "version": { "type": "string" },
+                    "route": { "type": "string" },
+                    "image": { "type": "string" },
                 },
             } } },
         ],
@@ -571,6 +617,21 @@ pub fn project_product_node(project_id: &str, value: Value) -> GtsNode {
 /// same day replaces that day's snapshot rather than adding one.
 pub fn component_snapshot_instance_id(component: &str, date: &str) -> String {
     anon_id(&["component_snapshot", component, date])
+}
+
+/// Instance id of one screen's preview in one build: the same screen of the
+/// same commit taken again replaces the picture.
+pub fn screen_preview_instance_id(component: &str, commit: &str, route: &str) -> String {
+    anon_id(&["screen_preview", component, commit, route])
+}
+
+/// One screen's preview.
+pub fn screen_preview_node(component: &str, commit: &str, route: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: SCREEN_PREVIEW_TYPE,
+        instance_id: screen_preview_instance_id(component, commit, route),
+        value,
+    }
 }
 
 /// Instance id of a board's gear, keyed on the board and the issue (or, for
@@ -753,7 +814,7 @@ mod tests {
     fn every_type_leaf_is_a_valid_gts_segment() {
         for id in ALL_NODE_TYPES
             .into_iter()
-            .chain([COMPONENT_SNAPSHOT_TYPE])
+            .chain([COMPONENT_SNAPSHOT_TYPE, SCREEN_PREVIEW_TYPE])
             .chain(ALL_EDGE_TYPES)
         {
             let leaf = id.strip_prefix("gts.").unwrap_or(id).trim_end_matches('~');
@@ -797,6 +858,25 @@ mod tests {
         assert_eq!(props["component"]["type"], "string");
         assert_eq!(props["day"]["type"], "integer");
         assert!(!ALL_NODE_TYPES.contains(&COMPONENT_SNAPSHOT_TYPE));
+    }
+
+    /// The preview reads filter on the component; a picture is no component.
+    #[test]
+    fn the_screen_preview_type_indexes_what_a_map_asks_for() {
+        let schema = graph_screen_preview_type_schema();
+        assert_eq!(
+            schema["x-gts-traits"]["index"],
+            json!(["/payload/component", "/payload/commit"])
+        );
+        let props = &schema["allOf"][1]["properties"]["payload"]["properties"];
+        assert_eq!(props["component"]["type"], "string");
+        assert_eq!(props["commit"]["type"], "string");
+        assert!(!ALL_NODE_TYPES.contains(&SCREEN_PREVIEW_TYPE));
+        assert!(
+            type_schemas()
+                .iter()
+                .any(|s| s["$id"] == format!("gts://{SCREEN_PREVIEW_TYPE}"))
+        );
     }
 
     #[test]

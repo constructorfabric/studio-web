@@ -843,6 +843,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/screen-previews",
+      "operation_id": "studio_components_catalog.list_screen_previews",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The pictures builds took of one micro-frontend's screens",
+      "authenticated": true,
+      "responses": [
+        "ScreenPreviewListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/sources",
       "operation_id": "studio_components_catalog.list_sources",
       "tag": "StudioComponentsCatalog",
@@ -3666,6 +3682,23 @@
         "401",
         "403",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/screen-previews",
+      "operation_id": "studio_components_catalog.upsert_screen_preview",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Keep a picture a build took of one micro-frontend screen",
+      "authenticated": true,
+      "request": "SaveScreenPreviewRequest",
+      "responses": [
+        "ScreenPreviewDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },

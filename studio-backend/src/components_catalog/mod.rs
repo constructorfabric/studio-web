@@ -33,6 +33,7 @@ mod repo_enrich;
 mod repo_facts;
 mod rest;
 pub(crate) mod roadmap;
+mod screen_previews;
 pub mod sdk;
 mod service;
 mod services;

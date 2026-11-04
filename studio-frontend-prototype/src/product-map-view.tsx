@@ -17,6 +17,7 @@ import {
   type ProductChange,
   type ProjectProduct,
   type ProjectTargets,
+  type ScreenPreview as ScreenPicture,
 } from "./api";
 import { gearKey, librariesFrom, mfesFrom, shellsFrom, splitTemplates, type Library, type Mfe, type Shell } from "./frontend-constructor";
 import { errText } from "./problem";
@@ -44,6 +45,7 @@ import {
 } from "./product-map";
 import { profilesToCheck } from "./product";
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
+import { previewBuild, shortCommit, type PreviewBuild } from "./screen-previews";
 
 type Read = {
   product: ProjectProduct | null;
@@ -207,6 +209,15 @@ export function ProductMap({
     [read, product, index],
   );
   const nodeById = useMemo(() => new Map((map?.nodes ?? []).map((n) => [n.id, n])), [map]);
+  /** Each screen card's catalogue entry, by node: what its pictures are kept under. */
+  const pictured = useMemo(() => {
+    const out = new Map<string, { component: string; version: string | null }>();
+    for (const place of product?.frontend?.mfes ?? []) {
+      const cat = catalogueMfe(place, read?.mfes ?? []);
+      if (cat) out.set(`mfe:${place.path}`, { component: cat.name, version: cat.version });
+    }
+    return out;
+  }, [product, read]);
   const problems = useMemo(() => (map ? problemsOf(map) : []), [map]);
   const select = useCallback((id: string | null) => {
     setSelected(id);
@@ -445,6 +456,8 @@ export function ProductMap({
             collapsed={collapsed}
             overlay={overlay}
             hasFrontend={!!product?.frontend}
+            token={token}
+            pictured={pictured}
             onSelect={select}
             onLink={(l) => {
               setLink(l);
@@ -493,11 +506,92 @@ export function ProductMap({
 
 /* ── A micro-frontend's screens, drawn ───────────────────────────────────── */
 
-/** What a micro-frontend puts in the shell, as a small window: its screens
- *  in the shell's navigation, the first one open. Drawn from what its
- *  manifest declares (mfe.json); not a picture of the running screen, which
- *  only a build can take. */
-function ScreenPreview({ name, screens }: { name: string; screens: string[] }) {
+/** Each component's pictures, read once per page: a build adds them, and a
+ *  reload is when a reader expects to see a new one. */
+const pictures = new Map<string, Promise<ScreenPicture[]>>();
+
+function usePictures(token: string, component: string | null): ScreenPicture[] | null {
+  const [items, setItems] = useState<ScreenPicture[] | null>(null);
+  useEffect(() => {
+    if (!component) return;
+    let live = true;
+    let read = pictures.get(component);
+    if (!read) {
+      read = api.screenPreviews(token, component).then(
+        (r) => r.items ?? [],
+        (): ScreenPicture[] => [],
+      );
+      pictures.set(component, read);
+    }
+    void read.then((r) => {
+      if (live) setItems(r);
+    });
+    return () => {
+      live = false;
+    };
+  }, [token, component]);
+  return component ? items : null;
+}
+
+/** What a micro-frontend puts in the shell, as a small window: the picture a
+ *  build took of each screen when the catalogue keeps one for this version
+ *  (scripts/mfe-screen-previews.mjs), otherwise drawn from what its manifest
+ *  declares (mfe.json) and labelled a schematic. */
+function ScreenPreview({
+  name,
+  screens,
+  token,
+  pictured,
+}: {
+  name: string;
+  screens: string[];
+  token: string;
+  pictured: { component: string; version: string | null } | null;
+}) {
+  const items = usePictures(token, pictured?.component ?? null);
+  const build = items ? previewBuild(items, pictured?.version ?? null) : null;
+  if (build) return <BuiltPreview name={name} build={build} />;
+  return <SchematicPreview name={name} screens={screens} />;
+}
+
+/** The pictures of one build: one screen large, every screen as a tab that
+ *  shows it on hover. */
+function BuiltPreview({ name, build }: { name: string; build: PreviewBuild }) {
+  const [on, setOn] = useState(0);
+  const shot = build.screens[Math.min(on, build.screens.length - 1)];
+  return (
+    <span className="pmap-preview-hold" onClick={(e) => e.stopPropagation()}>
+      <span className="pmap-preview real" role="img" aria-label={`${name}: ${build.screens.map((s) => s.label ?? s.route).join(", ")}, built at ${build.commit}`}>
+        <span className="pmap-preview-bar">
+          <span className="pmap-preview-dots" />
+          <span className="pmap-preview-url">{shot.route}</span>
+          <span
+            className="pmap-preview-tag built"
+            title={`Taken by a build of ${build.commit}${build.version ? ` (version ${build.version})` : ""} at ${build.capturedAt}: the screen with an empty project, not real data`}
+          >
+            built {shortCommit(build.commit)}
+          </span>
+        </span>
+        <img className="pmap-preview-shot" src={shot.image} alt={shot.label ?? shot.route} />
+        {build.screens.length > 1 && (
+          <span className="pmap-preview-thumbs">
+            {build.screens.map((s, i) => (
+              <span key={s.route} className={`pmap-preview-thumb${s === shot ? " on" : ""}`} onMouseEnter={() => setOn(i)} title={s.route}>
+                <img src={s.image} alt="" />
+                <span>{s.label ?? s.route}</span>
+              </span>
+            ))}
+          </span>
+        )}
+      </span>
+    </span>
+  );
+}
+
+/** Drawn from what the manifest declares: the screens in the shell's
+ *  navigation, the first one open. Not a picture of the running screen,
+ *  which only a build can take. */
+function SchematicPreview({ name, screens }: { name: string; screens: string[] }) {
   const shown = screens.slice(0, 8);
   return (
     <span className="pmap-preview" role="img" aria-label={`${name}: ${screens.length ? screens.join(", ") : "no screens declared"}`}>
@@ -574,6 +668,8 @@ function Canvas({
   collapsed,
   overlay,
   hasFrontend,
+  token,
+  pictured,
   onSelect,
   onLink,
   onToggleGroup,
@@ -590,6 +686,8 @@ function Canvas({
   collapsed: Set<string>;
   overlay?: MapOverlay;
   hasFrontend: boolean;
+  token: string;
+  pictured: Map<string, { component: string; version: string | null }>;
   onSelect: (id: string | null) => void;
   onLink: (l: MapLink) => void;
   onToggleGroup: (key: string) => void;
@@ -788,7 +886,7 @@ function Canvas({
               <span className="pmap-node-meta">
                 {shows ? `${shows.split(", ").length} screen${shows.split(", ").length === 1 ? "" : "s"} · ` : ""}calls {calls} gear{calls === 1 ? "" : "s"}
               </span>
-              {hover === n.id && <ScreenPreview name={n.label} screens={shows ? shows.split(", ") : []} />}
+              {hover === n.id && <ScreenPreview name={n.label} screens={shows ? shows.split(", ") : []} token={token} pictured={pictured.get(n.id) ?? null} />}
             </>
           );
         })()}

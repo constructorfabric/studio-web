@@ -237,6 +237,7 @@ rather than duplicates.
 | `gts.cf.studio.catalog.registry_read.v1~` | One repository the registry walk read for one project (connection, repository, ref): the fingerprint of the files discovery reads and the commit, so an unchanged repository is not read again after a restart either |
 | `gts.cf.studio.catalog.registry_settings.v1~` | The organization's registry settings: the projects the walk skips, what the last walk saw, and the crates.io keyword the tenant's catalogue syncs with (kept for the platform's, whose sync a schedule starts) |
 | `gts.cf.studio.catalog.component_snapshot.v1~` | One component's fields on one day: the number `n`, the grade `s` and the badge `b` (cut to 80 characters); kept out of the enumerated catalogue types |
+| `gts.cf.studio.catalog.screen_preview.v1~` | One micro-frontend screen as a build of the shell rendered it (`scripts/mfe-screen-previews.mjs`): `component`, `version`, `commit`, `route`, `label`, `order`, the picture as a `data:` URL (WebP, PNG or JPEG, at most 512 KiB) and `captured_at`; keyed on the component, the commit and the route, the newest three builds of a component kept; kept out of the enumerated catalogue types |
 
 A field value has the shape `{ v, b, n, s, l, u }`. Field schemas and the
 component mark are tenant-scoped because graph-storage is; reverting is
@@ -951,6 +952,8 @@ than one corpus are later phases.
 | `GET` | `/reference` | The catalogue joined with the engine's gears; `days` (default 90, `0` skips the warehouse), `include=all` | unstable |
 | `GET` | `/component-values` | Each component's fields with its three sources reconciled, its grade and its `tier`; a platform component's values are the platform's with the organization's annotation over them | unstable |
 | `GET` | `/component-history` | Snapshots: each component's earliest in the window, or one `component`'s every one; `days` default 30, at most 366 | unstable |
+| `POST` | `/screen-previews` | Keep one screen's picture a build took (`component`, `commit`, `route`, `image` as a `data:` URL, optional `version`, `label`, `order`, `width`, `height`) | unstable |
+| `GET` | `/screen-previews` | One `component`'s kept pictures, the newest build first and in the build's order within it | unstable |
 | `GET` | `/activity` | Commits, churn, authors and pull requests per gear; `days` (default 30), `compare=previous` | unstable |
 | `GET` | `/profiles` | The Studio-managed profiles: the platform's with the organization's annotations over them (`annotated`), then the organization's own, each with its `tier` | unstable |
 | `POST` | `/components/{name}/profile` | Create or replace one gear's profile; a body that does not fit the profile schema is refused. For a platform component an organization stores its annotation only, and the answer is the joined profile | unstable |

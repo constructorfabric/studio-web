@@ -3354,6 +3354,9 @@ mod readiness_routes;
 #[path = "registry_extract_rest.rs"]
 mod extract;
 
+#[path = "screen_previews_rest.rs"]
+mod screen_previews;
+
 #[cfg(test)]
 #[path = "sources_rest_tests.rs"]
 mod sources_tests;
@@ -3645,6 +3648,7 @@ pub fn register_routes(
     gearbox: Option<Arc<Gearbox>>,
 ) -> Router {
     let router = register_registry_routes(router, openapi);
+    let router = screen_previews::register(router, openapi);
     let router = OperationBuilder::post("/studio-components-catalog/v1/sync")
         .operation_id("studio_components_catalog.sync")
         .summary("Enqueue a background sync of the crates.io keyword into the graph")

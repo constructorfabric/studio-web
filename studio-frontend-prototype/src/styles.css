@@ -3060,6 +3060,18 @@ div.dm-block { padding-left: 0; }
 .pmap-preview-line { display: block; height: 6px; border-radius: 3px; background: color-mix(in oklab, var(--muted-foreground) 22%, transparent); }
 .pmap-preview-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 4px; }
 .pmap-preview-cards > span { height: 34px; border-radius: 5px; border: 1px solid var(--border); background: color-mix(in oklab, hsl(268 70% 60%) 5%, var(--card)); }
+/* A build's pictures: the gap under the card is part of the hold, so the
+   pointer reaches the tabs without leaving the card. */
+.pmap-preview-hold { position: absolute; z-index: 5; left: 0; top: 100%; padding-top: 6px; cursor: default; }
+.pmap-preview.real { position: static; width: 380px; pointer-events: auto; }
+.pmap-preview-tag.built { color: hsl(140 50% 34%); font-weight: 600; text-transform: none; letter-spacing: 0; font: 600 10px ui-monospace, monospace; }
+.pmap-preview-shot { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left; background: var(--muted); }
+.pmap-preview-thumbs { display: flex; gap: 4px; padding: 5px; overflow-x: auto; border-top: 1px solid var(--border); background: color-mix(in oklab, var(--muted) 50%, var(--card)); }
+.pmap-preview-thumb { flex: 0 0 64px; display: flex; flex-direction: column; gap: 2px; padding: 2px; border-radius: 4px; border: 1px solid transparent; }
+.pmap-preview-thumb img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left; border-radius: 2px; border: 1px solid var(--border); }
+.pmap-preview-thumb > span { font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted-foreground); }
+.pmap-preview-thumb.on { border-color: hsl(268 70% 60% / .55); background: hsl(268 70% 60% / .1); }
+.pmap-preview-thumb.on > span { color: hsl(268 55% 45%); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .pmap-preview { animation: none; } }
 .pmap-link-count { font-size: 10px; font-weight: 600; fill: var(--muted-foreground); paint-order: stroke; stroke: var(--card); stroke-width: 3px; pointer-events: none; }
 .pmap-link.bad.on { stroke: var(--destructive); }

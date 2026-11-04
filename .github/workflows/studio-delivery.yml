@@ -296,6 +296,25 @@ jobs:
           name: studio-frontend-dist
           path: studio-frontend/dist
           retention-days: 7
+      # A picture of every micro-frontend screen of the shell just built, taken
+      # signed in with a made-up session against an empty stand-in backend
+      # (scripts/mfe-screen-previews.mjs). Kept as an artifact for now: handing
+      # them to the components catalogue (--upload) needs a token this job
+      # does not hold. Advisory -- a browser that will not start must not fail
+      # the portal's tests.
+      - name: Screen previews
+        continue-on-error: true
+        run: |
+          npx playwright install chromium
+          PLAYWRIGHT_MODULE="$PWD/node_modules/playwright" node ../scripts/mfe-screen-previews.mjs             --dist dist --mfes src-app/mfe_packages --out ../mfe-screen-previews             --commit "$(git rev-parse --short=12 HEAD)"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        continue-on-error: true
+        with:
+          name: mfe-screen-previews
+          path: mfe-screen-previews
+          retention-days: 7
+          if-no-files-found: ignore
 
   # The prototype is independently deployable on its dedicated POC host, so changes to
   # it must now pass Test before an immutable image may be published.
@@ -389,6 +408,9 @@ jobs:
       # Not a contract, but Node-only and seconds: the hunk mapping and
       # scoring of docs/probe-calibration.md.
       - run: node --test scripts/probe-calibrate.test.mjs
+      # Which screens the build's previews visit and what the stand-in backend
+      # answers (scripts/mfe-screen-previews.mjs).
+      - run: node --test scripts/mfe-screen-previews.test.mjs
       # The other contract both portals owe, and the reason it lives in this
       # job rather than test-frontend: the event stream must not be
       # compressed, and a config change that breaks it is invisible in

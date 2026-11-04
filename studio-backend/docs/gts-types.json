@@ -1633,6 +1633,55 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.screen_preview.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          },
+          {
+            "properties": {
+              "payload": {
+                "properties": {
+                  "commit": {
+                    "type": "string"
+                  },
+                  "component": {
+                    "type": "string"
+                  },
+                  "image": {
+                    "type": "string"
+                  },
+                  "route": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "A picture of one micro-frontend screen as a build of the shell rendered it, at one commit.",
+        "title": "Screen preview",
+        "type": "object",
+        "x-gts-traits": {
+          "index": [
+            "/payload/component",
+            "/payload/commit"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.screen_preview.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.source.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -8487,6 +8536,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.catalog.roadmap_item.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.screen_preview.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A picture of one micro-frontend screen as a build of the shell rendered it, at one commit.",
+        "title": "Screen preview",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.screen_preview.v1~"
     },
     {
       "gear": "studio-components-catalog",

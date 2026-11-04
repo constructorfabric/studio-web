@@ -18,6 +18,21 @@ import type {
 } from "./spec-model";
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
+
+/** One screen of a micro-frontend as a build of the shell rendered it. */
+export interface ScreenPreview {
+  component: string;
+  version: string | null;
+  commit: string;
+  route: string;
+  label: string | null;
+  order: number;
+  /** `data:image/webp;base64,...` */
+  image: string;
+  width: number | null;
+  height: number | null;
+  captured_at: string;
+}
 import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
 import { sectionBody, type MirrorSummary, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
@@ -5923,6 +5938,15 @@ export const api = {
       `/studio-components-catalog/v1/component-history?days=${days}${
         component ? `&component=${encodeURIComponent(component)}` : ""
       }`,
+      token,
+    ),
+
+  /** The pictures builds took of one micro-frontend's screens, the newest
+   *  build first (`components_catalog/screen_previews.rs`). Each carries its
+   *  picture as a `data:` URL. */
+  screenPreviews: (token: string, component: string) =>
+    request<{ items: ScreenPreview[]; total: number }>(
+      `/studio-components-catalog/v1/screen-previews?component=${encodeURIComponent(component)}`,
       token,
     ),
 

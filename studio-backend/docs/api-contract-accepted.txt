@@ -258,6 +258,15 @@ request	POST /studio-components-catalog/v1/registry/{}/declare	category	String	o
 request	POST /studio-components-catalog/v1/registry/{}/declare	description	String	optional
 request	POST /studio-components-catalog/v1/registry/{}/declare	dry_run	bool	optional
 request	POST /studio-components-catalog/v1/registry/{}/declare	project_id	Uuid	optional
+request	POST /studio-components-catalog/v1/screen-previews	commit	String	required
+request	POST /studio-components-catalog/v1/screen-previews	component	String	required
+request	POST /studio-components-catalog/v1/screen-previews	height	u32	optional
+request	POST /studio-components-catalog/v1/screen-previews	image	String	required
+request	POST /studio-components-catalog/v1/screen-previews	label	String	optional
+request	POST /studio-components-catalog/v1/screen-previews	order	u32	optional
+request	POST /studio-components-catalog/v1/screen-previews	route	String	required
+request	POST /studio-components-catalog/v1/screen-previews	version	String	optional
+request	POST /studio-components-catalog/v1/screen-previews	width	u32	optional
 request	POST /studio-components-catalog/v1/sync	crates_io	String	optional
 request	POST /studio-components-catalog/v1/sync	repositories	Vec<{}>	optional
 request	POST /studio-components-catalog/v1/sync	repositories.connection_id	Uuid	optional
@@ -1642,6 +1651,18 @@ response	GET /studio-components-catalog/v1/registry/{}/readiness	path	String	alw
 response	GET /studio-components-catalog/v1/registry/{}/readiness	project_name	String	optional
 response	GET /studio-components-catalog/v1/registry/{}/readiness	ready	bool	always
 response	GET /studio-components-catalog/v1/registry/{}/readiness	repo	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items	Vec<{}>	always
+response	GET /studio-components-catalog/v1/screen-previews	items.captured_at	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.commit	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.component	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.height	u32	optional
+response	GET /studio-components-catalog/v1/screen-previews	items.image	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.label	String	optional
+response	GET /studio-components-catalog/v1/screen-previews	items.order	u32	always
+response	GET /studio-components-catalog/v1/screen-previews	items.route	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.version	String	optional
+response	GET /studio-components-catalog/v1/screen-previews	items.width	u32	optional
+response	GET /studio-components-catalog/v1/screen-previews	total	u32	always
 response	GET /studio-components-catalog/v1/sources	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/sources	items.connection_id	Uuid	optional
 response	GET /studio-components-catalog/v1/sources	items.git_ref	String	optional
@@ -4048,6 +4069,16 @@ response	POST /studio-components-catalog/v1/registry/{}/suggest	capabilities	Vec
 response	POST /studio-components-catalog/v1/registry/{}/suggest	category	String	optional
 response	POST /studio-components-catalog/v1/registry/{}/suggest	description	String	optional
 response	POST /studio-components-catalog/v1/registry/{}/suggest	model	String	always
+response	POST /studio-components-catalog/v1/screen-previews	captured_at	String	always
+response	POST /studio-components-catalog/v1/screen-previews	commit	String	always
+response	POST /studio-components-catalog/v1/screen-previews	component	String	always
+response	POST /studio-components-catalog/v1/screen-previews	height	u32	optional
+response	POST /studio-components-catalog/v1/screen-previews	image	String	always
+response	POST /studio-components-catalog/v1/screen-previews	label	String	optional
+response	POST /studio-components-catalog/v1/screen-previews	order	u32	always
+response	POST /studio-components-catalog/v1/screen-previews	route	String	always
+response	POST /studio-components-catalog/v1/screen-previews	version	String	optional
+response	POST /studio-components-catalog/v1/screen-previews	width	u32	optional
 response	POST /studio-components-catalog/v1/sync	run_id	String	always
 response	POST /studio-components-catalog/v1/sync	status	String	always
 response	POST /studio-connector/v1/connections	account	String	always
@@ -5762,6 +5793,7 @@ route	GET /studio-components-catalog/v1/registry/gear-repository
 route	GET /studio-components-catalog/v1/registry/projects
 route	GET /studio-components-catalog/v1/registry/{}
 route	GET /studio-components-catalog/v1/registry/{}/readiness
+route	GET /studio-components-catalog/v1/screen-previews
 route	GET /studio-components-catalog/v1/sources
 route	GET /studio-components-catalog/v1/types
 route	GET /studio-components-catalog/v1/types/counts
@@ -5939,6 +5971,7 @@ route	POST /studio-components-catalog/v1/registry/scaffold
 route	POST /studio-components-catalog/v1/registry/{}/decisions
 route	POST /studio-components-catalog/v1/registry/{}/declare
 route	POST /studio-components-catalog/v1/registry/{}/suggest
+route	POST /studio-components-catalog/v1/screen-previews
 route	POST /studio-components-catalog/v1/sync
 route	POST /studio-connector/v1/connections
 route	POST /studio-connector/v1/connections/{}/files
