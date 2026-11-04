@@ -1224,6 +1224,12 @@ pub fn inside(root: &Path, rel: &Path) -> Option<PathBuf> {
 }
 
 fn run(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
+    run_all(cmd, what).map(|(stdout, _)| stdout)
+}
+
+/// [`run`], answering what the tool printed to stdout and everything it said,
+/// stderr included: gearbox writes its diagnostics there.
+fn run_all(cmd: &mut Command, what: &str) -> anyhow::Result<(String, String)> {
     let out = cmd
         .output()
         .with_context(|| format!("{what} could not be started"))?;
@@ -1238,18 +1244,128 @@ fn run(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
         eprintln!("{text}");
         bail!("{what} failed: {}", failure_text(&text));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok((String::from_utf8_lossy(&out.stdout).into_owned(), text))
+}
+
+/// The lock of the product's own Rust code among the fetched sources: the one
+/// `Cargo.lock`, at a source's root or up to two folders below it, that pins a
+/// platform crate (`cf-gears-*`) from a registry or a git repository.
+///
+/// Every source of a build is fetched by `git(...)`, the product's own code
+/// included, so the engine cannot tell it by kind. The platform's own lock
+/// records its crates with no `source` -- they are its workspace members -- so
+/// it never qualifies; a consumer's lock does, and that consumer is the
+/// product's code. That lock decides which platform release the build links;
+/// the gear sources are read for their descriptions only. `None` when no lock
+/// or more than one qualifies: the engine then decides alone.
+fn product_lock(roots: &[PathBuf]) -> Option<PathBuf> {
+    fn locks(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+        let lock = dir.join("Cargo.lock");
+        if lock.is_file() {
+            out.push(lock);
+        }
+        if depth == 0 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut dirs: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter(|e| {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                !name.starts_with('.') && !matches!(name.as_ref(), "target" | "node_modules")
+            })
+            .map(|e| e.path())
+            .collect();
+        dirs.sort();
+        for d in dirs {
+            locks(&d, depth - 1, out);
+        }
+    }
+    let mut found = Vec::new();
+    for root in roots {
+        locks(root, 2, &mut found);
+    }
+    let mut pinning = found
+        .into_iter()
+        .filter(|lock| std::fs::read_to_string(lock).is_ok_and(|text| pins_platform(&text)));
+    let lock = pinning.next()?;
+    pinning.next().is_none().then_some(lock)
+}
+
+/// Whether a `Cargo.lock` takes some `cf-gears-*` crate from a registry or git:
+/// a `[[package]]` entry of that name with a `source`. Cargo writes one key per
+/// line, so the entries are read as text.
+fn pins_platform(text: &str) -> bool {
+    text.split("[[package]]").any(|entry| {
+        let mut lines = entry.lines().map(str::trim);
+        let named = entry
+            .lines()
+            .map(str::trim)
+            .any(|l| l.starts_with("name = \"cf-gears-"));
+        named && lines.any(|l| l.starts_with("source = "))
+    })
+}
+
+/// What of `gearbox generate`'s output belongs in the build's log: every
+/// warning and error and every note on where the gear crates come from
+/// (GBX07xx), each with the lines indented under it. The rest -- a whole
+/// product's notes on stability and coupling -- would bury them.
+fn generate_diagnostics(text: &str) -> String {
+    let mut kept = Vec::new();
+    let mut keeping = false;
+    for line in text.lines() {
+        if line.starts_with(char::is_whitespace) {
+            if keeping {
+                kept.push(line);
+            }
+        } else {
+            keeping =
+                line.starts_with("warning") || line.starts_with("error") || line.contains("[GBX07");
+            if keeping {
+                kept.push(line);
+            }
+        }
+    }
+    kept.join("\n")
+}
+
+/// The GBX0714 diagnostics that say two copies of a platform crate will link.
+/// Such a tree fails to compile minutes later with trait errors that do not
+/// name the cause; it is refused here instead.
+fn second_copies(diagnostics: &str) -> Vec<&str> {
+    diagnostics
+        .lines()
+        .filter(|l| l.contains("[GBX0714]") && l.contains("two copies"))
+        .collect()
 }
 
 /// Give the generated workspace the lock of the sources it builds, when it
-/// has none of its own: the product's own code first (a source in the
-/// repository), else a fetched one. Without it cargo locks every crate to its
-/// latest version, and the first build on a cluster mixed two releases of the
-/// platform's toolkit crates whose traits no longer met; cargo keeps what the
-/// lock names and adds only what it lacks.
-fn seed_lock(roots: &[PathBuf], repo: &Path, out: &Path) -> anyhow::Result<()> {
+/// has none of its own: the product code's lock ([`product_lock`]) first, then
+/// a source in the repository, else a fetched one. Without it cargo locks
+/// every crate to its latest version, and the first build on a cluster mixed
+/// two releases of the platform's toolkit crates whose traits no longer met;
+/// cargo keeps what the lock names and adds only what it lacks.
+///
+/// Seeding the platform checkout's lock under a product lock's pins was that
+/// same failure again: the checkout's lock knows nothing of the registry
+/// crates the product's code takes, so cargo locked them to their latest.
+fn seed_lock(
+    product: Option<&Path>,
+    roots: &[PathBuf],
+    repo: &Path,
+    out: &Path,
+) -> anyhow::Result<()> {
     let target = out.join("Cargo.lock");
     if target.exists() {
+        return Ok(());
+    }
+    if let Some(lock) = product {
+        std::fs::copy(lock, &target)
+            .with_context(|| format!("{} could not be copied into the tree", lock.display()))?;
         return Ok(());
     }
     let in_repo = |r: &PathBuf| {
@@ -1621,6 +1737,7 @@ pub fn prepare_as(
     }
 
     let out = repo.join(".gearbox").join("out");
+    let lock = product_lock(&roots);
     let mut generate = Command::new(gearbox());
     generate.arg("generate");
     for r in &roots {
@@ -1633,8 +1750,24 @@ pub fn prepare_as(
         .arg(profile)
         .arg("--out")
         .arg(&out);
-    run(&mut generate, "gearbox generate")?;
-    seed_lock(&roots, &repo, &out)?;
+    if let Some(lock) = &lock {
+        println!("platform crates at the versions in {}", lock.display());
+        generate.arg("--cargo-lock").arg(lock);
+    }
+    let (_, said) = run_all(&mut generate, "gearbox generate")?;
+    let diagnostics = generate_diagnostics(&said);
+    if !diagnostics.is_empty() {
+        println!("{diagnostics}");
+    }
+    let mixed = second_copies(&diagnostics);
+    if !mixed.is_empty() {
+        bail!(
+            "the generated workspace would link two copies of a platform crate, and would not \
+             compile:\n{}",
+            mixed.join("\n")
+        );
+    }
+    seed_lock(lock.as_deref(), &roots, &repo, &out)?;
 
     // The tree, made buildable (constructorfabric/gearbox#12).
     let docker = out.join("docker");
@@ -1916,7 +2049,7 @@ mod tests {
         std::fs::write(fetched.join("Cargo.lock"), "fetched").unwrap();
         std::fs::write(own.join("Cargo.lock"), "own").unwrap();
 
-        seed_lock(&[fetched.clone(), own.clone()], &repo, &out).unwrap();
+        seed_lock(None, &[fetched.clone(), own.clone()], &repo, &out).unwrap();
         assert_eq!(
             std::fs::read_to_string(out.join("Cargo.lock")).unwrap(),
             "own"
@@ -1924,13 +2057,96 @@ mod tests {
 
         // A lock the engine wrote is the tree's own, and stays.
         std::fs::write(out.join("Cargo.lock"), "generated").unwrap();
-        seed_lock(&[own], &repo, &out).unwrap();
+        seed_lock(None, &[own], &repo, &out).unwrap();
         assert_eq!(
             std::fs::read_to_string(out.join("Cargo.lock")).unwrap(),
             "generated"
         );
 
         std::fs::remove_dir_all(&work).ok();
+    }
+
+    const PLATFORM_LOCK: &str = r#"
+version = 4
+
+[[package]]
+name = "cf-gears-toolkit"
+version = "0.10.0"
+"#;
+
+    const PRODUCT_LOCK: &str = r#"
+version = 4
+
+[[package]]
+name = "cf-studio-backend"
+version = "0.1.0"
+
+[[package]]
+name = "cf-gears-toolkit"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+
+    #[test]
+    fn the_product_codes_lock_is_the_one_that_takes_the_platform_from_outside() {
+        // Both sources fetched by git, as a cluster build fetches them: the
+        // platform's own lock (its crates are members, no `source`) at the
+        // root, the product's two folders down.
+        let work = std::env::temp_dir().join(format!("studio-product-lock-{}", Uuid::new_v4()));
+        let platform = work.join("gears-rust");
+        let product = work.join("studio-backend");
+        let crate_dir = product.join("studio-backend");
+        for d in [&platform, &crate_dir, &product.join("target").join("x")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(platform.join("Cargo.lock"), PLATFORM_LOCK).unwrap();
+        std::fs::write(crate_dir.join("Cargo.lock"), PRODUCT_LOCK).unwrap();
+        // A build folder's lock is no one's decision.
+        std::fs::write(
+            product.join("target").join("x").join("Cargo.lock"),
+            PRODUCT_LOCK,
+        )
+        .unwrap();
+
+        let roots = [platform.clone(), product.clone()];
+        let lock = product_lock(&roots);
+        assert_eq!(
+            lock.as_deref(),
+            Some(crate_dir.join("Cargo.lock").as_path())
+        );
+
+        // It is the lock the tree gets, not the platform's.
+        let repo = work.join("repo");
+        let out = repo.join(".gearbox").join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        seed_lock(lock.as_deref(), &roots, &repo, &out).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(out.join("Cargo.lock")).unwrap(),
+            PRODUCT_LOCK
+        );
+
+        // Two consumers' locks are two decisions: none is chosen.
+        std::fs::write(product.join("Cargo.lock"), PRODUCT_LOCK).unwrap();
+        assert_eq!(product_lock(&roots), None);
+
+        std::fs::remove_dir_all(&work).ok();
+    }
+
+    #[test]
+    fn generate_keeps_the_crate_source_notes_and_refuses_two_copies() {
+        let said = "info [GBX0323] a.gdl:1: `x` is at preview\n    help: nothing to do\n\
+                    info [GBX0713] Cargo.lock:1: 23 gear(s) taken from crates.io\n    help: from source: y\n\
+                    warning [GBX0714] Cargo.lock:1: a gear built from source depends by path on \
+                    `cf-gears-toolkit` at `/x`, which the build takes from crates.io at 0.10.0: \
+                    two copies of it will link\n    help: add the gear\n";
+        let kept = generate_diagnostics(said);
+        assert!(!kept.contains("GBX0323"), "{kept}");
+        assert!(
+            kept.contains("GBX0713") && kept.contains("from source: y"),
+            "{kept}"
+        );
+        assert_eq!(second_copies(&kept).len(), 1);
+        assert!(second_copies("info [GBX0713] 24 gear(s)").is_empty());
     }
 
     #[test]
