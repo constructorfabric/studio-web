@@ -10,6 +10,8 @@ date: 2026-10-29
 
 Status: **proposed** · Date: 2026-10-29 · Amends `cpt-studio-adr-deployment-environments` (ADR-0043) · Uses ADR-0048 (a product ships as images and a chart in the organization's registry) and `cpt-studio-adr-research-environments` (ADR-0049)
 
+Amended by [ADR-0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) (2026-11-04): a project's own environment's namespace and build namespace follow the same rules as an organization's: named from the project's slug, recorded at first use.
+
 ## Table of Contents
 
 <!-- toc -->

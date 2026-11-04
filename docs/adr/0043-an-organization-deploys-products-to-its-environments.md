@@ -10,6 +10,8 @@ date: 2026-10-13
 
 Status: **proposed** · Date: 2026-10-13 · Extends `cpt-studio-component-product` (from a generated product to a running one) · Applies `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` to clusters
 
+Amended by [ADR-0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) (2026-11-04): a project's namespace is named from its immutable slug and recorded at the first build or deploy, and every later one reads the record; a found namespace another project's label claims is refused, and a cluster that gives namespaces instead of letting Studio make them is described by the environment's `namespaces`, each project assigned one by an administrator. The bootstrap manifest is versioned (`studio.constructor.tech/bootstrap-version`, now 2), and a build or deploy on a partially bootstrapped cluster is refused (`CLUSTER_NOT_BOOTSTRAPPED`).
+
 ## Table of Contents
 
 <!-- toc -->

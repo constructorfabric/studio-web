@@ -230,7 +230,8 @@ deciding again replaces the decision; it is written for
 comment logs under `.studio/comments/` with the ordering rules of
 `theia/product-ext/src/browser/comment-log.js` mirrored; the repository node
 carries `open_document_threads` and, where the provider can say,
-`open_review_threads`. A count is kept, never a message.
+`open_review_threads`. A count is kept, never a message. Its images and chart become the project's image records in
+`studio-environments` too (`environments::images_sink`, ADR-0062 §4).
 
 A `pull_request` node carries, beside what the listing always gave, `draft`,
 `requested_reviewers` and `requested_teams` (still owed a review: GitHub drops

@@ -8,7 +8,11 @@ the server, what a record of it holds — is
 how a product's images and chart reach it through the organization's registry
 is [ADR-0048](../../../docs/adr/0048-a-product-ships-as-images-and-a-chart-in-the-organizations-registry.md);
 previews are
-[ADR-0055](../../../docs/adr/0055-a-build-is-previewed-in-a-namespace-of-its-own-that-expires.md).
+[ADR-0055](../../../docs/adr/0055-a-build-is-previewed-in-a-namespace-of-its-own-that-expires.md);
+what keeps a project's build, images and namespaces its own -- the builder by
+digest, push and pull apart, project paths, image records, recorded
+namespaces, the build namespace, the build plan, the IdP preflight -- is
+[ADR-0062](../../../docs/adr/0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md).
 This README is what you need to work in the directory.
 
 ## REST
@@ -36,6 +40,16 @@ answer's `checks`. A missing one does not fail the test.
 | `POST /build-workflows?project_id=` | member | propose `.github/workflows/studio-build-<product>.yml` for the product `product_file` describes (default the path the product record gives, `products/<id>/product.gdl`) to the project's repository as a pull request (ADR-0048 §5) |
 | `POST /environments/{environment_id}/push-tokens?project_id=` | member | a push-only token for named repositories under the environment's registry prefix, from the registry's token service (ADR-0048 §1); 201 |
 | `PUT`/`DELETE /config-secrets/{key}?project_id=&environment_id=` | member | set or remove a secret of the release's configuration there; the value goes to credstore and never comes back |
+| `POST /builds/plan?project_id=` | member | what `POST /builds` would do, without starting it: sources with their refs and connections, description revision, registry paths, namespace and build namespace, builder and Gearbox version, strictness, warnings, and the `refusal` it would meet (ADR-0062 §8) |
+| `GET /environments/{environment_id}/readiness` | member | `bootstrapped`, `namespace_limited` (with the namespaces given) or `partial` (with what is missing), asked of the cluster now (ADR-0062 §6) |
+| `GET /images?project_id=`, `GET /images/{image_id}` | member | the project's image and chart records, newest first, each with the live releases that run it; filters `environment_id`, `app`, `kind`, `state`, `build_id` |
+| `PUT`/`DELETE /images/{image_id}/pin` | member | keep an image past retention, or let it go |
+| `DELETE /images/{image_id}` | member | 409 `IMAGE_RUNNING` / `IMAGE_PINNED`; else 202 with the run that deletes the digest |
+| `POST /images/{image_id}/promotions` | member | copy the digest into another environment's registry, under the project's path there; 202 |
+| `POST /images/imports` | member | copy an external image or OCI chart by digest into `<prefix>/<slug>/mirror/<name>`, with its provenance; 202 |
+| `GET`/`PUT /image-retention` | member (project) / admin (organization) | `keep_last`, `keep_days`; the daily `environments.image_sweep` applies it |
+| `GET /registries`, `…/{connection_id}/repositories`, `…/repositories/{repo}/tags`, `DELETE …/versions/{digest}`, `…/orphans` | admin | the organization's registries as they are, against the records (ADR-0062 §5) |
+| `GET`/`PUT /namespace-assignments` | admin | the namespace each project was given in each environment; an administrator assigns one on a cluster that gives namespaces |
 | `GET /deployments` | member | the history, newest first; filter by `project_id`, `environment_id` |
 | `DELETE /previews/{deployment_id}?project_id=` | member | remove a preview before it expires: a sweep of it alone deletes its namespace (ADR-0055); 202 with the run |
 | `POST /deployments/{deployment_id}/decisions` | admin | `approve` or `decline` (with a reason) a deploy to a protected environment |
@@ -47,8 +61,13 @@ of studio-user through `OrgAuthority`.
 
 ## In the assembly
 
-- Gear `studio-environments`, capabilities `[rest]`, deps
-  `account_management`. No database and no config section.
+- Gear `studio-environments`, capabilities `[db, rest]`, deps
+  `account_management`. Its database (`studio_environments`) keeps project
+  slugs, namespace assignments, image records and retention (`records.rs`,
+  `migrations.rs`); without one it stands down to namespaces from the
+  pattern and paths from the name, and the image routes answer 503.
+- Task types `environments.images` (delete, copy) and
+  `environments.image_sweep` (daily, scheduled when a retention is set).
 - Task type `environments.deploy` (studio-tasks), registered at `init`.
 - The cluster is a connection of the `kubernetes` kind
   (`connectors/kubernetes.rs`, plugin gear `kubernetes-connector-plugin`). Its
@@ -57,8 +76,17 @@ of studio-user through `OrgAuthority`.
   `insecure-skip-tls-verify`, and a kubeconfig for another server than the
   connection's address. An environment refuses a personal connection: the run
   acts as the service, which cannot read one.
-- A project's namespace (`<project>-<environment>` by default) is made by the
-  first build or deploy into it when it is missing, labelled
+- A project's namespace (`<slug>-<environment>` by default, the slug made
+  once from its name and kept) is recorded at the first build or deploy that
+  made or found it, and read from the record by every later one
+  (`placement.rs`). A found namespace whose `studio.constructor.tech/project`
+  label names another project is refused; one without the label only when
+  an administrator assigned it. An environment that lists `namespaces` (a
+  cluster that gives them) takes only an administrator's assignment. Builds
+  run in the build namespace (`<slug>-build` by default): the Job, the
+  repository token and the push token live there, the runtime namespace
+  holds only the pull secret. A missing namespace is made by the
+  first build or deploy into it, labelled
   `app.kubernetes.io/managed-by=constructor-studio`, and the connection then
   binds itself `admin` there (the `constructor-studio` RoleBinding, as the
   user a `SelfSubjectReview` names). A cluster administrator makes that
@@ -68,8 +96,12 @@ of studio-user through `OrgAuthority`.
   cluster" form shows the same file.
 - An environment may name a `registry` connection (`connectors/registry.rs`,
   plugin gear `registry-connector-plugin`; ADR-0048), on the host its registry
-  prefix names, organization-held like the cluster. Every deploy then writes
-  its login into the namespace as the `studio-registry`
+  prefix names, organization-held like the cluster, and may name a
+  read-only `registry_pull_connection_id`. Images and charts go under the
+  project's own path `<prefix>/<slug>/`, and a deploy takes nothing outside it.
+  Every deploy writes the pull identity (else the push connection's, and the
+  environment warns that the cluster gets a credential that can write) into
+  the namespace as the `studio-registry`
   `kubernetes.io/dockerconfigjson` secret and adds it to the `default` service
   account's `imagePullSecrets`, so the cluster pulls private images whatever
   the chart says. A published chart (`chart_ref`) is accepted only under the
@@ -124,6 +156,14 @@ the middle of a Job with a 403 or "no pod left". Each refusal is a
 | `CLUSTER_CANNOT_READ_NAMESPACE` | the connection may not read the project's namespace, so whether it exists cannot be told |
 | `CLUSTER_CANNOT_CREATE_NAMESPACE` | the namespace does not exist, and the connection lacks a right the bootstrap manifest gives (`create namespaces`, `create rolebindings`, `bind clusterroles/admin`); names the namespace and the manifest |
 | `CLUSTER_NAMESPACE_RIGHTS_MISSING` | the namespace exists, and the connection may not `create` secrets, Jobs or Deployments in it |
+| `CLUSTER_NOT_BOOTSTRAPPED` | the cluster is partially bootstrapped: a right, the admission policy, or the manifest's version label (2) is missing; all are listed |
+| `NAMESPACE_NOT_ASSIGNED` | the cluster gives namespaces and none is assigned to the project, or a found namespace without Studio's label was not assigned |
+| `NAMESPACE_OF_ANOTHER_PROJECT` | a found namespace's `studio.constructor.tech/project` label names another project |
+| `BUILDER_NOT_PINNED` | the builder image names no digest (or none is configured); a stand with `STUDIO_BUILDER_ALLOW_TAG=1` takes a tag |
+| `REGISTRY_CONNECTION_PERSONAL` | a build's registry connection is personal |
+| `REGISTRY_TOKEN_TOO_BROAD` | the registry token may also administer or delete (`admin:*`, `delete:*`, `repo`…), unless the environment sets `allow_broad_registry_token` |
+| `PRODUCT_USES_PLATFORM_IDP` | the product's OIDC issuer is Studio's own (`STUDIO_OIDC_ISSUER`) or its client is one of Studio's (`studio-portal`) |
+| `IMAGE_NOT_IN_PROJECT_PATH` | a deploy names an image or chart outside the project's path |
 
 The rights are asked with SelfSubjectAccessReviews made with the cluster
 connection's own credential. A namespace the connection may not read used to
@@ -192,16 +232,25 @@ once the run ends.
 - `workflow.rs` — the build workflow proposed to a product's repository.
 - `build.rs` — a build in the organization's cluster: the Job, the start and
   watch runs, and the Job's own steps (`studio-backend build-prepare`,
-  `build-publish`), which run in this Studio's backend image
-  (`STUDIO_BUILDER_IMAGE`, else `…/studio-backend:sha-<commit>`). The image
-  must start as uid 1000, since the Job's pod is `runAsNonRoot` with every
+  `build-publish`), which run in the builder image `builder_for` picks: the
+  environment's `builder_image`, else `STUDIO_BUILDER_IMAGE` (the chart's
+  `backend.builds.builderImage`, `studio-builder@sha256:…` from CI), by
+  digest, never the server's own. The watch mints the push token once
+  `prepare` names its images, and writes each published image as a record.
+  The image must start as uid 1000, since the Job's pod is `runAsNonRoot` with every
   capability dropped: the published image does, and so does
   `studio-backend/Dockerfile`'s `builder` target (the binary, git, Gearbox,
   helm; `scripts/check-builder-image.sh` checks it); the stand's
   `Dockerfile.src` image switches user through gosu and cannot. BuildKit
   runs in `STUDIO_BUILDKIT_IMAGE`, else `moby/buildkit:v0.20.0-rootless`. The
   chart sets both (`backend.image`, `backend.builds.buildkitImage`).
-- `rest.rs` — the routes.
+- `rest.rs` — the routes; `rest_images.rs` those of ADR-0062.
+- `placement.rs` — a project's slug, namespaces and registry path in an
+  environment, and whether a found namespace is its own.
+- `images.rs` — image records and references, retention, orphans, where a
+  record runs. No I/O. `records.rs` keeps them; `image_tasks.rs` deletes,
+  copies and sweeps; `service_images.rs` is who may.
+- `images_sink.rs` — a pipeline's published images, recorded.
 
 ## Not yet
 
