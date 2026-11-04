@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { OrgNeed, OrgOverview, OrgWorkspace } from "./api";
 import {
+  attentionStatus,
   growthText,
+  othersAttention,
+  topMoney,
+  workspaceDescription,
+  workspaceStatus,
   moneyFor,
   moneyLabel,
   needText,
@@ -127,5 +132,53 @@ describe("the organization's overview, in words", () => {
     expect(moneyFor(o, "person", true)?.group_by).toBe("person");
     expect(moneyFor(o, "person", false)).toBeNull();
     expect(moneyFor({ money: null } as unknown as OrgOverview, "project", false)).toBeNull();
+  });
+
+  it("says what needs the others once: the queues instead of their sum, the decisions once", () => {
+    const o = {
+      stuck_days: 7,
+      needs: [
+        need({ kind: "connection", tone: "danger", provider: "github", status: "401", projects: ["Shop"] }),
+        need({ kind: "pulls", pulls: 3, people: 2 }),
+        need({ kind: "components", components: 2 }),
+      ],
+      waiting_on: [
+        { person_id: "p", who: "Ann", count: 2, oldest_days: 9 },
+        { person_id: null, who: null, count: 1, oldest_days: 8 },
+      ],
+      decisions: { undecided: 2, candidates: 1, registered: 0, published: 0 },
+      people: { active: 3, with_spend: null, per_person: null, idle: [{ person_id: "abcdef123", name: null }] },
+    } as unknown as OrgOverview;
+    const rows = othersAttention(o, money);
+    expect(rows.map((r) => [r.sentence, r.action.target])).toEqual([
+      ["A github connection is refused (401)", "connectors"],
+      ["2 components wait for a decision", "gears"],
+      ["2 pull requests wait on Ann", "projects"],
+      ["1 pull request waits on nobody (no reviewer asked)", "projects"],
+      ["1 person has been idle for 30 days", "people"],
+    ]);
+    expect(rows[0].tone).toBe("danger");
+    // Without the queues the sum stays; without the need the decisions say themselves.
+    const bare = othersAttention({ ...o, needs: [need({ kind: "pulls", pulls: 3, people: 2 })], waiting_on: [], people: { ...o.people, idle: null } }, money);
+    expect(bare.map((r) => r.sentence)).toEqual(["3 pull requests wait over 7 days", "2 components wait for a decision"]);
+    expect(attentionStatus(null, 0)).toBe("Reading what needs attention…");
+    expect(attentionStatus(0, 0)).toBe("Nothing needs attention");
+    expect(attentionStatus(2, 1)).toBe("3 things need attention");
+  });
+
+  it("drills spend down to the top five", () => {
+    const rows = [1, 7, 3, 9, 5, 2].map((cost) => ({ key: `p${cost}`, label: null, cost, previous: 0, unpriced: false }));
+    expect(topMoney({ group_by: "project", include_personal: false, rows }).map((r) => r.cost)).toEqual([9, 7, 5, 3, 2]);
+    expect(topMoney(null)).toEqual([]);
+  });
+
+  it("describes a workspace by what it holds, not by the word workspace", () => {
+    expect(workspaceDescription(["Shop", "Billing"], false)).toBe("Shop, Billing");
+    expect(workspaceDescription(["a", "b", "c", "d", "e"], true)).toBe("Self-managed · a, b, c and 2 more");
+    expect(workspaceDescription([], false)).toBe("No projects yet");
+    expect(workspaceDescription(undefined, false)).toBe("");
+    expect(workspaceStatus(3, 213)).toBe("3 projects · 213 findings");
+    expect(workspaceStatus(1, null)).toBe("1 project");
+    expect(workspaceStatus(null, null)).toBe("");
   });
 });

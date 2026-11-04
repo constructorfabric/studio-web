@@ -13,12 +13,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
-import { api, TENANT_TYPES, type User } from "./api";
+import { api, TENANT_TYPES, type OrgOverview, type OrgWorkspace, type User } from "./api";
+import { money } from "./costs";
 import { DataTable } from "./data-table";
 import { errText } from "./format";
 import { Modal } from "./modal";
+import { growthText, quietText, workspaceDescription, workspaceLine, workspaceStatus } from "./org-dashboard-model";
 import { portfolioRollups, rollupText, type WorkspaceRollup } from "./rollups";
 import { TenantMark } from "./tenant-icon-view";
+import { PageHeader, StatusChip } from "./ui-standard";
 import { Tile } from "./view-mode";
 
 /** Initials + a stable hue from a name — the mockups' colored member discs. */
@@ -195,6 +198,30 @@ export function ProjectsPortfolio({
     void load();
   }, [load]);
 
+  // Spend, failing specs, stuck pull requests and quiet days per workspace:
+  // the organization overview's numbers, shown where the workspaces are.
+  const [overview, setOverview] = useState<OrgOverview | null>(null);
+  useEffect(() => {
+    if (!org) return;
+    let live = true;
+    api
+      .orgOverview(token, org.id)
+      .then((o) => live && setOverview(o))
+      .catch(() => live && setOverview(null));
+    return () => {
+      live = false;
+    };
+  }, [token, org?.id]);
+  const health = (id: string): OrgWorkspace | undefined => overview?.workspaces.find((w) => w.id === id);
+  const stuckDays = overview?.stuck_days ?? 7;
+  const cash = (n: number) => money(n, overview?.spend?.currency || "USD");
+  const describe = (r: RootProject) => {
+    const h = health(r.id);
+    if (h && h.projects.some((p) => p.reasons.length > 0)) return workspaceLine(h, stuckDays);
+    const kids = children[r.id] ?? (rollups[r.id]?.projects === 0 ? [] : undefined);
+    return workspaceDescription(kids?.map((p) => p.name), r.self_managed);
+  };
+
   async function create(e: FormEvent) {
     e.preventDefault();
     if (!homeOrgId || !name.trim()) return;
@@ -220,18 +247,18 @@ export function ProjectsPortfolio({
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          {/* The organization is chosen in the sidebar switcher now; the
-              portfolio just names where you are. */}
-          {org && <div className="eyebrow">{org.name}</div>}
-          <h1 style={{ marginTop: 8 }}>Workspaces</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            A workspace groups related projects. Open one to see its projects — each project owns its
-            connectors, artifacts and people, and its own IDE sessions.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Workspaces"
+        status={
+          <>
+            <StatusChip tone="neutral">
+              {roots.length} {roots.length === 1 ? "workspace" : "workspaces"}
+            </StatusChip>
+            {org && <span>in {org.name}</span>}
+          </>
+        }
+        info="A workspace groups related projects. Open one to see its projects — each project owns its connectors, artifacts and people, and its own IDE sessions."
+      />
 
       {creating && (
         <div className="card">
@@ -285,7 +312,7 @@ export function ProjectsPortfolio({
       <div className="card">
         <DataTable<RootProject>
           list="workspaces"
-          title={org ? `Workspaces in ${org.name}` : "Workspaces"}
+          title="Workspaces"
           rows={roots === null ? null : byName}
           rowKey={(r) => r.id}
           rowLabel={(r) => r.name}
@@ -320,7 +347,9 @@ export function ProjectsPortfolio({
                   <TenantMark token={token} level="workspace" id={r.id} name={r.name} className="pico ticon-mark" />
                   <div>
                     <div className="pname">{r.name}</div>
-                    <div className="sub">{r.self_managed ? "self-managed" : "workspace"}</div>
+                    <div className="sub" data-workspace-description>
+                      {describe(r)}
+                    </div>
                   </div>
                 </div>
               ),
@@ -333,6 +362,46 @@ export function ProjectsPortfolio({
               cell: (r) => rollupText(rollups[r.id]?.projects ?? null),
             },
             { id: "people", header: "People", cell: (r) => <Avatars users={people[r.id]} /> },
+            {
+              id: "spend",
+              header: "Spend, 30 d",
+              num: true,
+              cell: (r) => {
+                const h = health(r.id);
+                return h?.spend == null ? "—" : cash(h.spend);
+              },
+              compare: (a, b) => (health(a.id)?.spend ?? 0) - (health(b.id)?.spend ?? 0),
+            },
+            {
+              id: "delta",
+              header: "Δ",
+              num: true,
+              cell: (r) => {
+                const h = health(r.id);
+                return h?.spend == null || h.previous === null ? "—" : growthText(h.spend, h.previous);
+              },
+            },
+            {
+              id: "failing",
+              header: "Failing specs",
+              num: true,
+              cell: (r) => health(r.id)?.specs_failing || "—",
+              compare: (a, b) => (health(a.id)?.specs_failing ?? 0) - (health(b.id)?.specs_failing ?? 0),
+            },
+            {
+              id: "stuck",
+              header: `PRs > ${stuckDays} d`,
+              num: true,
+              cell: (r) => health(r.id)?.stuck || "—",
+              compare: (a, b) => (health(a.id)?.stuck ?? 0) - (health(b.id)?.stuck ?? 0),
+            },
+            {
+              id: "quiet",
+              header: "Quiet",
+              num: true,
+              cell: (r) => quietText(health(r.id)?.quiet_days ?? null),
+              compare: (a, b) => (health(a.id)?.quiet_days ?? -1) - (health(b.id)?.quiet_days ?? -1),
+            },
           ]}
           expand={(r) => <NestedProjects kids={children[r.id]} load={() => loadChildren(r.id)} onOpen={(p) => onOpenProject?.(r.id, p)} />}
           actions={(r) => [
@@ -364,7 +433,7 @@ export function ProjectsPortfolio({
             <Tile
               icon={<TenantMark token={token} level="workspace" id={r.id} name={r.name} />}
               title={r.name}
-              subtitle={r.self_managed ? "self-managed" : "workspace"}
+              subtitle={describe(r)}
               onClick={open}
               /* People come from the avatar list, not the rollup, and `?? null`
                  keeps "not read yet" a dash instead of nobody. */
@@ -422,5 +491,40 @@ function ProjectGlyph() {
       <path d="M4 1.8h5.2L12.4 5v8.2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
       <path d="M9 1.9V5h3.3" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/** A workspace page's line under its name: what it holds -- its projects by
+ *  name and "3 projects · 213 findings" -- read once, in one request. */
+export function WorkspaceStatusLine({ token, workspaceId, selfManaged }: { token: string; workspaceId: string; selfManaged: boolean }) {
+  const [read, setRead] = useState<{ names: string[]; projects: number | null; findings: number | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setRead(null);
+    portfolioRollups(token, workspaceId)
+      .then(({ workspaces, projects }) => {
+        if (!live) return;
+        const mine = [...projects.values()].filter((p) => p.parentId === workspaceId);
+        const counted = mine.filter((p) => p.findings !== null);
+        setRead({
+          names: mine.map((p) => p.name),
+          projects: workspaces.get(workspaceId)?.projects ?? mine.length,
+          findings: counted.length ? counted.reduce((n, p) => n + (p.findings ?? 0), 0) : null,
+        });
+      })
+      .catch(() => live && setRead({ names: [], projects: null, findings: null }));
+    return () => {
+      live = false;
+    };
+  }, [token, workspaceId]);
+  if (!read) return <span className="sub">…</span>;
+  const status = workspaceStatus(read.projects, read.findings);
+  const description = workspaceDescription(read.projects === null ? undefined : read.names, selfManaged);
+  return (
+    <span className="ws-status" data-workspace-status>
+      {description && <span>{description}</span>}
+      {description && status && <span aria-hidden> · </span>}
+      {status && <b>{status}</b>}
+    </span>
   );
 }

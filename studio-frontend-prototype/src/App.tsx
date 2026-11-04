@@ -24,7 +24,7 @@ import {
   ProjectKits,
   SpecQuality,
 } from "./lazy-screens";
-import { ProjectsPortfolio } from "./projects";
+import { ProjectsPortfolio, WorkspaceStatusLine } from "./projects";
 import { ConnectorLogo } from "./connector-logos";
 import { portfolioRollups, rollupText, type ProjectRollup } from "./rollups";
 import {
@@ -144,7 +144,6 @@ import { PlatformSources } from "./platform-sources";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
-import { WaitingOnYou } from "./waiting-on-me-view";
 import {
   BookIcon,
   CheckIcon,
@@ -2876,33 +2875,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "org" && orgAsSpace && (
-          <>
-          {/* What waits on this person across the organization's workspaces:
-              the first thing to see on its overview, not a page of its own. */}
-          <WaitingOnYou
+          <OrgDashboard
+            key={orgAsSpace.id}
             token={token}
+            org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
+            // What waits on you is read across these, inside its "Needs attention".
             workspaces={workspaces.filter((w) => w.orgId === orgAsSpace.id)}
             onOpenWorkspace={(ws) => {
               setCrumb({ projectId: ws.id });
               setView("projects");
             }}
-          />
-          <OrgDashboard
-            key={orgAsSpace.id}
-            token={token}
-            org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
             onOpen={(target) => {
               setCrumb({});
               setView(target);
             }}
-            onOpenProject={(workspaceId, projectId, name) => {
-              setProjectLabel(name);
-              setCrumb({ projectId: workspaceId, nestedId: projectId });
-              setProjectTab("overview");
-              setView("projects");
-            }}
           />
-          </>
         )}
         {view === "connectors" &&
           (orgAsSpace ? (
@@ -3851,7 +3838,7 @@ function WorkspaceHeader({
           <h1>{workspace.name}</h1>
         </div>
         <p className="subtitle" style={{ margin: 0 }}>
-          <code>{workspace.id.slice(0, 8)}…</code>
+          <WorkspaceStatusLine token={token} workspaceId={workspace.id} selfManaged={workspace.self_managed} />
         </p>
       </div>
       {actions}
