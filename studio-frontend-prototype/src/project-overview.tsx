@@ -30,7 +30,7 @@
  *   pull requests studio-artifact-ingest /open-pull-requests
  *   deployments   studio-environments /deployments
  *   activity      studio-artifact-ingest's Activity feed
- *   team          account management, the project tenant's users
+ *   team          the organization's members the project's access reaches (org-people.ts)
  *   studio        the IDE session for this project, launched from here
  *
  * A source that does not answer is named under Needs attention, never shown
@@ -39,6 +39,7 @@
 import { HeaderIcon } from "./tenant-icon-view";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { projectTeam } from "./org-people";
 import type {
   ActivityEvent,
   ArtifactNode,
@@ -236,7 +237,11 @@ export function ProjectOverview({
     jobs.push(soft("pull requests", api.openPullRequests(token, id), misses).then((r) => setPulls(r ? r.items : null)));
     jobs.push(soft("deployments", api.deployments(token, { project: id }), misses).then((r) => setDeployments(r ? r.items : null)));
     jobs.push(soft("activity", api.activityFeed(token, id), misses).then((r) => setEvents(r ? r.items : null)));
-    jobs.push(soft("team", api.tenantUsersAll(token, id), misses).then((r) => setTeam(r ? r.items : null)));
+    jobs.push(
+      project.orgId
+        ? soft("team", projectTeam(token, project.orgId, id), misses).then((r) => setTeam(r))
+        : Promise.resolve(setTeam(null)),
+    );
     jobs.push(
       soft("IDE sessions", api.studioSessions(token), misses).then((r) =>
         // A session is keyed by the tenant it was launched for.

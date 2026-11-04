@@ -3397,7 +3397,10 @@ button.mb-value:focus-visible { outline: 2px solid var(--ring, var(--primary)); 
   .org-dash .org-layout { grid-template-columns: minmax(0, 1fr); }
   .org-dash .org-needs { position: static; }
 }
-.mb-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); align-items: start; }
+/* At most five panels a row, each at least 220px: the columns fill the board's
+   width, so a row of five ends where Needs attention begins, with no empty
+   sixth track left over on a wide screen. */
+.mb-grid { grid-template-columns: repeat(auto-fill, minmax(max(220px, calc((100% - 40px) / 5)), 1fr)); align-items: start; }
 .mb-panel-head { flex-wrap: nowrap; align-items: center; }
 .mb-panel-title { flex: 0 1 auto; min-width: 0; }
 .mb-panel-off { gap: 2px; padding-block: 10px; }

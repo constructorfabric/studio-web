@@ -574,6 +574,7 @@ export const SURFACES: Surface[] = [
       "studio-organizations",
       "studio-product",
       "studio-session",
+      "studio-user",
     ],
   },
   {

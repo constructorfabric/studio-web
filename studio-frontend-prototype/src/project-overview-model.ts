@@ -348,7 +348,7 @@ export function teamPanel(
     source: "Studio" as const,
     unit: "people on the project",
     info:
-      "The project's members (account management), and how often the project saw each at work: Activity events signed with their login " +
+      "The organization's members the project's access reaches, and how often the project saw each at work: Activity events signed with their login " +
       "and open pull requests they wrote or review. A person working under another git login is not matched. It is now, not a range.",
     target: "people" as const,
   };
