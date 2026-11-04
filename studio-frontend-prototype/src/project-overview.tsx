@@ -42,10 +42,11 @@ import type {
 } from "./api";
 import { findRepoNode } from "./artifact-sync";
 import { projectRepoRows } from "./project-sources";
-import { errText, initials, relTime } from "./format";
+import { errText, relTime } from "./format";
 import { OpenInDesktop } from "./open-in-desktop";
 import { PullRequestsWaiting } from "./pull-requests-waiting";
 import { ProjectPath } from "./project-path-view";
+import { InfoPopover, KpiTile, PageHeader, StatusChip } from "./ui-standard";
 
 /** The sections of an open project. Lives here because Overview is the screen
  *  that links to all of them; the shell's rail renders the list.
@@ -120,30 +121,6 @@ async function countNodes(token: string, type: string, scope: string): Promise<n
 }
 
 /* ── Small presentational pieces ── */
-
-/** A dashboard number: big count, what it counts, one line of detail. Clicking
- *  it goes to the tab that owns the thing. */
-function Stat({
-  label,
-  value,
-  sub,
-  tone,
-  onClick,
-}: {
-  label: string;
-  value: string | number;
-  sub?: string;
-  tone?: "ok" | "warn" | "danger";
-  onClick?: () => void;
-}) {
-  return (
-    <button type="button" className={`stat${tone ? ` ${tone}` : ""}`} onClick={onClick} disabled={!onClick}>
-      <span className="stat-k">{label}</span>
-      <span className="stat-n">{value}</span>
-      <span className="stat-sub">{sub ?? " "}</span>
-    </button>
-  );
-}
 
 /** Percentage + slim bar + count — the conformance and sync meters. */
 function Meter({ done, total, unit }: { done: number; total: number; unit: string }) {
@@ -358,13 +335,6 @@ export function ProjectOverview({
 
   const started = rows.filter((r) => !r.untouched);
   const notStarted = rows.filter((r) => r.untouched);
-  const approved = docs.filter((d) => d.status === "approved").length;
-  /** Every document the project has, written here or bound from a repository
-   *  — the same count the Spec pipeline rows add up to. Counting only the
-   *  authored ones made this card say "none yet" beside a pipeline listing a
-   *  hundred documents. */
-  const specTotal = rows.reduce((n, r) => n + r.total, 0);
-  const specValid = rows.reduce((n, r) => n + r.valid, 0);
 
   /** Findings by severity — the detectors write `high`/`medium`/`low`, and
    *  anything unlabelled counts as `info`. */
@@ -376,7 +346,6 @@ export function ProjectOverview({
     }
     return m;
   }, [findings]);
-  const highFindings = (bySeverity.get("high") ?? 0) + (bySeverity.get("critical") ?? 0);
 
   // Every stage, in catalogue order. A project does not pick its stages: they
   // are a computed status of what it has (ADR-0058), and `stage_status` has
@@ -458,101 +427,126 @@ export function ProjectOverview({
 
   return (
     <div className="dash">
-      {/* How this project is SET UP — one line, not a card.
-          Where it sits is no longer repeated here. The id was already under the
-          title two lines above ("project · d5e76267…") and the organization is
-          the first segment of the bar's PathBar, so this row opened by telling
-          the reader twice what they could already see, and buried the part only
-          it knows — kind, status — behind that. */}
-      <div className="dash-context">
-        <HeaderIcon token={token} level="project" id={project.id} name={project.name} kind={config?.kind} />
-        <LevelBadge level="project" />
-        <h1 className="level-title">{project.name}</h1>
-        {config?.kind && <span className="badge info">{config.kind.replace("_", " ")}</span>}
-        {config?.status && (
-          <span
-            className={`badge ${config.status === "active" ? "ok" : config.status === "archived" ? "neutral" : "draft"}`}
-          >
-            {config.status}
-          </span>
-        )}
-        {project.self_managed && <span className="badge selfmanaged">self-managed</span>}
-        <button className="ghost" disabled={refreshing} onClick={() => void refresh()}>
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
+      {/* One standard header: the project, how it is set up and where its IDE
+          stands, in chips; the IDE is its action. What the screen is for is
+          behind the "?", not a banner above every visit. */}
+      <PageHeader
+        icon={<HeaderIcon token={token} level="project" id={project.id} name={project.name} kind={config?.kind} />}
+        title={project.name}
+        info={
+          <>
+            <p>
+              Where the project stands. Follow the path below; each step opens the tab where it is done.
+            </p>
+            <p>
+              The Web IDE is a session in your browser that clones the project&apos;s repositories and opens them
+              together; the desktop app does the same on your machine. A running session is stopped from the Spaces
+              list in the sidebar.
+            </p>
+          </>
+        }
+        status={
+          <>
+            <LevelBadge level="project" />
+            {config?.kind && <StatusChip tone="info">{config.kind.replace("_", " ")}</StatusChip>}
+            {config?.status && (
+              <StatusChip tone={config.status === "active" ? "ok" : "neutral"}>{config.status}</StatusChip>
+            )}
+            {project.self_managed && <StatusChip tone="neutral">self-managed</StatusChip>}
+            {liveSession && (
+              <StatusChip
+                tone={liveSession.state === "running" ? "running" : "neutral"}
+                title={`${liveSession.sources.length} source${liveSession.sources.length === 1 ? "" : "s"} mounted`}
+                data-ide-state={liveSession.state}
+              >
+                IDE {liveSession.state}
+              </StatusChip>
+            )}
+            {/* The one fact on this screen about the reader: silent at zero, and
+                silent when no sync read a checkout (not the same as nothing owed). */}
+            {waitingOnMe ? (
+              <StatusChip tone="warn" title="Answered in the IDE, where each thread sits on the text it is about" data-waiting-on-me>
+                {waitingOnMe} comment {waitingOnMe === 1 ? "thread waits" : "threads wait"} on you
+              </StatusChip>
+            ) : null}
+            {missing.length > 0 && (
+              <StatusChip tone="warn" title={`What they hold is shown as “—”, not as zero.`} data-no-answer>
+                no answer from {missing.join(", ")}
+              </StatusChip>
+            )}
+          </>
+        }
+        actions={
+          <>
+            <button
+              className="primary"
+              onClick={onOpenStudio}
+              title={liveSession ? "Open the running session in this window" : "Start a session for this project and open it in this window"}
+              data-open-ide
+            >
+              Open IDE
+            </button>
+            <OpenInDesktop token={token} project={project} />
+            <button className="ghost" disabled={refreshing} onClick={() => void refresh()}>
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </>
+        }
+      />
 
       {error && <div className="error">{error}</div>}
-      {missing.length > 0 && (
-        <p className="hint">
-          No answer from: {missing.join(", ")} — what they hold is shown as “—”, not as zero.
-        </p>
-      )}
 
-      {/* Where the project is on its way to a product that builds. Loads on
-          its own, after the numbers below, so a slow model read never holds
-          the dashboard. */}
+      {/* Where the project is on its way to a product that builds: the main
+          block, with the numbers (specs typed, repositories synced, findings)
+          in its rows. Loads on its own, after the tiles below, so a slow model
+          read never holds the dashboard. */}
       <ProjectPath
         token={token}
         projectId={project.id}
         repositories={missed("repositories") ? null : repos.length}
+        synced={missed("repositories") || missed("artifact graph") ? null : syncedRepos}
         onOpenTab={onOpenTab}
       />
 
-      {/* The project in six numbers. Each one opens the tab that owns it. */}
-      <div className="dash-stats">
-        <Stat
-          label="Specs"
-          value={missed("spec pipeline") ? "—" : specTotal}
-          sub={
-            specTotal
-              ? `${specValid} valid${approved ? ` · ${approved} approved` : ""}`
-              : "none yet"
-          }
-          tone={specTotal > 0 && specValid < specTotal ? "warn" : undefined}
-          onClick={() => onOpenTab("specs")}
-        />
-        <Stat
-          label="Pipeline"
-          value={missed("document types") ? "—" : `${started.length}/${types.length}`}
-          sub={notStarted.length ? `${notStarted.length} type${notStarted.length === 1 ? "" : "s"} not started` : "every type covered"}
-          onClick={() => onOpenTab("specs")}
-        />
-        <Stat
-          label="Repositories"
-          value={missed("repositories") ? "—" : repos.length}
-          sub={repos.length ? `${syncedRepos} synced` : "none attached"}
-          tone={repos.length > 0 && syncedRepos < repos.length ? "warn" : undefined}
-          /* Sources, not Artifacts. The stat counts sources and the tone warns
-             about unsynced ones, so the place it opens should be the one where
-             a sync is run — not the list of what a sync produced. */
-          onClick={() => onOpenTab("sources")}
-        />
-        <Stat
+      {/* What the path does not say, in three tiles. Each opens the tab that
+          owns it; a "—" says why behind its "?". */}
+      <div className="dash-stats" data-overview-kpis>
+        <KpiTile
           label="Artifacts"
           value={artifactsKnown ? artifactTotal : "—"}
-          sub={`${counts.build_artifact} from CI · ${counts.release} releases`}
-          onClick={() => onOpenTab("artifacts")}
+          sub={artifactsKnown ? `${counts.build_artifact} from CI · ${counts.release} releases` : undefined}
+          why="The artifact graph did not answer: what the builds kept is unknown, which is not zero."
+          onOpen={() => onOpenTab("artifacts")}
         />
-        <Stat
-          label="Findings"
-          value={missed("spec-quality findings") ? "—" : findingTotal}
-          sub={highFindings ? `${highFindings} high severity` : findingTotal ? "none high" : "not analysed"}
-          tone={highFindings ? "danger" : undefined}
-          onClick={() => onOpenTab("specs")}
+        <KpiTile
+          label="Pipeline"
+          value={missed("document types") || missed("spec pipeline") ? "—" : `${started.length}/${types.length}`}
+          sub={
+            missed("document types") || missed("spec pipeline")
+              ? undefined
+              : notStarted.length
+                ? `${notStarted.length} type${notStarted.length === 1 ? "" : "s"} not started`
+                : "every type covered"
+          }
+          tone={notStarted.length > 0 ? "warn" : undefined}
+          why="The document types or the spec pipeline did not answer."
+          onOpen={() => onOpenTab("specs")}
         />
-        <Stat
+        <KpiTile
           label="Team"
           value={missed("team") ? "—" : team.length}
           sub={
-            team.length === 0
-              ? "nobody assigned"
-              : team
-                  .slice(0, 2)
-                  .map((u) => u.display_name || u.username)
-                  .join(", ") + (team.length > 2 ? ` +${team.length - 2}` : "")
+            missed("team")
+              ? undefined
+              : team.length === 0
+                ? "nobody assigned"
+                : team
+                    .slice(0, 2)
+                    .map((u) => u.display_name || u.username)
+                    .join(", ") + (team.length > 2 ? ` +${team.length - 2}` : "")
           }
-          onClick={() => onOpenTab("people")}
+          why="The account service did not answer for this project's members: who is on it is unknown, not nobody."
+          onOpen={() => onOpenTab("people")}
         />
       </div>
 
@@ -562,7 +556,16 @@ export function ProjectOverview({
                 and whether what it produced passes its own type's checks. ── */}
           <div className="card">
             <div className="card-head">
-              <h2>Spec pipeline</h2>
+              <h2>
+                Spec pipeline{" "}
+                <InfoPopover label="About the spec pipeline">
+                  One row per document type the workspace defines, counting documents written here and repository
+                  files bound to that type alike. A type with documents shows how they stand and how many satisfy the
+                  type&apos;s required sections; the rest is what this project has neither written nor found. A file a
+                  scan only guessed at is shown as unconfirmed and left out of the count — a guess is not coverage.
+                  “Validate all” re-checks every document and lists what the checker objects to.
+                </InfoPopover>
+              </h2>
               <div style={{ display: "flex", gap: 8 }}>
                 <button className="ghost" disabled={validating || docs.length === 0} onClick={() => void validateAll()}>
                   {validating ? "Validating…" : "Validate all"}
@@ -572,15 +575,6 @@ export function ProjectOverview({
                 </button>
               </div>
             </div>
-            <p className="hint">
-              One row per document type the workspace defines, counting documents written here and
-              repository files bound to that type alike. A type with documents shows how they stand
-              and how many satisfy the type's required sections; the rest is what this project has
-              neither written nor found. A file a scan only guessed at is shown as unconfirmed and
-              left out of the count — a guess is not coverage. “Validate all” re-checks every
-              document and lists what the checker objects to.
-            </p>
-
             {stages.length > 0 && (
               <div className="dash-stages">
                 {stages.map((s) => (
@@ -731,64 +725,6 @@ export function ProjectOverview({
         </div>
 
         <div className="dash-col">
-          {/* ── IDE: this project in the browser (a session) or in the desktop app. ── */}
-          <div className="card launcher">
-            <div className="card-head">
-              <h2>IDE</h2>
-              {liveSession && <span className={`badge ${liveSession.state === "running" ? "ok" : "info"}`}>{liveSession.state}</span>}
-            </div>
-            {/* The one line on this screen that is about the reader. Above the
-                session state on purpose: it is the reason to open the IDE, and
-                a reason belongs before the door. Silent at zero — a dashboard
-                that reports nothing owed on every project teaches people to
-                stop reading it — and silent when the sync never read a
-                checkout, which is not the same as nothing owed. */}
-            {waitingOnMe ? (
-              <p className="hint waiting">
-                <b>
-                  {waitingOnMe} comment {waitingOnMe === 1 ? "thread is" : "threads are"} waiting on
-                  you
-                </b>{" "}
-                in this project. They are answered in the IDE, where the thread sits on the text it
-                is about.
-              </p>
-            ) : null}
-            {liveSession ? (
-              <>
-                <p className="hint">
-                  A session is up for this project
-                  {liveSession.sources.length
-                    ? ` with ${liveSession.sources.length} source${liveSession.sources.length === 1 ? "" : "s"} mounted`
-                    : " with an empty workspace"}
-                  . Opening it brings the IDE into this window; the Spaces list in the sidebar is
-                  where you stop it.
-                </p>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <button className="primary" onClick={onOpenStudio} title="Open the running session in this window">
-                    Web IDE
-                  </button>
-                  <OpenInDesktop token={token} project={project} />
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="hint">
-                  Open this project in an IDE. The Web IDE is a session in your browser that clones{" "}
-                  {repos.length === 0
-                    ? "an empty workspace — attach a repository first to have it check something out"
-                    : `${repos.length} attached repositor${repos.length === 1 ? "y" : "ies"} and opens them together`}
-                  ; the desktop app does the same in the Constructor Studio app on your machine.
-                </p>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <button className="primary" onClick={onOpenStudio} title="Start a session for this project and open it in this window">
-                    Web IDE
-                  </button>
-                  <OpenInDesktop token={token} project={project} />
-                </div>
-              </>
-            )}
-          </div>
-
           {/* ── Spec quality: what the detectors found, written back to the
                 graph as findings on the documents they are about. ── */}
           <div className="card">
@@ -865,40 +801,6 @@ export function ProjectOverview({
             )}
           </div>
 
-          {/* ── Team: who is on the project. ── */}
-          <div className="card">
-            <div className="card-head">
-              <h2>Team</h2>
-              <button className="ghost" onClick={() => onOpenTab("people")}>
-                Team →
-              </button>
-            </div>
-            <ul className="rows">
-              <li>
-                <div className="grow">
-                  <div className="name">
-                    Team · {team.length} member{team.length === 1 ? "" : "s"}
-                  </div>
-                  <div className="sub">
-                    {team.length === 0
-                      ? "nobody assigned to this project tenant"
-                      : team
-                          .slice(0, 4)
-                          .map((u) => u.display_name || u.username)
-                          .join(", ")}
-                    {team.length > 4 ? ` +${team.length - 4}` : ""}
-                  </div>
-                </div>
-                <span className="avatars">
-                  {team.slice(0, 3).map((u) => (
-                    <span key={u.id} className="avatar" title={u.display_name || u.username}>
-                      {initials(u.display_name || u.username)}
-                    </span>
-                  ))}
-                </span>
-              </li>
-            </ul>
-          </div>
         </div>
       </div>
     </div>

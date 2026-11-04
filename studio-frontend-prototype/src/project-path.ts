@@ -14,6 +14,8 @@ export type StepId = "repos" | "types" | "model" | "findings" | "product" | "bui
 export interface PathFacts {
   /** Repositories attached to the project. */
   repositories: number | null;
+  /** How many of them a sync has read; null (or absent) when unknown. */
+  synced?: number | null;
   /** The Specs queues: typed (bound), waiting for a decision, not read yet. */
   specs: { bound: number; needsReview: number; notScanned: number } | null;
   /** The domain model: documents read out of how many, facts, a build running. */
@@ -45,7 +47,13 @@ function repos(f: PathFacts): Draft {
   const base = { id: "repos" as const, title: "Connect a repository", tab: "sources" as const, action: "Open Sources" };
   if (f.repositories === null) return { ...base, done: null, status: "Could not read the project's sources." };
   return f.repositories > 0
-    ? { ...base, done: true, status: `${plural(f.repositories, "repository", "repositories")} attached.` }
+    ? {
+        ...base,
+        done: true,
+        status: `${plural(f.repositories, "repository", "repositories")} attached${
+          f.synced == null ? "" : f.synced === f.repositories ? `, ${f.synced === 1 ? "synced" : "all synced"}` : `, ${f.synced} synced`
+        }.`,
+      }
     : { ...base, done: false, status: "No repository yet. Attach one so Studio can read its documents." };
 }
 
@@ -145,10 +153,10 @@ export function specQueues(counts: readonly { queue: string; count: number }[]):
  *  Builds are missing on purpose: each of Domain model's views carries its own
  *  line, Product opens on its way from configured to running
  *  (product-flow.ts), and Builds on where the build stands and what comes next
- *  (pipeline.ts). Specs and Releases have a PageHeader (ui-standard.tsx) with
- *  their status in a line and the explanation behind its "?". */
+ *  (pipeline.ts). Overview, Specs and Releases have a PageHeader
+ *  (ui-standard.tsx) with their status in a line and the explanation behind
+ *  its "?". */
 export const TAB_HOWTO: Partial<Record<ProjTab, { lead: string; rest: string }>> = {
-  overview: { lead: "Where the project stands.", rest: "Follow the path below; each step opens the tab where it is done." },
   sources: { lead: "Connect the repositories.", rest: "A sync reads their documents, issues, pull requests and CI runs into the project." },
   artifacts: { lead: "Take what the project produced.", rest: "Download the files its CI builds kept and its releases; its typed documents and the files kept in Studio are beside them." },
   kits: { lead: "Install the project's ways of working.", rest: "Kits add workflows and conventions to the repository, pinned to a version." },

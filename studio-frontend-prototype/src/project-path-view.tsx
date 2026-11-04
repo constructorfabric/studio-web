@@ -22,7 +22,12 @@ async function soft<T>(p: Promise<T>): Promise<T | null> {
  *  ("did the last build pass"), not for the history the Builds tab shows. */
 const RUNS = 50;
 
-async function gather(token: string, projectId: string, repositories: number | null): Promise<PathFacts> {
+async function gather(
+  token: string,
+  projectId: string,
+  repositories: number | null,
+  synced: number | null,
+): Promise<PathFacts> {
   const [rows, model, findings, product, runs] = await Promise.all([
     soft(api.specRows(token, projectId)),
     soft(api.specModel(token, projectId)),
@@ -37,6 +42,7 @@ async function gather(token: string, projectId: string, repositories: number | n
   const last = built ? latestFinished(built, mainBranch(built)) : null;
   return {
     repositories,
+    synced,
     specs: rows ? specQueues(rows.sources.counts) : null,
     model: model
       ? {
@@ -67,23 +73,26 @@ export function ProjectPath({
   token,
   projectId,
   repositories,
+  synced = null,
   onOpenTab,
 }: {
   token: string;
   projectId: string;
   /** Counted by Overview already; null when its read failed. */
   repositories: number | null;
+  /** How many of them a sync has read, counted by Overview too. */
+  synced?: number | null;
   onOpenTab: (tab: ProjTab) => void;
 }) {
   const [steps, setSteps] = useState<PathStep[] | null>(null);
 
   useEffect(() => {
     let live = true;
-    void gather(token, projectId, repositories).then((facts) => live && setSteps(projectPath(facts)));
+    void gather(token, projectId, repositories, synced).then((facts) => live && setSteps(projectPath(facts)));
     return () => {
       live = false;
     };
-  }, [token, projectId, repositories]);
+  }, [token, projectId, repositories, synced]);
 
   const progress = steps ? pathProgress(steps) : null;
   return (
