@@ -220,14 +220,16 @@ pub struct SourcesLock {
     pub sources: Vec<LockedSource>,
 }
 
-#[cfg(test)]
 impl SourcesLock {
     /// Whether every source is pinned to a commit: what a protected
     /// environment builds.
     pub fn complete(&self) -> bool {
         !self.sources.is_empty() && self.sources.iter().all(|s| s.commit.is_some())
     }
+}
 
+#[cfg(test)]
+impl SourcesLock {
     /// The pinned commit of source `id`.
     pub fn commit_of(&self, id: &str) -> Option<&str> {
         self.sources

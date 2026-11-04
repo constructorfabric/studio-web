@@ -269,7 +269,18 @@ impl ProductService {
                 },
             )
             .await?;
-        if let Saved::Created(r) = &mut saved {
+        let to_pin = match &mut saved {
+            Saved::Created(r) => Some(r),
+            // A revision whose sources are not all pinned (kept before
+            // pinning, or a source's head was unreadable then) is pinned by
+            // saving it again: the text is the same, so no revision is
+            // written, and `REVISION_NOT_PINNED` says to do exactly this.
+            Saved::Unchanged(r) if !r.sources_lock.as_ref().is_some_and(|l| l.complete()) => {
+                Some(r)
+            }
+            _ => None,
+        };
+        if let Some(r) = to_pin {
             // The commit of each source the text uses, beside the revision
             // (ADR-0060 §3). A lock that could not be kept leaves the
             // revision unpinned: a dev build still builds it, a protected
@@ -597,7 +608,11 @@ impl ProductService {
         source: crate::project_sources::ProjectSource,
     ) -> Option<String> {
         let repo_name = source.full_path.clone();
-        let target = self.source_as_target(ctx, project, source).await?;
+        let connection = source.connection_id;
+        let Some(target) = self.source_as_target(ctx, project, source).await else {
+            tracing::warn!(%project, repo = %repo_name, ?connection, "studio-product: a source's connection is not one the project can use, so its head is not pinned");
+            return None;
+        };
         let read = async {
             let repo = self.open_target(ctx, &target, None).await?;
             repo.head_of(&target.base_branch).await
