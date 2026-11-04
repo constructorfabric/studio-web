@@ -229,7 +229,7 @@
       "summary": "Let an image go by its retention policy again",
       "authenticated": true,
       "responses": [
-        "ImageDto"
+        "ImageRecordDto"
       ],
       "errors": [
         "401",
@@ -276,7 +276,7 @@
       "summary": "Delete one digest from an organization's registry",
       "authenticated": true,
       "responses": [
-        "RunDto"
+        "ImageDeleteRunDto"
       ],
       "errors": [
         "400",
@@ -2066,7 +2066,7 @@
       "summary": "One of a project's images, and where it runs",
       "authenticated": true,
       "responses": [
-        "ImageDto"
+        "ImageRecordDto"
       ],
       "errors": [
         "401",
@@ -6579,7 +6579,7 @@
       "summary": "Keep an image past its retention policy",
       "authenticated": true,
       "responses": [
-        "ImageDto"
+        "ImageRecordDto"
       ],
       "errors": [
         "401",

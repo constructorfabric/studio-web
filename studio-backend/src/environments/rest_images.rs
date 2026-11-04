@@ -46,7 +46,7 @@ fn runs_dto(r: RunsIn) -> RunsInDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct ImageDto {
+pub struct ImageRecordDto {
     #[schema(value_type = String)]
     pub id: Uuid,
     #[schema(value_type = String)]
@@ -93,8 +93,8 @@ fn rfc3339_ms(ms: i64) -> String {
         .unwrap_or_default()
 }
 
-fn image_dto((r, runs): (ImageRecord, Vec<RunsIn>)) -> ImageDto {
-    ImageDto {
+fn image_dto((r, runs): (ImageRecord, Vec<RunsIn>)) -> ImageRecordDto {
+    ImageRecordDto {
         reference: match r.kind {
             ImageKind::Image => r.reference(),
             ImageKind::Chart => r.chart_ref(),
@@ -128,7 +128,7 @@ fn image_dto((r, runs): (ImageRecord, Vec<RunsIn>)) -> ImageDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct ImageListDto {
-    pub items: Vec<ImageDto>,
+    pub items: Vec<ImageRecordDto>,
     pub total: u32,
 }
 
@@ -144,7 +144,7 @@ pub struct ImageRunDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct RunDto {
+pub struct ImageDeleteRunDto {
     #[schema(value_type = String)]
     pub run_id: Uuid,
 }
@@ -253,7 +253,7 @@ pub struct RepositoryListDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct VersionDto {
+pub struct RegistryVersionDto {
     pub digest: Option<String>,
     pub tags: Vec<String>,
     pub size_bytes: Option<i64>,
@@ -269,7 +269,7 @@ pub struct VersionDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct VersionListDto {
-    pub items: Vec<VersionDto>,
+    pub items: Vec<RegistryVersionDto>,
     pub total: u32,
 }
 
@@ -496,7 +496,7 @@ async fn list_images(
         )
         .await
         .map_err(problem)?;
-    let items: Vec<ImageDto> = items
+    let items: Vec<ImageRecordDto> = items
         .into_iter()
         .filter(|(_, runs)| {
             q.environment_id
@@ -515,7 +515,7 @@ async fn get_image(
     Extension(envs): Extension<Environments>,
     Path(image_id): Path<Uuid>,
     Query(q): Query<ProjectQuery>,
-) -> ApiResult<JsonBody<ImageDto>> {
+) -> ApiResult<JsonBody<ImageRecordDto>> {
     let placed = envs
         .0
         .image(&ctx, q.project_id, image_id)
@@ -529,7 +529,7 @@ async fn pin_image(
     Extension(envs): Extension<Environments>,
     Path(image_id): Path<Uuid>,
     Query(q): Query<ProjectQuery>,
-) -> ApiResult<JsonBody<ImageDto>> {
+) -> ApiResult<JsonBody<ImageRecordDto>> {
     let placed = envs
         .0
         .pin_image(&ctx, q.project_id, image_id, true)
@@ -543,7 +543,7 @@ async fn unpin_image(
     Extension(envs): Extension<Environments>,
     Path(image_id): Path<Uuid>,
     Query(q): Query<ProjectQuery>,
-) -> ApiResult<JsonBody<ImageDto>> {
+) -> ApiResult<JsonBody<ImageRecordDto>> {
     let placed = envs
         .0
         .pin_image(&ctx, q.project_id, image_id, false)
@@ -724,7 +724,7 @@ async fn list_versions(
         total: total(list.len()),
         items: list
             .into_iter()
-            .map(|v| VersionDto {
+            .map(|v| RegistryVersionDto {
                 digest: v.version.digest,
                 tags: v.version.tags,
                 size_bytes: v.version.size_bytes,
@@ -741,7 +741,7 @@ async fn delete_version(
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
     Path((connection_id, repository, digest)): Path<(Uuid, String, String)>,
-) -> ApiResult<(StatusCode, JsonBody<RunDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<ImageDeleteRunDto>)> {
     let run_id = envs
         .0
         .delete_registry_version(
@@ -753,7 +753,7 @@ async fn delete_version(
         )
         .await
         .map_err(problem)?;
-    Ok((StatusCode::ACCEPTED, Json(RunDto { run_id })))
+    Ok((StatusCode::ACCEPTED, Json(ImageDeleteRunDto { run_id })))
 }
 
 async fn list_orphans(
@@ -995,7 +995,7 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .path_param("image_id", "Image record id")
         .query_param_typed("project_id", true, "The project", "string")
         .handler(get_image)
-        .json_response_with_schema::<ImageDto>(openapi, StatusCode::OK, "The image")
+        .json_response_with_schema::<ImageRecordDto>(openapi, StatusCode::OK, "The image")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -1012,7 +1012,7 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .path_param("image_id", "Image record id")
         .query_param_typed("project_id", true, "The project", "string")
         .handler(pin_image)
-        .json_response_with_schema::<ImageDto>(openapi, StatusCode::OK, "Pinned")
+        .json_response_with_schema::<ImageRecordDto>(openapi, StatusCode::OK, "Pinned")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -1029,7 +1029,7 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .path_param("image_id", "Image record id")
         .query_param_typed("project_id", true, "The project", "string")
         .handler(unpin_image)
-        .json_response_with_schema::<ImageDto>(openapi, StatusCode::OK, "Unpinned")
+        .json_response_with_schema::<ImageRecordDto>(openapi, StatusCode::OK, "Unpinned")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -1235,7 +1235,7 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     .path_param("digest", "sha256:…")
     .query_param_typed("organization_id", false, "The organization", "string")
     .handler(delete_version)
-    .json_response_with_schema::<RunDto>(openapi, StatusCode::ACCEPTED, "Deleting")
+    .json_response_with_schema::<ImageDeleteRunDto>(openapi, StatusCode::ACCEPTED, "Deleting")
     .error_400(openapi)
     .error_401(openapi)
     .error_403(openapi)
