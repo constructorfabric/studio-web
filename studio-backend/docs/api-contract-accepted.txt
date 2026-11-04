@@ -615,6 +615,12 @@ request	POST /studio-environments/v1/environments	connection_id	Uuid	required
 request	POST /studio-environments/v1/environments	database	String	optional
 request	POST /studio-environments/v1/environments	database_image	String	optional
 request	POST /studio-environments/v1/environments	description	String	optional
+request	POST /studio-environments/v1/environments	infra	{}	optional
+request	POST /studio-environments/v1/environments	infra.placement	String	optional
+request	POST /studio-environments/v1/environments	infra.shared	Vec<{}>	optional
+request	POST /studio-environments/v1/environments	infra.shared.namespace	String	optional
+request	POST /studio-environments/v1/environments	infra.shared.provides	BTreeMap<String,String>	optional
+request	POST /studio-environments/v1/environments	infra.shared.service	String	optional
 request	POST /studio-environments/v1/environments	kind	String	optional
 request	POST /studio-environments/v1/environments	name	String	required
 request	POST /studio-environments/v1/environments	namespace_pattern	String	optional
@@ -647,6 +653,12 @@ request	POST /studio-environments/v1/project-environments	connection_id	Uuid	req
 request	POST /studio-environments/v1/project-environments	database	String	optional
 request	POST /studio-environments/v1/project-environments	database_image	String	optional
 request	POST /studio-environments/v1/project-environments	description	String	optional
+request	POST /studio-environments/v1/project-environments	infra	{}	optional
+request	POST /studio-environments/v1/project-environments	infra.placement	String	optional
+request	POST /studio-environments/v1/project-environments	infra.shared	Vec<{}>	optional
+request	POST /studio-environments/v1/project-environments	infra.shared.namespace	String	optional
+request	POST /studio-environments/v1/project-environments	infra.shared.provides	BTreeMap<String,String>	optional
+request	POST /studio-environments/v1/project-environments	infra.shared.service	String	optional
 request	POST /studio-environments/v1/project-environments	kind	String	optional
 request	POST /studio-environments/v1/project-environments	name	String	required
 request	POST /studio-environments/v1/project-environments	namespace_pattern	String	optional
@@ -919,6 +931,12 @@ request	PUT /studio-environments/v1/environments/{}	connection_id	Uuid	required
 request	PUT /studio-environments/v1/environments/{}	database	String	optional
 request	PUT /studio-environments/v1/environments/{}	database_image	String	optional
 request	PUT /studio-environments/v1/environments/{}	description	String	optional
+request	PUT /studio-environments/v1/environments/{}	infra	{}	optional
+request	PUT /studio-environments/v1/environments/{}	infra.placement	String	optional
+request	PUT /studio-environments/v1/environments/{}	infra.shared	Vec<{}>	optional
+request	PUT /studio-environments/v1/environments/{}	infra.shared.namespace	String	optional
+request	PUT /studio-environments/v1/environments/{}	infra.shared.provides	BTreeMap<String,String>	optional
+request	PUT /studio-environments/v1/environments/{}	infra.shared.service	String	optional
 request	PUT /studio-environments/v1/environments/{}	kind	String	optional
 request	PUT /studio-environments/v1/environments/{}	name	String	required
 request	PUT /studio-environments/v1/environments/{}	namespace_pattern	String	optional
@@ -941,6 +959,28 @@ request	PUT /studio-environments/v1/image-retention	inherited	bool	optional
 request	PUT /studio-environments/v1/image-retention	keep_days	u32	optional
 request	PUT /studio-environments/v1/image-retention	keep_last	u32	optional
 request	PUT /studio-environments/v1/image-retention	scope	String	optional
+request	PUT /studio-environments/v1/infra-services	items	Vec<{}>	required
+request	PUT /studio-environments/v1/infra-services	items.chart_ref	String	optional
+request	PUT /studio-environments/v1/infra-services	items.chart_values	Value	optional
+request	PUT /studio-environments/v1/infra-services	items.chart_version	String	optional
+request	PUT /studio-environments/v1/infra-services	items.image	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport	{}	required
+request	PUT /studio-environments/v1/infra-services	items.passport.args	Vec<String>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.chart	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.chart_version	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.config	BTreeMap<String,String>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.data_path	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.description	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.health	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.image	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.name	String	required
+request	PUT /studio-environments/v1/infra-services	items.passport.ports	BTreeMap<String,u16>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.provides	BTreeMap<String,String>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.secrets	Vec<String>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.stateful	bool	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.storage	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.version	String	optional
+request	PUT /studio-environments/v1/infra-services	items.public_url	String	optional
 request	PUT /studio-environments/v1/namespace-assignments	assigned_at	String	optional
 request	PUT /studio-environments/v1/namespace-assignments	assigned_by	String	optional
 request	PUT /studio-environments/v1/namespace-assignments	build_namespace	String	optional
@@ -963,6 +1003,12 @@ request	PUT /studio-environments/v1/project-environments/{}	connection_id	Uuid	r
 request	PUT /studio-environments/v1/project-environments/{}	database	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	database_image	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	description	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra	{}	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.placement	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.shared	Vec<{}>	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.shared.namespace	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.shared.provides	BTreeMap<String,String>	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.shared.service	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	kind	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	name	String	required
 request	PUT /studio-environments/v1/project-environments/{}	namespace_pattern	String	optional
@@ -2769,6 +2815,12 @@ response	GET /studio-environments/v1/environments	items.database	String	always
 response	GET /studio-environments/v1/environments	items.database_image	String	optional
 response	GET /studio-environments/v1/environments	items.description	String	always
 response	GET /studio-environments/v1/environments	items.id	Uuid	always
+response	GET /studio-environments/v1/environments	items.infra	{}	optional
+response	GET /studio-environments/v1/environments	items.infra.placement	String	optional
+response	GET /studio-environments/v1/environments	items.infra.shared	Vec<{}>	optional
+response	GET /studio-environments/v1/environments	items.infra.shared.namespace	String	optional
+response	GET /studio-environments/v1/environments	items.infra.shared.provides	BTreeMap<String,String>	optional
+response	GET /studio-environments/v1/environments	items.infra.shared.service	String	optional
 response	GET /studio-environments/v1/environments	items.kind	String	always
 response	GET /studio-environments/v1/environments	items.name	String	always
 response	GET /studio-environments/v1/environments	items.namespace_pattern	String	always
@@ -2795,6 +2847,21 @@ response	GET /studio-environments/v1/environments	may_manage	bool	always
 response	GET /studio-environments/v1/environments	open_clusters	{}	always
 response	GET /studio-environments/v1/environments	open_clusters.connection_ids	Vec<Uuid>	always
 response	GET /studio-environments/v1/environments	total	u32	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	environment_id	Uuid	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	environment_name	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items	Vec<{}>	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.chart	String	optional
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.image	String	optional
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.install	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.placement	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.provides	Vec<{}>	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.provides.capability	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.provides.variable	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.refusal	String	optional
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.refusal_code	String	optional
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.service	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	namespace	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	placement	String	always
 response	GET /studio-environments/v1/environments/{}/readiness	bootstrap_version	String	optional
 response	GET /studio-environments/v1/environments/{}/readiness	level	String	always
 response	GET /studio-environments/v1/environments/{}/readiness	missing	Vec<String>	always
@@ -2864,6 +2931,29 @@ response	GET /studio-environments/v1/images/{}	size_bytes	i64	optional
 response	GET /studio-environments/v1/images/{}	source_ref	String	optional
 response	GET /studio-environments/v1/images/{}	state	String	always
 response	GET /studio-environments/v1/images/{}	tags	Vec<String>	always
+response	GET /studio-environments/v1/infra-services	items	Vec<{}>	always
+response	GET /studio-environments/v1/infra-services	items.chart_ref	String	optional
+response	GET /studio-environments/v1/infra-services	items.chart_values	Value	optional
+response	GET /studio-environments/v1/infra-services	items.chart_version	String	optional
+response	GET /studio-environments/v1/infra-services	items.image	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport	{}	always
+response	GET /studio-environments/v1/infra-services	items.passport.args	Vec<String>	always
+response	GET /studio-environments/v1/infra-services	items.passport.chart	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.chart_version	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.config	BTreeMap<String,String>	always
+response	GET /studio-environments/v1/infra-services	items.passport.data_path	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.description	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.health	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.image	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.name	String	always
+response	GET /studio-environments/v1/infra-services	items.passport.ports	BTreeMap<String,u16>	always
+response	GET /studio-environments/v1/infra-services	items.passport.provides	BTreeMap<String,String>	always
+response	GET /studio-environments/v1/infra-services	items.passport.secrets	Vec<String>	always
+response	GET /studio-environments/v1/infra-services	items.passport.stateful	bool	always
+response	GET /studio-environments/v1/infra-services	items.passport.storage	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.version	String	optional
+response	GET /studio-environments/v1/infra-services	items.public_url	String	optional
+response	GET /studio-environments/v1/infra-services	total	u32	always
 response	GET /studio-environments/v1/namespace-assignments	items	Vec<{}>	always
 response	GET /studio-environments/v1/namespace-assignments	items.assigned_at	String	optional
 response	GET /studio-environments/v1/namespace-assignments	items.assigned_by	String	optional
@@ -2889,6 +2979,12 @@ response	GET /studio-environments/v1/project-environments	items.database	String	
 response	GET /studio-environments/v1/project-environments	items.database_image	String	optional
 response	GET /studio-environments/v1/project-environments	items.description	String	always
 response	GET /studio-environments/v1/project-environments	items.id	Uuid	always
+response	GET /studio-environments/v1/project-environments	items.infra	{}	optional
+response	GET /studio-environments/v1/project-environments	items.infra.placement	String	optional
+response	GET /studio-environments/v1/project-environments	items.infra.shared	Vec<{}>	optional
+response	GET /studio-environments/v1/project-environments	items.infra.shared.namespace	String	optional
+response	GET /studio-environments/v1/project-environments	items.infra.shared.provides	BTreeMap<String,String>	optional
+response	GET /studio-environments/v1/project-environments	items.infra.shared.service	String	optional
 response	GET /studio-environments/v1/project-environments	items.kind	String	always
 response	GET /studio-environments/v1/project-environments	items.name	String	always
 response	GET /studio-environments/v1/project-environments	items.namespace_pattern	String	always
@@ -2977,6 +3073,12 @@ response	GET /studio-environments/v1/targets	environments.environment.database	S
 response	GET /studio-environments/v1/targets	environments.environment.database_image	String	optional
 response	GET /studio-environments/v1/targets	environments.environment.description	String	always
 response	GET /studio-environments/v1/targets	environments.environment.id	Uuid	always
+response	GET /studio-environments/v1/targets	environments.environment.infra	{}	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.placement	String	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.shared	Vec<{}>	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.shared.namespace	String	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.shared.provides	BTreeMap<String,String>	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.shared.service	String	optional
 response	GET /studio-environments/v1/targets	environments.environment.kind	String	always
 response	GET /studio-environments/v1/targets	environments.environment.name	String	always
 response	GET /studio-environments/v1/targets	environments.environment.namespace_pattern	String	always
@@ -5121,6 +5223,12 @@ response	POST /studio-environments/v1/environments	database	String	always
 response	POST /studio-environments/v1/environments	database_image	String	optional
 response	POST /studio-environments/v1/environments	description	String	always
 response	POST /studio-environments/v1/environments	id	Uuid	always
+response	POST /studio-environments/v1/environments	infra	{}	optional
+response	POST /studio-environments/v1/environments	infra.placement	String	optional
+response	POST /studio-environments/v1/environments	infra.shared	Vec<{}>	optional
+response	POST /studio-environments/v1/environments	infra.shared.namespace	String	optional
+response	POST /studio-environments/v1/environments	infra.shared.provides	BTreeMap<String,String>	optional
+response	POST /studio-environments/v1/environments	infra.shared.service	String	optional
 response	POST /studio-environments/v1/environments	kind	String	always
 response	POST /studio-environments/v1/environments	name	String	always
 response	POST /studio-environments/v1/environments	namespace_pattern	String	always
@@ -5161,6 +5269,12 @@ response	POST /studio-environments/v1/project-environments	database	String	alway
 response	POST /studio-environments/v1/project-environments	database_image	String	optional
 response	POST /studio-environments/v1/project-environments	description	String	always
 response	POST /studio-environments/v1/project-environments	id	Uuid	always
+response	POST /studio-environments/v1/project-environments	infra	{}	optional
+response	POST /studio-environments/v1/project-environments	infra.placement	String	optional
+response	POST /studio-environments/v1/project-environments	infra.shared	Vec<{}>	optional
+response	POST /studio-environments/v1/project-environments	infra.shared.namespace	String	optional
+response	POST /studio-environments/v1/project-environments	infra.shared.provides	BTreeMap<String,String>	optional
+response	POST /studio-environments/v1/project-environments	infra.shared.service	String	optional
 response	POST /studio-environments/v1/project-environments	kind	String	always
 response	POST /studio-environments/v1/project-environments	name	String	always
 response	POST /studio-environments/v1/project-environments	namespace_pattern	String	always
@@ -5835,6 +5949,12 @@ response	PUT /studio-environments/v1/environments/{}	database	String	always
 response	PUT /studio-environments/v1/environments/{}	database_image	String	optional
 response	PUT /studio-environments/v1/environments/{}	description	String	always
 response	PUT /studio-environments/v1/environments/{}	id	Uuid	always
+response	PUT /studio-environments/v1/environments/{}	infra	{}	optional
+response	PUT /studio-environments/v1/environments/{}	infra.placement	String	optional
+response	PUT /studio-environments/v1/environments/{}	infra.shared	Vec<{}>	optional
+response	PUT /studio-environments/v1/environments/{}	infra.shared.namespace	String	optional
+response	PUT /studio-environments/v1/environments/{}	infra.shared.provides	BTreeMap<String,String>	optional
+response	PUT /studio-environments/v1/environments/{}	infra.shared.service	String	optional
 response	PUT /studio-environments/v1/environments/{}	kind	String	always
 response	PUT /studio-environments/v1/environments/{}	name	String	always
 response	PUT /studio-environments/v1/environments/{}	namespace_pattern	String	always
@@ -5890,6 +6010,29 @@ response	PUT /studio-environments/v1/images/{}/pin	size_bytes	i64	optional
 response	PUT /studio-environments/v1/images/{}/pin	source_ref	String	optional
 response	PUT /studio-environments/v1/images/{}/pin	state	String	always
 response	PUT /studio-environments/v1/images/{}/pin	tags	Vec<String>	always
+response	PUT /studio-environments/v1/infra-services	items	Vec<{}>	always
+response	PUT /studio-environments/v1/infra-services	items.chart_ref	String	optional
+response	PUT /studio-environments/v1/infra-services	items.chart_values	Value	optional
+response	PUT /studio-environments/v1/infra-services	items.chart_version	String	optional
+response	PUT /studio-environments/v1/infra-services	items.image	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport	{}	always
+response	PUT /studio-environments/v1/infra-services	items.passport.args	Vec<String>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.chart	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.chart_version	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.config	BTreeMap<String,String>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.data_path	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.description	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.health	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.image	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.name	String	always
+response	PUT /studio-environments/v1/infra-services	items.passport.ports	BTreeMap<String,u16>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.provides	BTreeMap<String,String>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.secrets	Vec<String>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.stateful	bool	always
+response	PUT /studio-environments/v1/infra-services	items.passport.storage	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.version	String	optional
+response	PUT /studio-environments/v1/infra-services	items.public_url	String	optional
+response	PUT /studio-environments/v1/infra-services	total	u32	always
 response	PUT /studio-environments/v1/namespace-assignments	assigned_at	String	optional
 response	PUT /studio-environments/v1/namespace-assignments	assigned_by	String	optional
 response	PUT /studio-environments/v1/namespace-assignments	build_namespace	String	optional
@@ -5913,6 +6056,12 @@ response	PUT /studio-environments/v1/project-environments/{}	database	String	alw
 response	PUT /studio-environments/v1/project-environments/{}	database_image	String	optional
 response	PUT /studio-environments/v1/project-environments/{}	description	String	always
 response	PUT /studio-environments/v1/project-environments/{}	id	Uuid	always
+response	PUT /studio-environments/v1/project-environments/{}	infra	{}	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.placement	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.shared	Vec<{}>	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.shared.namespace	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.shared.provides	BTreeMap<String,String>	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.shared.service	String	optional
 response	PUT /studio-environments/v1/project-environments/{}	kind	String	always
 response	PUT /studio-environments/v1/project-environments/{}	name	String	always
 response	PUT /studio-environments/v1/project-environments/{}	namespace_pattern	String	always
@@ -6351,10 +6500,12 @@ route	GET /studio-environments/v1/deployments
 route	GET /studio-environments/v1/deployments/{}/logs
 route	GET /studio-environments/v1/deployments/{}/status
 route	GET /studio-environments/v1/environments
+route	GET /studio-environments/v1/environments/{}/infra-plan
 route	GET /studio-environments/v1/environments/{}/readiness
 route	GET /studio-environments/v1/image-retention
 route	GET /studio-environments/v1/images
 route	GET /studio-environments/v1/images/{}
+route	GET /studio-environments/v1/infra-services
 route	GET /studio-environments/v1/namespace-assignments
 route	GET /studio-environments/v1/project-build
 route	GET /studio-environments/v1/project-environments
@@ -6629,6 +6780,7 @@ route	PUT /studio-environments/v1/config-secrets/{}
 route	PUT /studio-environments/v1/environments/{}
 route	PUT /studio-environments/v1/image-retention
 route	PUT /studio-environments/v1/images/{}/pin
+route	PUT /studio-environments/v1/infra-services
 route	PUT /studio-environments/v1/namespace-assignments
 route	PUT /studio-environments/v1/open-clusters
 route	PUT /studio-environments/v1/project-build

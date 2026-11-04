@@ -2009,6 +2009,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/environments/{environment_id}/infra-plan",
+      "operation_id": "studio_environments.get_infra_plan",
+      "tag": "",
+      "summary": "What a deploy does with a project's infra services",
+      "authenticated": true,
+      "responses": [
+        "InfraPlanDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/environments/{environment_id}/readiness",
       "operation_id": "studio_environments.get_environment_readiness",
       "tag": "",
@@ -2067,6 +2084,22 @@
       "authenticated": true,
       "responses": [
         "ImageRecordDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/infra-services",
+      "operation_id": "studio_environments.list_infra_services",
+      "tag": "",
+      "summary": "A project's infra services",
+      "authenticated": true,
+      "responses": [
+        "InfraServiceListDto"
       ],
       "errors": [
         "401",
@@ -6582,6 +6615,24 @@
         "ImageRecordDto"
       ],
       "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/infra-services",
+      "operation_id": "studio_environments.update_infra_services",
+      "tag": "",
+      "summary": "Set a project's infra services",
+      "authenticated": true,
+      "request": "InfraServicesRequest",
+      "responses": [
+        "InfraServiceListDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "404",
         "500"
