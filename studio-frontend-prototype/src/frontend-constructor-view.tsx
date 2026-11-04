@@ -136,8 +136,8 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   useEffect(() => {
     let alive = true;
     Promise.all([
-      api.listComponents(token),
-      api.listComponentProfiles(token).catch(() => ({ nodes: [] })),
+      api.listComponents(token, projectId),
+      api.listComponentProfiles(token, projectId).catch(() => ({ nodes: [] })),
       api.projectProduct(token, projectId).catch(() => null),
       api.projectConfig(token, projectId).catch(() => null),
       api.listArtifactNodes(token, "repo", projectId, undefined, 50).catch(() => ({ nodes: [] })),

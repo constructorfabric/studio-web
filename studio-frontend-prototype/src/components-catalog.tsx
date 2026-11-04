@@ -55,6 +55,7 @@ import {
 import type { KindChip } from "./component-kinds";
 import { useFrontxDefaults } from "./frontend-constructor-view";
 import { OrgSources } from "./platform-sources";
+import { CatalogueLevelsPanel } from "./catalogue-levels-view";
 
 /* ============================================================================
  * Platform Gears — a schema-driven component page per Gear, in Constructor
@@ -446,7 +447,7 @@ function kitAsNode(kit: StudioKit): CatalogNode {
 }
 
 /** The panes of the organization's Components page. */
-export type ComponentsPane = "registry" | "catalogue" | "repositories";
+export type ComponentsPane = "registry" | "catalogue" | "repositories" | "levels";
 
 export function ComponentsCatalog({
   token,
@@ -1097,8 +1098,11 @@ export function ComponentsCatalog({
           <div className="org-toolbar" data-components-toolbar>
             {!platformLevel && (
               <span className="chips org-tabs" role="tablist" aria-label="Components">
-                <button type="button" role="tab" aria-selected={pane !== "repositories"} className={`chip ${pane !== "repositories" ? "on" : ""}`} onClick={() => setPane("registry")}>
+                <button type="button" role="tab" aria-selected={pane !== "repositories" && pane !== "levels"} className={`chip ${pane !== "repositories" && pane !== "levels" ? "on" : ""}`} onClick={() => setPane("registry")}>
                   Components
+                </button>
+                <button type="button" role="tab" aria-selected={pane === "levels"} className={`chip ${pane === "levels" ? "on" : ""}`} onClick={() => setPane("levels")} data-pane-levels>
+                  Organization and projects
                 </button>
                 <button type="button" role="tab" aria-selected={pane === "repositories"} className={`chip ${pane === "repositories" ? "on" : ""}`} onClick={() => setPane("repositories")} data-pane-repositories>
                   Repositories
@@ -1148,7 +1152,9 @@ export function ComponentsCatalog({
           {/* A catalogue that never loaded says so in the list, with Retry. */}
           {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
-          {!platformLevel && pane === "repositories" ? (
+          {!platformLevel && pane === "levels" ? (
+            <CatalogueLevelsPanel token={token} projects={projects} />
+          ) : !platformLevel && pane === "repositories" ? (
             <OrgSources
               token={token}
               orgId={tenantId}

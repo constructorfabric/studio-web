@@ -161,8 +161,11 @@ export function ProductMap({
     Promise.all([
       api.projectProduct(token, projectId),
       api.projectTargets(token, projectId).catch((): ProjectTargets | null => null),
-      api.listComponents(token).catch(() => ({ nodes: [] })),
-      api.listComponentProfiles(token).catch(() => ({ nodes: [] })),
+      // The project's catalogue: the organization's and the project's own
+      // components (ADR-0061), so a micro-frontend in its own repository --
+      // Studio's, for Studioweb -- is found and keeps its screen previews.
+      api.listComponents(token, projectId).catch(() => ({ nodes: [] })),
+      api.listComponentProfiles(token, projectId).catch(() => ({ nodes: [] })),
     ])
       .then(([p, targets, components, profiles]) => {
         if (!live) return;

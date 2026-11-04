@@ -2167,6 +2167,62 @@ export interface GtsEntityPage {
   entities: GtsEntity[];
 }
 
+/** One platform source as an organization sees it, with its pin (ADR-0061). */
+export interface PlatformPinSource {
+  repo: string;
+  git_ref: string;
+  mode: string;
+  pinned_ref?: string | null;
+  note?: string | null;
+  pinned_by?: string | null;
+  pinned_by_name?: string | null;
+  pinned_at?: string | null;
+}
+
+export interface PlatformPins {
+  /** Every platform source, each with its pin when it has one. */
+  items: PlatformPinSource[];
+  total: number;
+  may_manage: boolean;
+}
+
+/** A project's request to put a component into the organization's catalogue
+ *  at one version (ADR-0061). */
+export interface CatalogPublication {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  project_name?: string | null;
+  type_id: string;
+  name: string;
+  kind?: string | null;
+  repo?: string | null;
+  path?: string | null;
+  git_ref: string;
+  commit?: string | null;
+  version?: string | null;
+  artifact?: { kind: string; reference: string } | null;
+  reason?: string | null;
+  requested_by: string;
+  requested_by_name?: string | null;
+  at: string;
+  state: "requested" | "approved" | "declined";
+  decided_by?: string | null;
+  decided_by_name?: string | null;
+  decided_at?: string | null;
+  decline_reason?: string | null;
+}
+
+export interface ComponentDoc {
+  name: string;
+  path: string;
+  repo: string;
+  git_ref: string;
+  url: string;
+  text: string;
+  truncated: boolean;
+}
+
 export interface CatalogNode {
   type_id: string;
   instance_id: string;
@@ -6060,15 +6116,69 @@ export const api = {
       token,
     ),
 
-  /** Read back the ingested gear crates. */
-  listComponents: (token: string) =>
+  /** Read back the catalogue: the organization's, or with `projectId` the
+   *  project's -- the organization's components and the project's own
+   *  (`tier: "project"`, ADR-0061). */
+  listComponents: (token: string, projectId?: string) =>
     request<{ nodes: CatalogNode[]; truncated?: boolean; shadowed?: string[] }>(
-      "/studio-components-catalog/v1/components",
+      `/studio-components-catalog/v1/components${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
       token,
     ),
-  /** Read Studio-managed delivery metadata for catalogued Gears. */
-  listComponentProfiles: (token: string) =>
-    request<{ nodes: CatalogNode[] }>("/studio-components-catalog/v1/profiles", token),
+  /** Read Studio-managed delivery metadata for catalogued Gears; with
+   *  `projectId`, the project's own components' over the organization's. */
+  listComponentProfiles: (token: string, projectId?: string) =>
+    request<{ nodes: CatalogNode[] }>(
+      `/studio-components-catalog/v1/profiles${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      token,
+    ),
+  /** The organization's platform release (ADR-0061): every platform source it
+   *  sees and the version it holds each at. */
+  platformPins: (token: string) => request<PlatformPins>("/studio-components-catalog/v1/platform/pins", token),
+  /** Replace the pins; a source left out follows the platform. */
+  setPlatformPins: (token: string, items: { repo: string; git_ref: string; note?: string | null }[]) =>
+    request<PlatformPins>("/studio-components-catalog/v1/platform/pins", token, {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    }),
+  /** Read a project's repositories into its own catalogue now. */
+  syncProjectCatalogue: (token: string, projectId: string) =>
+    request<{ run_id: string; status: string }>(
+      `/studio-components-catalog/v1/project-catalogue/sync?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST" },
+    ),
+  /** Projects' requests to publish a component into the organization's catalogue. */
+  catalogPublications: (token: string, projectId?: string) =>
+    request<{ items: CatalogPublication[]; total: number; may_decide: boolean }>(
+      `/studio-components-catalog/v1/publications${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      token,
+    ),
+  /** A project proposes one of its components at a version. */
+  requestCatalogPublication: (
+    token: string,
+    projectId: string,
+    body: { name: string; type_id?: string; git_ref?: string; commit?: string; reason?: string },
+  ) =>
+    request<CatalogPublication>(
+      `/studio-components-catalog/v1/publications?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** An organization administrator approves or declines a publication. */
+  decideCatalogPublication: (token: string, id: string, action: "approve" | "decline", reason?: string) =>
+    request<CatalogPublication>(
+      `/studio-components-catalog/v1/publications/${encodeURIComponent(id)}/decisions`,
+      token,
+      { method: "POST", body: JSON.stringify({ action, reason }) },
+    ),
+  /** One of a component's documents, as its passport names it. */
+  componentDoc: (token: string, name: string, path: string, projectId?: string) =>
+    request<ComponentDoc>(
+      `/studio-components-catalog/v1/components/${encodeURIComponent(name)}/docs?path=${encodeURIComponent(path)}${
+        projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""
+      }`,
+      token,
+    ),
   /** Replace Studio-managed delivery metadata for one Gear. */
   saveComponentProfile: (token: string, name: string, profile: Record<string, unknown>) =>
     request<CatalogNode>(`/studio-components-catalog/v1/components/${encodeURIComponent(name)}/profile`, token, {
