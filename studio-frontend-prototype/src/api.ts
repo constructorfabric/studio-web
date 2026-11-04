@@ -5811,9 +5811,14 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => ({ ...r, target: "organization" as const })),
   /** Poll a background catalog sync. The task id is a studio-tasks run id,
-   * read through `taskRun`; the counts are the run's `result`. */
-  componentsCatalogTask: async (token: string, taskId: string) => {
-    const run = await api.taskRun(token, taskId);
+   * read through `taskRun`; the counts are the run's `result`.
+   *
+   * The sync is queued in the organization on screen (`orgScoped` names it),
+   * so the poll reads that organization's runs too: read from the caller's
+   * home tenant it answered 404 "Run not found" while the run went through.
+   * `null` reads the home tenant -- the platform's own sync is queued there. */
+  componentsCatalogTask: async (token: string, taskId: string, tenant: string | null = currentOrganization ?? null) => {
+    const run = await api.taskRun(token, taskId, tenant ?? undefined);
     const n = runCount(run);
     return {
       task_id: run.id,

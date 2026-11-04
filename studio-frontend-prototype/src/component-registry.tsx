@@ -35,6 +35,7 @@ import type {
   RegistrySuggestion,
 } from "./api";
 import { DataTable, type Column } from "./data-table";
+import { EmptyState, StatusChip } from "./ui-standard";
 import { errText } from "./format";
 import { occurrencePlace } from "./org-gear-repository";
 import {
@@ -74,6 +75,18 @@ import {
 } from "./registry";
 import type { RegistryAction } from "./registry";
 
+/** What the registry tells the screen's header. */
+export interface RegistrySummary {
+  /** Components on the list; null while it is read. */
+  total: number | null;
+  /** Candidates waiting for a decision. */
+  decide: number;
+  orphaned: number;
+  /** A read now in flight, or how the last one ended. */
+  reading: string;
+  failed: boolean;
+}
+
 export function ComponentRegistry({
   token,
   projects,
@@ -81,6 +94,11 @@ export function ComponentRegistry({
   isPlatformAdmin = false,
   catalogue = [],
   catalogueCell,
+  bare = false,
+  readSignal = 0,
+  onSummary,
+  candidates,
+  onCandidates,
 }: {
   token: string;
   /** The organization's projects, for choosing which ones the walk reads. */
@@ -95,6 +113,17 @@ export function ComponentRegistry({
   catalogueCell?: (column: "release" | "downloads" | "activity", node: CatalogNode) => ReactNode;
   /** A platform administrator may mark a contributed entry published by hand. */
   isPlatformAdmin?: boolean;
+  /** Under a screen's PageHeader: no card head of its own -- the title, the
+   *  explanation and "Read the projects now" are the header's. */
+  bare?: boolean;
+  /** Read the projects now each time this number grows (the header's menu). */
+  readSignal?: number;
+  /** What the header's status line says: the count, what needs a decision,
+   *  and how a read now stands. */
+  onSummary?: (s: RegistrySummary) => void;
+  /** The candidates view, when the screen holds it (the header's chip). */
+  candidates?: boolean;
+  onCandidates?: (on: boolean) => void;
 }) {
   const [entries, setEntries] = useState<RegistryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +134,12 @@ export function ComponentRegistry({
   const [sync, setSync] = useState("");
   const [busy, setBusy] = useState(false);
   /** Every component, or only the candidates (ADR-0041 P3). */
-  const [view, setView] = useState<"all" | "candidates">("all");
+  const [ownView, setOwnView] = useState<"all" | "candidates">("all");
+  const view: "all" | "candidates" = candidates === undefined ? ownView : candidates ? "candidates" : "all";
+  const setView = (v: "all" | "candidates") => {
+    if (onCandidates) onCandidates(v === "candidates");
+    if (candidates === undefined) setOwnView(v);
+  };
 
   const load = async () => {
     setError(null);
@@ -200,7 +234,43 @@ export function ComponentRegistry({
   const unreadable = projects.filter((p) => !(excluded ?? []).includes(p.id) && walkLine(walkOf(p.id)).failed);
   const orphaned = (entries ?? []).filter(isOrphaned).length;
 
+  useEffect(() => {
+    if (readSignal > 0) void readNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readSignal]);
+  useEffect(() => {
+    onSummary?.({
+      total: entries === null ? null : rows.length,
+      decide: counts.candidate ?? 0,
+      orphaned,
+      reading: busy ? sync || "reading…" : sync,
+      failed: !busy && !!sync,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, rows.length, counts.candidate, orphaned, busy, sync]);
+
+  /** "Needs a decision" as a filter chip that wants attention: on, the list
+   *  is the candidates (ADR-0041 P3). */
+  const decideChip =
+    (counts.candidate ?? 0) > 0 || view === "candidates" ? (
+      <StatusChip
+        tone={view === "candidates" ? "info" : "warn"}
+        className="reg-decide-chip"
+        onClick={() => setView(view === "candidates" ? "all" : "candidates")}
+        expanded={view === "candidates"}
+        title={
+          orphaned > 0
+            ? `${counts.candidate ?? 0} could become a gear; ${orphaned} no repository declares any more`
+            : "Code that could become a gear: declare it or reject it"
+        }
+        data-registry-candidates-tab
+      >
+        {view === "candidates" ? "✓ " : ""}Needs a decision · {counts.candidate ?? 0}
+      </StatusChip>
+    ) : null;
+
   if (missing) {
+    if (bare) return <EmptyState title="This backend has no component registry yet (ADR-0041)." />;
     return (
       <div className="card">
         <h2>Registry</h2>
@@ -210,7 +280,8 @@ export function ComponentRegistry({
   }
 
   return (
-    <div className="card" data-component-registry>
+    <div className={bare ? "" : "card"} data-component-registry>
+      {!bare && (
       <div className="card-head">
         <div>
           <h2>Components</h2>
@@ -228,12 +299,14 @@ export function ComponentRegistry({
           </button>
         </span>
       </div>
+      )}
       {error && <div className="error">{error}</div>}
 
       {entries === null ? (
         <p className="empty">Reading the registry…</p>
       ) : (
         <>
+          {!bare && (
           <p style={{ fontSize: 13, margin: "0 0 8px" }}>
             <b>
               {rows.length} component{rows.length === 1 ? "" : "s"}
@@ -242,6 +315,7 @@ export function ComponentRegistry({
             {duplicated > 0 && ` · ${duplicated} declared in more than one repository`}
             {orphaned > 0 && ` · ${orphaned} no repository declares any more`}
           </p>
+          )}
           {unreadable.length > 0 && (
             <div className="error" style={{ fontSize: 12, margin: "0 0 8px" }} data-registry-unreadable>
               <b>
@@ -250,7 +324,12 @@ export function ComponentRegistry({
               — {unreadable.map((p) => p.name).join(", ")}. {walkLine(walkOf(unreadable[0].id)).hint ?? "See the projects below."}
             </div>
           )}
-          {((counts.candidate ?? 0) > 0 || orphaned > 0 || view === "candidates") && (
+          {bare && view === "candidates" && (
+            <div className="dt-toolbar">
+              <div className="dt-toolbar-left">{decideChip}</div>
+            </div>
+          )}
+          {!bare && ((counts.candidate ?? 0) > 0 || orphaned > 0 || view === "candidates") && (
             <div className="reg-decide" role="group" aria-label="Needs a decision">
               <span className="sub">Needs a decision:</span>
               {view === "candidates" ? (
@@ -284,6 +363,7 @@ export function ComponentRegistry({
             onOpen={onOpenComponent ? (r) => r.node && onOpenComponent(String(r.node.value.name ?? r.name)) : undefined}
             canOpen={(r) => !!r.node}
             search={{ placeholder: "Search names, descriptions, paths" }}
+            extra={bare ? decideChip : undefined}
             searchText={(r) => [r.name, r.description, ...(r.entry?.occurrences ?? []).map((o) => o.path)]}
             filters={[
               {

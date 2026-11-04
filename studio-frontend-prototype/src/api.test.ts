@@ -42,6 +42,24 @@ describe("background work client", () => {
     expect(sent["Content-Type"]).toBe("application/json");
   });
 
+  it("polls a catalogue sync in the organization it was queued in", async () => {
+    // The sync is queued in the organization on screen; polled from the
+    // caller's home tenant it answered 404 "Run not found" though it ran.
+    const run = { id: "r-1", state: "running", task_type: "catalog.sync" };
+    let fetchMock = jsonMock(run);
+    setCurrentOrganization("org-1");
+    try {
+      await api.componentsCatalogTask("token", "r-1");
+      expect(fetchMock.mock.calls[0][0]).toBe("/cf/studio-tasks/v1/runs/r-1?tenant=org-1");
+      // The platform's own sync is queued in the home tenant.
+      fetchMock = jsonMock(run);
+      await api.componentsCatalogTask("token", "r-2", null);
+      expect(fetchMock.mock.calls[0][0]).toBe("/cf/studio-tasks/v1/runs/r-2");
+    } finally {
+      setCurrentOrganization(undefined);
+    }
+  });
+
   it("asks for every run when nothing is filtered", async () => {
     const fetchMock = jsonMock({ items: [] });
     await api.taskRuns("token");
