@@ -1,38 +1,35 @@
 /* The organization's overview, for the people who lead it: opened by clicking
- * the organization in the path (UI standard, wave 3).
+ * the organization in the path (UI standard, wave 3; metrics board, wave 4D).
  *
  *   - One header: the organization, and how much needs attention.
- *   - "Needs attention": ONE list, grouped -- what waits on you (reviews,
- *     pull requests; waiting-on-me-view.tsx) and what waits on others
- *     (refused connections, spend, who the stuck pull requests wait on,
- *     components to decide, idle people). A row is one sentence and one
+ *   - A metrics board (metrics-board.tsx), in rows like a Grafana board --
+ *     Delivery, Quality, Money, People -- over one time range (7 / 30 / 90
+ *     days). Each panel has its headline, its trend against the days before,
+ *     a small chart, a "?" saying what it is and where it comes from (Studio
+ *     or Constructor Insight), and a click-through to its screen.
+ *   - "Needs attention" beside it: ONE list, grouped -- what waits on you
+ *     (reviews, pull requests; waiting-on-me-view.tsx) and what waits on
+ *     others (refused connections, spend, who the stuck pull requests wait
+ *     on, components to decide, idle people). A row is one sentence and one
  *     action.
- *   - Four tiles -- Spend, Delivery, Spec health, People -- each opening its
- *     section; Spend opens where the money goes (the top five, and Costs).
  *
- * The workspaces table moved to the Workspaces tab (projects.tsx), with its
- * columns. One request: `GET /studio-organizations/v1/overview` composes it on
- * the server, rules and all. Words: `org-dashboard-model.ts`. */
+ * Two requests of its own: `GET /studio-organizations/v1/overview` (needs,
+ * open pull requests, spec health, idle people) and the board's
+ * `GET /studio-organizations/v1/metrics`. Words: `org-dashboard-model.ts` and
+ * `metrics-model.ts`. */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { api, type OrgOverview } from "./api";
 import { money } from "./costs";
 import { errText } from "./format";
 import { OrgMark } from "./level-marks";
-import {
-  attentionStatus,
-  growthText,
-  moneyFor,
-  moneyLabel,
-  othersAttention,
-  topMoney,
-  type NeedTarget,
-} from "./org-dashboard-model";
-import { EmptyState, KpiTile, PageHeader, StatusChip } from "./ui-standard";
+import { MetricsBoard } from "./metrics-board";
+import { attentionStatus, othersAttention, type NeedTarget } from "./org-dashboard-model";
+import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
 import { WaitingOnYou, type OnMeWorkspace } from "./waiting-on-me-view";
 
-type Target = NeedTarget | "platform";
+type Target = NeedTarget | "platform" | "environments" | "reports";
 
 export function OrgDashboard<W extends OnMeWorkspace>({
   token,
@@ -51,7 +48,6 @@ export function OrgDashboard<W extends OnMeWorkspace>({
   const [o, setO] = useState<OrgOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mine, setMine] = useState<number | null>(null);
-  const [moneyOpen, setMoneyOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -67,11 +63,7 @@ export function OrgDashboard<W extends OnMeWorkspace>({
   }, [token, org.id]);
 
   const onCount = useCallback((n: number | null) => setMine(n), []);
-  const closeMoney = useCallback(() => setMoneyOpen(false), []);
   const cash = (n: number) => money(n, o?.spend?.currency || "USD");
-  const n = (v: number | null | undefined) => (v === null || v === undefined ? "—" : String(v));
-  const spend = o?.spend ?? null;
-  const people = o?.people;
   const others = o ? othersAttention(o, cash) : [];
   const total = (mine ?? 0) + others.length;
 
@@ -94,157 +86,65 @@ export function OrgDashboard<W extends OnMeWorkspace>({
         }
         info={
           <>
-            What needs you, where the problems are, what it costs and whether work moves.
+            How the organization delivers, how good the work is, what it costs and who does it -- and what needs
+            attention now.
             <br />
             <br />
-            <b>For you</b>: reviews somebody asked you for, and open pull requests in your projects whose next step is
-            yours, overdue first. Done or snoozed items stay away until they change.
+            <b>The board</b>: four rows over the range you pick (7, 30 or 90 days), each panel against the same number
+            of days before. Studio's own figures (spend, deployments, open pull requests, spec health, members) sit
+            beside Constructor Insight's, which are read for the repositories the organization's projects are made of.
+            Each panel's "?" says which.
             <br />
-            <b>For others</b>: refused connections, spend against the same days last month, pull requests stuck over{" "}
+            <br />
+            <b>Needs attention</b>: for you, reviews somebody asked you for and open pull requests whose next step is
+            yours; for others, refused connections, spend against the same days last month, pull requests stuck over{" "}
             {o?.stuck_days ?? 7} days and who they wait on, components to decide, idle people.
-            <br />
-            <br />
-            Each tile opens its section; Spend opens where the money goes.
           </>
         }
       />
 
       {error && <p className="gcat-err">{error}</p>}
 
-      <div className="dash-stats org-trends">
-        <div className="org-spend" data-trend="spend">
-          <KpiTile
-            label="Spend, 30 days"
-            value={spend ? cash(spend.current) : o ? "—" : "…"}
-            sub={
-              o?.costs === "hidden"
-                ? "not yours to see"
-                : o?.costs === "unreadable"
-                  ? "could not be read"
-                  : spend
-                    ? `${growthText(spend.current, spend.previous)} vs last month · ends near ${cash(spend.forecast)}`
-                    : ""
-            }
-            onOpen={() => (o?.costs === "shown" ? setMoneyOpen((v) => !v) : onOpen("costs"))}
-          />
-          {moneyOpen && o && <MoneyDrill o={o} cash={cash} onClose={closeMoney} onCosts={() => onOpen("costs")} />}
-        </div>
-        <KpiTile
-          label="Delivery"
-          value={o ? n(o.delivery.merged) : "…"}
-          sub={o ? `merged in ${o.delivery.window_days} d · ${n(o.delivery.open)} open` : ""}
-          onOpen={() => onOpen("projects")}
+      <div className="org-layout">
+        <MetricsBoard
+          token={token}
+          org={org.id}
+          overview={o}
+          overviewLoading={o === null && error === null}
+          onOpen={(t) => onOpen(t)}
         />
-        <KpiTile
-          label="Spec health"
-          value={o ? n(o.specs.failing) : "…"}
-          tone={o?.specs.failing ? "danger" : undefined}
-          sub={o ? `failing · ${n(o.specs.open_findings)} open findings` : ""}
-          onOpen={() => onOpen("projects")}
-        />
-        <KpiTile
-          label="People"
-          value={o ? n(people?.active) : "…"}
-          sub={
-            people?.with_spend !== null && people?.with_spend !== undefined
-              ? `active · ${people.with_spend} used a model`
-              : "active members"
-          }
-          onOpen={() => onOpen("people")}
-        />
+
+        <section className="card org-needs" data-org-needs>
+          <div className="card-head">
+            <h3>Needs attention</h3>
+          </div>
+          <WaitingOnYou token={token} workspaces={workspaces} onOpenWorkspace={onOpenWorkspace} onCount={onCount} />
+          <div className="att-group" data-attention-group="others">
+            <h3 className="att-group-title">
+              For others{others.length > 0 && <span className="att-count">{others.length}</span>}
+            </h3>
+            {o === null ? (
+              <p className="sub att-empty">{error ? "Not readable." : "Reading the organization…"}</p>
+            ) : others.length === 0 ? (
+              <EmptyState title="Nothing waits on anybody in the organization." />
+            ) : (
+              <ul className="att-list">
+                {others.map((r) => (
+                  <li key={r.key} className={`att-row tone-${r.tone}`} data-attention={r.key.split(":")[0]}>
+                    <span className="att-text">
+                      <b>{r.sentence}</b>
+                      {r.detail && <span className="sub"> · {r.detail}</span>}
+                    </span>
+                    <button type="button" className="ghost att-action" onClick={() => onOpen(r.action.target)}>
+                      {r.action.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
       </div>
-
-      <section className="card org-needs" data-org-needs>
-        <div className="card-head">
-          <h3>Needs attention</h3>
-        </div>
-        <WaitingOnYou token={token} workspaces={workspaces} onOpenWorkspace={onOpenWorkspace} onCount={onCount} />
-        <div className="att-group" data-attention-group="others">
-          <h3 className="att-group-title">
-            For others{others.length > 0 && <span className="att-count">{others.length}</span>}
-          </h3>
-          {o === null ? (
-            <p className="sub att-empty">{error ? "Not readable." : "Reading the organization…"}</p>
-          ) : others.length === 0 ? (
-            <EmptyState title="Nothing waits on anybody in the organization." />
-          ) : (
-            <ul className="att-list">
-              {others.map((r) => (
-                <li key={r.key} className={`att-row tone-${r.tone}`} data-attention={r.key.split(":")[0]}>
-                  <span className="att-text">
-                    <b>{r.sentence}</b>
-                    {r.detail && <span className="sub"> · {r.detail}</span>}
-                  </span>
-                  <button type="button" className="ghost att-action" onClick={() => onOpen(r.action.target)}>
-                    {r.action.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-/** Where the money goes: the Spend tile's drill-down -- the five projects
- *  that spent most, and the way to Costs. */
-function MoneyDrill({
-  o,
-  cash,
-  onClose,
-  onCosts,
-}: {
-  o: OrgOverview;
-  cash: (n: number) => string;
-  onClose: () => void;
-  onCosts: () => void;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    const down = (e: MouseEvent) => {
-      // The tile's own button toggles it; a click there is not "outside".
-      const t = e.target as Node;
-      if (ref.current && !ref.current.contains(t) && !ref.current.parentElement?.contains(t)) onClose();
-    };
-    document.addEventListener("keydown", key);
-    document.addEventListener("mousedown", down);
-    return () => {
-      document.removeEventListener("keydown", key);
-      document.removeEventListener("mousedown", down);
-    };
-  }, [onClose]);
-  const rows = topMoney(moneyFor(o, "project", false));
-  const spend = o.spend;
-  return (
-    <div ref={ref} className="ui-info-pop org-money-pop" role="dialog" aria-label="Where the money goes" data-org-money>
-      <strong>Where the money goes</strong>
-      {rows.length === 0 ? (
-        <span className="sub">Nothing spent in the last 60 days.</span>
-      ) : (
-        <table className="org-money">
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.key || "-"}>
-                <td>
-                  {moneyLabel("project", r)}
-                  {r.unpriced && <span className="sub"> · unpriced</span>}
-                </td>
-                <td className="num">{cash(r.cost)}</td>
-                <td className={`num${r.previous > 0 && (r.cost - r.previous) / r.previous >= o.growth_alert ? " grows" : ""}`}>
-                  {growthText(r.cost, r.previous)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {spend && spend.unpriced.length > 0 && <span className="sub">No price for {spend.unpriced.join(", ")}.</span>}
-      <button type="button" className="linklike org-money-all" onClick={onCosts}>
-        All costs →
-      </button>
     </div>
   );
 }
@@ -252,15 +152,12 @@ function MoneyDrill({
 const ORG_DASH_CSS = `
 .org-dash .card-head h3 { margin:0; font-size:14px; }
 .org-dash .sub { color:var(--muted-foreground); font-size:12px; overflow-wrap:anywhere; }
-.org-dash .org-trends { margin-bottom:16px; }
-.org-dash .org-trends .stat-sub { white-space:normal; }
-.org-dash .org-spend { position:relative; display:grid; }
-.org-dash .org-money-pop { top:calc(100% + 4px); left:0; min-width:320px; }
-.org-dash .org-money-all { align-self:flex-start; }
-.org-dash table.org-money { width:100%; border-collapse:collapse; font-size:13px; }
-.org-dash table.org-money td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--border); }
-.org-dash table.org-money .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.org-dash table.org-money td.grows { color:var(--warning); font-weight:600; }
+.org-dash .org-layout { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start; }
+.org-dash .org-needs { position:sticky; top:12px; }
+@media (max-width: 1180px) {
+  .org-dash .org-layout { grid-template-columns:minmax(0,1fr); }
+  .org-dash .org-needs { position:static; }
+}
 .org-dash .att-group + .att-group { margin-top:14px; }
 .org-dash .att-group-title { margin:0 0 6px; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--muted-foreground); display:flex; align-items:center; gap:6px; }
 .org-dash .att-count { font-size:11px; padding:0 6px; border-radius:999px; background:var(--accent); color:var(--foreground); text-transform:none; }

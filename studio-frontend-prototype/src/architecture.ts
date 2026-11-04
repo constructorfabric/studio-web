@@ -759,9 +759,9 @@ export const SURFACES: Surface[] = [
     id: "organization-dashboard",
     area: "organization",
     title: "Organization overview",
-    does: "Open the organization from the path and see what needs attention in one list, for you and for others: refused connections, spend against the same days last month, who the pull requests stuck over 7 days wait on, components to decide, idle people; four tiles (spend, delivery, spec health, people), spend drilling down to where the money goes. Each workspace's spend, failing specs, stuck pull requests and quiet days are on the Workspaces tab.",
-    components: ["OrgDashboard"],
-    gears: ["studio-organizations"],
+    does: "Open the organization from the path and see a metrics board -- delivery, quality, money and people over 7, 30 or 90 days, each panel against the days before, Studio's own figures beside Constructor Insight's for the repositories its projects are made of -- and, beside it, what needs attention in one list, for you and for others: refused connections, spend against the same days last month, who the pull requests stuck over 7 days wait on, components to decide, idle people. Each workspace's spend, failing specs, stuck pull requests and quiet days are on the Workspaces tab.",
+    components: ["MetricsBoard", "OrgDashboard"],
+    gears: ["studio-environments", "studio-organizations"],
   },
   {
     id: "costs",

@@ -3452,6 +3452,62 @@ export interface OrgOverview {
   decisions: { undecided: number; candidates: number; registered: number; published: number } | null;
 }
 
+/** The scope a metrics board is about: the organization, or one of its
+ *  workspaces or projects (its own repositories, spend and deployments). */
+export type MetricsScope = { kind: "organization" } | { kind: "workspace"; id: string } | { kind: "project"; id: string };
+
+export type MetricsRange = "7d" | "30d" | "90d";
+
+export interface MetricsCell {
+  total: number;
+  median: number | null;
+  /** Observations. */
+  count: number;
+  /** Distinct entities. */
+  people: number;
+}
+
+/** `GET /studio-organizations/v1/metrics`: the leaders' board -- Studio's
+ *  spend and Insight's repository figures, composed on the server. */
+export interface OrgMetrics {
+  organization_id: string;
+  scope: "organization" | "workspace" | "project";
+  scope_id: string;
+  range: MetricsRange;
+  days: number;
+  bucket: "day" | "week";
+  /** `[current_from, to]` and `[previous_from, previous_to]`, UTC days, ends included. */
+  current_from: string;
+  to: string;
+  previous_from: string;
+  previous_to: string;
+  /** Every bucket's first day, oldest first. */
+  buckets: string[];
+  repositories: string[];
+  projects: number;
+  /** The projects in scope. */
+  project_ids: string[];
+  insight: {
+    state: "ok" | "unconfigured" | "unreachable" | "failed" | "absent" | "no_repositories";
+    detail: string | null;
+    truncated: boolean;
+    /** Keyed `domain.measure`; a measure absent had no observation. */
+    measures: { key: string; current: MetricsCell | null; previous: MetricsCell | null; series: ({ bucket: string } & MetricsCell)[] }[];
+    reviews: { period: "cur" | "prev"; reviewers: number; reviews: number; half: number; top: number[] }[];
+    /** Rows Insight's AI connectors wrote; 0 is "never ingested". */
+    ai_rows: number | null;
+  };
+  costs: "shown" | "hidden" | "unreadable";
+  spend: {
+    currency: string;
+    current: number;
+    previous: number;
+    series: { bucket: string; cost: number }[];
+    by_workspace: { id: string; name: string; cost: number; previous: number }[];
+    unpriced: string[];
+  } | null;
+}
+
 /** One thing that waits on the leaders; `kind` says which fields are set. */
 export interface OrgNeed {
   kind: "connection" | "spend" | "pulls" | "components" | "runs";
@@ -3607,6 +3663,16 @@ export const api = {
       `/studio-organizations/v1/overview?organization_id=${encodeURIComponent(org)}`,
       token,
     ),
+
+  /** The leaders' metrics board for an organization, or a workspace or
+   *  project in it, over `range` against the days before
+   *  (`organizations/metrics.rs`). */
+  orgMetrics: (token: string, org: string, range: MetricsRange, scope: MetricsScope = { kind: "organization" }) => {
+    const q = new URLSearchParams({ organization_id: org, range });
+    if (scope.kind === "workspace") q.set("workspace_id", scope.id);
+    if (scope.kind === "project") q.set("project_id", scope.id);
+    return request<OrgMetrics>(`/studio-organizations/v1/metrics?${q.toString()}`, token);
+  },
 
   /* ── studio-documents gear (types + templates + validation) ── */
 
