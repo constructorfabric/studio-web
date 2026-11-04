@@ -192,6 +192,12 @@ fn run(mut cmd: Command, what: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A full commit id: 40 (SHA-1) or 64 (SHA-256) hex digits, which `clone
+/// --branch` cannot take.
+fn is_commit_id(git_ref: &str) -> bool {
+    matches!(git_ref.len(), 40 | 64) && git_ref.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// Clone (or fast-forward an existing checkout of) one repository into
 /// `work_root`, shallow and single-branch. Blocking — call under
 /// `spawn_blocking`.
@@ -224,6 +230,26 @@ pub fn clone_or_update_into(
             .map_err(|e| anyhow::anyhow!("cannot create clone root {}: {e}", parent.display()))?;
     }
     let dir = dir.to_path_buf();
+
+    if !dir.join(".git").is_dir() && git_ref.is_some_and(is_commit_id) {
+        // `clone --branch` takes a branch or a tag, never a commit, and a
+        // protected environment builds a pinned commit: start an empty
+        // repository and let the fetch below bring the commit in.
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", dir.display()))?;
+        let mut init = git(username, token);
+        init.arg("-C").arg(&dir).arg("init").arg("-q");
+        run(init, "init")?;
+        let mut remote = git(username, token);
+        remote
+            .arg("-C")
+            .arg(&dir)
+            .arg("remote")
+            .arg("add")
+            .arg("origin")
+            .arg(clone_url);
+        run(remote, "remote add")?;
+    }
 
     if dir.join(".git").is_dir() {
         // Existing checkout: fetch the tip shallowly and hard-reset onto it, so
@@ -642,6 +668,39 @@ mod tests {
         sh(seed, &["add", "."]);
         sh(seed, &["commit", "--quiet", "-m", "two"]);
         sh(seed, &["push", "--quiet", "origin", "HEAD:main"]);
+    }
+
+    /// A protected environment builds a pinned commit, not a branch head,
+    /// and `clone --branch` takes no commit: the clone fetches it instead.
+    #[test]
+    fn a_pinned_commit_is_cloned_though_it_is_no_branch() {
+        let root = std::env::temp_dir().join(format!("pinned-{}", uuid::Uuid::new_v4()));
+        let (seed, _) = init_pair(&root);
+        let first = String::from_utf8(
+            Command::new("git")
+                .arg("-C")
+                .arg(&seed)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .expect("git runs")
+                .stdout,
+        )
+        .expect("utf-8")
+        .trim()
+        .to_owned();
+        push_prd(&seed);
+        let bare = root.join("origin.git");
+        let cloned = clone_or_update_into(
+            &root.join("pinned"),
+            bare.to_str().expect("path"),
+            "",
+            "",
+            Some(&first),
+        )
+        .expect("clone");
+        assert_eq!(cloned.commit.as_deref(), Some(first.as_str()));
+        assert!(!root.join("pinned/docs/prd/p.md").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A merged PR reaches the project's checkout on Re-sync, the way a pull
