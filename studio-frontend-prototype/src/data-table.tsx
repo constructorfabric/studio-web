@@ -230,6 +230,9 @@ export interface Column<T> {
 export interface FilterOption {
   value: string;
   label: string;
+  /** A list paged by the backend cannot count its own options: the screen
+   *  may say how many there are. Unknown, the chip shows no count at all. */
+  count?: number;
 }
 
 export interface Filter<T> {
@@ -493,7 +496,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     onClick={() => list.setFilter(f.id, state.filters[f.id] === o.value ? null : o.value)}
                   >
                     {o.label}
-                    <span className="dt-chip-n">{client && !error ? client.counts[f.id]?.[o.value] ?? 0 : "—"}</span>
+                    {client && !error ? (
+                      <span className="dt-chip-n">{client.counts[f.id]?.[o.value] ?? 0}</span>
+                    ) : (
+                      o.count !== undefined && <span className="dt-chip-n">{o.count.toLocaleString()}</span>
+                    )}
                   </button>
                 ))}
               </div>
