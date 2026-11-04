@@ -55,6 +55,7 @@ import { DomainQuestionsPanel } from "./domain-questions-panel";
 import { BriefPanel, RemarksPanel } from "./remarks-panel";
 import { PullRequestChecksChip, PullRequestChecksMenu, PullRequestChecksResult, usePullRequestChecks } from "./project-checks-view";
 import { journeyProgress, specsStatus } from "./specs-status";
+import { SpecPipelineSummary } from "./spec-pipeline-summary";
 import { PageHeader, StatusChip, type Tone } from "./ui-standard";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
@@ -1405,6 +1406,11 @@ function IngestedDocumentsView({
       )}
 
       {err && <div className="error">{err}</div>}
+
+      {/* The spec pipeline by type, folded to one line: moved here from
+          Overview, which says how the project is doing and leaves this
+          detail to Specs. */}
+      <SpecPipelineSummary token={token} projectId={projectTenantId} />
 
       {showJourney && (
         <JourneyPanel stages={stages} types={types} onSeed={setSeeding} onClose={() => setShowJourney(false)} />

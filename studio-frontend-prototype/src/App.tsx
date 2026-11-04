@@ -5769,7 +5769,6 @@ function ProjectScreen({
           <ProjectOverview
             token={token}
             project={proj}
-            parentWorkspaceId={workspace.id}
             onOpenTab={setTab}
             onOpenStudio={() => onOpenStudio(proj)}
           />
