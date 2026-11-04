@@ -176,3 +176,4 @@ A build is refused with `PRODUCT_USES_PLATFORM_IDP` when the description's OIDC 
 - `studio-backend/src/connectors/kubernetes.rs`: `cluster_readiness`, `readiness_of`, `BOOTSTRAP_VERSION`.
 - `deploy/k8s/studio-environments/bootstrap.yaml` (version 2); `.github/workflows/studio-delivery.yml` (`studio-builder`); `deploy/helm/studio-web` (`backend.builds.builderImage`).
 - `studio-frontend-prototype/src/images.ts`, `project-images.tsx`, `registry-browser.ts`, `registry-browser-view.tsx`, `build-plan.ts`, and the readiness badge in `environments-screen.tsx`.
+- `studio-frontend-prototype/src/namespace-assignments.ts`, `namespace-assignments-view.tsx`: Infrastructure's Namespaces tab, which lists and assigns the namespaces of §3 (`GET`/`PUT /namespace-assignments`), and its Image retention tab, the organization's default of §4 (`/image-retention?organization_id=`), which shares `RetentionForm` with the project's Images.

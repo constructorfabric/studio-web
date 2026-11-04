@@ -148,3 +148,4 @@ Chosen option: **2.**
 - `studio-backend/src/environments/model.rs`: `Strictness`, `Environment::strictness`. `service.rs`: `request_build` with `build_refs`.
 - `studio-backend/src/environments/build.rs`: `source_refs`, `strictness`, `SourceOptions`, and `Manifest.sources`. `artifact_ingest/port.rs`: `BuildPlace::source_commits`.
 - `studio-frontend-prototype/src/source-roles.ts`, `source-roles-view.tsx`: the Sources tab's role columns and `ProductSources` on the Product page and in the Release step.
+- `studio-frontend-prototype/src/environments.ts` (`strictnessOf`, and the form keeping `strictness`) and `environments-screen.tsx`: the environment form says how strictly the environment checks a product, unset following protection, and the ladder marks one that differs from what its protection implies (§5).

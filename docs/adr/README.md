@@ -74,6 +74,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0060](0060-a-project-is-one-list-of-sources-and-a-revision-pins-each.md) | A project is one list of source repositories, and each description revision pins the commit of every source it uses | proposed | 2026-11-04 |
 | [0061](0061-components-are-found-by-their-passports-in-a-two-level-catalogue.md) | Components are found by their passports, in a catalogue with an organization level and a project level | proposed | 2026-11-04 |
 | [0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) | A project's build, its images and its namespaces are its own, not the platform's | proposed | 2026-11-04 |
+| [0063](0063-what-a-product-is-comes-from-its-specs-and-a-project-starts-from-an-optional-template.md) | What a product is comes from its specs, and a project starts from an optional template | proposed | 2026-11-04 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

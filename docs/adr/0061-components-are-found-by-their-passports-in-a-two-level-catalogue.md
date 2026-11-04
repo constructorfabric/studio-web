@@ -266,7 +266,11 @@ component into the organization's catalogue without moving its code.
   `catalogue_levels_rest.rs`; `repo_enrich::{passport_component, docs_of,
   address_key, canonical_repo_key}`; `registry::migrate_repo_keys`.
 - Prototype: Components › Organization and projects
-  (`catalogue-levels-view.tsx`).
+  (`catalogue-levels-view.tsx`). Attaching or detaching a source, and
+  creating a project with one, asks for the project's sync (`saveSources`
+  in `App.tsx`, ADR-0063 §3). The product map describes a gear the
+  engine's corpus does not hold from its passport in the project's
+  catalogue (`product-map.ts`, `components`).
 - Memory of the findings: issues 11 and 14 of the 2026-11-04 build of
   Studioweb.
 
