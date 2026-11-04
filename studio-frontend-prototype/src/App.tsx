@@ -1271,7 +1271,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       tabbedProject.current = place.crumb?.nestedId;
       tabbedWorkspace.current = place.crumb?.projectId;
       if (place.view) setView(place.view);
-      if (place.crumb) setCrumb(place.crumb);
+      if (place.crumb) {
+        // The label may name the project left: the bar reads the one gone
+        // back to from the workspace's projects.
+        setProjectLabel(undefined);
+        setCrumb(place.crumb);
+      }
       if (place.projectTab) setProjectTab(place.projectTab);
       if (place.workspaceTab) setWorkspaceTab(place.workspaceTab);
       if (place.adminOpen !== undefined) setAdminOpen(place.adminOpen);
@@ -1974,6 +1979,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       cancelled = true;
     };
   }, [token, crumb.projectId]);
+  // The open project's name, for the path bar and the IDE launch: from the
+  // workspace's projects once read. `projectLabel` alone is set only by a
+  // click (the bar, a pin, the project list) and kept in the tab's storage,
+  // and an address carries ids only: a project opened from a link, in a new
+  // tab, read "All projects" there -- or the name of the one opened before.
+  const openProjectName =
+    (crumb.nestedId ? nestedProjects.find((p) => p.id === crumb.nestedId)?.name : undefined) ?? projectLabel;
 
   if (accessState !== "ready") {
     return (
@@ -2117,7 +2129,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               }}
               projects={nestedProjects}
               currentProjectId={crumb.nestedId}
-              currentProjectName={projectLabel}
+              currentProjectName={crumb.nestedId ? openProjectName : undefined}
               onPickProject={(p) => {
                 if (p) {
                   setProjectLabel(p.name);
@@ -2576,7 +2588,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               kind: "project",
               projectId: crumb.nestedId ?? "",
               workspaceId: crumb.projectId ?? "",
-              name: projectLabel ?? "Project",
+              name: openProjectName ?? "Project",
               tab: projectTab,
             };
             const already = isPinned(pins, pin);
