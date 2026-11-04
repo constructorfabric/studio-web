@@ -1658,6 +1658,9 @@ export interface DeployEnvironment {
   database_image?: string | null;
   /** A deploy waits for an organization administrator's approval. */
   protected: boolean;
+  /** How strictly a product is checked for it (ADR-0060): `dev` checks the
+   *  profile as a development one; absent from an older backend. */
+  strictness?: "dev" | "prod";
   /** The environment a release must have succeeded in first. */
   promote_from?: string | null;
   /** The projects that may deploy here; absent: all of them. */
@@ -3295,7 +3298,13 @@ export interface ProjectProduct {
   /** Where `product.gdl` was last committed; `path` is relative to the repository root. */
   written?: { branch: string; commit_sha: string; pr_url?: string | null; path?: string };
   /** The description revision Studio keeps (ADR-0053), and its path in the repository. */
-  description?: { revision: number; sha256?: string; path?: string | null };
+  description?: {
+    revision: number;
+    sha256?: string;
+    path?: string | null;
+    /** Each source the revision uses, pinned at save (ADR-0060). */
+    sources_lock?: { sources: import("./source-roles").LockedSource[] } | null;
+  };
   /** Where and which revision was last published to the repository (ADR-0053 §3). */
   published?: { revision: number; branch: string; commit_sha: string; pr_url?: string | null; path?: string; at?: string };
 }
@@ -3324,6 +3333,8 @@ export interface ProductDescriptionRevision {
   sha256: string;
   /** `studio`, `repository` (read back from the base branch) or `migrated`. */
   source: string;
+  /** Each source the text uses, pinned at save (ADR-0060); empty before locks were kept. */
+  sources_lock?: import("./source-roles").LockedSource[];
 }
 
 /** A project's product description as Studio keeps it. */
@@ -6325,6 +6336,8 @@ export const api = {
       config?: GearConfig;
       /** Commit onto the base branch, whatever the share mode. */
       onto_base?: boolean;
+      /** `dev`: check the profile as a development one (ADR-0060). */
+      strictness?: "dev" | "prod";
     },
   ) => {
     const ask = () =>

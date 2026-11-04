@@ -13,6 +13,7 @@
  *   Frontend         the frontend constructor, or "Add a frontend"
  */
 
+import { ProductSources } from "./source-roles-view";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { PRODUCT_CHANGED_EVENT, api, type FrontendPick, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
@@ -258,6 +259,7 @@ export function ProductPage({
         onSaved={() => setRound((r) => r + 1)}
         onSteps={setSteps}
       />
+      <ProductSources key={round} token={token} projectId={projectId} compact />
       <div className="doc-views product-tabs" role="tablist" aria-label="The product's parts" data-product-tabs>
         {tabs.map((t) => {
           const part = partOf(t.id);

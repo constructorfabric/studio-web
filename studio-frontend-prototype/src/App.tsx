@@ -59,6 +59,7 @@ import {
   type ProjectSource,
   type ShareMode,
 } from "./project-sources";
+import { sourceRoleColumns, useSourceRoles } from "./source-roles-view";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { ProjectComponentsInventory } from "./project-components-view";
 import { makeZip } from "./zip";
@@ -7057,6 +7058,8 @@ function ProjectSources({
   const [sync, setSync] = useState<Record<string, SyncProgress>>({});
   /** The project's connections, opened from the header. */
   const [managing, setManaging] = useState(false);
+  /** What each source is for (ADR-0060): read again with the rows. */
+  const roles = useSourceRoles(token, ws.id, repos);
 
   const syncRepo = async (r: RepoEntry) => {
     // Nodes land in the graph as the sync runs, so refresh the ingested list
@@ -7186,12 +7189,20 @@ function ProjectSources({
       <PageHeader
         title="Sources"
         info={
-          <p>
-            The repositories this project is built from. A session clones them when you open it; a sync pulls their
-            issues, pull requests and files into the artifact graph, which is where every artifact number in this
-            project comes from. Add one by picking it from a connector; the connections it is picked from are under
-            Manage connections.
-          </p>
+          <>
+            <p>
+              The repositories this project is built from: one list, no hidden main repository. A session clones them
+              when you open it; a sync pulls their issues, pull requests and files into the artifact graph, which is
+              where every artifact number in this project comes from. Add one by picking it from a connector; the
+              connections it is picked from are under Manage connections.
+            </p>
+            <p>
+              <b>Gears here</b>: Create a gear puts new gears in this source. <b>Publish product.gdl here</b>: a
+              published description goes to this source; with none marked, Studio keeps the revisions only. Neither
+              decides what a build clones: a build takes every source the product uses, at its branch for a dev
+              environment and at the commit the revision pinned for a protected one.
+            </p>
+          </>
         }
         status={
           <>
@@ -7267,6 +7278,7 @@ function ProjectSources({
               </>
             ),
           },
+          ...sourceRoleColumns(roles),
           {
             id: "share",
             header: "Changes",

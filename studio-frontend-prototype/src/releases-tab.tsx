@@ -33,6 +33,7 @@ import { deployableBuilds, productUrls, profilesBoundTo } from "./project-deploy
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 import { ladderSteps, newestRelease, releaseStatus, stepStatus, versionOf, type LadderStep } from "./releases";
+import { ProductSources } from "./source-roles-view";
 import { PageHeader, StatusChip, StepFlow, type Tone } from "./ui-standard";
 
 export function ProjectReleases({
@@ -187,15 +188,18 @@ export function ProjectReleases({
                 ? `${published} published build${published === 1 ? "" : "s"}; the newest is ready to deploy.`
                 : "Nothing published yet: build the product first.",
             body: (
-              <ProjectBuilds
-                token={token}
-                projectId={projectId}
-                projectName={projectName}
-                onOpenTab={onOpenTab}
-                round={shared}
-                onChanged={buildsChanged}
-                embedded
-              />
+              <>
+                <ProductSources key={shared} token={token} projectId={projectId} />
+                <ProjectBuilds
+                  token={token}
+                  projectId={projectId}
+                  projectName={projectName}
+                  onOpenTab={onOpenTab}
+                  round={shared}
+                  onChanged={buildsChanged}
+                  embedded
+                />
+              </>
             ),
           },
           {

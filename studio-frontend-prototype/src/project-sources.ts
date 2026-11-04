@@ -34,6 +34,10 @@ export interface ProjectSource {
   branch?: string;
   /** How shared edits reach this repository; `branch` when absent. */
   share_mode?: ShareMode;
+  /** "Create a gear" puts new gears here (ADR-0060; source-roles.ts). */
+  gears_here?: boolean;
+  /** A published product.gdl goes here; none: Studio keeps revisions only. */
+  publish_here?: boolean;
 }
 
 /** Whether shares through `connection` can open a pull request — GitHub only

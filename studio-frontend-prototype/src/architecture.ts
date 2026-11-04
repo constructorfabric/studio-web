@@ -650,7 +650,7 @@ export const SURFACES: Surface[] = [
     area: "project",
     title: "Product: its header, the way to running, Infrastructure and Frontend",
     does: "Follow the product from configured to running in four steps -- configure its infrastructure, backend and frontend, save it to product.gdl after seeing what changes against the kept revision, read its history and restore an earlier revision, build it, deploy it -- each with where it stands and what comes next; see the product in a header -- whether it resolves, the revision kept and whether it is published, and one action that follows the state (show the fixes, save to product.gdl, build) -- and switch between its parts on tabs, each with a dot for where it stands; see the whole product on its map -- the shell and its micro-frontends, the gears grouped by subsystem, what they run on, and the links between them, each screen card showing the pictures the last build took of its screens (a schematic until a build has), with a screen that calls a gear the product lacks, a database an environment does not give and a gear no screen uses marked -- and build it there: add screens and gears from a palette by dragging or Add, take the gears the engine says they also need, remove one, and read the same product as the product.gdl the next save would write, selected together with the map; see what it needs to run, and the environments it runs in as chips that open Releases; add a frontend from FrontX's shell template, or leave the product gears alone; compose the UI from micro-frontends in the shell, with how it gets built folded to how many steps are ready, see whether the product has the gears each screen calls, read the project's own repository into the catalogue when it has no micro-frontend, and find FrontX's templates to start a new one.",
-    components: ["FrontendConstructor", "GdlView", "Palette", "ProductFlow", "ProductFrontend", "ProductInfrastructure", "ProductMap", "ProductPage", "Revisions", "SaveStep", "ScreenPreview"],
+    components: ["FrontendConstructor", "GdlView", "Palette", "ProductFlow", "ProductFrontend", "ProductInfrastructure", "ProductMap", "ProductPage", "ProductSources", "Revisions", "SaveStep", "ScreenPreview"],
     gears: ["account-management", "studio-artifact-ingest", "studio-components-catalog", "studio-environments", "studio-product"],
   },
   {
@@ -698,14 +698,16 @@ export const SURFACES: Surface[] = [
     id: "project-sources",
     area: "project",
     title: "Sources",
-    does: "Attach repositories, choose how shared edits land, run a sync; see which connector each came from, and manage the connections they are picked from -- the project's own, or with the organization's it inherits (the project's Connections tab was this; its address opens here).",
+    does: "Attach repositories -- one list, no hidden main one -- mark the one new gears go to and the one a product.gdl is published to, see the commit the latest revision pins in each and the components found there, choose how shared edits land, run a sync; see which connector each came from, and manage the connections they are picked from -- the project's own, or with the organization's it inherits (the project's Connections tab was this; its address opens here).",
     components: ["ProjectSources", "RepoBrowser", "SourceAttachPicker"],
     gears: [
       "account-management",
       "studio-artifact-ingest",
+      "studio-components-catalog",
       "studio-connector",
       "studio-documents",
       "studio-events",
+      "studio-product",
     ],
   },
   {
