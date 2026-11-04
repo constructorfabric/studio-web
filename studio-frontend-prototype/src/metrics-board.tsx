@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, api, type Deployment, type MetricsRange, type MetricsScope, type OrgMetrics, type OrgOverview } from "./api";
 import { money } from "./costs";
 import { boardStatus, buildBoard, type PanelTarget } from "./metrics-model";
-import { PanelRow, RangePicker } from "./metrics-panels";
+import { PanelRow, RangePicker, type TargetLabels } from "./metrics-panels";
 import { errText } from "./problem";
 
 export function MetricsBoard({
@@ -32,6 +32,7 @@ export function MetricsBoard({
   overviewLoading = false,
   exclude = [],
   onOpen,
+  labels,
   initialRange = "30d",
 }: {
   token: string;
@@ -44,6 +45,8 @@ export function MetricsBoard({
   /** Panel keys to leave out (e.g. those only an organization's overview fills). */
   exclude?: string[];
   onOpen?: (target: PanelTarget) => void;
+  /** Where a panel opens, in the screen's words (metrics-panels.tsx). */
+  labels?: TargetLabels;
   initialRange?: MetricsRange;
 }) {
   const [range, setRange] = useState<MetricsRange>(initialRange);
@@ -119,7 +122,7 @@ export function MetricsBoard({
         </span>
       </div>
       {rows.map((row) => (
-        <PanelRow key={row.key} row={row} against={against} onOpen={onOpen} />
+        <PanelRow key={row.key} row={row} against={against} onOpen={onOpen} labels={labels} />
       ))}
     </div>
   );

@@ -176,7 +176,8 @@ export function deploymentCounts(
 /* ── Panels ─────────────────────────────────────────────────────────────── */
 
 /** Where a panel's click goes; the screens a board can open. */
-export type PanelTarget = "projects" | "people" | "costs" | "environments" | "reports" | "tasks";
+/** `specs` and `releases` are a project's own tabs (its Overview). */
+export type PanelTarget = "projects" | "people" | "costs" | "environments" | "reports" | "tasks" | "specs" | "releases";
 
 export type PanelState =
   /** Drawn from data. */
@@ -214,7 +215,7 @@ export interface Panel {
 }
 
 export interface BoardRow {
-  key: "delivery" | "quality" | "money" | "people";
+  key: "delivery" | "quality" | "money" | "people" | "project";
   title: string;
   panels: Panel[];
 }
@@ -383,7 +384,8 @@ export function buildBoard(i: BoardInputs): BoardRow[] {
         state: "ok",
         value: compact(perWeek(studio.current, days)),
         trend: trend(studio.current, studio.previous, "up"),
-        sub: `${studio.current} in ${span} · ${ins ? "Insight: " + ins.why : "no CI deployments in Insight"}`,
+        // Why Insight has no figure is the board's status line and the "?", once.
+        sub: `${studio.current} in ${span} · ${ins ? "Studio's own deploys only" : "no CI deployments in Insight"}`,
         chart: { kind: "bars", points: studio.series, format: n0 },
       };
     return off(base, ins ?? { state: i.loading ? "loading" : "unavailable", why: studioText });

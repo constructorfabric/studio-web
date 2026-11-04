@@ -111,7 +111,10 @@ export function OrgDashboard<W extends OnMeWorkspace>({
           org={org.id}
           overview={o}
           overviewLoading={o === null && error === null}
-          onOpen={(t) => onOpen(t)}
+          onOpen={(t) => {
+            // `specs` and `releases` are a project's tabs: no organization panel opens them.
+            if (t !== "specs" && t !== "releases") onOpen(t);
+          }}
         />
 
         <section className="card org-needs" data-org-needs>
@@ -150,14 +153,9 @@ export function OrgDashboard<W extends OnMeWorkspace>({
 }
 
 const ORG_DASH_CSS = `
+/* The layout (.org-layout, .org-needs) is in styles.css, wave 4G. */
 .org-dash .card-head h3 { margin:0; font-size:14px; }
 .org-dash .sub { color:var(--muted-foreground); font-size:12px; overflow-wrap:anywhere; }
-.org-dash .org-layout { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start; }
-.org-dash .org-needs { position:sticky; top:12px; }
-@media (max-width: 1180px) {
-  .org-dash .org-layout { grid-template-columns:minmax(0,1fr); }
-  .org-dash .org-needs { position:static; }
-}
 .org-dash .att-group + .att-group { margin-top:14px; }
 .org-dash .att-group-title { margin:0 0 6px; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--muted-foreground); display:flex; align-items:center; gap:6px; }
 .org-dash .att-count { font-size:11px; padding:0 6px; border-radius:999px; background:var(--accent); color:var(--foreground); text-transform:none; }

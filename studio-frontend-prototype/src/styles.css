@@ -3383,3 +3383,28 @@ button.mb-value:focus-visible { outline: 2px solid var(--ring, var(--primary)); 
 .mb-rank-track { height: 8px; }
 .mb-rank-bar { display: block; height: 8px; border-radius: 0 4px 4px 0; background: var(--mb-mark); }
 .mb-rank-value { font-variant-numeric: tabular-nums; color: var(--foreground); }
+
+/* wave 4G */
+/* Overview layouts (org-dashboard.tsx, project-overview.tsx): the board takes
+   what is left, Needs attention is a sticky column beside it, and below
+   ~1200px it drops under the board. Metric panels are as tall as their
+   content: one with no number is a line, not a box the height of its
+   neighbours; a row with no number at all is one line. */
+.org-dash .org-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.org-dash .org-layout > .mb-board { min-width: 0; }
+.org-dash .org-needs { position: sticky; top: 12px; margin: 0; }
+@media (max-width: 1200px) {
+  .org-dash .org-layout { grid-template-columns: minmax(0, 1fr); }
+  .org-dash .org-needs { position: static; }
+}
+.mb-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); align-items: start; }
+.mb-panel-head { flex-wrap: nowrap; align-items: center; }
+.mb-panel-title { flex: 0 1 auto; min-width: 0; }
+.mb-panel-off { gap: 2px; padding-block: 10px; }
+.mb-off { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.mb-off-dash { font-size: 18px; font-weight: 600; line-height: 1.2; color: var(--muted-foreground); }
+.mb-off-word { font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.mb-row-off { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); }
+.mb-row-off .mb-row-title { margin: 0; }
+.mb-row-off-line { font-size: 13px; color: var(--muted-foreground); }
+.mb-row-gone { margin: 6px 0 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); }

@@ -2,10 +2,14 @@
  * panels and the time-range picker. Scope-free: the organization's Overview
  * draws them, and a project's Overview can draw the same ones.
  *
- *   - MetricPanel: title, "?" (what the number is and where it comes from),
- *     source, the headline with its trend against the previous period, a
- *     small chart, and a click-through to the screen behind it. A panel with
- *     no number says why in an EmptyState rather than showing a zero.
+ *   - MetricPanel: title, "?" (what the number is, where it comes from --
+ *     Studio or Insight -- and why there is none), the headline with its
+ *     trend against the previous period, a small chart, and a click-through
+ *     to the screen behind it. A panel with no number is compact: a muted
+ *     "—" and a word, never a zero and never a tall empty box.
+ *   - PanelRow: a row of panels; the ones nobody can fill here are one line
+ *     under it, and a row with no number anywhere is one line
+ *     ("Delivery: waiting on Insight metrics").
  *   - Spark: a small time series as columns or a line (inline SVG, one
  *     series, one hue), with a y-axis top and zero, first and last bucket
  *     labels, and a hover readout per bucket.
@@ -19,7 +23,7 @@ import { useId, useState } from "react";
 
 import type { MetricsRange } from "./api";
 import { dayLabel, type BoardRow, type Panel, type PanelTarget, type Point, type Trend } from "./metrics-model";
-import { EmptyState, InfoPopover, StatusChip } from "./ui-standard";
+import { InfoPopover, StatusChip } from "./ui-standard";
 
 export const RANGES: { id: MetricsRange; label: string }[] = [
   { id: "7d", label: "7 days" },
@@ -55,7 +59,18 @@ const TARGET_LABEL: Record<PanelTarget, string> = {
   environments: "Infrastructure",
   reports: "Reports",
   tasks: "Background work",
+  specs: "Specs",
+  releases: "Releases",
 };
+
+/** A screen's own words for where a panel opens: a project calls People its
+ *  Team. Null: that panel opens nowhere on this screen (no link). */
+export type TargetLabels = Partial<Record<PanelTarget, string | null>>;
+
+function targetLabel(t: PanelTarget, labels?: TargetLabels): string | null {
+  const own = labels?.[t];
+  return own === undefined ? TARGET_LABEL[t] : own;
+}
 
 function TrendChip({ trend, against }: { trend: Trend; against: string }) {
   const arrow = trend.dir === "up" ? "▲" : trend.dir === "down" ? "▼" : "■";
@@ -67,41 +82,75 @@ function TrendChip({ trend, against }: { trend: Trend; against: string }) {
   );
 }
 
-/** One panel. `against` names the previous period ("previous 30 d"). */
-export function MetricPanel({ panel, against, onOpen }: { panel: Panel; against: string; onOpen?: (t: PanelTarget) => void }) {
+/** Words for a panel with no number, by why. */
+const OFF_WORD: Record<Exclude<Panel["state"], "ok" | "loading">, string> = {
+  hidden: "not yours to see",
+  empty: "no data",
+  unavailable: "not available",
+};
+
+/** One panel. `against` names the previous period ("previous 30 d").
+ *
+ *  The source (Studio, Insight) and, for a count of now, the lack of a trend
+ *  are said in the "?", not on the panel. A panel with no number is compact:
+ *  its title, a muted "—" and a word; the reason is in the "?" (an empty one
+ *  keeps its short reason on the line, since that IS the answer). */
+export function MetricPanel({
+  panel,
+  against,
+  onOpen: open,
+  labels,
+}: {
+  panel: Panel;
+  against: string;
+  onOpen?: (t: PanelTarget) => void;
+  labels?: TargetLabels;
+}) {
   const ok = panel.state === "ok";
+  const label = targetLabel(panel.target, labels);
+  const onOpen = label === null ? undefined : open;
+  const off = panel.state !== "ok" && panel.state !== "loading";
   return (
-    <section className={`card mb-panel state-${panel.state}`} data-panel={panel.key} data-panel-state={panel.state}>
+    <section
+      className={`card mb-panel state-${panel.state}${off ? " mb-panel-off" : ""}`}
+      data-panel={panel.key}
+      data-panel-state={panel.state}
+      data-source={panel.source}
+    >
       <header className="mb-panel-head">
         <h4 className="mb-panel-title">{panel.title}</h4>
         <InfoPopover label={`About ${panel.title}`}>
           {panel.info}
+          {ok && !panel.trend && <> No trend: it is a count of now.</>}
+          <br />
+          <br />
+          <b>Source:</b> {panel.source}.
           {panel.why && !ok && (
             <>
-              <br />
               <br />
               <b>Now:</b> {panel.why}
             </>
           )}
         </InfoPopover>
-        <span className="mb-source" data-source={panel.source}>
-          {panel.source}
-        </span>
       </header>
       {panel.state === "loading" ? (
         <div className="mb-loading" aria-busy="true">
           <StatusChip tone="running">reading…</StatusChip>
         </div>
-      ) : !ok ? (
-        <EmptyState
-          title={panel.state === "hidden" ? "Not yours to see" : panel.state === "empty" ? "No data" : "Not available"}
-          body={panel.why}
-        />
+      ) : off ? (
+        <div className="mb-off" data-panel-off>
+          <span className="mb-off-dash" aria-hidden>
+            —
+          </span>
+          <span className="mb-off-word">
+            {panel.state === "empty" && panel.why ? panel.why : OFF_WORD[panel.state as keyof typeof OFF_WORD]}
+          </span>
+        </div>
       ) : (
         <>
           <div className="mb-headline">
             {onOpen ? (
-              <button type="button" className="mb-value" onClick={() => onOpen(panel.target)} aria-label={`${panel.title}: ${panel.value}, open ${TARGET_LABEL[panel.target]}`}>
+              <button type="button" className="mb-value" onClick={() => onOpen(panel.target)} aria-label={`${panel.title}: ${panel.value}, open ${label}`}>
                 {panel.value}
               </button>
             ) : (
@@ -109,9 +158,11 @@ export function MetricPanel({ panel, against, onOpen }: { panel: Panel; against:
             )}
             {panel.unit && <span className="mb-unit">{panel.unit}</span>}
           </div>
-          <div className="mb-meta">
-            {panel.trend ? <TrendChip trend={panel.trend} against={against} /> : <span className="mb-trend none">no trend: a count of now</span>}
-          </div>
+          {panel.trend && (
+            <div className="mb-meta">
+              <TrendChip trend={panel.trend} against={against} />
+            </div>
+          )}
           {panel.sub && <div className="mb-sub">{panel.sub}</div>}
           {panel.chart &&
             (panel.chart.kind === "rank" ? (
@@ -121,25 +172,84 @@ export function MetricPanel({ panel, against, onOpen }: { panel: Panel; against:
             ))}
         </>
       )}
-      {onOpen && (
+      {onOpen && !off && (
         <button type="button" className="linklike mb-open" onClick={() => onOpen(panel.target)}>
-          {TARGET_LABEL[panel.target]} →
+          {label} →
         </button>
       )}
     </section>
   );
 }
 
-/** A row of panels under its title, like a dashboard row. */
-export function PanelRow({ row, against, onOpen }: { row: BoardRow; against: string; onOpen?: (t: PanelTarget) => void }) {
+/** What a row says when none of its panels has a number: one line, not a
+ *  row of empty boxes. Null when any panel has one (or is still reading). */
+export function rowOffLine(row: BoardRow): string | null {
+  if (row.panels.length === 0 || !row.panels.every((p) => p.state === "unavailable" || p.state === "hidden")) return null;
+  if (row.panels.every((p) => p.source === "Insight" || p.source === "Studio + Insight")) return "waiting on Insight metrics";
+  if (row.panels.every((p) => p.state === "hidden")) return "not yours to see";
+  return "not available";
+}
+
+/** A row of panels under its title, like a dashboard row; a row with no
+ *  number anywhere is one line, its panels' reasons behind its "?". */
+export function PanelRow({
+  row,
+  against,
+  onOpen,
+  labels,
+}: {
+  row: BoardRow;
+  against: string;
+  onOpen?: (t: PanelTarget) => void;
+  labels?: TargetLabels;
+}) {
+  const offLine = rowOffLine(row);
+  if (offLine) {
+    const whys = [...new Set(row.panels.map((p) => p.why).filter(Boolean))];
+    return (
+      <section className="mb-row mb-row-off" data-board-row={row.key} data-row-off aria-label={row.title}>
+        <h3 className="mb-row-title">{row.title}</h3>
+        <span className="mb-row-off-line">{offLine}</span>
+        <InfoPopover label={`Why ${row.title} has no numbers`}>
+          {row.panels.map((p) => p.title).join(", ")}.
+          {whys.map((w) => (
+            <span key={w}>
+              <br />
+              {w}
+            </span>
+          ))}
+        </InfoPopover>
+      </section>
+    );
+  }
+  // The panels nobody can fill here are one line under the others, not boxes.
+  const away = (p: Panel) => p.state === "unavailable" || p.state === "hidden";
+  const shown = row.panels.filter((p) => !away(p));
+  const gone = row.panels.filter(away);
+  const goneWhys = [...new Set(gone.map((p) => p.why).filter(Boolean))];
   return (
     <section className="mb-row" data-board-row={row.key} aria-label={row.title}>
       <h3 className="mb-row-title">{row.title}</h3>
       <div className="mb-grid">
-        {row.panels.map((p) => (
-          <MetricPanel key={p.key} panel={p} against={against} onOpen={onOpen} />
+        {shown.map((p) => (
+          <MetricPanel key={p.key} panel={p} against={against} onOpen={onOpen} labels={labels} />
         ))}
       </div>
+      {gone.length > 0 && (
+        <p className="mb-row-gone" data-row-gone>
+          <span>
+            Not available here: {gone.map((p) => p.title).join(", ")}
+          </span>
+          <InfoPopover label={`Why some of ${row.title} has no numbers`}>
+            {goneWhys.map((w, k) => (
+              <span key={w}>
+                {k > 0 && <br />}
+                {w}
+              </span>
+            ))}
+          </InfoPopover>
+        </p>
+      )}
     </section>
   );
 }
