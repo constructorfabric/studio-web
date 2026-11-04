@@ -36,6 +36,7 @@ import { EVIDENCE_LABEL } from "./need-view";
 import { classify, REQUIREMENT_TYPE_LABEL } from "./requirement-types";
 import type { SpecModelReview } from "./review-state";
 import type { SpecRequirement, SpecRequirements } from "./spec-model";
+import { EmptyState, InfoPopover } from "./ui-standard";
 
 const ORIGIN_LABEL: Record<Criterion["origin"], string> = {
   measured: "measured",
@@ -207,9 +208,8 @@ export function PrioritiesScreen({
   return (
     <div className="pr">
       <p className="dm-howto">
-        <b>Compare what to build first.</b> ICE: the mean of Impact, Confidence and Ease, each 1–10, higher is better.
-        Each value says where it comes from; one nobody knows leaves the score incomplete rather than guessed. Order puts a
-        prerequisite before what needs it, and a tie stays a tie.
+        <b>Compare what to build first.</b>{" "}
+        <InfoPopover label="How to read this">ICE: the mean of Impact, Confidence and Ease, each 1–10, higher is better. Each value says where it comes from; one nobody knows leaves the score incomplete rather than guessed. Order puts a prerequisite before what needs it, and a tie stays a tie.</InfoPopover>
       </p>
       {legacy && onSave && (
         <div className="card pr-legacy">
@@ -257,7 +257,7 @@ export function PrioritiesScreen({
         )}
       </div>
       {rows.length === 0 ? (
-        <div className="empty">Nothing to compare yet. Add the requirements to weigh against each other.</div>
+        <EmptyState title="Nothing to compare yet." body="Add the requirements to weigh against each other." />
       ) : (
         <div className="card">
           <DataTable<(typeof rows)[number]>

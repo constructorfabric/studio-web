@@ -33,6 +33,7 @@ import { readRule } from "./rule-checks";
 import { decisionIndex, EVIDENCE_PREFIX, evidenceIndex, FactReviewContext, factKey, reviewIndex, withoutRejected, type FactReview, type SpecModelReview } from "./review-state";
 import { overlaySaved, pruneSaved, savedWrites, withSaved, type SavedEdit } from "./saved-entities";
 import { useGearCatalogue } from "./product-configurator-view";
+import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
 import {
   buildLine,
   coverageCounts,
@@ -469,37 +470,48 @@ export function SpecModelTab({
   return (
     <FactReviewContext.Provider value={factReview}>
     <>
-      <h1>{only === "issues" ? "Issues" : "Domain model"}</h1>
-      <p className="subtitle">
-        {only === "issues"
-          ? "Everything to decide about the project: what stops a build, what to look at, how the documentation could be better."
-          : "What the project's documents say the application is, each fact with the passage it comes from."}
-      </p>
-
-      <div className="sm-bar">
-        <div className="dm-tabs" role="tablist" aria-label="Domain model" hidden={only === "issues"}>
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tabOf(view) === t.id}
-              className={`dm-tabbtn${tabOf(view) === t.id ? " on" : ""}`}
-              onClick={() => setView(t.views[0].id)}
-              title={t.why}
-            >
-              {t.label} <span className="chip-n">{t.count}</span>
-            </button>
-          ))}
-        </div>
-        <div className="sm-build">
-          {line && <span className={model?.build.error ? "sm-build-line sm-err" : "sm-build-line"}>{line}</span>}
-          {model && running && model.build.documents > 0 && model.build.done < model.build.documents && (
-            <span className="sm-build-progress" data-build-progress>
-              <progress value={readFraction(model.build)} max={1} />
-              {etaLabel(model.build, Date.now())}
-            </span>
-          )}
+      <PageHeader
+        title={only === "issues" ? "Issues" : "Domain model"}
+        info={
+          only === "issues" ? (
+            <p>Everything to decide about the project: what stops a build, what to look at, how the documentation could be better.</p>
+          ) : (
+            <>
+              <p>What the project&apos;s documents say the application is, each fact with the passage it comes from.</p>
+              <ul>
+                {tabs.map((t) => (
+                  <li key={t.id}>
+                    <b>{t.label}</b>: {t.why}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )
+        }
+        status={
+          <>
+            {model && (
+              <span>
+                {model.documents.length} document{model.documents.length === 1 ? "" : "s"}
+              </span>
+            )}
+            {line && (
+              <StatusChip
+                tone={running ? "running" : model?.build.error ? "danger" : "ok"}
+                data-build-line
+              >
+                {line}
+              </StatusChip>
+            )}
+            {model && running && model.build.documents > 0 && model.build.done < model.build.documents && (
+              <span className="sm-build-progress" data-build-progress>
+                <progress value={readFraction(model.build)} max={1} />
+                {etaLabel(model.build, Date.now())}
+              </span>
+            )}
+          </>
+        }
+        actions={
           <button
             className="primary"
             disabled={running || starting || model?.documents.length === 0}
@@ -518,8 +530,27 @@ export function SpecModelTab({
                 ? `Build on my key · ${estimateLabel(estimate)}`
                 : "Build on my key"}
           </button>
+        }
+      />
+
+        <div className="sm-bar">
+          <div className="dm-tabs" role="tablist" aria-label="Domain model">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tabOf(view) === t.id}
+                className={`dm-tabbtn${tabOf(view) === t.id ? " on" : ""}`}
+                onClick={() => setView(t.views[0].id)}
+                title={t.why}
+              >
+                {t.label} <span className="chip-n">{t.count}</span>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+
       {only !== "issues" && (tabs.find((t) => t.id === tabOf(view))?.views.length ?? 0) > 1 && (
         <div className="dm-seg" role="tablist" aria-label="Views">
           {tabs
@@ -699,17 +730,22 @@ function AgainstTheCode({
   if ("error" in read) return <div className="error">{read.error}</div>;
   if (!read.repo) {
     return (
-      <div className="empty">
-        No code to compare: the project has no gear repository and no GitHub source whose Cargo
-        manifests could be read.
-      </div>
+      <EmptyState
+        title="No code to compare."
+        body="The project has no gear repository and no GitHub source whose Cargo manifests could be read."
+      />
     );
   }
   if (read.items.length === 0) {
     return (
-      <div className="empty">
-        Every capability the documents ask for is filled by a gear in <code>{read.repo}</code>.
-      </div>
+      <EmptyState
+        title="Nothing missing in the code."
+        body={
+          <>
+            Every capability the documents ask for is filled by a gear in <code>{read.repo}</code>.
+          </>
+        }
+      />
     );
   }
   return (
@@ -767,16 +803,21 @@ function Work({
   if (read === null) return <div className="empty">Loading…</div>;
   if ("error" in read) return <div className="error">{read.error}</div>;
   if (!read.synced) {
-    return <div className="empty">Nothing syncs this deployment&apos;s issues and pull requests, so there is no work to link.</div>;
+    return (
+      <EmptyState title="No work to link." body="Nothing syncs this deployment's issues and pull requests." />
+    );
   }
   const summary = `${read.identifiers} identifier${read.identifiers === 1 ? "" : "s"} defined in the documents; ${read.total} named by work. ${read.unlinked} of ${read.work} issues, pull requests and commits name none.`;
   if (read.items.length === 0) {
     return (
-      <div className="empty">
-        {read.identifiers === 0
-          ? "The documents define no identifiers with a label (**ID**: `…`), so there is nothing for work to name."
-          : `No issue, pull request or commit names one of the ${read.identifiers} identifiers the documents define.`}
-      </div>
+      <EmptyState
+        title="No work names the documents."
+        body={
+          read.identifiers === 0
+            ? "The documents define no identifiers with a label (**ID**: `…`), so there is nothing for work to name."
+            : `No issue, pull request or commit names one of the ${read.identifiers} identifiers the documents define.`
+        }
+      />
     );
   }
   return (
@@ -853,11 +894,14 @@ function Elsewhere({
   if ("error" in read) return <div className="error">{read.error}</div>;
   if (read.items.length === 0) {
     return (
-      <div className="empty">
-        {read.projects === 0
-          ? "There is no other project in this organization you can read, so there is nothing to compare with."
-          : `No requirement of the ${read.projects} other project${read.projects === 1 ? "" : "s"} reads like one of this project's.`}
-      </div>
+      <EmptyState
+        title="Nothing similar elsewhere."
+        body={
+          read.projects === 0
+            ? "There is no other project in this organization you can read, so there is nothing to compare with."
+            : `No requirement of the ${read.projects} other project${read.projects === 1 ? "" : "s"} reads like one of this project's.`
+        }
+      />
     );
   }
   return (

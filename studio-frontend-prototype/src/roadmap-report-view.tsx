@@ -11,12 +11,10 @@ import { api } from "./api";
 import { errText } from "./format";
 import { Modal } from "./modal";
 import { demandText, type RoadmapGroup, type RoadmapReport } from "./roadmap-report";
+import { EmptyState, InfoPopover, KpiTile, StatusChip, type Tone } from "./ui-standard";
 
-const LAMP: Record<string, string> = {
-  good: "var(--success, #16a34a)",
-  watch: "var(--warning, #d97706)",
-  bad: "var(--destructive, #dc2626)",
-};
+/** A plan lamp as a StatusChip tone. */
+const LAMP: Record<string, Tone> = { good: "ok", watch: "warn", bad: "danger" };
 
 const TABLE: CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 12 };
 const TH: CSSProperties = {
@@ -68,7 +66,12 @@ export function RoadmapReportDialog({
   return (
     <Modal label="Roadmap report" onClose={onClose} cardStyle={{ width: "min(1100px, 100%)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <h2 style={{ margin: 0, fontSize: 16, flex: 1 }}>Roadmap report</h2>
+        <h2 style={{ margin: 0, fontSize: 16, flex: 1 }}>
+          Roadmap report{" "}
+          <InfoPopover label="About the roadmap report">
+            Where the board and the plan come from is set once for the organization, under Reports.
+          </InfoPopover>
+        </h2>
         <button
           className="iconbtn primary"
           disabled={!total || saving}
@@ -86,9 +89,6 @@ export function RoadmapReportDialog({
         </button>
       </div>
       {err && <p className="gcat-err">{err}</p>}
-      <p className="gcat-hint" style={{ margin: 0 }}>
-        Where the board and the plan come from is set once for the organization, under Reports.
-      </p>
       <RoadmapReportBody token={token} org={org} onLoaded={(r) => setTotal(r.total)} />
     </Modal>
   );
@@ -134,16 +134,18 @@ export function RoadmapReportBody({
       {!report && !err && <p className="gcat-hint">Reading the board…</p>}
       {report && s && (
         <>
-          <p className="gcat-hint" style={{ margin: 0 }}>
-            {report.total} gears on the roadmap board
-            {report.not_in_code > 0 && ` · ${report.not_in_code} not in code yet`}
-            {report.not_on_board > 0 &&
-              ` · ${report.not_on_board} catalogued components are not on it — unplanned, or pin one through its Roadmap item field`}
-          </p>
+          <div className="dash-stats" style={{ marginTop: 0 }} data-roadmap-counts>
+            <KpiTile label="Gears on the board" value={report.total} />
+            <KpiTile label="Not in code yet" value={report.not_in_code} tone={report.not_in_code > 0 ? "warn" : undefined} />
+            <KpiTile
+              label="Not on the board"
+              value={report.not_on_board}
+              tone={report.not_on_board > 0 ? "warn" : undefined}
+              sub={report.not_on_board > 0 ? "catalogued, unplanned: pin one through its Roadmap item field" : undefined}
+            />
+          </div>
           {report.total === 0 ? (
-            <p className="gcat-hint">
-              No gears yet. Set the report&apos;s source under Reports and refresh it.
-            </p>
+            <EmptyState title="No gears on the board yet." body="Set the report's source under Reports and refresh it." />
           ) : (
             <>
               {s.by_group.length > 0 && (
@@ -275,9 +277,11 @@ export function RoadmapReportBody({
                 )}
               </div>
               {s.overdue.length > 0 && (
-                <p className="gcat-err" style={{ margin: 0 }}>
-                  Overdue: {s.overdue.join(", ")}
-                </p>
+                <div>
+                  <StatusChip tone="danger" data-roadmap-overdue>
+                    Overdue: {s.overdue.join(", ")}
+                  </StatusChip>
+                </div>
               )}
               <div style={{ overflowX: "auto" }}>
                 <table style={TABLE}>
@@ -315,7 +319,7 @@ export function RoadmapReportBody({
                           </td>
                           <td style={TD} title={r.plan_reasons.join("\n")}>
                             {r.plan && (
-                              <span style={{ color: LAMP[r.plan_lamp ?? ""] ?? "inherit" }}>{r.plan}</span>
+                              <StatusChip tone={LAMP[r.plan_lamp ?? ""] ?? "neutral"}>{r.plan}</StatusChip>
                             )}
                             {r.plan_reasons.length > 0 && (
                               <div style={{ color: "var(--muted-foreground)" }}>{r.plan_reasons.join("; ")}</div>
