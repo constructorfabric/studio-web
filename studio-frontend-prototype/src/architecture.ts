@@ -125,8 +125,8 @@ export const DOMAINS: Domain[] = [
   {
     id: "ide",
     title: "IDE sessions & AI",
-    blurb: "Per-project Theia IDE containers, the bridge from the IDE back to Studio, and the LLM proxy the agents call.",
-    gears: ["studio-session", "studio-theia", "studio-llm-proxy"],
+    blurb: "Per-project Theia IDE containers, the bridge from the IDE back to Studio, the LLM proxy the agents call, and the MCP server that gives an agent outside Studio its tools.",
+    gears: ["studio-session", "studio-theia", "studio-llm-proxy", "studio-mcp"],
   },
   {
     id: "background",
@@ -456,6 +456,7 @@ export const COMPONENT_GEAR: Record<string, string> = {
   "studio-insight": "studio-insight",
   "studio-kits": "studio-kits",
   "studio-llm": "studio-llm-proxy",
+  "studio-mcp": "studio-mcp",
   "studio-notify": "studio-notify",
   "studio-organizations": "studio-organizations",
   "studio-presence": "studio-presence",
@@ -876,6 +877,7 @@ export const SURFACES: Surface[] = [
       "studio-connector",
       "studio-domain-model",
       "studio-events",
+      "studio-mcp",
       "types-registry",
     ],
   },
@@ -924,6 +926,15 @@ export const SURFACES: Surface[] = [
       "studio-theia",
       "studio-user",
     ],
+  },
+  {
+    id: "mcp",
+    area: "outside",
+    title: "Your own agent, over MCP",
+    does: "From Claude Code, Codex or Cursor on your machine: read the domain model and change its fields, see what a project's documents need and which gears could provide it, check a draft spec before you commit it. The agent signs you in at Studio's Keycloak and every tool calls the REST API as you: a way in, not more rights. Deploying is not a tool. A product goes to Constructor Research through an environment of its project; Research's own MCP (constructor-research-mcp) runs a folder Studio does not hold, on the agent's own Research sign-in, and Studio does not see it.",
+    sources: ["studio-backend/src/mcp/", "studio-backend/src/{domain_model,spec_mapping,spec_quality}/mcp.rs"],
+    hostedBy: ["studio-mcp"],
+    gears: ["studio-domain-model", "studio-mcp", "studio-spec-mapping", "studio-spec-quality", "studio-tasks"],
   },
 ];
 
