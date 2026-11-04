@@ -515,9 +515,17 @@ impl KitRegistryService {
 /// A deployment's catalogue: a JSON array of [`KitDescriptor`]s. Each slug
 /// and default version must be one a request could name, and slugs distinct;
 /// an empty list is a deployment without kits.
+///
+/// Each kit must also be one the IDE's installer can put in place: it holds
+/// its own allow-list (`theia/studio/src/node/kit-installer.ts`), slug to
+/// repository, and installs from that repository whatever the catalogue
+/// says. So a deployment may offer fewer of Constructor's kits, describe
+/// them its own way or pin other commits, but not add a kit or move one to
+/// another repository -- that would be offered here and refused there.
 fn parse_catalogue(json: &str) -> Result<Vec<KitDescriptor>> {
     let kits: Vec<KitDescriptor> =
         serde_json::from_str(json).context("not a JSON array of kits")?;
+    let installable = official_catalogue();
     let mut seen = std::collections::HashSet::new();
     for kit in &kits {
         if normalize_slug(&kit.slug)? != kit.slug {
@@ -529,6 +537,30 @@ fn parse_catalogue(json: &str) -> Result<Vec<KitDescriptor>> {
         normalize_version(&kit.default_version).with_context(|| format!("kit `{}`", kit.slug))?;
         if !kit.repository_url.starts_with("https://") {
             bail!("kit `{}`: repository_url must be an https URL", kit.slug);
+        }
+        let repo = |url: &str| {
+            url.trim()
+                .trim_end_matches('/')
+                .trim_end_matches(".git")
+                .to_ascii_lowercase()
+        };
+        match installable.iter().find(|k| k.slug == kit.slug) {
+            Some(known) if repo(&known.repository_url) == repo(&kit.repository_url) => {}
+            Some(known) => bail!(
+                "kit `{}`: the IDE installs it from {}, not {}",
+                kit.slug,
+                known.repository_url,
+                kit.repository_url
+            ),
+            None => bail!(
+                "kit `{}`: the IDE installs only {}; another kit needs its installer to know it first",
+                kit.slug,
+                installable
+                    .iter()
+                    .map(|k| format!("`{}`", k.slug))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
     Ok(kits)
@@ -833,11 +865,12 @@ mod tests {
     #[test]
     fn a_deployment_names_its_own_kits() {
         let kits = parse_catalogue(
-            r#"[{"slug": "ops", "name": "Ops", "repository_url": "https://github.com/acme/kit-ops",
+            r#"[{"slug": "sdlc", "name": "Delivery", "repository_url": "https://github.com/constructorfabric/studio-kit-sdlc.git",
                  "default_version": "v1.2.0"}]"#,
         )
         .unwrap();
         assert_eq!(kits.len(), 1);
+        assert_eq!(kits[0].default_version, "v1.2.0");
         assert_eq!(kits[0].source, "github");
         assert_eq!(kits[0].visibility, "public");
         assert_eq!(kits[0].manifest_path, ".cf-studio-kit.toml");
@@ -855,9 +888,30 @@ mod tests {
                 r#"{{"slug": "{slug}", "name": "n", "repository_url": "{url}", "default_version": "{version}"}}"#
             )
         };
-        let ok = kit("ops", "https://github.com/acme/kit-ops", "main");
+        let ok = kit(
+            "sdlc",
+            "https://github.com/constructorfabric/studio-kit-sdlc",
+            "main",
+        );
+        assert!(parse_catalogue(&format!("[{ok}]")).is_ok());
         assert!(parse_catalogue("{}").is_err());
         assert!(parse_catalogue(&format!("[{ok}, {ok}]")).is_err());
+        // What the IDE's installer cannot put in place: a kit it does not
+        // know, or one of its own from another repository.
+        assert!(
+            parse_catalogue(&format!(
+                "[{}]",
+                kit("ops", "https://github.com/acme/kit-ops", "main")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse_catalogue(&format!(
+                "[{}]",
+                kit("sdlc", "https://github.com/acme/kit-sdlc", "main")
+            ))
+            .is_err()
+        );
         assert!(parse_catalogue(&format!("[{}]", kit("Ops", "https://x/y", "main"))).is_err());
         assert!(parse_catalogue(&format!("[{}]", kit("ops", "http://x/y", "main"))).is_err());
         assert!(parse_catalogue(&format!("[{}]", kit("ops", "https://x/y", "../main"))).is_err());

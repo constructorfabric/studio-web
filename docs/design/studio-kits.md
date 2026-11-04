@@ -125,7 +125,10 @@ lists one `[[kits]]` entry per kit, so the slug names the kit and not the
 repository). Each pins a default commit and the manifest path
 `.cf-studio-kit.toml`. That is the default; a deployment names its own kits
 in `STUDIO_KIT_CATALOGUE`, a JSON array of the same fields (see the gear's
-README), read once at start and refused there when it does not read.
+README), read once at start; the service refuses to start when it fails to parse.
+The IDE's installer keeps its own allow-list, slug to repository, so the
+catalogue may drop, re-describe or re-pin those kits but not add one or move
+one to another repository: such an entry is refused at start too.
 
 ## 3. Technical Architecture
 

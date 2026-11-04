@@ -16,7 +16,9 @@ This README is what you need to work in the directory.
   `manifest_path` = `.cf-studio-kit.toml` optional). Unset, it is
   `official_catalogue()` in `service.rs`, Constructor's own kits; moving their
   pinned default commits is a change there. A value that does not read stops
-  the gear at start rather than offering other kits; `[]` offers none.
+  the gear at start rather than offering other kits; `[]` offers none. Each
+  entry must be a kit the IDE's installer allow-lists (`sdlc`, `compete`),
+  from that kit's own repository: the installer installs by slug.
 - Materialize, reconcile and the repository list call the project's session
   through [`../studio_theia`](../studio_theia), so they need a backend built
   with the `theia-bridge` feature and a running session; without either they
