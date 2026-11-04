@@ -25,6 +25,9 @@ import {
 import { budgetProblem, budgetWarnings, budgetsOf, levelBadge, nextPlace, percent, placeLabel, rowsOf, standingText, type BudgetRow } from "./budgets";
 import { GROUPS, PERIODS, blankModel, hours, money, periodRange, priceProblem, rowLabel, tokens, type Period } from "./costs";
 import { errText } from "./format";
+import { Modal } from "./modal";
+import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
+import "./org-screens.css";
 
 const CSS = `
 .costs .cost-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 4px 0 12px; }
@@ -68,6 +71,12 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
   const [currency, setCurrency] = useState("USD");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /** The report, or the price list it is priced with: two tabs, not one page. */
+  const [tab, setTab] = useState<"report" | "prices">("report");
+  /** The budgets, a header action: open in a dialog. */
+  const [budgetsOpen, setBudgetsOpen] = useState(false);
+  /** This month's budgets that warn, for the header's status. */
+  const [budgetAlerts, setBudgetAlerts] = useState(0);
 
   const loadPrices = useCallback(() => {
     let live = true;
@@ -117,7 +126,7 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
     try {
       const saved = await api.updatePrices(token, org.id, { currency, models, session });
       setPrices(saved);
-      setNotice("Prices saved. The report below is priced with them, past usage included.");
+      setNotice("Prices saved. The report is priced with them, past usage included.");
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -127,25 +136,99 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
   const setModel = (i: number, patch: Partial<ModelPrice>) =>
     setModels((ms) => ms.map((m, j) => (j === i ? { ...m, ...patch } : m)));
   const editable = prices?.may_manage ?? false;
+  /** Nothing is priced, saved: every cost would read $0. */
+  const unpricedList = !!prices && prices.models.length === 0 && !prices.session;
 
   return (
     <div className="costs" data-org-costs>
       <style>{CSS}</style>
-      <h1>Costs</h1>
-      <p className="subtitle">
-        What {org.name}&apos;s model calls and IDE sessions cost. Usage is recorded as tokens and pod time; the money comes
-        from the price list below, so a changed price reprices the past too.
-      </p>
+      <PageHeader
+        title="Costs"
+        status={
+          <>
+            {report && prices?.may_view_costs && !unpricedList && (
+              <span data-costs-total>
+                {money(report.total, report.currency)} · {PERIODS.find((p) => p.id === period)?.label.toLowerCase()}
+              </span>
+            )}
+            {unpricedList && (
+              <StatusChip tone="warn" onClick={() => setTab("prices")} data-costs-no-prices>
+                no prices set
+              </StatusChip>
+            )}
+            {budgetAlerts > 0 && (
+              <StatusChip tone="warn" onClick={() => setBudgetsOpen(true)} data-costs-budget-alerts>
+                {budgetAlerts === 1 ? "1 budget needs attention" : `${budgetAlerts} budgets need attention`}
+              </StatusChip>
+            )}
+            {prices && !prices.may_view_costs && <StatusChip tone="neutral">costs are the administrators&apos;</StatusChip>}
+          </>
+        }
+        info={
+          <>
+            <p>
+              What {org.name}&apos;s model calls and IDE sessions cost. Usage is recorded as tokens and pod time; the
+              money comes from the price list, so a changed price reprices the past too.
+            </p>
+            <p>
+              Budgets say what the organization, a workspace or a project may spend in a calendar month. They warn; they
+              never stop anyone.
+            </p>
+            {prices && !prices.may_view_costs && (
+              <p>Only the organization&apos;s administrators, or people granted cost.view, see the costs.</p>
+            )}
+          </>
+        }
+        actions={
+          prices?.may_view_costs && (
+            <button className="primary" onClick={() => setBudgetsOpen(true)} data-costs-budgets>
+              Budgets
+            </button>
+          )
+        }
+      />
       {error && <div className="error">{error}</div>}
       {notice && <div className="hint">{notice}</div>}
 
-      {prices && !prices.may_view_costs && (
-        <p className="hint">Only the organization&apos;s administrators, or people granted cost.view, see the costs.</p>
+      {prices?.may_view_costs && (
+        <OrgBudgets
+          token={token}
+          org={org}
+          personal={personal}
+          prices={prices}
+          open={budgetsOpen}
+          onClose={() => setBudgetsOpen(false)}
+          onAlerts={setBudgetAlerts}
+        />
       )}
 
-      {prices?.may_view_costs && <OrgBudgets token={token} org={org} personal={personal} prices={prices} />}
+      {prices && (
+        <div className="org-toolbar">
+          <span className="chips org-tabs" role="tablist" aria-label="Costs">
+            {prices.may_view_costs && (
+              <button type="button" role="tab" aria-selected={tab === "report"} className={`chip ${tab === "report" ? "on" : ""}`} onClick={() => setTab("report")} data-costs-tab="report">
+                Report
+              </button>
+            )}
+            <button type="button" role="tab" aria-selected={tab === "prices" || !prices.may_view_costs} className={`chip ${tab === "prices" || !prices.may_view_costs ? "on" : ""}`} onClick={() => setTab("prices")} data-costs-tab="prices">
+              Price list
+            </button>
+          </span>
+        </div>
+      )}
 
-      {prices?.may_view_costs && (
+      {prices?.may_view_costs && tab === "report" && unpricedList && (
+        <EmptyState
+          title="No prices set: usage is counted, cost shows $0"
+          action={
+            <button className="primary" onClick={() => setTab("prices")} data-costs-set-prices>
+              Set prices
+            </button>
+          }
+        />
+      )}
+
+      {prices?.may_view_costs && tab === "report" && !unpricedList && (
         <section className="card" data-cost-report>
           {reportError && <div className="error">{reportError}</div>}
           <div className="cost-controls">
@@ -175,7 +258,7 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
             </label>
             {loading && <span className="hint">Counting…</span>}
           </div>
-          {report && report.rows.length === 0 && <p className="empty">Nothing was used in this period.</p>}
+          {report && report.rows.length === 0 && <EmptyState title="Nothing was used in this period." />}
           {report && report.rows.length > 0 && (
             <table>
               <thead>
@@ -218,15 +301,17 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
           )}
           {report && report.unpriced.length > 0 && (
             <p className="cost-unpriced" data-cost-unpriced>
-              * No price for {report.unpriced.join(", ")}: counted above, not in the cost. Add a price below.
+              * No price for {report.unpriced.join(", ")}: counted above, not in the cost.{" "}
+              <button type="button" className="linklike" onClick={() => setTab("prices")}>
+                Add a price
+              </button>
             </p>
           )}
         </section>
       )}
 
-      {prices && (
+      {prices && (tab === "prices" || !prices.may_view_costs) && (
         <section className="card" data-price-list>
-          <h3>Price list</h3>
           <p className="hint">
             Per model, the price of a million tokens of each kind; for IDE sessions, an hour of a requested CPU core and
             GiB of memory. A model ending in * prices every model that starts with the rest.
@@ -315,11 +400,18 @@ function OrgBudgets({
   org,
   personal,
   prices,
+  open,
+  onClose,
+  onAlerts,
 }: {
   token: string;
   org: { id: string; name: string };
   personal: boolean;
   prices: PriceList;
+  /** Shown in a dialog; closed, it still reads the standing for the header. */
+  open: boolean;
+  onClose: () => void;
+  onAlerts?: (n: number) => void;
 }) {
   const [list, setList] = useState<BudgetList | null>(null);
   const [status, setStatus] = useState<BudgetStatus | null>(null);
@@ -364,9 +456,12 @@ function OrgBudgets({
     };
   }, [token, org.id, personal, list, prices]);
 
-  if (!list && !error) return null;
-  const currency = status?.currency ?? list?.currency ?? prices.currency;
   const warnings = budgetWarnings(status);
+  useEffect(() => {
+    onAlerts?.(warnings.length);
+  }, [warnings.length, onAlerts]);
+  if (!open || (!list && !error)) return null;
+  const currency = status?.currency ?? list?.currency ?? prices.currency;
   const problem = budgetProblem(rows, warnAt);
   const editable = list?.may_manage ?? false;
   const places = list?.places ?? [];
@@ -392,8 +487,14 @@ function OrgBudgets({
   };
 
   return (
-    <section className="card" data-budgets>
-      <h3>Budgets this month</h3>
+    <Modal label="Budgets this month" onClose={onClose} cardStyle={{ width: "min(860px, 100%)" }}>
+    <section className="costs" data-budgets>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <h3 style={{ margin: 0 }}>Budgets this month</h3>
+        <button type="button" className="ghost" style={{ marginLeft: "auto" }} onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </div>
       {error && <div className="error">{error}</div>}
       {notice && <div className="hint">{notice}</div>}
       {warnings.length > 0 && status && (
@@ -502,5 +603,6 @@ function OrgBudgets({
       )}
       {list && !editable && <p className="hint">Only the organization&apos;s administrators, or people granted cost.manage, change budgets.</p>}
     </section>
+    </Modal>
   );
 }
