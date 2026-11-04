@@ -136,7 +136,18 @@ Each `studio` build node keeps, beside what every build keeps, where it ran
 and with what (`artifact_ingest::port::BuildPlace`): `environment_id`,
 `environment`, `namespace`, `git_ref`, `repository`, `source_connection_id`
 and `source_connection` (its label), `builder_image`, and `gearbox_version`,
-the engine's commit `publish` reads in its image (the manifest's `gearbox`).
+the engine's commit `publish` reads in its image (the manifest's `gearbox`),
+and `source_commits`, `id=commit` for every source the build fetched
+(ADR-0060 §3).
+
+A build takes every source its description uses (ADR-0060 §3): the home
+source cloned for the `path(...)` ones, and each `git(...)` source that is
+one of the project's repositories fetched at the ref the server chose
+(`build-prepare --source-ref id=ref`) -- its branch for a dev environment, the
+revision's pinned commit for a protected one, which refuses a revision with
+no lock (`REVISION_NOT_PINNED`). An environment's `strictness` (`dev` |
+`prod`; unset: `prod` when protected, else `dev`) is passed as
+`--strictness`: `dev` builds the profile marked `development = True` (§5).
 The start writes all but the engine; a later record keeps what an earlier one
 said unless it says it again. Each is absent from a record written before it
 was kept.

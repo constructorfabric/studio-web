@@ -125,7 +125,58 @@ pub struct BuildPayload {
     /// builds `product_file` on gears.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub own: Option<super::model::OwnBuild>,
+    /// `(description source id, ref)` for each `git(...)` source that is one
+    /// of the project's repositories (ADR-0060 §3): fetched at its branch for
+    /// a dev build, at the revision's pinned commit for a protected one,
+    /// instead of the `rev` the text names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_refs: Vec<(String, String)>,
+    /// `dev` checks and generates the profile as a development one
+    /// (ADR-0060 §5); absent or `prod` as the description says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strictness: Option<String>,
 }
+
+/// How `prepare` takes the description's sources beyond the repository it
+/// clones (ADR-0060 §3, §5).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceOptions {
+    /// `(source id, ref)`: a `git(...)` source fetched at this ref, with the
+    /// repository's credentials, instead of its `rev`.
+    pub refs: Vec<(String, String)>,
+    /// Mark the profile built `development = True`.
+    pub development: bool,
+}
+
+impl SourceOptions {
+    /// Read from the command line: each `--source-ref id=ref`, and
+    /// `--strictness`.
+    pub fn parse(refs: &[String], strictness: Option<&str>) -> anyhow::Result<Self> {
+        let refs = refs
+            .iter()
+            .map(|r| {
+                let (id, at) = r
+                    .split_once('=')
+                    .ok_or_else(|| anyhow!("--source-ref {r} is not id=ref"))?;
+                Ok((id.trim().to_owned(), at.trim().to_owned()))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(Self {
+            refs,
+            development: strictness.map(str::trim) == Some("dev"),
+        })
+    }
+
+    fn ref_of(&self, id: &str) -> Option<&str> {
+        self.refs
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, r)| r.as_str())
+    }
+}
+
+/// See [`crate::product::sdk::development_profile`].
+pub use crate::product::sdk::development_profile;
 
 /// The context a run reads an environment's connections as, and the tenant
 /// it finds them from: the project's service for a project's own
@@ -313,6 +364,14 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
     if let Some(own) = &p.own {
         prepare_args.push("--own".to_owned());
         prepare_args.push(serde_json::to_string(own).unwrap_or_default());
+    }
+    for (id, at) in &p.source_refs {
+        prepare_args.push("--source-ref".to_owned());
+        prepare_args.push(format!("{id}={at}"));
+    }
+    if let Some(strictness) = &p.strictness {
+        prepare_args.push("--strictness".to_owned());
+        prepare_args.push(strictness.clone());
     }
     let restricted = serde_json::json!({
         "runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
@@ -961,6 +1020,13 @@ impl WatchTask {
                     chart_version: Some(m.chart.version),
                     place: crate::artifact_ingest::port::BuildPlace {
                         gearbox_version: m.gearbox,
+                        source_commits: (!m.sources.is_empty()).then(|| {
+                            m.sources
+                                .iter()
+                                .map(|(id, c)| format!("{id}={c}"))
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        }),
                         ..Default::default()
                     },
                     ..BuildOutcome::default()
@@ -1108,6 +1174,10 @@ pub struct Manifest {
     /// written before it was recorded, and from a pipeline's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gearbox: Option<String>,
+    /// `(source id, commit)` of every source the build fetched (ADR-0060
+    /// §3): what a dev build actually took from each branch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<(String, String)>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1133,6 +1203,9 @@ pub struct Prepared {
     pub chart_base: String,
     /// `(app, image name)`.
     pub apps: Vec<(String, String)>,
+    /// `(source id, commit)` of every source fetched.
+    #[serde(default)]
+    pub sources: Vec<(String, String)>,
 }
 
 /// The applications `docker/build.sh` builds, `(app, image)`, and its build
@@ -1477,6 +1550,7 @@ fn gearbox() -> String {
 
 /// `studio-backend build-prepare`: the repository and its gear sources
 /// cloned, the profile generated and made buildable, and what to build listed.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare(
     work: &Path,
     repo_url: &str,
@@ -1485,6 +1559,7 @@ pub fn prepare(
     product_file: &str,
     profile: &str,
     own: Option<&str>,
+    options: &SourceOptions,
 ) -> anyhow::Result<()> {
     let username = std::env::var("GIT_USERNAME").unwrap_or_default();
     let password = std::env::var("GIT_PASSWORD").unwrap_or_default();
@@ -1501,6 +1576,7 @@ pub fn prepare(
         description,
         product_file,
         profile,
+        options,
     )
 }
 
@@ -1634,6 +1710,7 @@ pub fn prepare_own(
         chart_dir: chart_dir.display().to_string(),
         chart_base: chart_base_version(&chart_yaml),
         apps: named,
+        sources: Vec::new(),
     };
     std::fs::write(
         work.join("build.json"),
@@ -1649,6 +1726,7 @@ pub fn prepare_own(
 
 /// [`prepare`] with the repository's credentials given, not read from the
 /// environment: the server prepares a Research build in its own process.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_as(
     work: &Path,
     repo_url: &str,
@@ -1657,6 +1735,7 @@ pub fn prepare_as(
     description: &DescriptionFrom<'_>,
     product_file: &str,
     profile: &str,
+    options: &SourceOptions,
 ) -> anyhow::Result<()> {
     if !super::workflow::is_product_file(product_file) {
         bail!("'{product_file}' is not a product description in the repository");
@@ -1670,6 +1749,16 @@ pub fn prepare_as(
         .ok_or_else(|| anyhow!("the clone has no commit"))?;
     lay_description(&repo, (username, password), description, product_file)?;
     let file = repo.join(product_file);
+    if options.development {
+        let text = std::fs::read_to_string(&file)
+            .with_context(|| format!("{product_file} could not be read"))?;
+        std::fs::write(&file, development_profile(&text, profile))?;
+        println!(
+            "profile {profile} is built as a development one (the environment's strictness is dev)"
+        );
+    }
+    // Every source's commit, as fetched: the record of what a build took.
+    let mut fetched: Vec<(String, String)> = Vec::new();
 
     let intent: serde_json::Value = serde_json::from_str(&run(
         Command::new(gearbox())
@@ -1701,17 +1790,39 @@ pub fn prepare_as(
             match s.get("kind").and_then(|k| k.as_str()) {
                 Some("git") => {
                     let url = s.get("url").and_then(|v| v.as_str()).unwrap_or_default();
-                    let rev = s.get("rev").and_then(|v| v.as_str()).unwrap_or_default();
+                    // A project's own repository is taken at the ref the
+                    // server chose -- its branch, or the revision's pinned
+                    // commit -- with the repository's credentials (ADR-0060
+                    // §3); any other at the `rev` the description names.
+                    let chosen = options.ref_of(id);
+                    let rev = chosen
+                        .or_else(|| s.get("rev").and_then(|v| v.as_str()))
+                        .unwrap_or_default();
                     if !url.starts_with("https://") || rev.is_empty() {
                         bail!("source '{id}' is not an https git URL at a revision");
+                    }
+                    if let Some(r) = chosen {
+                        println!("source {id} is the project's repository, taken at {r}");
                     }
                     let dir = sources_dir.join(id);
                     run(
                         Command::new("git").arg("init").arg("-q").arg(&dir),
                         "git init",
                     )?;
+                    let mut fetch = Command::new("git");
+                    if chosen.is_some() && !password.is_empty() {
+                        // The token from the environment, never argv or the URL.
+                        fetch
+                            .env("GIT_TERMINAL_PROMPT", "0")
+                            .env("STUDIO_GIT_TOKEN", password)
+                            .args(["-c", "credential.helper="])
+                            .arg("-c")
+                            .arg(format!(
+                                "credential.helper=!f() {{ echo username={username}; echo password=$STUDIO_GIT_TOKEN; }}; f"
+                            ));
+                    }
                     run(
-                        Command::new("git")
+                        fetch
                             .arg("-C")
                             .arg(&dir)
                             .args(["-c", "core.longpaths=true", "fetch", "-q", "--depth", "1"])
@@ -1727,9 +1838,13 @@ pub fn prepare_as(
                         ]),
                         &format!("checking out source '{id}'"),
                     )?;
+                    if let Some(c) = crate::connectors::sdk::git_checkout::head_commit(&dir) {
+                        fetched.push((id.clone(), c));
+                    }
                     roots.push(dir);
                 }
                 Some("path") => {
+                    fetched.push((id.clone(), commit.clone()));
                     let at = s.get("at").and_then(|v| v.as_str()).unwrap_or_default();
                     let dir = inside(&repo, &base.join(at))
                         .ok_or_else(|| anyhow!("source '{id}' points outside the repository"))?;
@@ -1855,6 +1970,7 @@ pub fn prepare_as(
         chart_dir: chart_dir.display().to_string(),
         chart_base,
         apps: named,
+        sources: fetched,
     };
     std::fs::write(
         work.join("build.json"),
@@ -1935,6 +2051,7 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
             version,
         },
         gearbox: engine_revision(),
+        sources: prepared.sources,
     };
     let text = serde_json::to_string(&manifest)?;
     // The kubelet keeps a container's termination message (at most 4 KiB):
@@ -1975,7 +2092,58 @@ mod tests {
             description_text: None,
             connections_from: None,
             own: None,
+            source_refs: Vec::new(),
+            strictness: None,
         }
+    }
+
+    #[test]
+    fn a_build_takes_each_project_source_at_the_ref_the_server_chose() {
+        let mut p = payload();
+        p.source_refs = vec![("billing".into(), "feature/x".into())];
+        p.strictness = Some("dev".into());
+        let job = job_manifest(&p, true);
+        let args: Vec<String> = job
+            .pointer("/spec/template/spec/initContainers/0/args")
+            .and_then(|a| a.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|a| a.as_str().map(str::to_owned))
+            .collect();
+        let after = |flag: &str| {
+            args.iter()
+                .position(|a| a == flag)
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+        };
+        assert_eq!(after("--source-ref").as_deref(), Some("billing=feature/x"));
+        assert_eq!(after("--strictness").as_deref(), Some("dev"));
+        let options = SourceOptions::parse(&["billing=feature/x".into()], Some("dev")).unwrap();
+        assert_eq!(options.ref_of("billing"), Some("feature/x"));
+        assert_eq!(options.ref_of("gears-rust"), None);
+        assert!(options.development);
+        assert!(SourceOptions::parse(&["nope".into()], None).is_err());
+        // A payload queued before either is the build it always was.
+        let old: BuildPayload = serde_json::from_value({
+            let mut v = serde_json::to_value(payload()).unwrap();
+            v.as_object_mut().unwrap().remove("source_refs");
+            v
+        })
+        .unwrap();
+        assert!(old.source_refs.is_empty() && old.strictness.is_none());
+    }
+
+    #[test]
+    fn a_dev_strictness_marks_the_built_profile_development() {
+        let gdl = "profiles = [\n    embedded(id = \"dev\", development = True),\n    kubernetes(id = \"prod\", discovery = \"static\", database = postgres(host = \"pg\")),\n],";
+        let out = development_profile(gdl, "prod");
+        assert!(
+            out.contains("kubernetes(id = \"prod\", development = True, discovery"),
+            "{out}"
+        );
+        assert_eq!(development_profile(&out, "prod"), out, "once");
+        assert_eq!(development_profile(gdl, "dev"), gdl, "already marked");
+        assert_eq!(development_profile(gdl, "local"), gdl, "no such profile");
     }
 
     #[test]

@@ -188,6 +188,7 @@ async fn prepare(
             },
             &product_file,
             &profile,
+            &build::SourceOptions::default(),
         )?;
         serde_json::from_slice(&std::fs::read(at.join("build.json"))?)
             .context("prepare left no build.json")

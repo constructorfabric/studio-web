@@ -119,6 +119,10 @@ pub struct Environment {
     /// `None` takes no previews.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previews: Option<PreviewSettings>,
+    /// How strictly a product is checked for this environment (ADR-0060
+    /// §5); `None` follows [`Environment::protected`] ([`Self::strictness`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strictness: Option<Strictness>,
     pub updated_by: String,
     pub updated_at: String,
 }
@@ -138,6 +142,36 @@ pub struct EnvironmentList {
     pub open_clusters: Vec<Uuid>,
 }
 
+/// How strictly the engine holds a product to the production rules for an
+/// environment (ADR-0060 §5). `dev` checks the profile as a development one
+/// -- Gearbox's `development = True`, the production rules' findings as
+/// warnings -- so a dev cluster can run static sign-in while it is set up;
+/// `prod` holds it to them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Strictness {
+    Dev,
+    Prod,
+}
+
+impl Strictness {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Prod => "prod",
+        }
+    }
+
+    /// `dev` or `prod`; anything else is `None`.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "dev" => Some(Self::Dev),
+            "prod" => Some(Self::Prod),
+            _ => None,
+        }
+    }
+}
+
 /// What a person may set on an environment.
 #[derive(Debug, Clone)]
 pub struct EnvironmentInput {
@@ -155,6 +189,7 @@ pub struct EnvironmentInput {
     pub promote_from: Option<Uuid>,
     pub projects: Option<Vec<Uuid>>,
     pub previews: Option<PreviewSettings>,
+    pub strictness: Option<Strictness>,
 }
 
 /// A refusal of an environment as written.
@@ -338,6 +373,7 @@ pub fn checked(
         }),
         project_id: None,
         previews,
+        strictness: input.strictness,
         updated_by: by,
         updated_at: at,
     })
@@ -481,6 +517,16 @@ fn check_promotion(list: &EnvironmentList, own: Uuid, from: Uuid) -> Result<(), 
 }
 
 impl Environment {
+    /// How strictly a product is checked here: as set, else `prod` for a
+    /// protected environment and `dev` for any other.
+    pub fn strictness(&self) -> Strictness {
+        self.strictness.unwrap_or(if self.protected {
+            Strictness::Prod
+        } else {
+            Strictness::Dev
+        })
+    }
+
     /// May `project` deploy here? A project's own environment takes only
     /// its project's deploys.
     pub fn admits(&self, project: Uuid) -> bool {
@@ -1450,7 +1496,22 @@ mod tests {
             promote_from: None,
             projects: None,
             previews: None,
+            strictness: None,
         }
+    }
+
+    #[test]
+    fn a_protected_environment_is_checked_by_prod_rules_and_another_by_dev_ones() {
+        let mut e = env("dev");
+        assert_eq!(e.strictness(), Strictness::Dev);
+        e.protected = true;
+        assert_eq!(e.strictness(), Strictness::Prod);
+        e.strictness = Some(Strictness::Dev);
+        assert_eq!(e.strictness(), Strictness::Dev, "set, it is what was set");
+        assert_eq!(Strictness::parse("prod"), Some(Strictness::Prod));
+        assert_eq!(Strictness::parse("strict"), None);
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["strictness"], "dev");
     }
 
     fn env(name: &str) -> Environment {

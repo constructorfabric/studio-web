@@ -160,6 +160,13 @@ enum Commands {
         /// (ADR-0054 §7); without it the product description is built.
         #[arg(long)]
         own: Option<String>,
+        /// `id=ref`: the description's `git(...)` source `id`, one of the
+        /// project's repositories, fetched at `ref` (ADR-0060 §3).
+        #[arg(long = "source-ref")]
+        source_refs: Vec<String>,
+        /// `dev` builds the profile as a development one (ADR-0060 §5).
+        #[arg(long)]
+        strictness: Option<String>,
     },
     /// The last step of a build in an organization's cluster: push the chart
     /// beside the images and leave the manifest as the termination message.
@@ -216,6 +223,8 @@ pub async fn run_cli() -> Result<()> {
         product_file,
         profile,
         own,
+        source_refs,
+        strictness,
     }) = &cli.command
     {
         // Studio's revision when the Job carries one (ADR-0053 §2), else only
@@ -239,6 +248,7 @@ pub async fn run_cli() -> Result<()> {
             product_file,
             profile,
             own.as_deref(),
+            &environments::build::SourceOptions::parse(source_refs, strictness.as_deref())?,
         )
         .inspect_err(environments::build::say_failure);
     }

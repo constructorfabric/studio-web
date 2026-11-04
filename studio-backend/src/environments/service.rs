@@ -1918,6 +1918,40 @@ impl EnvironmentService {
                 "'{r}' is not a branch, tag or commit"
             )));
         }
+        // Each project source the description uses (ADR-0060 §3): a dev
+        // build takes its branch and records the commit it got; a protected
+        // environment builds only the commits the revision pinned at save.
+        let refs = if research || own.is_some() {
+            crate::product::sources_lock::SourceRefs::default()
+        } else {
+            match &description {
+                Some(d) => crate::product::sources_lock::build_refs(
+                    d.sources_lock.as_ref(),
+                    &d.planned,
+                    env.protected,
+                )
+                .map_err(|why| Refusal::Precondition("REVISION_NOT_PINNED", why))?,
+                None if env.protected => {
+                    return Err(Refusal::Precondition(
+                        "REVISION_NOT_PINNED",
+                        format!(
+                            "environment '{}' is protected: it builds only a description                              revision Studio keeps, with its sources pinned -- save the                              product first",
+                            env.name
+                        ),
+                    ));
+                }
+                None => crate::product::sources_lock::SourceRefs::default(),
+            }
+        };
+        let git_ref = match (&refs.home, env.protected) {
+            (Some(pinned), true) => {
+                if git_ref.as_deref().is_some_and(|r| r != pinned) {
+                    tracing::info!(%project, environment = %env.name, "studio-environments: a protected build takes the revision's pinned commit, not the ref asked for");
+                }
+                Some(pinned.clone())
+            }
+            _ => git_ref,
+        };
         let builder_image = if research {
             String::new()
         } else {
@@ -1991,6 +2025,7 @@ impl EnvironmentService {
             source_connection: Some(source_label).filter(|l| !l.is_empty()),
             builder_image: Some(builder_image.clone()),
             gearbox_version: None,
+            source_commits: None,
         };
         let payload = build::BuildPayload {
             build_id: build_id.clone(),
@@ -2011,6 +2046,8 @@ impl EnvironmentService {
             description_text: description.map(|d| d.text),
             connections_from: env.project_id,
             own,
+            source_refs: refs.git,
+            strictness: Some(env.strictness().as_str().to_owned()),
         };
         if let Ok(builds) = self
             .hub

@@ -92,6 +92,9 @@ pub struct EnvironmentDto {
     pub database_image: Option<String>,
     /// Whether a deploy waits for an organization administrator's approval.
     pub protected: bool,
+    /// How strictly a product is checked for it (ADR-0060 §5): `dev` or
+    /// `prod`, as set or as its protection makes it.
+    pub strictness: String,
     /// The environment a release must have succeeded in first; absent for
     /// none (ADR-0048 §5).
     #[schema(value_type = Option<String>)]
@@ -165,6 +168,7 @@ fn kind_str(k: EnvironmentKind) -> &'static str {
 }
 
 fn env_dto(e: Environment) -> EnvironmentDto {
+    let strictness = e.strictness().as_str().to_owned();
     EnvironmentDto {
         id: e.id,
         name: e.name,
@@ -179,6 +183,7 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         database: database_str(e.database).to_owned(),
         database_image: e.database_image,
         protected: e.protected,
+        strictness,
         promote_from: e.promote_from,
         projects: e.projects,
         project_id: e.project_id,
@@ -337,6 +342,10 @@ pub struct EnvironmentRequest {
     pub database_image: Option<String>,
     #[serde(default)]
     pub protected: bool,
+    /// `dev` or `prod` (ADR-0060 §5); absent: `prod` when protected, else
+    /// `dev`.
+    #[serde(default)]
+    pub strictness: Option<String>,
     /// Another environment of the organization a release must have
     /// succeeded in first.
     #[schema(value_type = Option<String>)]
@@ -374,6 +383,14 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
                 .create());
         }
     };
+    let strictness = match r.strictness.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(raw) => Some(super::model::Strictness::parse(raw).ok_or_else(|| {
+            StudioEnvironmentsError::invalid_argument()
+                .with_constraint(format!("strictness is dev or prod, not '{raw}'"))
+                .create()
+        })?),
+    };
     let research = r.research_project.map(|project| ResearchTarget {
         project,
         hardware: r.research_hardware,
@@ -393,6 +410,7 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
         promote_from: r.promote_from,
         projects: r.projects,
         previews: r.previews.map(preview_settings),
+        strictness,
     })
 }
 

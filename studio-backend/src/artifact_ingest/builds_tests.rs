@@ -280,6 +280,7 @@ fn a_studio_build_records_where_it_ran_and_the_end_keeps_it() {
             source_connection: Some("GitHub (acme)".into()),
             builder_image: Some("ghcr.io/acme/studio-backend:sha-1".into()),
             gearbox_version: None,
+            source_commits: None,
         },
         ..start()
     };
@@ -292,6 +293,7 @@ fn a_studio_build_records_where_it_ran_and_the_end_keeps_it() {
         status: "passed".into(),
         place: crate::artifact_ingest::port::BuildPlace {
             gearbox_version: Some("361e703".into()),
+            source_commits: Some("shop=abc,gears-rust=def".into()),
             ..Default::default()
         },
         ..start()
@@ -301,4 +303,5 @@ fn a_studio_build_records_where_it_ran_and_the_end_keeps_it() {
     assert_eq!(v["environment"], "dev");
     assert_eq!(v["builder_image"], "ghcr.io/acme/studio-backend:sha-1");
     assert_eq!(v["gearbox_version"], "361e703");
+    assert_eq!(v["source_commits"], "shop=abc,gears-rust=def");
 }
