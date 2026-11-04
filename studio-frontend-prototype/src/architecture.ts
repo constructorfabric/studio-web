@@ -587,7 +587,6 @@ export const SURFACES: Surface[] = [
       "DomainQuestionsPanel",
       "BriefPanel",
       "RemarksPanel",
-      "PullRequestChecksPanel",
       "SpecQuality",
       "SqStatusChip",
       "PublishModal",

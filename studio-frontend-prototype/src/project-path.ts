@@ -145,11 +145,11 @@ export function specQueues(counts: readonly { queue: string; count: number }[]):
  *  Builds are missing on purpose: each of Domain model's views carries its own
  *  line, Product opens on its way from configured to running
  *  (product-flow.ts), and Builds on where the build stands and what comes next
- *  (pipeline.ts). */
+ *  (pipeline.ts). Specs and Releases have a PageHeader (ui-standard.tsx) with
+ *  their status in a line and the explanation behind its "?". */
 export const TAB_HOWTO: Partial<Record<ProjTab, { lead: string; rest: string }>> = {
   overview: { lead: "Where the project stands.", rest: "Follow the path below; each step opens the tab where it is done." },
   sources: { lead: "Connect the repositories.", rest: "A sync reads their documents, issues, pull requests and CI runs into the project." },
-  specs: { lead: "Type the documents.", rest: "Confirm the template each file was written against; what Studio could not decide waits under Needs review." },
   artifacts: { lead: "Take what the project produced.", rest: "Download the files its CI builds kept and its releases; its typed documents and the files kept in Studio are beside them." },
   kits: { lead: "Install the project's ways of working.", rest: "Kits add workflows and conventions to the repository, pinned to a version." },
   people: { lead: "Choose who works here.", rest: "Add people from the organization and give each a role on this project." },

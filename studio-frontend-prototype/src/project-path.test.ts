@@ -97,7 +97,8 @@ describe("specQueues", () => {
 
 describe("TAB_HOWTO", () => {
   it("has a line for the tabs a new member needs", () => {
-    for (const tab of ["overview", "sources", "specs", "kits", "people"] as const) {
+    // Specs says it behind its header's "?" (documents.tsx), not in a banner.
+    for (const tab of ["overview", "sources", "kits", "people"] as const) {
       expect(TAB_HOWTO[tab]?.lead, tab).toBeTruthy();
     }
   });

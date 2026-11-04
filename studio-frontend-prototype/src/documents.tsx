@@ -53,7 +53,9 @@ import { rowReview, withDecisions, type FindingDecision } from "./spec-findings"
 import { ReviewPanel } from "./review-panel";
 import { DomainQuestionsPanel } from "./domain-questions-panel";
 import { BriefPanel, RemarksPanel } from "./remarks-panel";
-import { PullRequestChecksPanel } from "./project-checks-view";
+import { PullRequestChecksChip, PullRequestChecksMenu, PullRequestChecksResult, usePullRequestChecks } from "./project-checks-view";
+import { journeyProgress, specsStatus } from "./specs-status";
+import { PageHeader, StatusChip } from "./ui-standard";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { subsystemOf } from "./product-configurator";
@@ -504,6 +506,10 @@ function IngestedDocumentsView({
   const [stages, setStages] = useState<StageStatus[]>([]);
   /** The types a stage wants and the project has no document for. */
   const [seeding, setSeeding] = useState<string[] | null>(null);
+  /** The journey's stages, opened from the header's journey chip. */
+  const [showJourney, setShowJourney] = useState(false);
+  /** The checks on open pull requests, run from the header's menu. */
+  const checks = usePullRequestChecks(token, projectTenantId);
   const abortRef = useRef<AbortController | null>(null);
 
   const typeName = useCallback(
@@ -1206,6 +1212,14 @@ function IngestedDocumentsView({
     return bindings.find((b) => b.id === row.id) ?? null;
   }, [shown, selectedId, bindings]);
 
+  /** The header's line: the specs, what waits, what is open, the journey. */
+  const status = specsStatus({
+    bound: counts.bound,
+    needsReview: counts["needs-review"],
+    findings: reviewsKnown ? rows.reduce((n, r) => n + (r.findings ?? 0), 0) : null,
+    journey: journeyProgress(stages),
+  });
+
   const FILTERS: { id: SpecFilter; label: string; count: number; unknown?: boolean }[] = [
     // First, because it is the state a freshly synced project is in: prose the
     // sync found, nothing has read yet.
@@ -1228,36 +1242,64 @@ function IngestedDocumentsView({
   return (
     <div className="ingested">
       <style>{INGESTED_CSS}</style>
-      {/* One line: what this is, and what can be done to it. The explanation
-          is a hover away rather than a paragraph above every visit, and the
-          four Spec Quality runs are one menu, not four buttons wider than the
-          table they act on. */}
-      <div className="ing-bar">
-        <h2 className="ing-title">Specs</h2>
-        <span
-          className="ing-info"
-          tabIndex={0}
-          title={
-            "Studio reads the files the repository sync pulled in and works out which template each one " +
-            "was written against — from a type declared in its front matter, or by matching its sections, " +
-            "path and title. Anything it cannot decide waits here for you. The Status column counts what the " +
-            "detectors found open on each document; the analysis that produced them is the Analysis view."
-          }
-        >
-          ⓘ
-        </span>
-        {progress && <span className="ing-progress">{progress}</span>}
-        {note && !progress && <span className="ing-note">{note}</span>}
-        <span className="ing-bar-actions">
-          {busy && abortRef.current && (
-            <button onClick={() => abortRef.current?.abort()}>Stop</button>
-          )}
-          <button onClick={() => setWriting((w) => !w)} disabled={busy} aria-expanded={writing}>
-            New document
-          </button>
-          <button onClick={recheck} disabled={busy}>
-            {busy ? "Working…" : "Look again"}
-          </button>
+      {/* One line: what this is, where it stands, and what can be done to
+          it. The explanation is behind the "?" rather than a paragraph above
+          every visit; the Spec Quality runs and the pull request checks are
+          one menu, not buttons and a card wider than the table they act on. */}
+      <PageHeader
+        title="Specs"
+        info={
+          <>
+            <p>
+              Type the documents: confirm the template each file was written against. Studio reads the files the
+              repository sync pulled in and works out the template from a type declared in the front matter, or by
+              matching sections, path and title; what it cannot decide waits under Needs review.
+            </p>
+            <p>
+              The Review column counts what the detectors found open on each document. Spec Quality runs them on the
+              documents the filters leave on screen; the checks on pull requests test every open pull request that
+              changes a document against its type&apos;s template and can set the result on it as a status.
+            </p>
+          </>
+        }
+        status={
+          <>
+            <span data-specs-count>{status.lead}</span>
+            {status.chips.map((c) => (
+              <StatusChip
+                key={c.id}
+                tone={c.tone}
+                data-specs-chip={c.id}
+                onClick={
+                  c.id === "review"
+                    ? () => setFilter("needs-review")
+                    : c.id === "journey"
+                      ? () => setShowJourney((v) => !v)
+                      : undefined
+                }
+                expanded={c.id === "journey" ? showJourney : undefined}
+                title={c.id === "review" ? "Show the Needs review queue" : c.id === "journey" ? "What the journey needs" : undefined}
+              >
+                {c.text}
+              </StatusChip>
+            ))}
+            <PullRequestChecksChip read={checks.read} open={checks.open} onToggle={() => checks.setOpen(!checks.open)} />
+            {progress && <StatusChip tone="running">{progress}</StatusChip>}
+            {note && !progress && <span className="ing-note">{note}</span>}
+          </>
+        }
+        actions={
+          <>
+            {busy && abortRef.current && <button onClick={() => abortRef.current?.abort()}>Stop</button>}
+            <button className="primary" onClick={() => setWriting((w) => !w)} disabled={busy} aria-expanded={writing}>
+              New document
+            </button>
+            <button onClick={recheck} disabled={busy}>
+              {busy ? "Working…" : "Look again"}
+            </button>
+          </>
+        }
+        menu={
           <details className="ing-menu">
             <summary className={busy ? "disabled" : undefined}>Spec Quality ▾</summary>
             <div className="ing-menu-list" onClick={(e) => (e.currentTarget.parentElement as HTMLDetailsElement).removeAttribute("open")}>
@@ -1291,10 +1333,11 @@ function IngestedDocumentsView({
               >
                 Trace <span className="ing-count">{shownTyped}</span>
               </button>
+              <PullRequestChecksMenu read={checks.read} run={checks.run} />
             </div>
           </details>
-        </span>
-      </div>
+        }
+      />
 
       {writing && (
         /* Which template, and what it is called; the IDE is where it is
@@ -1365,8 +1408,10 @@ function IngestedDocumentsView({
 
       {err && <div className="error">{err}</div>}
 
-      <JourneyPanel stages={stages} types={types} onSeed={setSeeding} />
-      <PullRequestChecksPanel token={token} projectId={projectTenantId} />
+      {showJourney && (
+        <JourneyPanel stages={stages} types={types} onSeed={setSeeding} onClose={() => setShowJourney(false)} />
+      )}
+      {checks.open && <PullRequestChecksResult read={checks.read} onClose={() => checks.setOpen(false)} />}
 
       {seeding && (
         <SeedModal
@@ -1695,6 +1740,8 @@ function IngestedDocumentsView({
                 {b ? (
                   <span onClick={(e) => e.stopPropagation()}>
                     <select
+                      className="ing-type-pick"
+                      aria-label={`Type of ${row.path || row.name}`}
                       value={row.type_key ?? ""}
                       disabled={busy}
                       onChange={(e) =>
@@ -1798,6 +1845,7 @@ function IngestedDocumentsView({
                         </button>
                       ) : (
                         <button
+                          className="ing-hover"
                           onClick={() => void decide(b, { action: "reject" })}
                           disabled={busy}
                           title="This file is not a document — stop proposing types for it"
@@ -1808,6 +1856,7 @@ function IngestedDocumentsView({
                     </>
                   ) : row.origin === "authored" ? (
                     <button
+                      className="ing-hover"
                       onClick={() => onOpenDoc(row.id, row.name)}
                       disabled={!canOpenDocs}
                       title={canOpenDocs ? "Open in the IDE's editor" : "No IDE to open it in"}
@@ -1819,7 +1868,7 @@ function IngestedDocumentsView({
                       IDE is one click from the list, not only from its
                       detail. */}
                   {row.origin !== "authored" && row.path && (
-                    <button onClick={() => onOpenFile(row.path)} title={`Open ${row.path} in the IDE`}>
+                    <button className="ing-hover" onClick={() => onOpenFile(row.path)} title={`Open ${row.path} in the IDE`}>
                       IDE ↗
                     </button>
                   )}
@@ -2470,32 +2519,33 @@ function JourneyPanel({
   stages,
   types,
   onSeed,
+  onClose,
 }: {
   stages: StageStatus[];
   types: DocType[];
   /** Offer to write the missing documents into the repository. */
   onSeed: (typeKeys: string[]) => void;
+  onClose: () => void;
 }) {
   const typeName = (key: string) => types.find((t) => t.key === key)?.name ?? key;
 
   // Stages that ask for nothing say nothing: a journey is mostly those, and
   // listing them buries the two that actually want something.
   const asking = stages.filter((s) => s.requirements.length > 0);
-  if (asking.length === 0) return null;
-
-  const missing = [
-    ...new Set(
-      asking.flatMap((s) => s.requirements.filter((r) => !r.present).map((r) => r.type_key)),
-    ),
-  ];
+  const progress = journeyProgress(stages);
+  if (!progress) return null;
+  const { missing } = progress;
 
   return (
-    <div style={card}>
+    <div style={card} data-journey-panel>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>What the journey needs</span>
         <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.6 }}>
-          {asking.filter((s) => s.complete).length} of {asking.length} stages complete
+          {progress.complete} of {progress.total} stages complete
         </span>
+        <button type="button" className="ghost" onClick={onClose}>
+          Close
+        </button>
       </div>
 
       <div className="jr-stages">
@@ -2568,15 +2618,24 @@ const INGESTED_CSS = `
 .ing-start p { margin: 0; font-size: 13px; color: var(--muted-foreground); }
 .ing-start-routes { display: flex; gap: 8px; margin: 14px 0 12px; flex-wrap: wrap; }
 .ing-start-note { font-size: 12px; }
-.ing-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 30px; }
-.ing-title { margin: 0; font-size: 16px; }
-.ing-info { cursor: help; color: var(--muted-foreground); font-size: 13px; }
-.ing-bar-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
-.ing-bar-actions button, .ing-menu summary { font-size: 12px; padding: 4px 10px; }
+.ing-menu summary { font-size: 12px; padding: 4px 10px; }
 .ing-menu { position: relative; }
 .ing-menu summary { list-style: none; cursor: pointer; border: 1px solid var(--primary); background: var(--primary); color: var(--primary-foreground); border-radius: 6px; user-select: none; }
 .ing-menu summary::-webkit-details-marker { display: none; }
 .ing-menu summary.disabled { opacity: 0.6; pointer-events: none; }
+.ui-ph-actions .ing-menu summary { background: var(--card); color: var(--foreground); border-color: var(--border); }
+.ing-menu-sep { margin: 4px 6px 2px; padding-top: 6px; border-top: 1px solid var(--border); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); }
+/* The row's type picker reads as its value, and Not a doc and IDE stay out of
+   the way, until the row is pointed at, focused or open: a column of selects
+   and buttons down 50 rows was most of what the list showed. Keyboard focus
+   reaches them as before, and shows them. */
+@media (hover: hover) {
+  .ing-row .ing-hover { transition: opacity 0.12s; }
+  .ing-row:not(:hover):not(:focus-within):not(.on) .ing-hover { opacity: 0; }
+  .ing-row:not(:hover):not(:focus-within):not(.on) select.ing-type-pick:not(:focus) {
+    appearance: none; -webkit-appearance: none; border-color: transparent; background: transparent; padding-left: 0; box-shadow: none;
+  }
+}
 .ing-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; display: flex; flex-direction: column; min-width: 240px; padding: 4px; background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); }
 .ing-menu-list button { text-align: left; border: none; background: transparent; font-size: 12px; padding: 6px 10px; border-radius: 4px; display: flex; justify-content: space-between; gap: 12px; }
 .ing-menu-list button:hover:not(:disabled) { background: var(--accent); }

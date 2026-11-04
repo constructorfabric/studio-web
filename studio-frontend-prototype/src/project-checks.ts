@@ -65,6 +65,17 @@ export function checksSummary(r: PullRequestChecks): string {
   return parts.join(" · ");
 }
 
+/** The Specs header's chip for the last run of the checks: a few words and
+ *  a tone; checksSummary has the sentence. */
+export function checksChip(r: PullRequestChecks): { text: string; tone: "ok" | "danger" | "neutral" } {
+  if (!r.reached) return { text: "PR checks: no connection", tone: "neutral" };
+  if (r.total === 0) return { text: "PR checks: nothing to check", tone: "neutral" };
+  const failing = r.items.filter((i) => i.state === "failure").length;
+  return failing === 0
+    ? { text: `PR checks: ${r.total} pass`, tone: "ok" }
+    : { text: `PR checks: ${failing} of ${r.total} fail`, tone: "danger" };
+}
+
 /** Not ready first, then ask-first, then ready; by name within each. */
 export function orderComponents(items: ProjectComponent[]): ProjectComponent[] {
   const rank = { not_ready: 0, caution: 1, ready: 2 } as const;
