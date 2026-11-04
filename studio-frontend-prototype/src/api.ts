@@ -964,6 +964,9 @@ export interface ProjectConfig {
   frontend?: { mfes?: string[]; shell?: string };
   /** The icon somebody chose (`tenant-icon.ts`); absent: the kind's. */
   icon?: import("./tenant-icon").TenantIcon;
+  /** What the product is, as a member confirmed it after Studio proposed it
+   *  from the specs (`product-kind.ts`); absent: not decided yet. */
+  product_kind?: import("./product-kind").ProductKindChoice;
 }
 
 /** Where a FrontX package is: `owner/name`, its directory there, the ref it is
@@ -5585,7 +5588,7 @@ export const api = {
     }
   },
 
-  putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTypesDoc) =>
+  putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTemplatesDoc) =>
     request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
       method: "PUT",
       body: JSON.stringify(value),

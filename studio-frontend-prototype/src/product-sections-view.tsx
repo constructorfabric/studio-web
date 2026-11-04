@@ -21,6 +21,7 @@ import { FrontendConstructor, useFrontxDefaults } from "./frontend-constructor-v
 import type { PipelineTab } from "./pipeline";
 import type { FlowState, FlowStep } from "./product-flow";
 import { ProductFlow } from "./product-flow-view";
+import { ProductKindStep } from "./product-kind-view";
 import { ProductMap } from "./product-map-view";
 import {
   PRODUCT_ACTION_LABEL,
@@ -248,6 +249,9 @@ export function ProductPage({
           }
         />
       </div>
+      {/* What the product is comes first: Studio proposes it from the specs
+          and a member confirms it (product-kind.ts). */}
+      <ProductKindStep token={token} projectId={projectId} />
       <ProductFlow
         token={token}
         projectId={projectId}

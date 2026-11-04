@@ -5,6 +5,8 @@ import { api } from "./api";
 import { buildsOf, latestFinished, mainBranch } from "./builds";
 import type { ProjTab } from "./project-overview";
 import { stripState } from "./project-overview-model";
+import { kindStatus, proposeKind } from "./product-kind";
+import { readKindFacts } from "./product-kind-view";
 import { type PathFacts, type PathStep, TAB_HOWTO, pathProgress, specQueues } from "./project-path";
 import { InfoPopover, StatusChip, StepFlow, type FlowStep } from "./ui-standard";
 
@@ -30,7 +32,7 @@ export async function readPathFacts(
   repositories: number | null,
   synced: number | null,
 ): Promise<PathFacts> {
-  const [rows, model, findings, product, runs] = await Promise.all([
+  const [rows, model, findings, product, runs, kind] = await Promise.all([
     soft(api.specRows(token, projectId)),
     soft(api.specModel(token, projectId)),
     soft(api.specModelFindings(token, projectId)),
@@ -38,6 +40,7 @@ export async function readPathFacts(
     // and soft() answers null for a failure.
     soft(api.projectProduct(token, projectId).then((value) => ({ value }))),
     soft(api.listArtifactNodes(token, "workflow_run", projectId, undefined, RUNS, { sort: "updated" })),
+    soft(readKindFacts(token, projectId)),
   ]);
   const open = findings ? findings.items.filter((f) => !f.decision) : null;
   const built = runs ? buildsOf(runs.nodes ?? []) : null;
@@ -55,6 +58,7 @@ export async function readPathFacts(
         }
       : null,
     findings: open ? { open: open.length, high: open.filter((f) => f.severity === "high").length } : null,
+    kind: kind ? ((k) => ({ done: k.done, status: k.text }))(kindStatus(kind.choice, proposeKind(kind.facts))) : null,
     product: product
       ? {
           gears: product.value?.gears?.length ?? 0,
@@ -67,7 +71,7 @@ export async function readPathFacts(
   };
 }
 
-/** "Path of the project" as one row: the six steps as a StepFlow strip, the
+/** "Path of the project" as one row: the steps as a StepFlow strip, the
  *  current one outlined. A step's line is on its title (hover) and opens below
  *  it (click), with the button to the tab where it is done. */
 export function ProjectPath({

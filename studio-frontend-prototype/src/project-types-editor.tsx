@@ -1,6 +1,8 @@
-/* The workspace's "Project types" tab: which kinds of project its New project
- * card offers, what each creates and which tabs its projects show. The model
- * and its rules are `project-types.ts`; this file is the form.
+/* The workspace's "Project templates" tab: which templates its New project
+ * card offers, what each fills in -- the sources, a brief, the kits, the tabs
+ * its projects show -- and nothing more: a template does not say what the
+ * product is (product-kind.ts). The model and its rules are
+ * `project-types.ts`; this file is the form.
  *
  * Saved where the reader chooses: on this workspace, or on the organization so
  * every workspace of it inherits the list (the metadata is inherited, and the
@@ -12,8 +14,15 @@ import { api } from "./api";
 import type { StudioKit } from "./api";
 import { errText } from "./problem";
 import type { ProjTab } from "./project-overview";
-import { BUILTIN_TYPES, PRESETS, RECIPES, keyFor, parseTypes, typesProblem } from "./project-types";
-import type { ProjectType } from "./project-types";
+import { BUILTIN_TEMPLATES, PRESETS, keyFor, parseTemplates, templateFills, templatesProblem } from "./project-types";
+import type { ProjectTemplate } from "./project-types";
+import type { RepoRoad } from "./project-form";
+
+const ROAD_WORDS: Record<RepoRoad, string> = {
+  none: "no repository yet",
+  new: "a new repository",
+  existing: "a repository attached",
+};
 
 type Source = "workspace" | "organization" | "builtin";
 
@@ -29,7 +38,7 @@ export function ProjectTypesTab({
   tabs: readonly { id: ProjTab; label: string }[];
 }) {
   const tabIds = tabs.map((t) => t.id);
-  const [types, setTypes] = useState<ProjectType[] | null>(null);
+  const [types, setTypes] = useState<ProjectTemplate[] | null>(null);
   const [source, setSource] = useState<Source>("builtin");
   const [target, setTarget] = useState<"workspace" | "organization">("organization");
   const [kits, setKits] = useState<StudioKit[]>([]);
@@ -47,7 +56,7 @@ export function ProjectTypesTab({
         const from: Source = own ? "workspace" : org ? "organization" : "builtin";
         setSource(from);
         setTarget(from === "workspace" ? "workspace" : "organization");
-        setTypes(parseTypes(own ?? org, tabIds));
+        setTypes(parseTemplates(own ?? org, tabIds));
       })
       .catch((e) => alive && setErr(errText(e)));
     api
@@ -62,20 +71,20 @@ export function ProjectTypesTab({
   }, [token, workspace.id, workspace.orgId, reload]);
 
   if (err && !types) return <div className="error">{err}</div>;
-  if (!types) return <p style={{ opacity: 0.7 }}>Reading the project types…</p>;
+  if (!types) return <p style={{ opacity: 0.7 }}>Reading the project templates…</p>;
 
-  const problem = typesProblem(types);
-  const edit = (i: number, patch: Partial<ProjectType>) =>
+  const problem = templatesProblem(types);
+  const edit = (i: number, patch: Partial<ProjectTemplate>) =>
     setTypes(types.map((t, k) => (k === i ? { ...t, ...patch } : t)));
   const sourceWords =
     source === "workspace"
       ? `this workspace's own list`
       : source === "organization"
         ? `the list of ${workspace.orgName}, which every workspace of it inherits`
-        : "Studio's built-in types: neither this workspace nor its organization has set any";
+        : "Studio's built-in templates: neither this workspace nor its organization has set any";
 
   async function save() {
-    const problem = typesProblem(types!);
+    const problem = templatesProblem(types!);
     if (problem) return;
     setBusy(true);
     setErr(null);
@@ -109,17 +118,19 @@ export function ProjectTypesTab({
   return (
     <div style={{ display: "grid", gap: 12, maxWidth: 980 }}>
       <div>
-        <h3 style={{ margin: "0 0 4px" }}>Project types</h3>
+        <h3 style={{ margin: "0 0 4px" }}>Project templates</h3>
         <p style={{ margin: 0, fontSize: 13, opacity: 0.8, lineHeight: 1.5 }}>
-          What the New project card offers here, what each type creates, and which tabs its projects show. Showing{" "}
-          {sourceWords}. Projects already created keep their type; one whose type is removed shows every tab.
+          What a new project may start from here. A template is optional and only fills in the New project card: the
+          project&apos;s sources, a brief, the kits ticked, and which tabs its projects show. What the product is, is
+          not a template&apos;s to say: Studio proposes it from the project&apos;s specs. Showing {sourceWords}. Projects
+          already created keep their tabs; one whose template is removed shows every tab.
         </p>
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 12, opacity: 0.7 }}>Start from</span>
         {PRESETS.map((p) => (
-          <button key={p.id} type="button" onClick={() => setTypes(p.types.map((t) => ({ ...t })))}>
+          <button key={p.id} type="button" onClick={() => setTypes(p.templates.map((t) => ({ ...t })))}>
             {p.title}
           </button>
         ))}
@@ -128,18 +139,21 @@ export function ProjectTypesTab({
           onClick={() =>
             setTypes([
               ...types,
-              { key: keyFor("New type", types.map((t) => t.key)), title: "New type", description: "", recipe: "existing" },
+              { key: keyFor("New template", types.map((t) => t.key)), title: "New template", description: "" },
             ])
           }
         >
-          + Add a type
+          + Add a template
+        </button>
+        <button type="button" disabled={types.length === 0} onClick={() => setTypes([])} title="Offer no template: every project starts empty">
+          Offer none
         </button>
       </div>
 
       {types.map((t, i) => (
         <section
           key={i}
-          data-type={t.key}
+          data-template={t.key}
           style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12, display: "grid", gap: 8 }}
         >
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -177,17 +191,43 @@ export function ProjectTypesTab({
             placeholder="One line the New project card shows under the title"
             onChange={(e) => edit(i, { description: e.target.value })}
           />
-          <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            Creating one makes
-            <select value={t.recipe} onChange={(e) => edit(i, { recipe: e.target.value as ProjectType["recipe"] })}>
-              {RECIPES.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.title}
-                </option>
-              ))}
-            </select>
-            <span style={{ opacity: 0.7 }}>— {RECIPES.find((r) => r.id === t.recipe)?.creates}</span>
-          </label>
+          <div style={{ fontSize: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              Sources: starts with
+              <select
+                value={t.repository ?? "none"}
+                onChange={(e) => {
+                  const road = e.target.value as RepoRoad;
+                  edit(i, road === "none" ? { repository: undefined, starter_gear: undefined } : { repository: road });
+                }}
+                data-template-repository
+              >
+                {(Object.keys(ROAD_WORDS) as RepoRoad[]).map((r) => (
+                  <option key={r} value={r}>
+                    {ROAD_WORDS[r]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "flex", gap: 4, alignItems: "center", opacity: t.repository ? 1 : 0.5 }}>
+              <input
+                type="checkbox"
+                checked={!!t.starter_gear}
+                disabled={!t.repository}
+                onChange={(e) => edit(i, { starter_gear: e.target.checked || undefined })}
+                data-template-starter-gear
+              />
+              with a starter gear
+            </label>
+            <span style={{ opacity: 0.7 }}>{templateFills(t)}</span>
+          </div>
+          <textarea
+            aria-label="Brief"
+            rows={2}
+            value={t.brief ?? ""}
+            placeholder="A brief the card starts with (optional): what a project from this template builds"
+            onChange={(e) => edit(i, { brief: e.target.value || undefined })}
+          />
           <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
             <legend style={{ fontSize: 12, marginBottom: 4 }}>
               Tabs its projects show{" "}
@@ -287,7 +327,7 @@ export function ProjectTypesTab({
         {note && <span style={{ fontSize: 12, opacity: 0.8 }}>{note}</span>}
         {err && <span className="error" style={{ fontSize: 12 }}>{err}</span>}
       </div>
-      {source === "builtin" && types === BUILTIN_TYPES && (
+      {source === "builtin" && types === BUILTIN_TEMPLATES && (
         <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>Nothing is stored until you save.</p>
       )}
     </div>

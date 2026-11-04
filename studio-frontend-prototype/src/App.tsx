@@ -130,7 +130,6 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
-import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
 import { OrgInfrastructure } from "./environments-screen";
@@ -165,15 +164,25 @@ import { isPinned, loadPins, pinKey, savePins, togglePin, type Pin } from "./pin
 import {
   clampStep,
   createFormLayout,
+  createMode,
   createSteps,
   pluginBlocker,
   stepBlocker,
-  type RepoMode,
+  type RepoRoad,
 } from "./project-form";
 import { ProjectTypesTab } from "./project-types-editor";
 import { productAttention, type TabAttention } from "./product-flow";
 import { ProductPage } from "./product-sections-view";
-import { BUILTIN_TYPES, landingTab, parseTypes, typeOfProject, visibleTabs, type ProjectType } from "./project-types";
+import {
+  BUILTIN_TEMPLATES,
+  landingTab,
+  parseTemplates,
+  templateDefaults,
+  templateFills,
+  templateOfProject,
+  visibleTabs,
+  type ProjectTemplate,
+} from "./project-types";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -1769,11 +1778,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // When a project is open, the sidebar gains its tab nav (Overview / Artifacts
   // / Spec Quality / Team) so the tabs live on the panel rather than the page.
   const projectOpen = !adminOpen && !activeSpace && view === "projects" && !!crumb.nestedId;
-  // The open project's type (project-types.ts) decides which of its tabs show.
-  // Read on the project itself: the types are inherited metadata, so the
-  // project resolves its workspace's or its organization's. Until it is known,
-  // and when it cannot be read, every tab shows — hiding is never the fallback.
-  const [projectType, setProjectType] = useState<ProjectType | null>(null);
+  // The template the open project was created from (project-types.ts) decides
+  // which of its tabs show. Read on the project itself: the templates are
+  // inherited metadata, so the project resolves its workspace's or its
+  // organization's. Until it is known, when it cannot be read, and for a
+  // project created without one, every tab shows -- hiding is never the fallback.
+  const [projectType, setProjectType] = useState<ProjectTemplate | null>(null);
   useEffect(() => {
     setProjectType(null);
     const id = crumb.nestedId;
@@ -1781,7 +1791,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     let alive = true;
     Promise.all([api.projectConfig(token, id), api.projectTypes(token, id)])
       .then(([cfg, raw]) => {
-        if (alive) setProjectType(typeOfProject(cfg, parseTypes(raw, PROJECT_TABS.map((t) => t.id))));
+        if (alive) setProjectType(templateOfProject(cfg, parseTemplates(raw, PROJECT_TABS.map((t) => t.id))));
       })
       .catch(() => {});
     return () => {
@@ -3863,7 +3873,7 @@ function WorkspaceHeader({
 
 const WORKSPACE_TABS: { id: WorkspaceTab; icon: string; label: string; hint: string }[] = [
   { id: "projects", icon: "grid", label: "Projects", hint: "The projects in this workspace" },
-  { id: "ptypes", icon: "layers", label: "Project types", hint: "What New project offers and which tabs each kind shows" },
+  { id: "ptypes", icon: "layers", label: "Project templates", hint: "What a new project may start from: its sources, a brief, kits and tabs" },
   { id: "types", icon: "file", label: "Document types", hint: "Templates, section checklists and rules" },
 ];
 
@@ -3930,25 +3940,23 @@ function WorkspaceProjects({
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState("");
-  // The types this workspace offers (project-types.ts), read when the card
-  // opens; until then, and when nobody set any, the built-in three.
-  const [offeredTypes, setOfferedTypes] = useState<ProjectType[]>(BUILTIN_TYPES);
-  const [newTypeKey, setNewTypeKey] = useState<string | null>(null);
-  const newType = offeredTypes.find((t) => t.key === newTypeKey) ?? offeredTypes[0];
-  // What creating it provisions: the type's recipe. Everything below the
-  // picker still branches on this, so a type only chooses among the roads the
-  // card already knows.
-  const newKind = newType.recipe;
+  // The templates this workspace offers (project-types.ts), read when the card
+  // opens; until then, and when nobody set any, the built-in ones. Optional:
+  // none is picked until somebody picks one, and a template only fills in the
+  // fields below -- what the product is comes from its specs (product-kind.ts).
+  const [offeredTemplates, setOfferedTemplates] = useState<ProjectTemplate[]>(BUILTIN_TEMPLATES);
+  const [templateKey, setTemplateKey] = useState<string | null>(null);
+  const template = offeredTemplates.find((t) => t.key === templateKey) ?? null;
   // What the new project takes from the shared catalogue. A kit is a component
   // like any other, and a project acquires one the same way it acquires
   // anything else: by picking it from the list, not by naming a repository.
   const [kitCatalog, setKitCatalog] = useState<import("./api").StudioKit[]>([]);
   const [kitSel, setKitSel] = useState<Set<string>>(new Set());
-  // Where a new gear's repository comes from. The `new_gears` radio has always
-  // promised two roads in its own subtitle -- "Create a new repo, or use an
-  // existing gear store" -- and the form asked for neither, so every gear
-  // project was created with nowhere to put a gear.
-  const [repoMode, setRepoMode] = useState<RepoMode>("new");
+  // Where the project's code starts: a repository created now, one attached
+  // now, or none yet (Sources adds them later); and whether a starter gear is
+  // written into it.
+  const [repoMode, setRepoMode] = useState<RepoRoad>("none");
+  const [starterGear, setStarterGear] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
   // "" means "let the backend take the first GitHub connection", which it does.
   const [connId, setConnId] = useState("");
@@ -4062,20 +4070,18 @@ function WorkspaceProjects({
       .catch(() => setKitCatalog([]));
   }, [creating, token]);
 
-  // Both kinds that create or attach a repository start at a connection. Not
-  // loaded for `existing`, which attaches its repository afterwards rather than
-  // at creation.
+  // A repository created or attached starts at a connection.
   useEffect(() => {
-    if (!creating || (newKind !== "new_gears" && newKind !== "product")) return;
+    if (!creating || repoMode === "none") return;
     api
       .connections(token, workspace.id)
       .then((r) => setConnections(r.items ?? []))
       .catch(() => setConnections([]));
-  }, [creating, newKind, token, workspace.id]);
+  }, [creating, repoMode, token, workspace.id]);
 
   // The hosts a plugin can fill, only once somebody asks for a plugin.
   useEffect(() => {
-    if (!creating || newKind !== "new_gears" || gearKind !== "plugin") return;
+    if (!creating || !starterGear || repoMode === "none" || gearKind !== "plugin") return;
     let alive = true;
     api
       .gearboxExtensionPoints(token)
@@ -4096,13 +4102,13 @@ function WorkspaceProjects({
     return () => {
       alive = false;
     };
-  }, [creating, newKind, gearKind, token]);
+  }, [creating, starterGear, repoMode, gearKind, token]);
 
-  // The gear stores to choose from. A connection is required here (unlike
+  // The repositories to choose from. A connection is required here (unlike
   // creating a repository, where the backend picks the first GitHub one) --
   // there is no listing without one to list through.
   useEffect(() => {
-    if (!creating || newKind !== "new_gears" || repoMode !== "existing" || !connId) {
+    if (!creating || repoMode !== "existing" || !connId) {
       setRemoteRepos(null);
       return;
     }
@@ -4124,7 +4130,7 @@ function WorkspaceProjects({
       alive = false;
       clearTimeout(t);
     };
-  }, [creating, newKind, repoMode, connId, repoSearch, token, workspace.id]);
+  }, [creating, repoMode, connId, repoSearch, token, workspace.id]);
 
   useEffect(() => {
     if (!creating) return;
@@ -4133,12 +4139,11 @@ function WorkspaceProjects({
       .projectTypes(token, workspace.id)
       .then((raw) => {
         if (!alive) return;
-        const types = parseTypes(raw, PROJECT_TABS.map((t) => t.id));
-        setOfferedTypes(types);
-        setNewTypeKey((k) => (k && types.some((t) => t.key === k) ? k : types[0].key));
-        setKitSel(new Set(types[0].kits ?? []));
+        const templates = parseTemplates(raw, PROJECT_TABS.map((t) => t.id));
+        setOfferedTemplates(templates);
+        setTemplateKey((k) => (k && templates.some((t) => t.key === k) ? k : null));
       })
-      // The built-in types stay offered: a card that cannot read the
+      // The built-in templates stay offered: a card that cannot read the
       // workspace's own list must still create a project.
       .catch(() => {});
     return () => {
@@ -4146,9 +4151,17 @@ function WorkspaceProjects({
     };
   }, [creating, token, workspace.id]);
 
-  const pickType = (t: ProjectType) => {
-    setNewTypeKey(t.key);
-    setKitSel(new Set(t.kits ?? []));
+  /** Fill the card in from a template, or empty it again for none. */
+  const pickTemplate = (t: ProjectTemplate | null) => {
+    const d = templateDefaults(t);
+    setTemplateKey(t?.key ?? null);
+    setRepoMode(d.road);
+    setStarterGear(d.starterGear);
+    setBrief(d.brief);
+    setKitSel(new Set(d.kits));
+    // A gear store belongs to whoever already keeps gears in it.
+    setOpenPr(d.road === "existing" && d.starterGear);
+    setExistingRepo(null);
   };
 
   const toggleKit = (slug: string) =>
@@ -4162,7 +4175,7 @@ function WorkspaceProjects({
   // The gear project's derived names. Both fields follow the project name until
   // somebody types in one: in a shared gear store the gear is not the project,
   // and neither is the repository.
-  const isGearProject = newKind === "new_gears";
+  const isGearProject = starterGear && repoMode !== "none";
   // GitHub only, and not as a shortcut: creating a repository resolves "the
   // first GitHub connection" server-side, and the scaffold writer speaks
   // GitHub's git API directly (product/scaffold.rs). Offering a
@@ -4171,14 +4184,15 @@ function WorkspaceProjects({
   const gearSlugValue = gearSlug(gearName.trim() || newName.trim() || "gear");
   const gearDirValue = gearParentDir(gearDir);
   const repoNameValue = gearSlug(repoName.trim() || newName.trim() || "project");
-  // Which sections this project kind is actually asked about, and what it still
-  // needs before it can be created — both decided in project-form.ts, where the
-  // branches can be read without the JSX around them.
-  const layout = createFormLayout(newKind, repoMode);
+  // Which sections the card asks, and what it still needs before it can be
+  // created -- both decided in project-form.ts, where the branches can be read
+  // without the JSX around them.
+  const choices = { road: repoMode, starterGear };
+  const layout = createFormLayout(choices);
   // The card's pages, and which one is showing. The list changes length when
-  // the type or the repository road changes, so the index is clamped on every
-  // render rather than corrected in the handlers that could change it.
-  const steps = createSteps(newKind, repoMode);
+  // the repository road changes, so the index is clamped on every render
+  // rather than corrected in the handlers that could change it.
+  const steps = createSteps(choices);
   const stepIndex = clampStep(step, steps);
   const current = steps[stepIndex];
   const pluginProblem = pluginBlocker({
@@ -4189,10 +4203,9 @@ function WorkspaceProjects({
   });
   const formState = {
     name: newName,
-    kind: newKind,
-    repoMode,
+    ...choices,
     connectionId: connId,
-    storePicked: existingRepo !== null,
+    repoPicked: existingRepo !== null,
     pluginProblem: gearKind === "plugin" ? pluginProblem : null,
   };
   const pageBlocker = stepBlocker(current.key, formState);
@@ -4204,7 +4217,7 @@ function WorkspaceProjects({
    *  probes real backend state in `check` so a retry resumes cleanly instead of
    *  duplicating writes (ADR-0010: creation is several non-atomic requests). */
   const buildCreatePlan = (name: string): ProvisionStep<CreateCtx>[] => {
-    const mode: ProjectMode = newKind === "existing" ? "modernize" : "greenfield";
+    const mode: ProjectMode = createMode(choices);
     const steps: ProvisionStep<CreateCtx>[] = [];
 
     // 1) Project tenant — find-or-create. Reusing a same-named sibling heals a
@@ -4233,9 +4246,11 @@ function WorkspaceProjects({
       },
     });
 
-    // 3) Project config — mode/kind/brief. Idempotent overwriting PUT, so it
-    //    always runs (cheap) and re-running is safe. No `stages`: a project
-    //    does not pick its stages, they are a computed status (ADR-0058).
+    // 3) Project config — mode/template/brief. Idempotent overwriting PUT, so
+    //    it always runs (cheap) and re-running is safe. No `stages`: a project
+    //    does not pick its stages, they are a computed status (ADR-0058). No
+    //    `kind` either: what the product is gets proposed from its specs and
+    //    confirmed on the Product page (product-kind.ts).
     steps.push({
       key: "config",
       label: "Project config",
@@ -4244,8 +4259,7 @@ function WorkspaceProjects({
         await api.putProjectConfig(token, ctx.tenantId, {
           ...cfg,
           mode,
-          kind: newKind,
-          type: newType.key,
+          ...(template ? { type: template.key } : {}),
           status: cfg.status ?? "draft",
           brief: brief.trim() || cfg.brief,
           source_git_url: ctx.cloneUrl || cfg.source_git_url,
@@ -4272,7 +4286,7 @@ function WorkspaceProjects({
         const cfg = (await api.projectConfig(token, ctx.tenantId).catch(() => null)) ?? {};
         const cloneUrl = cloneUrlOf(ctx);
         if (hasRepository(cfg.sources, cloneUrl)) return;
-        await api.putProjectConfig(token, ctx.tenantId, {
+        await saveSources(token, ctx.tenantId, {
           ...cfg,
           source_git_url: cfg.source_git_url || cloneUrl,
           sources: [
@@ -4282,18 +4296,20 @@ function WorkspaceProjects({
               full_path: ctx.repoFull,
               clone_url: cloneUrl,
               ...(ctx.branch ? { branch: ctx.branch } : {}),
+              // The starter gear goes here, and so does the next one Create a
+              // gear makes (ADR-0060).
+              ...(isGearProject ? { gears_here: true } : {}),
             },
           ],
         });
       },
     };
 
-    // 4) The gear's repository, and the gear.
+    // 4) The repository a starter gear goes into, and the gear.
     //
-    //    Only a `new_gears` project has these: it is the one kind whose whole
-    //    purpose is a gear, and a gear needs a directory in a repository before
-    //    it is anything at all. The two roads end in the same place -- the
-    //    project's gear repo -- so only the `run` differs.
+    //    A gear needs a directory in a repository before it is anything at
+    //    all. The two roads end in the same place -- the project's gear repo
+    //    -- so only the `run` differs.
     if (isGearProject) {
       steps.push({
         key: "repo",
@@ -4367,23 +4383,13 @@ function WorkspaceProjects({
       });
     }
 
-    // 5) A product's repository, and the one document the assembly reads.
+    // 5) A repository without a starter gear: created, or attached.
     //
-    //    The type's own subtitle promises both -- "Assemble a product from
-    //    gears. A new repository is created." -- and until now it did neither:
-    //    `product` differed from `existing` in `mode` and in that sentence, and
-    //    in nothing else.
-    //
-    //    The order is the only order that works. Components cannot be chosen
-    //    before the product says what it needs, so creation ends at the App
-    //    Spec rather than at a list of gears: its questionnaire is what turns
-    //    prose into capabilities, and the capabilities are what the matcher
-    //    reads (`compose.ts`). The brief is already the answer to that
-    //    questionnaire's FIRST question, word for word -- "What are we
-    //    building? Describe the product and its core domain." -- so the card
-    //    stops filing it under `brief` and never asking again, and hands it
-    //    over as the answer it is.
-    if (newKind === "product") {
+    //    No product.gdl is written here any more: what the product is -- and
+    //    so whether it has a product.gdl at all -- is decided once its specs
+    //    are read (product-kind.ts), and the Product page's Save writes the
+    //    first revision.
+    if (!isGearProject && repoMode === "new") {
       steps.push({
         key: "repo",
         label: `Repository · ${repoNameValue}`,
@@ -4415,28 +4421,30 @@ function WorkspaceProjects({
         },
       });
       steps.push(sourcesStep);
-
-      // The product's description, from the first minute. It names no gears
-      // yet; picking them on the Components tab rewrites this same file on
-      // this same branch, so the project has one `product.gdl` from creation
-      // on, rather than none until somebody presses Save.
+    }
+    if (!isGearProject && repoMode === "existing") {
       steps.push({
-        key: "product",
-        label: "product.gdl",
-        check: async (ctx) =>
-          !!(await api.projectProduct(token, ctx.tenantId).catch(() => null))?.written,
+        key: "repo",
+        label: `Repository · ${existingRepo?.full_path ?? "?"}`,
         run: async (ctx) => {
-          await api.previewProduct(token, ctx.tenantId, {
-            product_id: productIdFrom(name),
-            name,
-            gears: [],
-            write: true,
-            onto_base: true,
-          });
+          if (!existingRepo) throw new Error("No repository selected");
+          ctx.repoFull = existingRepo.full_path;
+          ctx.branch = existingRepo.default_branch || "main";
+          ctx.cloneUrl = existingRepo.clone_url;
         },
       });
+      steps.push(sourcesStep);
+    }
 
-      if (brief.trim()) {
+    // 6) The PRD, from the brief.
+    //
+    //    The brief is the answer to the PRD questionnaire's FIRST question,
+    //    word for word -- "What are we building? Describe the product and its
+    //    core domain." -- so the card hands it over as the answer it is. It
+    //    is also what Studio first reads to propose what the product is. A
+    //    starter gear writes its own PRD from the same brief.
+    {
+      if (brief.trim() && !isGearProject) {
         steps.push({
           key: "spec",
           label: "PRD",
@@ -4467,7 +4475,7 @@ function WorkspaceProjects({
       }
     }
 
-    // 6) Kits the project asked for, as DESIRED state.
+    // 7) Kits the project asked for, as DESIRED state.
     //
     //    Requesting is idempotent by slug, and materialization is somebody
     //    else's job: the registry records `pending`, and a trusted `cfs` runner
@@ -4542,8 +4550,9 @@ function WorkspaceProjects({
     setBrief("");
     setStep(0);
     setKitSel(new Set());
-    setNewTypeKey(null);
-    setRepoMode("new");
+    setTemplateKey(null);
+    setRepoMode("none");
+    setStarterGear(false);
     setConnId("");
     setRepoOwner("");
     setRepoIsOrg(false);
@@ -4659,12 +4668,18 @@ function WorkspaceProjects({
                 onChange={(e) => setNewName(e.target.value)}
               />
 
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Project type</div>
+              <div data-project-templates>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                  Start from a template <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
+                </div>
+                <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+                  A template only fills in the next pages: the sources, a brief, the kits. What the product is,
+                  Studio proposes once its specs are read, on the Product page.
+                </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {offeredTypes.map((t) => (
+                  {[null, ...offeredTemplates].map((t) => (
                     <label
-                      key={t.key}
+                      key={t?.key ?? "none"}
                       style={{
                         display: "flex",
                         gap: 8,
@@ -4672,20 +4687,23 @@ function WorkspaceProjects({
                         padding: "8px 10px",
                         border: "1px solid var(--border)",
                         borderRadius: 8,
-                        background: newType.key === t.key ? "var(--accent)" : "transparent",
+                        background: templateKey === (t?.key ?? null) ? "var(--accent)" : "transparent",
                         cursor: "pointer",
                       }}
                     >
                       <input
                         type="radio"
-                        name="pkind"
-                        checked={newType.key === t.key}
-                        onChange={() => pickType(t)}
+                        name="ptemplate"
+                        checked={templateKey === (t?.key ?? null)}
+                        onChange={() => pickTemplate(t)}
                         style={{ marginTop: 2 }}
+                        data-project-template={t?.key ?? "none"}
                       />
                       <span>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.title}</div>
-                        <div style={{ fontSize: 11, opacity: 0.7 }}>{t.description}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t ? t.title : "No template"}</div>
+                        <div style={{ fontSize: 11, opacity: 0.7 }}>
+                          {t ? `${t.description}${t.description ? " " : ""}${templateFills(t)}` : "Start empty and add the sources later."}
+                        </div>
                       </span>
                     </label>
                   ))}
@@ -4694,25 +4712,26 @@ function WorkspaceProjects({
               </>
             )}
 
-            {current.key === "repository" && layout.gearRepository && (
-              <div>
+            {current.key === "repository" && (
+              <div data-create-sources>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                  Gear repository
+                  Sources
                 </div>
                 <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
-                  Where the gear is written. Either road ends the same way — a skeleton on
-                  branch <code>scaffold/{gearSlugValue}</code>, never on the base branch.
+                  Where the project&apos;s code lives. More repositories are added in Sources; Studio finds the
+                  components in each by their passports.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {(
                     [
-                      ["new", "New repository", "Created now; the gear is its first commit."],
+                      ["none", "No repository yet", "Write the specs first; attach or create a repository in Sources later."],
+                      ["new", "New repository", "Created now, as the project's first source."],
                       [
                         "existing",
-                        "Existing gear store",
-                        "A repository that already holds gears. The skeleton arrives as a branch.",
+                        "Existing repository",
+                        "One the project already has: an application, or a store that holds gears.",
                       ],
-                    ] as ["new" | "existing", string, string][]
+                    ] as [RepoRoad, string, string][]
                   ).map(([m, title, desc]) => (
                     <label
                       key={m}
@@ -4734,11 +4753,13 @@ function WorkspaceProjects({
                         disabled={prov !== null}
                         onChange={() => {
                           setRepoMode(m);
+                          setExistingRepo(null);
                           // A gear store belongs to whoever already keeps gears
                           // in it; a repository created a moment ago does not.
-                          setOpenPr(m === "existing");
+                          setOpenPr(m === "existing" && starterGear);
                         }}
                         style={{ marginTop: 2 }}
+                        data-create-road={m}
                       />
                       <span>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
@@ -4748,6 +4769,7 @@ function WorkspaceProjects({
                   ))}
                 </div>
 
+                {layout.repository && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
                   <ConnectionField
                     connections={gitConnections}
@@ -4821,7 +4843,7 @@ function WorkspaceProjects({
                               >
                                 <input
                                   type="radio"
-                                  name="gstore"
+                                  name="grepo-existing"
                                   checked={existingRepo?.id === r.id}
                                   disabled={prov !== null}
                                   onChange={() => setExistingRepo(r)}
@@ -4841,6 +4863,25 @@ function WorkspaceProjects({
                     </label>
                   )}
 
+                  <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={starterGear}
+                      disabled={prov !== null}
+                      onChange={(e) => {
+                        setStarterGear(e.target.checked);
+                        setOpenPr(repoMode === "existing" && e.target.checked);
+                      }}
+                      data-create-starter-gear
+                    />
+                    Write a starter gear into it
+                    <span style={{ opacity: 0.6 }}>
+                      · on branch <code>scaffold/{gearSlugValue}</code>, never on the base branch
+                    </span>
+                  </label>
+
+                  {layout.starterGear && (
+                  <>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <span style={{ fontSize: 11, opacity: 0.8 }}>Gear name</span>
                     <input
@@ -4933,7 +4974,10 @@ function WorkspaceProjects({
                     />
                     Open a pull request
                   </label>
+                  </>
+                  )}
                 </div>
+                )}
               </div>
             )}
 
@@ -4999,40 +5043,6 @@ function WorkspaceProjects({
               </div>
             )}
 
-            {current.key === "repository" && layout.productRepository && (
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                  Repository
-                </div>
-                <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
-                  A product gets its own, new — the gears it is assembled from stay where
-                  they are and are depended on. This is also where a gear scaffolded for a
-                  capability nothing in the catalogue covers will be written.
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <ConnectionField
-                    connections={gitConnections}
-                    value={connId}
-                    disabled={prov !== null}
-                    onChange={setConnId}
-                    emptyLabel="Default — the first GitHub connection"
-                  />
-                  <NewRepoFields
-                    owner={repoOwner}
-                    setOwner={setRepoOwner}
-                    isOrg={repoIsOrg}
-                    setIsOrg={setRepoIsOrg}
-                    name={repoName}
-                    setName={setRepoName}
-                    namePlaceholder={repoNameValue}
-                    isPrivate={repoPrivate}
-                    setPrivate={setRepoPrivate}
-                    disabled={prov !== null}
-                  />
-                </div>
-              </div>
-            )}
-
             {current.key === "repository" && layout.componentsNote && (
               <p style={{ fontSize: 11, opacity: 0.7, margin: 0, lineHeight: 1.5 }}>
                 No components are offered for a shared gear store. A kit installs with
@@ -5049,11 +5059,11 @@ function WorkspaceProjects({
                 </div>
                 <textarea
                   placeholder={
-                    newKind === "existing"
-                      ? "What is this app, and what are we modernizing?"
-                      : isGearProject
-                        ? "What is this gear for? Becomes ## Problem in its docs/PRD.md."
-                        : "What are we building, and why?"
+                    isGearProject
+                      ? "What is this gear for? Becomes ## Problem in its docs/PRD.md."
+                      : repoMode === "existing"
+                        ? "What is this app, and what are we changing in it?"
+                        : "What are we building, and why? Studio reads what the product is from this, and from the specs."
                   }
                   value={brief}
                   onChange={(e) => setBrief(e.target.value)}
@@ -6650,6 +6660,16 @@ const ORG_ONLY_PROVIDER = (p: { provider: string; category?: string }) =>
  *  the credstore sharing mode of the token (who may read it). */
 type Reach = "organization" | "workspace" | "personal";
 
+/** Write a project's configuration whose sources changed, then have the
+ *  project's catalogue read them now (ADR-0061 §6): a repository attached is
+ *  where its components are found, one detached takes them with it. The sync
+ *  is asked for and not waited on -- the hourly walk would come to it anyway,
+ *  and a sync that cannot be queued must not undo the save. */
+export async function saveSources(token: string, projectId: string, cfg: import("./api").ProjectConfig): Promise<void> {
+  await api.putProjectConfig(token, projectId, cfg);
+  void api.syncProjectCatalogue(token, projectId).catch(() => undefined);
+}
+
 /** The project's current sources (workspace repos) with detach + Open in IDE, so
  *  the Sources tab shows the RESULT of attaching, not only the connectors. */
 /** Attach chosen remote repositories to a project: into its config's
@@ -6667,7 +6687,7 @@ async function attachReposToWorkspace(
 ): Promise<number> {
   const current = (await api.projectConfig(token, ws.id)) ?? {};
   const { sources, added } = withPicked(current.sources, connection, picks, shareMode);
-  if (added > 0) await api.putProjectConfig(token, ws.id, { ...current, sources });
+  if (added > 0) await saveSources(token, ws.id, { ...current, sources });
   return added;
 }
 
@@ -7143,7 +7163,7 @@ function ProjectSources({
   const detach = async (name: string) => {
     setErr(null);
     const config = (await api.projectConfig(token, ws.id)) ?? {};
-    await api.putProjectConfig(token, ws.id, { ...config, sources: without(config.sources, name) });
+    await saveSources(token, ws.id, { ...config, sources: without(config.sources, name) });
     const remaining = (repos ?? []).filter((r) => r.name !== name);
     await pruneDetached(token, remaining, {
       workspaceId: parentWorkspaceId ?? ws.id,

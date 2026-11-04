@@ -1,5 +1,5 @@
-// The path of a project, from an empty tenant to a product that builds: six
-// steps, each read off what the project already holds. Pure, so the rules for
+// The path of a project, from an empty tenant to a product that builds: seven
+// steps (what the product is comes after the specs), each read off what the project already holds. Pure, so the rules for
 // "done" sit in one place and are tested without a backend; the view in
 // project-path-view.tsx only gathers the numbers and draws them.
 
@@ -7,7 +7,7 @@ import type { ProjTab } from "./project-overview";
 
 export type StepState = "done" | "current" | "todo" | "unknown";
 
-export type StepId = "repos" | "types" | "model" | "findings" | "product" | "build";
+export type StepId = "repos" | "types" | "model" | "findings" | "kind" | "product" | "build";
 
 /** What the Overview could read. `null` everywhere means "that read failed":
  *  the step then says it does not know, rather than claiming it is not done. */
@@ -22,6 +22,10 @@ export interface PathFacts {
   model: { documents: number; extracted: number; facts: number; running: boolean } | null;
   /** Findings nobody has decided yet, and how many of those are high. */
   findings: { open: number; high: number } | null;
+  /** What the product is (product-kind.ts): confirmed, or what Studio
+   *  proposes. Absent: the path has no such step (an older caller); null:
+   *  it could not be read. */
+  kind?: { done: boolean; status: string } | null;
   /** The product record: gears picked, and what the last preview said. */
   product: { gears: number; resolves: boolean | null; errors: number; written: boolean } | null;
   /** The newest finished build on the main branch, or none ever. */
@@ -105,6 +109,12 @@ function findings(f: PathFacts): Draft {
   };
 }
 
+function kind(f: PathFacts): Draft {
+  const base = { id: "kind" as const, title: "Decide what the product is", tab: "components" as const, action: "Open Product" };
+  if (!f.kind) return { ...base, done: null, status: "Could not read what the product is." };
+  return { ...base, done: f.kind.done, status: f.kind.status };
+}
+
 function product(f: PathFacts): Draft {
   const base = { id: "product" as const, title: "Compose the product", tab: "components" as const, action: "Open Product" };
   if (f.product === null) return { ...base, done: null, status: "Could not read the product." };
@@ -125,11 +135,21 @@ function build(f: PathFacts): Draft {
   return { ...base, done: f.build.status === "passed", status: `Last build ${f.build.status}${at}.` };
 }
 
-/** The six steps in order. The current one is the first that is known and not
- *  done; an unknown step is skipped rather than made current, because a failed
- *  read is not where the project stands. */
+/** The steps in order: six, and "Decide what the product is" after the
+ *  findings when the caller read it -- the kind is proposed from the specs,
+ *  so it comes once they are read. The current one is the first that is
+ *  known and not done; an unknown step is skipped rather than made current,
+ *  because a failed read is not where the project stands. */
 export function projectPath(f: PathFacts): PathStep[] {
-  const drafts = [repos(f), types(f), model(f), findings(f), product(f), build(f)];
+  const drafts = [
+    repos(f),
+    types(f),
+    model(f),
+    findings(f),
+    ...(f.kind === undefined ? [] : [kind(f)]),
+    product(f),
+    build(f),
+  ];
   const current = drafts.findIndex((d) => d.done === false);
   return drafts.map(({ done, ...rest }, i) => ({
     ...rest,
