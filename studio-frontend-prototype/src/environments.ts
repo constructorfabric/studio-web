@@ -68,6 +68,7 @@ export function emptyEnvironment(): DeployEnvironmentInput {
     build_namespace: null,
     namespaces: null,
     allow_broad_registry_token: false,
+    infra: null,
     strictness: null,
   };
 }
@@ -97,6 +98,7 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
     build_namespace: e.build_namespace ?? null,
     namespaces: e.namespaces ?? null,
     allow_broad_registry_token: e.allow_broad_registry_token ?? false,
+    infra: e.infra ?? null,
     // Kept as stored, so a save does not fall back to what `protected` implies.
     strictness: e.strictness ?? null,
   };

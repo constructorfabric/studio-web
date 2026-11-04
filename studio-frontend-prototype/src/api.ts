@@ -1686,6 +1686,8 @@ export interface DeployEnvironment {
   namespaces?: string[] | null;
   /** The registry token a build gets may reach past the project's own path. */
   allow_broad_registry_token?: boolean | null;
+  /** Where a product's infra services run here (ADR-0064); absent: with the product. */
+  infra?: InfraPlacement | null;
   /** What the server thinks is risky about how it is set up, one sentence each. */
   warnings?: string[];
   updated_by: string;
@@ -1772,9 +1774,82 @@ export interface DeployEnvironmentInput {
   build_namespace?: string | null;
   namespaces?: string[] | null;
   allow_broad_registry_token?: boolean | null;
+  /** Where a product's infra services run (ADR-0064); absent: with the product. */
+  infra?: InfraPlacement | null;
   /** How strictly a product is checked for it (ADR-0060 §5); absent: `prod`
    *  when protected, else `dev`. */
   strictness?: "dev" | "prod" | null;
+}
+
+/** Where an environment runs a product's infra services (ADR-0064 §3). */
+export interface InfraPlacement {
+  /** `with_product`: in the product's namespace, one of each per environment
+   *  (always so in a dev environment). `shared`: the organization's place. */
+  placement: "with_product" | "shared";
+  shared: InfraSharedService[];
+}
+
+/** One service the organization runs for every product of an environment. */
+export interface InfraSharedService {
+  service: string;
+  namespace?: string | null;
+  /** Capability -> its value (`oidc.issuer` -> the issuer). Not secret. */
+  provides: Record<string, string>;
+}
+
+/** An infra service's passport, from its `service.gdl` (`kind = "infra"`). */
+export interface InfraPassport {
+  name: string;
+  version?: string | null;
+  description?: string | null;
+  /** The image as its publisher names it. */
+  image?: string | null;
+  ports: Record<string, number>;
+  health?: string | null;
+  args: string[];
+  config: Record<string, string>;
+  secrets: string[];
+  /** Capability -> template of its value. */
+  provides: Record<string, string>;
+  stateful: boolean;
+  storage?: string | null;
+  data_path?: string | null;
+  chart?: string | null;
+  chart_version?: string | null;
+}
+
+/** One infra service of a project's product (ADR-0064). */
+export interface InfraService {
+  passport: InfraPassport;
+  /** Imported into the project's path, by digest. */
+  image?: string | null;
+  /** A ready chart under the project's path; absent: generated from the passport. */
+  chart_ref?: string | null;
+  chart_version?: string | null;
+  chart_values?: Record<string, unknown> | null;
+  /** Where people reach it: `{public_url}`. */
+  public_url?: string | null;
+}
+
+/** What a deploy does with one infra service. */
+export interface InfraPlanItem {
+  service: string;
+  placement: "with_product" | "shared";
+  install: "database" | "chart" | "generated" | "shared";
+  image?: string | null;
+  chart?: string | null;
+  provides: { capability: string; variable: string }[];
+  refusal_code?: string | null;
+  refusal?: string | null;
+}
+
+/** What a deploy of the project to one environment does with its infra services. */
+export interface InfraPlan {
+  environment_id: string;
+  environment_name: string;
+  placement: "with_product" | "shared";
+  namespace: string;
+  items: InfraPlanItem[];
 }
 
 /** What a build would do, said before it is started (`POST /builds/plan`):
@@ -5172,7 +5247,30 @@ export const api = {
     ),
   /** Copy an external image (`docker.io/library/postgres:16`) into the
    *  project's own path of an environment's registry, under `mirror/<name>`. */
-  importImage: (token: string, projectId: string, body: { environment_id: string; source: string; name?: string }) =>
+  /** The infra services the project's product runs beside its gears (ADR-0064). */
+  infraServices: (token: string, projectId: string) =>
+    request<{ items: InfraService[]; total: number }>(
+      `/studio-environments/v1/infra-services?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** Replace the project's infra services. */
+  putInfraServices: (token: string, projectId: string, items: InfraService[]) =>
+    request<{ items: InfraService[]; total: number }>(
+      `/studio-environments/v1/infra-services?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "PUT", body: JSON.stringify({ items }) },
+    ),
+  /** What a deploy to an environment does with the project's infra services. */
+  infraPlan: (token: string, projectId: string, environmentId: string) =>
+    request<InfraPlan>(
+      `/studio-environments/v1/environments/${encodeURIComponent(environmentId)}/infra-plan?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  importImage: (
+    token: string,
+    projectId: string,
+    body: { environment_id: string; source: string; name?: string; kind?: "image" | "chart" },
+  ) =>
     request<{ run_id: string; image_id: string }>(
       `/studio-environments/v1/images/imports?project_id=${encodeURIComponent(projectId)}`,
       token,

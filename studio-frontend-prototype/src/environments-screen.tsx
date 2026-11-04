@@ -56,6 +56,7 @@ import {
   shortCommit,
   stateTone,
 } from "./environments";
+import { InfraPlacementField } from "./infra-services-view";
 import { DataTable, RowMenu } from "./data-table";
 import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
@@ -749,6 +750,7 @@ export function EnvironmentForm({
           one)
         </label>
       </details>
+      {input.kind !== "research" && <InfraPlacementField input={input} set={set} />}
       <details className="env-advanced" open={!patternIsDefault || !!shown("namespace_pattern")}>
         <summary>
           Namespaces: <code>{examples.join(", ")}</code>

@@ -17,6 +17,7 @@ import {
   type ProjectBuildSetting,
 } from "./api";
 import { planKey, planLines, planRefusalText } from "./build-plan";
+import { InfraPlanView } from "./infra-services-view";
 import { type IdeBuild, buildRefusalText } from "./builds";
 import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { ownBuildSummary } from "./project-build";
@@ -245,6 +246,7 @@ export function EnvironmentActions({
           )}
         </div>
       )}
+      {env.kind !== "research" && <InfraPlanView token={token} projectId={projectId} environmentId={env.id} />}
       {error && <div className="error">{error}</div>}
     </div>
   );

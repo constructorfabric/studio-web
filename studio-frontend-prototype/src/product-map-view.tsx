@@ -21,6 +21,7 @@ import {
   type ScreenPreview as ScreenPicture,
 } from "./api";
 import { HeaderMenu } from "./header-menu";
+import { InfraLane } from "./infra-services-view";
 import { gearKey, librariesFrom, mfesFrom, shellsFrom, splitTemplates, type Library, type Mfe, type Shell } from "./frontend-constructor";
 import { errText } from "./problem";
 import { lineDiff } from "./product-flow";
@@ -468,6 +469,8 @@ export function ProductMap({
           product={product}
           catalogue={catalogue}
           infra={infrastructureOf(product, read.targets).needs}
+          token={token}
+          projectId={projectId}
           busy={!!busy}
           onAddScreen={addScreen}
           onAddGear={addGear}
@@ -1098,6 +1101,8 @@ function Palette({
   product,
   catalogue,
   infra,
+  token,
+  projectId,
   busy,
   onAddScreen,
   onAddGear,
@@ -1106,6 +1111,8 @@ function Palette({
   product: ProjectProduct | null;
   catalogue: ReturnType<typeof useGearCatalogue>;
   infra: ReturnType<typeof infrastructureOf>["needs"];
+  token: string;
+  projectId: string;
   busy: boolean;
   onAddScreen: (m: Mfe) => void;
   onAddGear: (name: string) => void;
@@ -1205,25 +1212,14 @@ function Palette({
       )}
       {tab === "infrastructure" && (
         <div className="pmap-palette-list">
-          <p className="muted pmap-hint">
-            Not added by hand: what the product runs on follows from its gears and from the environment it is deployed to.
-          </p>
-          {infra === null ? (
-            <p className="muted">Shows once the product is checked.</p>
-          ) : infra.length === 0 ? (
-            <p className="muted">The gears need nothing beside them.</p>
-          ) : (
-            infra.map((t) => (
-              <div key={t.id} className="pmap-item">
-                <div className="grow">
-                  <div className="pmap-item-name">{t.name}</div>
-                  <div className="pmap-item-sub">
-                    {t.why}; for {t.gears.length} gear{t.gears.length === 1 ? "" : "s"}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
+          {/* Deployable infra services (ADR-0064): each need of the gears
+              met by a catalogue service, with its image or chart source. */}
+          <InfraLane
+            token={token}
+            projectId={projectId}
+            needs={infra}
+            environments={(read.targets?.environments ?? []).map((e) => e.environment)}
+          />
         </div>
       )}
     </aside>
