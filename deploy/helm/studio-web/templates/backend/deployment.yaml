@@ -274,8 +274,10 @@ spec:
               value: {{ .Values.backend.telemetry.tracing | quote }}
             - name: STUDIO_OTLP_ENDPOINT
               value: {{ .Values.backend.telemetry.endpoint | quote }}
+            # The builder by digest (ADR-0062 §1), never this server's image:
+            # empty refuses every build with BUILDER_NOT_PINNED.
             - name: STUDIO_BUILDER_IMAGE
-              value: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+              value: {{ .Values.backend.builds.builderImage | quote }}
             - name: STUDIO_BUILDKIT_IMAGE
               value: {{ .Values.backend.builds.buildkitImage | quote }}
             - name: STUDIO_SESSION_ENABLED

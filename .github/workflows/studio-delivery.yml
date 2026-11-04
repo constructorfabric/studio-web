@@ -1044,6 +1044,24 @@ jobs:
             -f studio-backend/Dockerfile -t studio-backend-builder:check studio-backend
           bash studio-backend/scripts/check-builder-image.sh studio-backend-builder:check
 
+      # The builder is published as an image of its own, `studio-builder`
+      # (ADR-0062 §1): a project's build runs in it by digest, never in the
+      # server's image, so a build does not change with the Studio that runs
+      # it and the platform's image is never pushed into a project's registry.
+      # The digest is in the summary and is what the deploy pins.
+      - name: Build & push the builder image
+        if: needs.build-require-ci.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          # shellcheck disable=SC2046
+          docker buildx build $(ci-cache-buildx-args studio-builder) --push --target builder \
+            --metadata-file /tmp/studio-builder.json \
+            -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-builder:$tag" studio-backend
+          digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' /tmp/studio-builder.json)"
+          echo "studio-builder: $IMAGE_PREFIX/studio-builder@$digest"
+          echo "- builder \`$IMAGE_PREFIX/studio-builder@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build and push file-storage sidecar image
         if: needs.build-require-ci.outputs.backend == 'true'
         run: |
@@ -1134,6 +1152,8 @@ jobs:
           if [ "$BUILD_BACKEND" != true ]; then
             copy_image studio-backend
             copy_image file-storage-sidecar
+            # Absent from an edge older than the builder image itself.
+            copy_image studio-builder || echo "::warning::no studio-builder:edge to copy yet"
           fi
           if [ "$BUILD_FRONTEND" != true ]; then
             copy_image studio-frontend
@@ -1158,6 +1178,7 @@ jobs:
             cf-studio-theia
           )
           for promotion in ${{ steps.tags.outputs.promotions }}; do
+            docker buildx imagetools create               --tag "$IMAGE_PREFIX/studio-builder:$promotion"               "$IMAGE_PREFIX/studio-builder:$immutable"               || echo "::warning::no studio-builder:$immutable to promote"
             for image in "${images[@]}"; do
               docker buildx imagetools create \
                 --tag "$IMAGE_PREFIX/$image:$promotion" \
@@ -1726,6 +1747,18 @@ jobs:
           wait_for_image "$IMAGE_PREFIX/cf-studio-theia:$theia_tag"
           wait_for_image "$IMAGE_PREFIX/cf-studio-keycloak:$keycloak_tag"
 
+          # The builder of the same snapshot, by digest (ADR-0062 §1): the
+          # backend refuses a build in an image that names none. A snapshot
+          # from before studio-builder was published has none, and builds
+          # then say so (BUILDER_NOT_PINNED) until the next one.
+          builder_image=""
+          if digest="$(docker buildx imagetools inspect "$IMAGE_PREFIX/studio-builder:$backend_tag" \
+                --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')" && [ -n "$digest" ]; then
+            builder_image="$IMAGE_PREFIX/studio-builder@$digest"
+          else
+            echo "::warning::no studio-builder:$backend_tag in GHCR; Studio builds are refused until one is published"
+          fi
+          echo "builder_image=$builder_image" >> "$GITHUB_OUTPUT"
           echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
           echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
           echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
@@ -1756,6 +1789,7 @@ jobs:
             --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}"
             --set-string "backend.sessions.image.tag=${{ steps.versions.outputs.theia_tag }}"
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}"
+            --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}"
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
             --set-string "keycloak.image.tag=${{ steps.versions.outputs.keycloak_tag }}"
@@ -1788,6 +1822,7 @@ jobs:
             --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}" \
             --set-string "backend.sessions.image.tag=${{ steps.versions.outputs.theia_tag }}" \
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}" \
+            --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}" \
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
             --set-string "keycloak.image.tag=${{ steps.versions.outputs.keycloak_tag }}" \
@@ -2070,6 +2105,10 @@ jobs:
           backend_tag="$(current_tag backend)"
           frontend_tag="$(current_tag frontend)"
           prototype_tag="$(current_tag frontend-prototype 2>/dev/null || printf '%s' "$frontend_tag")"
+          # The builder the running backend builds with (ADR-0062 §1), kept as
+          # it is: an infrastructure release does not change it.
+          builder_image="$(kubectl get deployment studio-studio-web-backend -n "$NAMESPACE"             -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="STUDIO_BUILDER_IMAGE")].value}'             2>/dev/null || true)"
+          echo "builder_image=$builder_image" >> "$GITHUB_OUTPUT"
           echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
           echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
           echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
@@ -2089,6 +2128,7 @@ jobs:
           common_args=(
             -f "$values"
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}"
+            --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}"
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
             --set-string "keycloak.image.tag=$INFRA_TAG"
@@ -2141,6 +2181,7 @@ jobs:
             -n "$NAMESPACE" \
             -f "deploy/helm/values-${{ github.event.inputs.environment }}.example.yaml" \
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}" \
+            --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}" \
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
             --set-string "keycloak.image.tag=$INFRA_TAG" \

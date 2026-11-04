@@ -229,7 +229,10 @@ services:
       # prepare and publish steps in Studio's own image, pulled by that cluster:
       # a published studio-backend image, since this stand's image is local.
       # Without it, Build in Studio answers 503 naming this variable.
+      # The builder a Studio build runs in (ADR-0062 §1): by digest, else
+      # refused -- but this local stand takes a tag, and says so in its log.
       STUDIO_BUILDER_IMAGE: ${STUDIO_BUILDER_IMAGE:-}
+      STUDIO_BUILDER_ALLOW_TAG: ${STUDIO_BUILDER_ALLOW_TAG:-1}
       STUDIO_BUILDKIT_IMAGE: ${STUDIO_BUILDKIT_IMAGE:-}
       # Read by the container ENTRYPOINT, not by any gear: it makes the
       # bind-mount below writable for the unprivileged server user. Keep it
