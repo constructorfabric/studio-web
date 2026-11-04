@@ -1,43 +1,105 @@
-//! A FrontX package's own description, `frontx.gdl` (GDL 1.5), read without
+//! A FrontX package's passport, `frontx.gdl` (GDL 1.5), read without
 //! evaluating it.
 //!
 //! The file sits at a package's root beside its `package.json` and says what
-//! the package is, in one call: `shell(signs_in = …, runtime_env = …)`,
-//! `mfe(requires = [...])` or `library()`. Gearbox evaluates it as Starlark;
-//! Studio does not depend on Gearbox's crates, and the scan reads files from
-//! repositories it does not own, so this reads only the subset the vocabulary
-//! needs — a `gdl_version = "1.5"` line (or a later 1.x), the one call with literal named
-//! arguments (`True`, `False`, `None`, strings, lists of strings), and `#`
-//! comments — and refuses anything else with the reason. Nothing is executed.
+//! the package is, in one call — `shell(...)`, `mfe(...)` or `library(...)` —
+//! and everything a tool needs to know about it, including what its
+//! `package.json` and `mfe.json` already say (name, version, pins, screens).
+//! Gearbox evaluates it as Starlark; Studio does not depend on Gearbox's
+//! crates, and the scan reads files from repositories it does not own, so this
+//! reads only the subset the vocabulary needs — a `gdl_version = "1.5"` line
+//! (or a later 1.x), the one call with literal named arguments (`True`,
+//! `False`, `None`, strings, lists of strings, dicts of strings to strings),
+//! and `#` comments — and refuses anything else with the reason. Nothing is
+//! executed.
 //!
-//! What the package's manifests already say (name, version, pins, screens,
-//! what a shell carries) is not part of the vocabulary, so an argument naming
-//! one is refused like any unknown argument, as Gearbox refuses it.
+//! Every argument but a shell's `signs_in` is optional. Where one restates a
+//! manifest, the catalogue checks the two agree and records a disagreement
+//! as a warning (`apply_frontx_description`), not a refusal: the passport
+//! still reads.
+
+use std::collections::BTreeMap;
+
+/// Who a package says it is: `package.json`'s name, version and description.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Identity {
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub description: Option<String>,
+}
+
+/// A shell's passport.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ShellPassport {
+    pub identity: Identity,
+    /// Whether it signs users in before it mounts a screen.
+    pub signs_in: bool,
+    /// Where the identity provider sends a signed-in user back to.
+    pub sign_in_redirect: Vec<String>,
+    /// The file (inside the package) it reads the product's addresses from at
+    /// start, `None` when it takes them at build.
+    pub runtime_env: Option<String>,
+    /// The keys it reads at start, each to what fills it.
+    pub env: BTreeMap<String, String>,
+    /// The variables it needs at build.
+    pub build_env: Vec<String>,
+    pub node: Option<String>,
+    pub package_manager: Option<String>,
+    pub build: Option<String>,
+    pub output: Option<String>,
+    pub base: Option<String>,
+    /// The path its screens call the backend under (`/cf/`).
+    pub api_prefix: Option<String>,
+    /// The FrontX packages it gives what it mounts; `None` when not declared.
+    pub carries: Option<BTreeMap<String, String>>,
+}
+
+/// A micro-frontend's passport.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct MfePassport {
+    pub identity: Identity,
+    /// The backend gears its screens call, sorted and once each; empty when it
+    /// calls none.
+    pub requires: Vec<String>,
+    /// Its `mfe.json` extensions' labels, in order.
+    pub screens: Option<Vec<String>>,
+    /// Its `mfe.json` extensions' routes, in order.
+    pub mounts: Option<Vec<String>>,
+    /// Its `@gears-frontx/react` pin.
+    pub frontx: Option<String>,
+    /// The permissions its screens need, when known.
+    pub roles: Option<Vec<String>>,
+    pub preview: Vec<String>,
+    pub fixtures: Option<String>,
+}
 
 /// What a `frontx.gdl` declares the package to be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FrontxDescription {
-    /// A shell: whether it signs users in before it mounts a screen, and the
-    /// file (inside the package) it reads the product's addresses from at
-    /// start, `None` when it takes them at build.
-    Shell {
-        signs_in: bool,
-        runtime_env: Option<String>,
-    },
-    /// A micro-frontend and the backend gears its screens call, sorted and
-    /// once each; empty when it calls none.
-    Mfe { requires: Vec<String> },
+    /// A shell, which mounts micro-frontends.
+    Shell(Box<ShellPassport>),
+    /// A micro-frontend.
+    Mfe(Box<MfePassport>),
     /// A package micro-frontends share, which is not one itself.
-    Library,
+    Library(Identity),
 }
 
 impl FrontxDescription {
     /// The kind as the profile records it: `shell`, `mfe` or `library`.
     pub(crate) fn kind(&self) -> &'static str {
         match self {
-            Self::Shell { .. } => "shell",
-            Self::Mfe { .. } => "mfe",
-            Self::Library => "library",
+            Self::Shell(_) => "shell",
+            Self::Mfe(_) => "mfe",
+            Self::Library(_) => "library",
+        }
+    }
+
+    /// Who the package says it is.
+    pub(crate) fn identity(&self) -> &Identity {
+        match self {
+            Self::Shell(s) => &s.identity,
+            Self::Mfe(m) => &m.identity,
+            Self::Library(i) => i,
         }
     }
 }
@@ -69,6 +131,9 @@ enum Tok {
     RParen,
     LBracket,
     RBracket,
+    LBrace,
+    RBrace,
+    Colon,
     Comma,
     Eq,
 }
@@ -87,6 +152,7 @@ enum Lit {
     None,
     Str(String),
     List(Vec<String>),
+    Dict(Vec<(String, String)>),
 }
 
 fn lex(src: &str) -> Result<Vec<Spanned>, String> {
@@ -96,6 +162,22 @@ fn lex(src: &str) -> Result<Vec<Spanned>, String> {
     let mut i = 0usize;
     while i < chars.len() {
         let c = chars[i];
+        let single = match c {
+            '(' => Some(Tok::LParen),
+            ')' => Some(Tok::RParen),
+            '[' => Some(Tok::LBracket),
+            ']' => Some(Tok::RBracket),
+            '{' => Some(Tok::LBrace),
+            '}' => Some(Tok::RBrace),
+            ':' => Some(Tok::Colon),
+            ',' => Some(Tok::Comma),
+            _ => None,
+        };
+        if let Some(tok) = single {
+            out.push((tok, line));
+            i += 1;
+            continue;
+        }
         match c {
             '\n' => {
                 line += 1;
@@ -106,26 +188,6 @@ fn lex(src: &str) -> Result<Vec<Spanned>, String> {
                 while i < chars.len() && chars[i] != '\n' {
                     i += 1;
                 }
-            }
-            '(' => {
-                out.push((Tok::LParen, line));
-                i += 1;
-            }
-            ')' => {
-                out.push((Tok::RParen, line));
-                i += 1;
-            }
-            '[' => {
-                out.push((Tok::LBracket, line));
-                i += 1;
-            }
-            ']' => {
-                out.push((Tok::RBracket, line));
-                i += 1;
-            }
-            ',' => {
-                out.push((Tok::Comma, line));
-                i += 1;
             }
             '=' => {
                 if chars.get(i + 1) == Some(&'=') {
@@ -214,6 +276,9 @@ struct Parser {
     at: usize,
 }
 
+const A_VALUE: &str =
+    "True, False, None, a string, a list of strings or a dict of strings to strings";
+
 impl Parser {
     fn peek(&self) -> Option<&Spanned> {
         self.toks.get(self.at)
@@ -231,6 +296,72 @@ impl Parser {
         t
     }
 
+    fn ends_inside(&self, what: &str) -> String {
+        format!("line {}: the file ends inside a {what}", self.line())
+    }
+
+    /// After an item of a list or dict: `,` or the closing token. `true` when
+    /// it closed.
+    fn item_end(&mut self, close: &Tok, what: &str) -> Result<bool, String> {
+        match self.next() {
+            Some((Tok::Comma, _)) => Ok(false),
+            Some((t, _)) if &t == close => Ok(true),
+            Some((_, l)) => Err(format!("line {l}: expected `,` or the end of the {what}")),
+            None => Err(self.ends_inside(what)),
+        }
+    }
+
+    fn list(&mut self) -> Result<Lit, String> {
+        let mut items = Vec::new();
+        loop {
+            match self.next() {
+                Some((Tok::RBracket, _)) => break,
+                Some((Tok::Str(s), _)) => {
+                    items.push(s);
+                    if self.item_end(&Tok::RBracket, "list")? {
+                        break;
+                    }
+                }
+                Some((_, l)) => return Err(format!("line {l}: a list holds strings only")),
+                None => return Err(self.ends_inside("list")),
+            }
+        }
+        Ok(Lit::List(items))
+    }
+
+    fn dict(&mut self) -> Result<Lit, String> {
+        let mut entries = Vec::new();
+        loop {
+            match self.next() {
+                Some((Tok::RBrace, _)) => break,
+                Some((Tok::Str(k), l)) => {
+                    match self.next() {
+                        Some((Tok::Colon, _)) => {}
+                        Some((_, l)) => return Err(format!("line {l}: expected `:` after a key")),
+                        None => return Err(self.ends_inside("dict")),
+                    }
+                    let v = match self.next() {
+                        Some((Tok::Str(v), _)) => v,
+                        Some((_, l)) => {
+                            return Err(format!("line {l}: a dict maps strings to strings"));
+                        }
+                        None => return Err(self.ends_inside("dict")),
+                    };
+                    if entries.iter().any(|(e, _): &(String, String)| e == &k) {
+                        return Err(format!("line {l}: the key \"{k}\" is given twice"));
+                    }
+                    entries.push((k, v));
+                    if self.item_end(&Tok::RBrace, "dict")? {
+                        break;
+                    }
+                }
+                Some((_, l)) => return Err(format!("line {l}: a dict maps strings to strings")),
+                None => return Err(self.ends_inside("dict")),
+            }
+        }
+        Ok(Lit::Dict(entries))
+    }
+
     fn value(&mut self) -> Result<Lit, String> {
         match self.next() {
             Some((Tok::Ident(w), l)) => match w.as_str() {
@@ -238,47 +369,13 @@ impl Parser {
                 "False" => Ok(Lit::Bool(false)),
                 "None" => Ok(Lit::None),
                 _ => Err(format!(
-                    "line {l}: `{w}` is a name, not a literal; a value is True, False, None, a string or a list of strings"
+                    "line {l}: `{w}` is a name, not a literal; a value is {A_VALUE}"
                 )),
             },
             Some((Tok::Str(s), _)) => Ok(Lit::Str(s)),
-            Some((Tok::LBracket, _)) => {
-                let mut items = Vec::new();
-                loop {
-                    match self.next() {
-                        Some((Tok::RBracket, _)) => break,
-                        Some((Tok::Str(s), _)) => {
-                            items.push(s);
-                            match self.next() {
-                                Some((Tok::Comma, _)) => {}
-                                Some((Tok::RBracket, _)) => break,
-                                Some((_, l)) => {
-                                    return Err(format!("line {l}: expected `,` or `]` in a list"));
-                                }
-                                None => {
-                                    return Err(format!(
-                                        "line {}: the file ends inside a list",
-                                        self.line()
-                                    ));
-                                }
-                            }
-                        }
-                        Some((_, l)) => {
-                            return Err(format!("line {l}: a list holds strings only"));
-                        }
-                        None => {
-                            return Err(format!(
-                                "line {}: the file ends inside a list",
-                                self.line()
-                            ));
-                        }
-                    }
-                }
-                Ok(Lit::List(items))
-            }
-            Some((_, l)) => Err(format!(
-                "line {l}: expected a value (True, False, None, a string or a list of strings)"
-            )),
+            Some((Tok::LBracket, _)) => self.list(),
+            Some((Tok::LBrace, _)) => self.dict(),
+            Some((_, l)) => Err(format!("line {l}: expected a value ({A_VALUE})")),
             None => Err(format!(
                 "line {}: the file ends where a value was expected",
                 self.line()
@@ -303,12 +400,7 @@ impl Parser {
                         Some((Tok::Comma, _)) => {}
                         Some((Tok::RParen, _)) => return Ok(out),
                         Some((_, l)) => return Err(format!("line {l}: expected `,` or `)`")),
-                        None => {
-                            return Err(format!(
-                                "line {}: the file ends inside a call",
-                                self.line()
-                            ));
-                        }
+                        None => return Err(self.ends_inside("call")),
                     }
                 }
                 Some((_, l)) => {
@@ -316,7 +408,7 @@ impl Parser {
                         "line {l}: arguments are named (`name = value`); a positional one is not read"
                     ));
                 }
-                None => return Err(format!("line {}: the file ends inside a call", self.line())),
+                None => return Err(self.ends_inside("call")),
             }
         }
     }
@@ -375,7 +467,7 @@ pub(crate) fn read(src: &str) -> Result<FrontxDescription, String> {
                     }
                     other => {
                         return Err(format!(
-                            "line {line}: `{other}()` is not a FrontX package declaration; it is one of `shell(...)`, `mfe(...)` or `library()`"
+                            "line {line}: `{other}()` is not a FrontX package declaration; it is one of `shell(...)`, `mfe(...)` or `library(...)`"
                         ));
                     }
                 }
@@ -416,75 +508,265 @@ pub(crate) fn read(src: &str) -> Result<FrontxDescription, String> {
     declaration(&name, args, line)
 }
 
-fn declaration(name: &str, args: Vec<Arg>, line: usize) -> Result<FrontxDescription, String> {
-    let allowed: &[&str] = match name {
-        "shell" => &["signs_in", "runtime_env"],
-        "mfe" => &["requires"],
-        _ => &[],
-    };
-    if let Some((arg, _, l)) = args.iter().find(|(a, _, _)| !allowed.contains(&a.as_str())) {
-        let says = if allowed.is_empty() {
-            "it takes no arguments".to_string()
-        } else {
-            format!("it takes {}", allowed.join(", "))
-        };
-        return Err(format!(
-            "line {l}: `{name}()` has no argument `{arg}`; {says}"
-        ));
-    }
-    let get = |key: &str| {
-        args.iter()
+const IDENTITY: [&str; 3] = ["name", "version", "description"];
+const SHELL_ARGS: [&str; 12] = [
+    "signs_in",
+    "sign_in_redirect",
+    "runtime_env",
+    "env",
+    "build_env",
+    "node",
+    "package_manager",
+    "build",
+    "output",
+    "base",
+    "api_prefix",
+    "carries",
+];
+const MFE_ARGS: [&str; 7] = [
+    "requires", "screens", "mounts", "frontx", "roles", "preview", "fixtures",
+];
+
+/// The arguments of one call, each taken once and checked.
+struct Args {
+    call: &'static str,
+    args: Vec<Arg>,
+}
+
+impl Args {
+    fn get(&self, key: &str) -> Option<(&Lit, usize)> {
+        self.args
+            .iter()
             .find(|(a, _, _)| a == key)
             .map(|(_, v, l)| (v, *l))
-    };
-    match name {
-        "shell" => {
-            let signs_in = match get("signs_in") {
-                Some((Lit::Bool(b), _)) => *b,
-                Some((_, l)) => return Err(format!("line {l}: `signs_in` is True or False")),
-                None => {
-                    return Err(format!(
-                        "line {line}: `shell()` must say whether it signs users in: `signs_in = True` or `False`"
-                    ));
-                }
-            };
-            let runtime_env = match get("runtime_env") {
-                None | Some((Lit::None, _)) => None,
-                Some((Lit::Str(path), l)) => Some(package_path(path).map_err(|e| {
-                    format!(
-                        "line {l}: runtime_env = \"{path}\" is not a path inside the package: {e}"
-                    )
-                })?),
-                Some((_, l)) => {
-                    return Err(format!(
-                        "line {l}: `runtime_env` is a path inside the package or None"
-                    ));
-                }
-            };
-            Ok(FrontxDescription::Shell {
-                signs_in,
-                runtime_env,
-            })
-        }
-        "mfe" => {
-            let mut requires = match get("requires") {
-                None => Vec::new(),
-                Some((Lit::List(ids), l)) => {
-                    if let Some(bad) = ids.iter().find(|id| !is_gear_id(id)) {
-                        return Err(format!(
-                            "line {l}: requires: `{bad}` is not a gear id (lowercase letters, digits and single hyphens, starting with a letter)"
-                        ));
-                    }
-                    ids.clone()
-                }
-                Some((_, l)) => return Err(format!("line {l}: `requires` is a list of gear ids")),
-            };
-            requires.sort();
-            requires.dedup();
-            Ok(FrontxDescription::Mfe { requires })
-        }
-        _ => Ok(FrontxDescription::Library),
     }
+
+    /// A string argument, checked by `check`; absent is `None`.
+    fn string(
+        &self,
+        key: &str,
+        check: impl Fn(&str) -> Result<(), String>,
+    ) -> Result<Option<String>, String> {
+        match self.get(key) {
+            None => Ok(None),
+            Some((Lit::Str(s), l)) => {
+                check(s).map_err(|e| format!("line {l}: {key} = \"{s}\" {e}"))?;
+                Ok(Some(s.clone()))
+            }
+            Some((_, l)) => Err(format!("line {l}: `{key}` is a string")),
+        }
+    }
+
+    /// A list-of-strings argument, each item checked; absent is `None`.
+    fn list(
+        &self,
+        key: &str,
+        check: impl Fn(&str) -> Result<(), String>,
+    ) -> Result<Option<Vec<String>>, String> {
+        match self.get(key) {
+            None => Ok(None),
+            Some((Lit::List(items), l)) => {
+                for item in items {
+                    check(item).map_err(|e| format!("line {l}: {key}: \"{item}\" {e}"))?;
+                }
+                Ok(Some(items.clone()))
+            }
+            Some((_, l)) => Err(format!("line {l}: `{key}` is a list of strings")),
+        }
+    }
+
+    /// A dict-of-strings argument, each key and value non-empty; absent is
+    /// `None`.
+    fn dict(&self, key: &str) -> Result<Option<BTreeMap<String, String>>, String> {
+        match self.get(key) {
+            None => Ok(None),
+            Some((Lit::Dict(entries), l)) => {
+                if let Some((k, v)) = entries
+                    .iter()
+                    .find(|(k, v)| word(k).is_err() || one_line(v).is_err())
+                {
+                    return Err(format!(
+                        "line {l}: {key}: \"{k}\": \"{v}\" is not a key with no spaces to a one-line value"
+                    ));
+                }
+                Ok(Some(entries.iter().cloned().collect()))
+            }
+            Some((_, l)) => Err(format!("line {l}: `{key}` is a dict of strings to strings")),
+        }
+    }
+
+    fn identity(&self) -> Result<Identity, String> {
+        Ok(Identity {
+            name: self.string("name", word)?,
+            version: self.string("version", word)?,
+            description: self.string("description", one_line)?,
+        })
+    }
+}
+
+fn declaration(name: &str, args: Vec<Arg>, line: usize) -> Result<FrontxDescription, String> {
+    let (call, own): (&'static str, &[&str]) = match name {
+        "shell" => ("shell", &SHELL_ARGS),
+        "mfe" => ("mfe", &MFE_ARGS),
+        _ => ("library", &[]),
+    };
+    if let Some((arg, _, l)) = args
+        .iter()
+        .find(|(a, _, _)| !IDENTITY.contains(&a.as_str()) && !own.contains(&a.as_str()))
+    {
+        let takes: Vec<&str> = IDENTITY.iter().chain(own).copied().collect();
+        return Err(format!(
+            "line {l}: `{call}()` has no argument `{arg}`; it takes {}",
+            takes.join(", ")
+        ));
+    }
+    let a = Args { call, args };
+    let identity = a.identity()?;
+    match a.call {
+        "shell" => shell(&a, identity, line),
+        "mfe" => mfe(&a, identity),
+        _ => Ok(FrontxDescription::Library(identity)),
+    }
+}
+
+fn shell(a: &Args, identity: Identity, line: usize) -> Result<FrontxDescription, String> {
+    let signs_in = match a.get("signs_in") {
+        Some((Lit::Bool(b), _)) => *b,
+        Some((_, l)) => return Err(format!("line {l}: `signs_in` is True or False")),
+        None => {
+            return Err(format!(
+                "line {line}: `shell()` must say whether it signs users in: `signs_in = True` or `False`"
+            ));
+        }
+    };
+    let runtime_env = match a.get("runtime_env") {
+        None | Some((Lit::None, _)) => None,
+        Some((Lit::Str(path), l)) => Some(package_path(path).map_err(|e| {
+            format!("line {l}: runtime_env = \"{path}\" is not a path inside the package: {e}")
+        })?),
+        Some((_, l)) => {
+            return Err(format!(
+                "line {l}: `runtime_env` is a path inside the package or None"
+            ));
+        }
+    };
+    let sign_in_redirect = match a.get("sign_in_redirect") {
+        None | Some((Lit::None, _)) => Vec::new(),
+        Some((Lit::Str(_), _)) => vec![a.string("sign_in_redirect", route)?.unwrap_or_default()],
+        Some((Lit::List(_), _)) => a.list("sign_in_redirect", route)?.unwrap_or_default(),
+        Some((_, l)) => {
+            return Err(format!(
+                "line {l}: `sign_in_redirect` is a route, a list of them, or None"
+            ));
+        }
+    };
+    if !signs_in
+        && let Some((_, l)) = a
+            .get("sign_in_redirect")
+            .filter(|_| !sign_in_redirect.is_empty())
+    {
+        return Err(format!(
+            "line {l}: sign_in_redirect is where a signed-in user comes back to; a shell with `signs_in = False` has none"
+        ));
+    }
+    Ok(FrontxDescription::Shell(Box::new(ShellPassport {
+        identity,
+        signs_in,
+        sign_in_redirect,
+        runtime_env,
+        env: a.dict("env")?.unwrap_or_default(),
+        build_env: a.list("build_env", env_name)?.unwrap_or_default(),
+        node: a.string("node", word)?,
+        package_manager: a.string("package_manager", |pm| {
+            if matches!(pm, "npm" | "pnpm" | "yarn") {
+                Ok(())
+            } else {
+                Err("is not \"npm\", \"pnpm\" or \"yarn\"".into())
+            }
+        })?,
+        build: a.string("build", one_line)?,
+        output: a.string("output", |p| {
+            package_path(p).map(|_| ()).map_err(str::to_string)
+        })?,
+        base: a.string("base", |p| url_path(p, true))?,
+        api_prefix: a.string("api_prefix", |p| url_path(p, false))?,
+        carries: a.dict("carries")?,
+    })))
+}
+
+fn mfe(a: &Args, identity: Identity) -> Result<FrontxDescription, String> {
+    let mut requires = a
+        .list("requires", |id| {
+            if is_gear_id(id) {
+                Ok(())
+            } else {
+                Err("is not a gear id (lowercase letters, digits and single hyphens, starting with a letter)".into())
+            }
+        })?
+        .unwrap_or_default();
+    requires.sort();
+    requires.dedup();
+    Ok(FrontxDescription::Mfe(Box::new(MfePassport {
+        identity,
+        requires,
+        screens: a.list("screens", one_line)?,
+        mounts: a.list("mounts", route)?,
+        frontx: a.string("frontx", word)?,
+        roles: a.list("roles", word)?,
+        preview: a.list("preview", route)?.unwrap_or_default(),
+        fixtures: a.string("fixtures", |p| {
+            package_path(p).map(|_| ()).map_err(str::to_string)
+        })?,
+    })))
+}
+
+/// A word with no spaces: a name, a version, a key.
+fn word(s: &str) -> Result<(), String> {
+    if s.is_empty() || s.chars().any(char::is_whitespace) {
+        return Err("is empty or has spaces".into());
+    }
+    Ok(())
+}
+
+/// A non-empty string on one line.
+fn one_line(s: &str) -> Result<(), String> {
+    if s.trim().is_empty() || s.contains(['\n', '\r']) {
+        return Err("is empty or spans lines".into());
+    }
+    Ok(())
+}
+
+/// A route on the package's origin: `/accounts`.
+fn route(s: &str) -> Result<(), String> {
+    if !s.starts_with('/') || s.chars().any(char::is_whitespace) {
+        return Err("is not a route (it starts with `/` and has no spaces)".into());
+    }
+    Ok(())
+}
+
+/// A path that starts and ends with `/`, of letters, digits, `-`, `_`, `.`.
+fn url_path(s: &str, root_allowed: bool) -> Result<(), String> {
+    let safe = s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
+    if !safe || !s.starts_with('/') || !s.ends_with('/') || s.contains("//") {
+        return Err("is not a path such as \"/cf/\"".into());
+    }
+    if s == "/" && !root_allowed {
+        return Err("would send every request to the backend".into());
+    }
+    Ok(())
+}
+
+/// An environment variable name: `VITE_API_BASE`.
+fn env_name(s: &str) -> Result<(), String> {
+    let valid = s.starts_with(|c: char| c.is_ascii_uppercase() || c == '_')
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    if !valid {
+        return Err("is not a variable name (uppercase letters, digits and `_`)".into());
+    }
+    Ok(())
 }
 
 /// A path inside the package: relative, forward slashes, no `..` or empty part.
@@ -497,6 +779,9 @@ fn package_path(path: &str) -> Result<String, &'static str> {
     }
     if path.starts_with('/') || path.contains(':') {
         return Err("it is absolute");
+    }
+    if path.chars().any(char::is_whitespace) {
+        return Err("it has spaces");
     }
     if path
         .split('/')

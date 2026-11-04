@@ -153,6 +153,44 @@ describe("what a package's frontx.gdl declares", () => {
     // A file that did not read is a guess, like no file.
     expect(shellsFrom([node("@cs/portal")], { "@cs/portal": { auto: { frontx_described: false, frontx_kind: "shell" } } })).toEqual([]);
   });
+
+  it("reads a shell's passport: where its screens call, what it reads at start, how it is built", () => {
+    const [shell] = shellsFrom([node("@cs/portal")], {
+      "@cs/portal": described("shell", {
+        shell_signin: true,
+        shell_runtime_env: true,
+        shell_api_prefix: "/cf/",
+        shell_build: "npm run build",
+        shell_output: "dist",
+        shell_node: ">=24",
+        shell_env: { apiBase: "gateway.url", oidcIssuer: "oidc.issuer" },
+        frontx_passport_drift: { v: "x", b: "x", s: "watch", items: ["version: frontx.gdl says \"1.1.0\", package.json \"1.2.0\""] },
+      }),
+    });
+    expect(shell.passport).toMatchObject({
+      apiPrefix: "/cf/",
+      build: "npm run build",
+      output: "dist",
+      node: ">=24",
+      env: { apiBase: "gateway.url", oidcIssuer: "oidc.issuer" },
+      buildEnv: [],
+    });
+    expect(shell.drift).toHaveLength(1);
+    // A minimal frontx.gdl says nothing more, and a guessed shell has no passport.
+    const [minimal] = shellsFrom([node("@cs/portal")], { "@cs/portal": described("shell", { shell_signin: false }) });
+    expect(minimal.passport).toBeNull();
+    expect(minimal.drift).toEqual([]);
+  });
+
+  it("reads the roles a micro-frontend's passport names, and none when it does not say", () => {
+    const nodes = [node("@cs/org-mfe", { component_kind: "micro-frontend" }), node("@cs/old-mfe", { component_kind: "micro-frontend" })];
+    const [old, org] = mfesFrom(nodes, {
+      "@cs/org-mfe": described("mfe", { mfe_calls: ["studio-organizations"], mfe_roles: ["organizations.read"] }),
+      "@cs/old-mfe": { auto: { mfe_extensions: [] } },
+    });
+    expect(org.roles).toEqual(["organizations.read"]);
+    expect(old.roles).toBeNull();
+  });
 });
 
 describe("the shell", () => {

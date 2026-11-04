@@ -45,6 +45,7 @@ import {
   type Mfe,
   type Placement,
   type Shell,
+  type ShellPassport,
   type Step,
 } from "./frontend-constructor";
 import { errText } from "./problem";
@@ -489,9 +490,11 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
                 {shell.runtimeEnv === true && <span className="fc-tag ok">reads /env.js at start</span>}
                 {shell.runtimeEnv === false && <span className="fc-tag">addresses fixed at build</span>}
                 {(shell.signsIn !== null || shell.runtimeEnv !== null) && <SourceMark described={shell.described} />}
+                <DriftMark drift={shell.drift} />
               </span>
             )}
           </div>
+          {shell?.passport && <ShellPassportLine passport={shell.passport} />}
           <div className="fc-frame">
             <div className="fc-top">
               <span className="fc-dot" />
@@ -623,6 +626,46 @@ function PageCard({
   );
 }
 
+/** A passport that disagrees with its package.json or mfe.json: the
+ *  passport still counts, and the tag says which facts drifted. */
+function DriftMark({ drift }: { drift?: string[] }) {
+  if (!drift || drift.length === 0) return null;
+  return (
+    <span className="fc-tag warn" title={drift.join("\n")}>
+      frontx.gdl drifts from its manifests ({drift.length})
+    </span>
+  );
+}
+
+/** The shell's passport, compactly: where its screens call the backend, what
+ *  it reads at start, how it is built. */
+function ShellPassportLine({ passport: p }: { passport: ShellPassport }) {
+  const envKeys = Object.keys(p.env);
+  const parts: { k: string; v: string; title?: string }[] = [];
+  if (p.apiPrefix) parts.push({ k: "API", v: p.apiPrefix, title: "The path its screens call the backend under, proxied to the API Gateway" });
+  if (envKeys.length > 0)
+    parts.push({
+      k: "reads at start",
+      v: envKeys.join(", "),
+      title: Object.entries(p.env)
+        .map(([k, v]) => `${k} ← ${v}`)
+        .join("\n"),
+    });
+  if (p.buildEnv.length > 0) parts.push({ k: "needs at build", v: p.buildEnv.join(", ") });
+  if (p.build) parts.push({ k: "build", v: p.output ? `${p.build} → ${p.output}/` : p.build });
+  if (p.node) parts.push({ k: "node", v: p.node });
+  if (parts.length === 0) return null;
+  return (
+    <div className="fc-passport muted" aria-label="What the shell's frontx.gdl says">
+      {parts.map((x) => (
+        <span key={x.k} title={x.title}>
+          {x.k} <code>{x.v}</code>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** Where a package's facts came from: its own `frontx.gdl`, or the scan's
  *  reading of its files. */
 function SourceMark({ described }: { described?: boolean }) {
@@ -713,7 +756,28 @@ function Inspector({
           {gears.length} gears are in the product.
         </small>
       </section>
+      {mfe.roles && (
+        <section>
+          <div className="pm-h">
+            Roles its screens need <SourceMark described />
+          </div>
+          {mfe.roles.length === 0 ? (
+            <span className="muted">None: its frontx.gdl lists no role.</span>
+          ) : (
+            mfe.roles.map((r) => (
+              <code key={r} style={{ marginRight: 6 }}>
+                {r}
+              </code>
+            ))
+          )}
+        </section>
+      )}
       <FitSection mfe={mfe} shell={shell} />
+      {mfe.drift && mfe.drift.length > 0 && (
+        <p className="pm-why" style={{ margin: 0 }}>
+          <DriftMark drift={mfe.drift} /> {mfe.drift.join("; ")}
+        </p>
+      )}
       {mfe.version && <small className="muted">version {mfe.version}</small>}
       {picked ? (
         <button type="button" onClick={() => onRemove(mfe.name)}>

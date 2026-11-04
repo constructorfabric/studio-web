@@ -195,6 +195,61 @@ export interface Mfe {
   /** Whether `calls` is what its `frontx.gdl` declares (`mfe(requires = …)`)
    *  rather than what the scan guessed from its API services. */
   described?: boolean;
+  /** The permissions its screens need, as its passport says; `null` when it
+   *  does not say. */
+  roles?: string[] | null;
+  /** Where its passport disagrees with its package.json or mfe.json. */
+  drift?: string[];
+}
+
+/** What a FrontX package's passport (`frontx.gdl`) says beyond its kind;
+ *  each `null` when it does not say. */
+export interface ShellPassport {
+  /** The path its screens call the backend under, proxied to the API Gateway. */
+  apiPrefix: string | null;
+  base: string | null;
+  build: string | null;
+  output: string | null;
+  node: string | null;
+  packageManager: string | null;
+  /** The keys it reads at start, each to what fills it. */
+  env: Record<string, string>;
+  /** The variables it needs at build. */
+  buildEnv: string[];
+  signInRedirect: string[];
+}
+
+/** A shell passport's facts out of a catalogue profile, `null` when it states none. */
+export function shellPassportOf(auto: Record<string, unknown>): ShellPassport | null {
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  const env: Record<string, string> = {};
+  if (auto.shell_env && typeof auto.shell_env === "object")
+    for (const [k, v] of Object.entries(auto.shell_env as Record<string, unknown>)) if (typeof v === "string") env[k] = v;
+  const p: ShellPassport = {
+    apiPrefix: str(auto.shell_api_prefix),
+    base: str(auto.shell_base),
+    build: str(auto.shell_build),
+    output: str(auto.shell_output),
+    node: str(auto.shell_node),
+    packageManager: str(auto.shell_package_manager),
+    env,
+    buildEnv: strings(auto.shell_build_env),
+    signInRedirect: strings(auto.shell_sign_in_redirect),
+  };
+  const says =
+    Object.values(p).some((v) => typeof v === "string") ||
+    Object.keys(env).length > 0 ||
+    p.buildEnv.length > 0 ||
+    p.signInRedirect.length > 0;
+  return says ? p : null;
+}
+
+/** Where a package's passport disagrees with its manifests, one line each. */
+export function passportDriftOf(auto: Record<string, unknown>): string[] {
+  const d = auto.frontx_passport_drift;
+  if (!d || typeof d !== "object") return [];
+  const items = (d as Record<string, unknown>).items;
+  return Array.isArray(items) ? items.filter((x): x is string => typeof x === "string") : [];
 }
 
 /** A FrontX package that is neither a micro-frontend nor a shell: a library
@@ -298,6 +353,8 @@ export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<s
       path: textOf(auto.path),
       deps: strings(auto.deps_names),
       described,
+      roles: Array.isArray(auto.mfe_roles) ? strings(auto.mfe_roles) : null,
+      drift: passportDriftOf(auto),
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -439,6 +496,11 @@ export interface Shell {
   /** Whether `signsIn` and `runtimeEnv` are what its `frontx.gdl` declares
    *  rather than what the scan guessed from its files. */
   described?: boolean;
+  /** How it is built and served and what it reads, as its passport says;
+   *  `null` when it has no passport that says. */
+  passport?: ShellPassport | null;
+  /** Where its passport disagrees with its package.json or workspace. */
+  drift?: string[];
 }
 
 const FRONTX_SCOPE = "@gears-frontx/";
@@ -483,6 +545,8 @@ export function shellsFrom(nodes: CatalogNode[], profiles: Record<string, Record
       signsIn: typeof auto.shell_signin === "boolean" ? auto.shell_signin : null,
       runtimeEnv: typeof auto.shell_runtime_env === "boolean" ? auto.shell_runtime_env : null,
       described,
+      passport: described ? shellPassportOf(auto) : null,
+      drift: passportDriftOf(auto),
     });
   }
   return out.sort(

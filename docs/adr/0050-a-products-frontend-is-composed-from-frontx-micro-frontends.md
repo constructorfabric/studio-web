@@ -95,6 +95,19 @@ screen, and records `frontx_described`; when it has none, or it does not read
 (`frontx_gdl_error`), the guesses here and in "Take the shell" stand. Studio's
 own `studio-frontend` and each of its `mfe_packages` carry one.
 
+`frontx.gdl` is now the package's **passport**: one file with everything a
+tool needs about the package, including what `package.json` and `mfe.json`
+already say (name, version, description; a micro-frontend's screens, mounts
+and `@gears-frontx/react` pin as `frontx`; a shell's `carries`), plus what they
+cannot (a shell's `api_prefix`, `base`, `build`, `output`, `node`,
+`package_manager`, runtime `env` keys, `build_env`, `sign_in_redirect`; a
+micro-frontend's `roles`, `preview`, `fixtures`). Every field but `signs_in` is
+optional and falls back to the manifests. A restated fact that disagrees is
+Gearbox's GBX0722 (identity, pins, screens) or GBX0723 (softer facts) at
+generation, and a `frontx_passport_drift` warning in the catalogue here; the
+passport still reads. The Frontend section shows a shell's API prefix, runtime
+env keys, build and node, and a micro-frontend's roles.
+
 ### 3. The UI sits beside the gears, not inside a gear
 
 A gear may name its default micro-frontend in `gear.gdl` (the engine's
