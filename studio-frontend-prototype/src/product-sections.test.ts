@@ -8,6 +8,7 @@ import {
   hasFrontend,
   infrastructureOf,
   openingSection,
+  productHeader,
   productSummary,
   sectionFromPath,
   newFrontend,
@@ -222,5 +223,46 @@ describe("the section the Product page opens on", () => {
     expect(openingSection(null, "infrastructure")).toBe("infrastructure");
     expect(openingSection(null, "nonsense")).toBe("backend");
     expect(openingSection(null, null)).toBe("backend");
+  });
+});
+
+describe("the Product page's header line", () => {
+  const summary = (over: Partial<ReturnType<typeof productSummary>> = {}) => ({
+    ...productSummary(null, null),
+    id: "studioweb",
+    gears: 66,
+    revision: 1,
+    preview: { ok: false, errors: 2, warnings: 0 },
+    ...over,
+  });
+
+  it("gives a verdict and where the description is kept, not a sentence of facts", () => {
+    const h = productHeader(summary(), null, "done");
+    expect(h.verdict).toEqual({ tone: "danger", text: "doesn't resolve: 2 errors" });
+    expect(h.kept).toBe("rev 1 · not published");
+    expect(h.action).toBe("fix");
+  });
+
+  it("follows the state with its one action: the fixes, the save, the build", () => {
+    expect(productHeader(summary(), "fix", "done").action).toBe("fix");
+    // Backend has not checked the product as it is yet: the errors still lead.
+    expect(productHeader(summary(), "preview", "done").action).toBe("fix");
+    const ok = summary({ preview: { ok: true, errors: 0, warnings: 1 } });
+    expect(productHeader(ok, null, "todo").action).toBe("save");
+    expect(productHeader(ok, "save", "done").action).toBe("save");
+    expect(productHeader(ok, "builds", "done").action).toBe("build");
+    expect(productHeader(ok, null, "done").verdict).toEqual({ tone: "ok", text: "resolves" });
+    expect(productHeader(summary({ saved: { branch: "main", prUrl: null } }), null, null).kept).toBe("rev 1 · published");
+  });
+
+  it("takes Backend's own next step first: start the product, check it", () => {
+    expect(productHeader(summary({ preview: null }), "preview", null)).toEqual({
+      verdict: { tone: "neutral", text: "not checked yet" },
+      kept: "rev 1 · not published",
+      action: "preview",
+    });
+    const none = productSummary(null, null);
+    expect(productHeader(none, null, null)).toEqual({ verdict: null, kept: null, action: "pick" });
+    expect(productHeader(none, "take-from-code", null).action).toBe("take-from-code");
   });
 });

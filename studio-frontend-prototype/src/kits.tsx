@@ -23,6 +23,7 @@ import {
   type StudioKit,
 } from "./api";
 import { DataTable, When, useConfirm } from "./data-table";
+import { PRODUCT_COMMAND_EVENT, announceNext } from "./product-sections";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
 import { ProductConfigurator, useGearCatalogue, useKeptEntities, useRunning } from "./product-configurator-view";
@@ -76,7 +77,6 @@ import {
   rowShortlist,
   type Fix,
   type NextAction,
-  type NextStep,
 } from "./components-flow";
 
 export function ProjectKits({
@@ -311,6 +311,33 @@ export function ProjectKits({
   const steps = productSteps(flowState);
   const next = nextStep(flowState);
 
+  /** Take a next step, from the Product page's header. */
+  const act = (action: NextAction) => {
+    if (action === "add-recommended") {
+      product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
+    } else if (action === "builds") {
+      if (onOpenTab) onOpenTab("builds");
+      else setCommand({ kind: "build", at: Date.now() });
+    } else {
+      setCommand({ kind: action, at: Date.now() });
+    }
+  };
+  const actRef = useRef(act);
+  actRef.current = act;
+  const nextAction = section === "components" ? (next.action ?? null) : null;
+  useEffect(() => {
+    if (section === "components") announceNext(projectId, nextAction);
+  }, [section, projectId, nextAction]);
+  useEffect(() => {
+    if (section !== "components") return;
+    const take = (e: Event) => {
+      const d = (e as CustomEvent<{ projectId: string; action: NextAction }>).detail;
+      if (d?.projectId === projectId) actRef.current(d.action);
+    };
+    window.addEventListener(PRODUCT_COMMAND_EVENT, take);
+    return () => window.removeEventListener(PRODUCT_COMMAND_EVENT, take);
+  }, [section, projectId]);
+
   return (
     <section className="kits-view">
       {/* The page reads as the question a person brings to it: what do my
@@ -320,23 +347,8 @@ export function ProjectKits({
           button further down, which is the answer before the question. */}
       {section === "components" && (
         <>
-      {/* Building is the page strip's next step: a line that only says so is
-          the strip said twice. */}
-      {next.action !== "builds" && (
-      <NextStepBar
-        step={next}
-        onAct={(action) => {
-          if (action === "add-recommended") {
-            product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
-          } else if (action === "builds") {
-            if (onOpenTab) onOpenTab("builds");
-            else setCommand({ kind: "build", at: Date.now() });
-          } else {
-            setCommand({ kind: action, at: Date.now() });
-          }
-        }}
-      />
-      )}
+      {/* No bar of its own: the Product page's header carries the next step
+          as its one action (announceNext), and asks for it back here. */}
       {product.gearbox && !product.gearbox.enabled && (
         <p className="hint" style={{ fontSize: 12 }}>
           Composing a product from gears needs the Gearbox engine, which is off in this deployment
@@ -585,47 +597,6 @@ function useCodeReport(token: string, projectId: string, workspaceId: string, on
   }, [on, load]);
   return { report, busy, error, reload: () => void load() };
 }
-
-/** The page's one sentence: where the person is, and the button for the next
- *  step. It replaces three tiles that had to be read and combined. */
-function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextAction) => void }) {
-  const label: Record<NextAction, string> = {
-    "add-recommended": "Add the recommended gears",
-    "take-from-code": "Take the product from the code",
-    preview: "Check it",
-    fix: "Show the fixes",
-    save: "Save",
-    build: "Open in the desktop app →",
-    open: "Open in the desktop app",
-    builds: "Builds →",
-  };
-  return (
-    <div
-      className={`next-step ${step.tone}`}
-      role="status"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        flexWrap: "wrap",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: "8px 12px",
-        margin: "0 0 12px",
-        background: step.tone === "done" ? "var(--success-soft)" : step.tone === "warn" ? "var(--warning-soft)" : "var(--accent)",
-      }}
-    >
-      <b style={{ fontSize: 13 }}>Next:</b>
-      <span style={{ fontSize: 13 }}>{step.text}</span>
-      {step.action && (
-        <button className="primary" style={{ marginLeft: "auto" }} onClick={() => onAct(step.action as NextAction)}>
-          {label[step.action]}
-        </button>
-      )}
-    </div>
-  );
-}
-
 
 function SuggestedComponents({
   token,

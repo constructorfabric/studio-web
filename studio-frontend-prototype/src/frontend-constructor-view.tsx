@@ -48,6 +48,7 @@ import {
   type Step,
 } from "./frontend-constructor";
 import { errText } from "./problem";
+import { StatusChip, StepFlow, type FlowStep, type StepState } from "./ui-standard";
 
 type Loaded = {
   /** The micro-frontends a product can add. */
@@ -273,7 +274,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
       <BuildSteps
         steps={steps}
         open={openStep}
-        onOpen={(id) => setOpenStep((o) => (o === id ? null : id))}
+        onOpen={setOpenStep}
         shells={data.shells}
         shell={shell}
         shellRef={shellRef}
@@ -712,10 +713,12 @@ function Inspector({
   );
 }
 
-const STEP_MARK: Record<Step["state"], string> = { ok: "✓", warn: "!", bad: "✗", todo: "…", info: "i" };
+/** A constructor step as the StepFlow strip draws it. */
+const STEP_STATE: Record<Step["state"], StepState> = { ok: "done", warn: "warn", bad: "failed", todo: "todo", info: "current" };
 
 /** The steps a build of this frontend takes, in order, each marked with what
- *  the constructor found; one opens to say why. The first step is where the
+ *  the constructor found: folded to how many are ready ("5/8"), unfolded a
+ *  StepFlow strip where one opens to say why. The first step is where the
  *  shell is chosen. */
 function BuildSteps({
   steps,
@@ -728,87 +731,95 @@ function BuildSteps({
 }: {
   steps: Step[];
   open: Step["id"] | null;
-  onOpen: (id: Step["id"]) => void;
+  onOpen: (id: Step["id"] | null) => void;
   shells: Shell[];
   shell: Shell | null;
   shellRef: string;
   onShell: (ref: string) => void;
 }) {
-  const shown = steps.find((s) => s.id === open);
+  const [unfolded, setUnfolded] = useState(false);
   const refs = shells.map((s) => ({ shell: s, ref: shellRefOf(s) })).filter((x): x is { shell: Shell; ref: string } => !!x.ref);
+  const ready = steps.filter((s) => s.state === "ok").length;
+  const worst = steps.some((s) => s.state === "bad") ? "danger" : steps.some((s) => s.state === "warn") ? "warn" : ready === steps.length ? "ok" : "neutral";
+  const flow: FlowStep[] = steps.map((s) => ({
+    id: s.id,
+    title: s.title,
+    state: STEP_STATE[s.state],
+    status: s.detail,
+    body: (
+      <>
+        {s.id === "shell" && (
+          <label className="fc-shell-pick">
+            Assemble on{" "}
+            <select value={shellRef} onChange={(e) => onShell(e.target.value)} aria-label="The shell">
+              {!refs.some((r) => r.ref === shellRef) && <option value={shellRef}>{shellRef}</option>}
+              {refs.map(({ shell: s, ref }) => (
+                <option key={ref} value={ref}>
+                  {s.name}
+                  {s.version ? `@${s.version}` : ""} · {ref.replace(/^github:/, "")}
+                  {s.signsIn === true ? " · signs in" : s.signsIn === false ? " · no sign-in" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {s.id === "shell" && shell && (
+          <div className="fc-carries">
+            {Object.entries(shell.carries)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([pkg, v]) => (
+                <code key={pkg}>
+                  {pkg.replace("@gears-frontx/", "")} {v}
+                </code>
+              ))}
+          </div>
+        )}
+        {s.id === "build" && (
+          <ol className="fc-commands">
+            <li>
+              <code>npm ci</code>
+            </li>
+            <li>
+              <code>npm run build:packages</code> — the FrontX packages the shell carries
+            </li>
+            <li>
+              <code>npm run build:mfes</code> — each micro-frontend, a module-federation remote
+            </li>
+            <li>
+              <code>npm run generate:mfe-manifests</code> — what the shell reads to mount them
+            </li>
+            <li>
+              <code>vite build</code> — the static site
+            </li>
+          </ol>
+        )}
+      </>
+    ),
+  }));
   return (
-    <div className="pm-box fc-steps" aria-label="How this frontend gets built" data-build-steps>
-      <div className="pm-h">How this frontend gets built</div>
-      <ol>
-        {steps.map((s, i) => (
-          <li key={s.id}>
-            <button
-              type="button"
-              className={`fc-step ${s.state}${open === s.id ? " on" : ""}`}
-              aria-expanded={open === s.id}
-              onClick={() => onOpen(s.id)}
-              title={s.detail}
-              data-step={s.id}
-              data-state={s.state}
-            >
-              <span className="fc-step-mark" aria-hidden="true">
-                {STEP_MARK[s.state]}
-              </span>
-              <span className="fc-step-n">{i + 1}</span>
-              {s.title}
-            </button>
-          </li>
-        ))}
-      </ol>
-      {shown && (
-        <div className="fc-step-detail" data-step-detail={shown.id}>
-          <p style={{ margin: 0 }}>{shown.detail}</p>
-          {shown.id === "shell" && (
-            <label className="fc-shell-pick">
-              Assemble on{" "}
-              <select value={shellRef} onChange={(e) => onShell(e.target.value)} aria-label="The shell">
-                {!refs.some((r) => r.ref === shellRef) && <option value={shellRef}>{shellRef}</option>}
-                {refs.map(({ shell: s, ref }) => (
-                  <option key={ref} value={ref}>
-                    {s.name}
-                    {s.version ? `@${s.version}` : ""} · {ref.replace(/^github:/, "")}
-                    {s.signsIn === true ? " · signs in" : s.signsIn === false ? " · no sign-in" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {shown.id === "shell" && shell && (
-            <div className="fc-carries">
-              {Object.entries(shell.carries)
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([pkg, v]) => (
-                  <code key={pkg}>
-                    {pkg.replace("@gears-frontx/", "")} {v}
-                  </code>
-                ))}
-            </div>
-          )}
-          {shown.id === "build" && (
-            <ol className="fc-commands">
-              <li>
-                <code>npm ci</code>
-              </li>
-              <li>
-                <code>npm run build:packages</code> — the FrontX packages the shell carries
-              </li>
-              <li>
-                <code>npm run build:mfes</code> — each micro-frontend, a module-federation remote
-              </li>
-              <li>
-                <code>npm run generate:mfe-manifests</code> — what the shell reads to mount them
-              </li>
-              <li>
-                <code>vite build</code> — the static site
-              </li>
-            </ol>
-          )}
-        </div>
+    <div className="fc-build" aria-label="How this frontend gets built" data-build-steps data-unfolded={unfolded}>
+      <div className="row" style={{ gap: 8, alignItems: "center" }}>
+        <span className="pm-h" style={{ margin: 0 }}>
+          How it gets built
+        </span>
+        <StatusChip
+          tone={worst}
+          onClick={() => setUnfolded((u) => !u)}
+          expanded={unfolded}
+          title={unfolded ? "Fold the steps" : "Show the steps"}
+          data-build-steps-count
+        >
+          {ready}/{steps.length} ready {unfolded ? "▴" : "▾"}
+        </StatusChip>
+      </div>
+      {unfolded && (
+        <StepFlow
+          steps={flow}
+          look="strip"
+          label="How this frontend gets built"
+          open={open}
+          onOpen={(id) => onOpen(id as Step["id"] | null)}
+        />
       )}
     </div>
   );

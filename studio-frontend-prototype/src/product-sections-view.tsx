@@ -1,9 +1,13 @@
-/* The Product tab (product-sections.ts): one page for the one product. A header
- * says it in a line -- id, profile, gears, where it was saved, whether it
- * resolved, whether it has a frontend -- above a switch between its parts;
- * only the chosen part is drawn below it:
+/* The Product tab (product-sections.ts): one page for the one product. A
+ * PageHeader names it with a verdict (resolves, or how many errors), where its
+ * description is kept, and one action that follows the state (Show the fixes,
+ * Save to product.gdl, Build); the strip from configured to running; then
+ * tabs for its parts, each with a dot for where it stands. Only the chosen
+ * part is drawn below them:
  *
- *   Infrastructure   where it runs: its profile, environments, databases
+ *   Map              the whole product in one picture (the default)
+ *   Infrastructure   what it needs; the environments it runs in, as chips
+ *                    that open Releases (ADR-0056 §3)
  *   Backend          the gears (the existing `ProjectKits` journey, passed in
  *                    by the shell, kept mounted so its panes keep their state)
  *   Frontend         the frontend constructor, or "Add a frontend"
@@ -14,11 +18,19 @@ import { useEffect, useState, type ReactNode } from "react";
 import { PRODUCT_CHANGED_EVENT, api, type FrontendPick, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
 import { FrontendConstructor, useFrontxDefaults } from "./frontend-constructor-view";
 import type { PipelineTab } from "./pipeline";
+import type { FlowState, FlowStep } from "./product-flow";
 import { ProductFlow } from "./product-flow-view";
 import { ProductMap } from "./product-map-view";
 import {
+  PRODUCT_ACTION_LABEL,
+  PRODUCT_COMMAND_EVENT,
+  PRODUCT_NEXT_EVENT,
+  PRODUCT_SECTIONS,
+  announcedNext,
   hasFrontend,
   comesWith,
+  productHeader,
+  type ProductAction,
   infrastructureOf,
   openingSection,
   productSummary,
@@ -31,6 +43,7 @@ import {
 } from "./product-sections";
 import { errText } from "./problem";
 import { gearLabel, verdictText } from "./product";
+import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
 
 /** The section an old address asked for (`/…/frontend`), read once when the
  *  page loaded: the shell rewrites the address to Product's straight after. */
@@ -54,7 +67,16 @@ function storeSection(projectId: string, id: ProductSectionId) {
   }
 }
 
-/** The Product tab: the header, the section switch, the chosen section. */
+/** A part's state as its tab's dot. */
+const DOT: Record<FlowState, "ok" | "warn" | "danger" | "neutral"> = {
+  done: "ok",
+  todo: "warn",
+  failed: "danger",
+  unknown: "neutral",
+  none: "neutral",
+};
+
+/** The Product tab: the header, the strip, the section tabs, the chosen section. */
 export function ProductPage({
   token,
   projectId,
@@ -82,6 +104,11 @@ export function ProductPage({
   // A product that could not be read is not a product that is not there.
   const [readError, setReadError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
+  const [steps, setSteps] = useState<FlowStep[] | null>(null);
+  /** The strip's step opened below it: the header's Save opens Save. */
+  const [openStep, setOpenStep] = useState<string | null>(null);
+  /** What Backend says comes next (kits.tsx announces it). */
+  const [next, setNext] = useState<string | null>(() => announcedNext(projectId));
 
   useEffect(() => {
     let alive = true;
@@ -113,32 +140,148 @@ export function ProductPage({
     return () => window.removeEventListener(PRODUCT_CHANGED_EVENT, changed);
   }, [projectId]);
 
+  // Backend's next step is the header's action; Backend mounts first, so what
+  // it said before this listened is read back too.
+  useEffect(() => {
+    setNext(announcedNext(projectId));
+    const said = (e: Event) => {
+      const d = (e as CustomEvent<{ projectId: string; action: string | null }>).detail;
+      if (d?.projectId === projectId) setNext(d.action);
+    };
+    window.addEventListener(PRODUCT_NEXT_EVENT, said);
+    return () => window.removeEventListener(PRODUCT_NEXT_EVENT, said);
+  }, [projectId]);
+
   const pick = (id: ProductSectionId) => {
     setSection(id);
     storeSection(projectId, id);
     // The header follows what the sections changed: a save, a frontend added.
     setRound((r) => r + 1);
   };
+
+  /** Ask Backend to take a step: it is shown, then acts. */
+  const tellBackend = (action: string) => {
+    pick("backend");
+    setTimeout(() => window.dispatchEvent(new CustomEvent(PRODUCT_COMMAND_EVENT, { detail: { projectId, action } })), 0);
+  };
+
+  const header = summary ? productHeader(summary, next, steps?.find((s) => s.id === "save")?.state ?? null) : null;
+  const act = (a: ProductAction) => {
+    if (a === "pick") pick("backend");
+    else if (a === "save") setOpenStep("save");
+    else if (a === "build") onOpenTab?.("releases");
+    // Backend lists the fixes once it has checked the product as it is.
+    else if (a === "fix" && next === "preview") tellBackend("preview");
+    else tellBackend(a);
+  };
+  const partsOf = steps?.find((s) => s.id === "configure")?.parts ?? [];
+  const partOf = (id: string) => partsOf.find((p) => p.id === id);
+  const gears = summary?.gears ?? 0;
+  const tabs: { id: ProductSectionId; label: string }[] = [
+    { id: "map", label: "Map" },
+    { id: "infrastructure", label: "Infrastructure" },
+    { id: "backend", label: gears > 0 ? `Backend · ${gears} gear${gears === 1 ? "" : "s"}` : "Backend" },
+    { id: "frontend", label: "Frontend" },
+    ...(parts ? [{ id: "parts" as const, label: "Parts" }] : []),
+  ];
+
   return (
     <>
-      <section className="card" style={{ marginBottom: 12 }} data-product-header>
-        <SummaryLine summary={summary} readError={readError} />
-      </section>
-      {/* The strip is the page's navigation: Configure's parts open the
-          sections below, the later steps say what comes after them. */}
+      <div data-product-header>
+        <PageHeader
+          title={summary?.id ?? "Product"}
+          info={
+            <>
+              <p>
+                The product this project ships: its infrastructure, its backend (the gears) and, if it has one, its
+                frontend. Configure it in the parts below, save it to <code>product.gdl</code> -- a revision Studio
+                keeps -- then build and deploy what was saved, in Releases.
+              </p>
+              <p>
+                The verdict is the Gearbox engine&apos;s at the last check. Published: the description is in the
+                repository too.
+              </p>
+            </>
+          }
+          status={
+            readError ? (
+              <span className="error" data-product-summary>
+                The product could not be read: {readError}
+              </span>
+            ) : !summary || !header ? (
+              <span>Reading the product…</span>
+            ) : (
+              <span data-product-summary style={{ display: "contents" }}>
+                {header.verdict ? (
+                  <StatusChip
+                    tone={header.verdict.tone}
+                    data-product-verdict={header.verdict.tone}
+                    title={summary.preview ? `${summary.preview.warnings} warnings` : undefined}
+                    onClick={header.verdict.tone === "danger" ? () => act("fix") : undefined}
+                  >
+                    {header.verdict.text}
+                  </StatusChip>
+                ) : (
+                  <span>No product yet</span>
+                )}
+                {header.kept && (
+                  <StatusChip tone="neutral" data-product-kept>
+                    {header.kept}
+                  </StatusChip>
+                )}
+                {summary.saved?.prUrl && (
+                  <a href={summary.saved.prUrl} target="_blank" rel="noreferrer">
+                    pull request ↗
+                  </a>
+                )}
+              </span>
+            )
+          }
+          actions={
+            header && (
+              <button type="button" className="primary" onClick={() => act(header.action)} data-product-action={header.action}>
+                {PRODUCT_ACTION_LABEL[header.action]}
+                {header.action === "build" ? " →" : ""}
+              </button>
+            )
+          }
+        />
+      </div>
       <ProductFlow
         token={token}
         projectId={projectId}
         round={round}
-        section={section}
-        hasParts={!!parts}
+        open={openStep}
+        onOpen={setOpenStep}
         onSection={pick}
         onOpenTab={onOpenTab}
         onSaved={() => setRound((r) => r + 1)}
+        onSteps={setSteps}
       />
+      <div className="doc-views product-tabs" role="tablist" aria-label="The product's parts" data-product-tabs>
+        {tabs.map((t) => {
+          const part = partOf(t.id);
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={section === t.id}
+              className={section === t.id ? "doc-view on" : "doc-view"}
+              onClick={() => pick(t.id)}
+              title={part?.status ?? PRODUCT_SECTIONS.find((s) => s.id === t.id)?.hint}
+              data-product-section-tab={t.id}
+              data-flow-state={part?.state}
+            >
+              {part && <span className={`product-tab-dot ${DOT[part.state]}`} aria-hidden />}
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
       {section === "map" && <ProductMap token={token} projectId={projectId} onSection={pick} />}
       {section === "parts" && parts?.(() => pick("backend"))}
-      {section === "infrastructure" && <ProductInfrastructure token={token} projectId={projectId} />}
+      {section === "infrastructure" && <ProductInfrastructure token={token} projectId={projectId} onOpenTab={onOpenTab} />}
       <div hidden={section !== "backend"} data-product-section="backend">
         {backend}
       </div>
@@ -149,67 +292,17 @@ export function ProductPage({
   );
 }
 
-/** The product in one line. */
-function SummaryLine({ summary: s, readError }: { summary: ProductSummary | null; readError: string | null }) {
-  if (readError) {
-    return (
-      <p className="error" style={{ margin: 0 }} data-product-summary>
-        The product could not be read: {readError}
-      </p>
-    );
-  }
-  if (!s) return <p className="muted" style={{ margin: 0 }}>Reading the product…</p>;
-  if (!s.id && s.gears === 0) {
-    return (
-      <p style={{ margin: 0 }} data-product-summary>
-        <b>No product yet.</b>{" "}
-        <span className="muted">
-          Pick its gears under Backend and Save: Studio keeps it, and Publish puts it in the repository.
-        </span>
-      </p>
-    );
-  }
-  return (
-    <p style={{ margin: 0, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }} data-product-summary>
-      <b>{s.id ?? "Unnamed product"}</b>
-      <span className="muted">
-        · {s.gears} gear{s.gears === 1 ? "" : "s"}
-      </span>
-      {s.preview && (
-        <span className={`badge ${s.preview.ok ? "ok" : "danger"}`} title={`${s.preview.warnings} warnings`}>
-          {s.preview.ok ? "resolves" : `${s.preview.errors} error${s.preview.errors === 1 ? "" : "s"}`}
-        </span>
-      )}
-      <span className="muted">
-        ·{" "}
-        {s.revision !== null ? (
-          <>kept in Studio as revision {s.revision}</>
-        ) : s.saved ? (
-          <>
-            saved on <code>{s.saved.branch ?? "the repository's branch"}</code>
-            {s.saved.prUrl && (
-              <>
-                {" "}
-                (
-                <a href={s.saved.prUrl} target="_blank" rel="noreferrer">
-                  pull request
-                </a>
-                )
-              </>
-            )}
-          </>
-        ) : (
-          "not saved yet"
-        )}
-      </span>
-      <span className="muted">· {s.frontend ? "with a frontend" : "no frontend"}</span>
-    </p>
-  );
-}
-
-/** Where the product runs: the environments it may run in, the profile each
- *  runs and what the engine said of it, and the database each gives it. */
-function ProductInfrastructure({ token, projectId }: { token: string; projectId: string }) {
+/** What the product needs to run, and where it runs: per ADR-0056 §3 the
+ *  environments are Releases'; here each is a chip that opens them. */
+function ProductInfrastructure({
+  token,
+  projectId,
+  onOpenTab,
+}: {
+  token: string;
+  projectId: string;
+  onOpenTab?: (tab: PipelineTab) => void;
+}) {
   const [infra, setInfra] = useState<Infrastructure | null>(null);
 
   useEffect(() => {
@@ -223,67 +316,65 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
     };
   }, [token, projectId]);
 
+  const releases = onOpenTab ? () => onOpenTab("releases") : undefined;
   return (
-    <>
-      <section className="card" data-product-section="infrastructure">
-        {!infra ? (
-          <p className="muted">Reading where the product runs…</p>
-        ) : (
-          <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
-            <ProductNeeds infra={infra} />
-            {infra.runsIn.length === 0 ? (
-              <div className="muted">
-                No environment this project may deploy to. An organization administrator adds one under Infrastructure;
-                Releases binds a profile to it.
-              </div>
-            ) : (
-              <table className="ptable" aria-label="Where the product runs">
-                <thead>
-                  <tr>
-                    <th>Environment</th>
-                    <th>Namespace</th>
-                    <th>Profile</th>
-                    <th>Checked</th>
-                    <th>Database</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {infra.runsIn.map((r) => (
-                    <tr key={r.environment}>
-                      <td>{r.environment}</td>
-                      <td>
-                        <code>{r.namespace}</code>
-                      </td>
-                      <td>{r.profileLabel ?? <span className="muted">not bound</span>}</td>
-                      <td data-env-verdict={r.verdict?.state ?? "none"}>
-                        {!r.verdict ? null : r.unchecked ? (
-                          <span className="badge warn" title="Check it under Backend, on its profile's chip">
-                            {r.unchecked}
-                          </span>
-                        ) : (
-                          <span className={`badge ${r.verdict.state === "ok" ? "ok" : "danger"}`}>{verdictText(r.verdict)}</span>
-                        )}
-                      </td>
-                      <td>{r.database}</td>
-                      <td>
-                        {r.missing.length > 0 ? (
-                          <span className="badge danger" title="The gears that need it cannot start there" data-env-missing>
-                            no {r.missing.join(", ")}
-                          </span>
-                        ) : r.needs ? (
-                          <span className="badge ok">gives what it needs</span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-      </section>
-    </>
+    <section className="card" data-product-section="infrastructure">
+      {!infra ? (
+        <p className="muted">Reading what the product needs…</p>
+      ) : (
+        <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
+          <ProductNeeds infra={infra} />
+          {infra.runsIn.length === 0 ? (
+            <EmptyState
+              title="No environment to run in yet."
+              action={
+                releases && (
+                  <button type="button" onClick={releases}>
+                    Open Releases
+                  </button>
+                )
+              }
+            />
+          ) : (
+            <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }} data-product-environments>
+              <span className="muted">Runs in</span>
+              {infra.runsIn.map((r) => {
+                const tone =
+                  r.missing.length > 0 || r.verdict?.state === "failed"
+                    ? "danger"
+                    : r.unchecked || !r.profile
+                      ? "warn"
+                      : r.verdict?.state === "ok"
+                        ? "ok"
+                        : "neutral";
+                const why =
+                  r.missing.length > 0
+                    ? `no ${r.missing.join(", ")}: the gears that need it cannot start there`
+                    : (r.unchecked ?? (r.verdict ? verdictText(r.verdict) : "no profile bound"));
+                return (
+                  <StatusChip
+                    key={r.environment}
+                    tone={tone}
+                    onClick={releases}
+                    title={`${r.namespace} · ${r.database} · ${why}. Opens Releases.`}
+                    data-env-chip={r.environment}
+                    data-env-verdict={r.verdict?.state ?? "none"}
+                  >
+                    {r.environment} · {r.profileLabel ?? "no profile"}
+                    {r.missing.length > 0 && <span data-env-missing> · no {r.missing.join(", ")}</span>}
+                  </StatusChip>
+                );
+              })}
+              {releases && (
+                <button type="button" className="linklike" onClick={releases}>
+                  Environments are in Releases →
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

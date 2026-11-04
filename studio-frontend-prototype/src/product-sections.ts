@@ -228,3 +228,89 @@ export function openingSection(landing: ProductSectionId | null, stored: string 
   if (landing) return landing;
   return PRODUCT_SECTIONS.some((s) => s.id === stored) ? (stored as ProductSectionId) : "backend";
 }
+
+/* ── The Product page's header ─────────────────────────────────────────────── */
+
+/** What the header's one primary action does, by where the product stands. */
+export type ProductAction = "pick" | "fix" | "add-recommended" | "take-from-code" | "preview" | "save" | "build";
+
+export const PRODUCT_ACTION_LABEL: Record<ProductAction, string> = {
+  pick: "Pick its gears",
+  fix: "Show the fixes",
+  "add-recommended": "Add the recommended gears",
+  "take-from-code": "Take the product from the code",
+  preview: "Check it",
+  save: "Save to product.gdl",
+  build: "Build",
+};
+
+/** The header: a verdict, where the description is kept, and the next thing
+ *  to do -- in chips and one button rather than a sentence of facts. */
+export interface ProductHeader {
+  /** Whether the engine resolves the product; null before there is one. */
+  verdict: { tone: "ok" | "danger" | "neutral"; text: string } | null;
+  /** "rev 3 · not published", "published", "not saved yet". */
+  kept: string | null;
+  action: ProductAction;
+}
+
+/** Backend's own next step (components-flow.ts `nextStep`), when it says one. */
+const BACKEND_FIRST: readonly ProductAction[] = ["fix", "add-recommended", "take-from-code", "preview"];
+
+export function productHeader(
+  s: ProductSummary,
+  /** What Backend says comes next, when it has said. */
+  next: string | null,
+  /** Where the strip's Save step stands, once read. */
+  save: "done" | "todo" | "failed" | "unknown" | "none" | null,
+): ProductHeader {
+  const none = !s.id && s.gears === 0;
+  const verdict: ProductHeader["verdict"] = none
+    ? null
+    : !s.preview
+      ? { tone: "neutral", text: "not checked yet" }
+      : s.preview.ok
+        ? { tone: "ok", text: "resolves" }
+        : { tone: "danger", text: `doesn't resolve: ${s.preview.errors} error${s.preview.errors === 1 ? "" : "s"}` };
+  const kept =
+    s.revision !== null
+      ? `rev ${s.revision} · ${s.saved ? "published" : "not published"}`
+      : s.saved
+        ? "published"
+        : none
+          ? null
+          : "not saved yet";
+  const asked = BACKEND_FIRST.find((a) => a === next);
+  // Errors at the last check are the verdict, so the fixes are the action,
+  // even while Backend has still to check again to list them.
+  const action: ProductAction = s.preview && !s.preview.ok
+    ? "fix"
+    : asked
+      ? asked
+      : none
+        ? "pick"
+        : next === "save" || save === "todo"
+          ? "save"
+          : "build";
+  return { verdict, kept, action };
+}
+
+/** Backend (kits.tsx) says its next step, and the page asks it to take one:
+ *  the header's action is Backend's, without a second bar saying it. */
+export const PRODUCT_NEXT_EVENT = "studio:product-next";
+export const PRODUCT_COMMAND_EVENT = "studio:product-command";
+
+const announced = new Map<string, string | null>();
+
+/** Backend says what comes next for the project's product (null: nothing). */
+export function announceNext(projectId: string, action: string | null) {
+  if (announced.get(projectId) === action) return;
+  announced.set(projectId, action);
+  if (typeof window !== "undefined")
+    window.dispatchEvent(new CustomEvent(PRODUCT_NEXT_EVENT, { detail: { projectId, action } }));
+}
+
+/** What Backend said last, for a header that mounted after it did. */
+export function announcedNext(projectId: string): string | null {
+  return announced.get(projectId) ?? null;
+}

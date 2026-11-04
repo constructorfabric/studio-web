@@ -1,6 +1,7 @@
 /* The Product page's strip: configure the product, save it to product.gdl,
- * build it, deploy it -- each step with what the project holds and, opened,
- * what to do next. The model is product-flow.ts.
+ * build it, deploy it -- a StepFlow strip, each step with what the project
+ * holds; Save opens below it, Configure opens the map, Build and Deploy open
+ * Releases. The model is product-flow.ts.
  *
  * The save is the page's one: it composes the description from what the
  * sections configured (the gears and their configuration, the profile, the
@@ -14,13 +15,14 @@ import { buildsOf, ideBuildsOf, productBuildsOf, repoPathsOf, type BuildRun, typ
 import { buildableEnvironments } from "./deploy-actions";
 import { buildsHint, deploysHint, type PipelineTab } from "./pipeline";
 import { errText } from "./problem";
-import { lineDiff, productFlow, type DiffLine, type FlowState, type FlowStep } from "./product-flow";
+import { lineDiff, productFlow, type DiffLine, type FlowState, type FlowStep as ModelStep } from "./product-flow";
 import { profilesToCheck } from "./product";
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
 import { deployableBuilds } from "./project-deploys";
+import { StepFlow, type FlowStep, type StepState } from "./ui-standard";
 
-const MARK: Record<FlowState, string> = { done: "✓", todo: "!", failed: "✗", unknown: "…", none: "–" };
-const TONE: Record<FlowState, string> = { done: "ok", todo: "warn", failed: "bad", unknown: "", none: "" };
+/** A flow state as the StepFlow strip draws it. */
+const STEP_STATE: Record<FlowState, StepState> = { done: "done", todo: "warn", failed: "failed", unknown: "todo", none: "todo" };
 
 type Read = {
   product: ProjectProduct | null;
@@ -35,27 +37,28 @@ export function ProductFlow({
   token,
   projectId,
   round,
-  section,
-  hasParts,
+  open,
+  onOpen,
   onSection,
   onOpenTab,
   onSaved,
+  onSteps,
 }: {
   token: string;
   projectId: string;
   /** Bumped by the page when a section changed the product. */
   round: number;
-  /** The section open below, marked among Configure's parts. */
-  section: ProductSectionId;
-  /** Whether the page has the Parts inventory to open. */
-  hasParts: boolean;
+  /** The step opened below the strip (the page's header opens Save). */
+  open: string | null;
+  onOpen: (id: string | null) => void;
   onSection: (id: ProductSectionId) => void;
   onOpenTab?: (tab: PipelineTab) => void;
   onSaved: () => void;
+  /** The steps as read, for the page's header and its sections' dots. */
+  onSteps?: (steps: ModelStep[]) => void;
 }) {
   const [read, setRead] = useState<Read | null>(null);
   const [mine, setMine] = useState(0);
-  const [open, setOpen] = useState<FlowStep["id"] | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -115,115 +118,45 @@ export function ProductFlow({
     });
   }, [read]);
 
+  useEffect(() => {
+    if (steps) onSteps?.(steps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [steps]);
+
   if (!steps || !read) return <p className="muted">Reading where the product stands…</p>;
-  // Configure stays open while one of its sections is below, unless another
-  // step was asked for.
-  const shown = steps.find((s) => s.id === (open ?? "configure"));
+
+  const flow: FlowStep[] = steps.map((s) => ({
+    id: s.id,
+    title: s.title,
+    state: STEP_STATE[s.state],
+    status: s.status,
+    // Configure is the sections below; Build and Deploy are Releases'.
+    onSelect:
+      s.id === "configure"
+        ? () => onSection("map")
+        : s.tab && onOpenTab
+          ? () => onOpenTab(s.tab!)
+          : undefined,
+    body:
+      s.id === "save" ? (
+        <SaveStep
+          token={token}
+          projectId={projectId}
+          product={read.product}
+          profile={profilesToCheck(read.targets?.bindings ?? [])[0]}
+          kept={read.kept}
+          onSaved={() => {
+            setMine((n) => n + 1);
+            onSaved();
+          }}
+        />
+      ) : undefined,
+  }));
 
   return (
-    <section className="card fc-steps" style={{ marginBottom: 12 }} data-product-flow>
-      <div className="row" style={{ alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-        <b style={{ fontSize: 13 }}>From configured to running</b>
-        <span className="muted" style={{ fontSize: 12 }}>
-          Configure the product below, save it to <code>product.gdl</code>, then build and deploy what was saved.
-        </span>
-      </div>
-      <ol>
-        {steps.map((s, i) => (
-          <li key={s.id}>
-            <button
-              type="button"
-              className={`fc-step ${TONE[s.state]}${shown?.id === s.id ? " on" : ""}`}
-              aria-expanded={shown?.id === s.id}
-              title={s.tab && onOpenTab ? `${s.status} Opens Releases.` : undefined}
-              onClick={() => (s.tab && onOpenTab ? onOpenTab(s.tab) : setOpen(s.id))}
-              data-flow-step={s.id}
-              data-flow-state={s.state}
-            >
-              <span className="fc-step-mark">{MARK[s.state]}</span>
-              <span className="fc-step-n">{i + 1}</span>
-              {s.title}
-              {s.tab && onOpenTab && <span aria-hidden> →</span>}
-            </button>
-          </li>
-        ))}
-      </ol>
-      {shown && (
-        <div className="fc-step-detail" data-flow-detail={shown.id}>
-          {shown.parts ? (
-            <div style={{ display: "grid", gap: 4 }}>
-              <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
-                <button
-                  type="button"
-                  className={`fc-step${section === "map" ? " on" : ""}`}
-                  aria-pressed={section === "map"}
-                  onClick={() => onSection("map")}
-                  data-product-section-tab="map"
-                >
-                  Map
-                </button>
-                <span className="grow muted">The whole product in one picture, and where screens and gears are added.</span>
-                {section === "map" && <span className="muted">shown below</span>}
-              </div>
-              {shown.parts.map((p) => (
-                <div key={p.id} className="row" style={{ gap: 8, alignItems: "baseline" }} data-flow-part={p.id} data-flow-state={p.state}>
-                  <button
-                    type="button"
-                    className={`fc-step ${TONE[p.state]}${section === p.id ? " on" : ""}`}
-                    aria-pressed={section === p.id}
-                    onClick={() => onSection(p.id)}
-                    data-product-section-tab={p.id}
-                  >
-                    <span className="fc-step-mark">{MARK[p.state]}</span>
-                    {p.title}
-                  </button>
-                  <span className="grow">{p.status}</span>
-                  {section === p.id && <span className="muted">shown below</span>}
-                </div>
-              ))}
-              {hasParts && (
-                <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
-                  <button
-                    type="button"
-                    className={`fc-step${section === "parts" ? " on" : ""}`}
-                    aria-pressed={section === "parts"}
-                    onClick={() => onSection("parts")}
-                    data-product-section-tab="parts"
-                  >
-                    Parts
-                  </button>
-                  <span className="grow muted">
-                    Everything else the repositories hold: services and applications that are not gears.
-                  </span>
-                </div>
-              )}
-            </div>
-          ) : shown.id === "save" ? (
-            <SaveStep
-              token={token}
-              projectId={projectId}
-              status={shown.status}
-              product={read.product}
-              profile={profilesToCheck(read.targets?.bindings ?? [])[0]}
-              kept={read.kept}
-              onSaved={() => {
-                setMine((n) => n + 1);
-                onSaved();
-              }}
-            />
-          ) : (
-            <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
-              <span className="grow">{shown.status}</span>
-              {shown.tab && onOpenTab && (
-                <button type="button" className="ghost" onClick={() => onOpenTab(shown.tab!)}>
-                  Open Releases
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
+    <div className="product-flow" data-product-flow>
+      <StepFlow steps={flow} look="strip" label="From configured to running" open={open} onOpen={onOpen} />
+    </div>
   );
 }
 
@@ -232,7 +165,6 @@ export function ProductFlow({
 function SaveStep({
   token,
   projectId,
-  status,
   product,
   profile,
   kept,
@@ -240,7 +172,6 @@ function SaveStep({
 }: {
   token: string;
   projectId: string;
-  status: string;
   product: ProjectProduct | null;
   /** The profile the save checks too: the first an environment runs. The
    *  description is the same for any (ADR-0057). */
@@ -282,7 +213,7 @@ function SaveStep({
   return (
     <div style={{ display: "grid", gap: 8 }}>
       <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-        <span className="grow">{status}</span>
+        <span className="grow" />
         {!productId || gears.length === 0 ? (
           <span className="muted">Pick the product&apos;s gears under Backend first.</span>
         ) : (

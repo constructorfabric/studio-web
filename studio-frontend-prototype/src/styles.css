@@ -1634,6 +1634,15 @@ button.ui-chip-btn[aria-expanded="true"] { border-color: currentColor; }
 .ui-steps.strip .fc-step.current { border-color: var(--primary); }
 .ui-steps.strip .fc-step.current .fc-step-mark { background: var(--primary); color: var(--primary-foreground, #fff); }
 
+/* Wave 2 (project screens). Segmented tabs whose dot says where each part
+   stands (Product's parts); a strip that sits under a header without a card. */
+.doc-view .product-tab-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: var(--muted-foreground); opacity: 0.5; }
+.product-tab-dot.ok { background: var(--success); opacity: 1; }
+.product-tab-dot.warn { background: var(--warning); opacity: 1; }
+.product-tab-dot.danger { background: var(--destructive); opacity: 1; }
+.product-flow { margin: 0 0 12px; }
+.product-tabs { margin-bottom: 12px; }
+
 /* Table headers, the shipped TableHead exactly: 10px uppercase in the MONO
    face at normal weight. The mono is the whole trick — it is what makes a
    column row read as a label for the data rather than as a small bold heading,
