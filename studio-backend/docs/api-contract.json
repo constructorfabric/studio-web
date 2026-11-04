@@ -2288,6 +2288,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/metrics",
+      "operation_id": "studio_organizations.get_organization_metrics",
+      "tag": "StudioOrganizations",
+      "summary": "An organization's delivery, quality, money and people, over a range",
+      "authenticated": true,
+      "responses": [
+        "super::metrics::OrgMetricsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/organization-requests",
       "operation_id": "studio_organizations.list_organization_requests",
       "tag": "StudioOrganizations",

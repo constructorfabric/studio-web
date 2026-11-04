@@ -58,6 +58,16 @@ This README is what you need to work in the directory.
   studio-user's roster and aliases) are resolved per request, and each one
   missing nulls its part of the answer.
 
+- The metrics board ([`metrics.rs`](metrics.rs)): `GET
+  /studio-organizations/v1/metrics?organization_id=&range=7d|30d|90d`, and
+  `workspace_id=` or `project_id=` to narrow it to one workspace or project of
+  the organization. Studio's spend per bucket and per workspace (studio-usage,
+  `cost.view` only, people's own keys left out) beside Insight's git, CI and
+  task figures for the repositories the scope's projects name in
+  `project.config` `sources[]` (studio-insight `RepositoryAnalytics`; no SQL
+  here). Insight missing, unconfigured or failing is `insight.state` with a
+  reason, and the rest still answers. Rules are tests in `metrics_tests.rs`.
+
 ## Working here
 
 - `clean_name` and the rollup rules are unit tests in `service.rs` and

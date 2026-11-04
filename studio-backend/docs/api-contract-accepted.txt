@@ -5883,6 +5883,7 @@ route	GET /studio-mcp/v1/oauth-protected-resource
 route	GET /studio-organizations/v1/access-catalogue
 route	GET /studio-organizations/v1/capabilities
 route	GET /studio-organizations/v1/logo
+route	GET /studio-organizations/v1/metrics
 route	GET /studio-organizations/v1/organization-requests
 route	GET /studio-organizations/v1/overview
 route	GET /studio-organizations/v1/rollups

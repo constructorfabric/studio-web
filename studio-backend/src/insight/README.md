@@ -22,13 +22,16 @@ README is what you need to work in the directory.
 - Another gear reaches Insight in process, not through the gateway:
   `InsightClient` under the ClientHub scope `INSIGHT_INSTANCE_ID`, or the typed
   `port::ComponentDelivery` (what [`../components_catalog`](../components_catalog)
-  uses for `/activity`). Both are published in `init`.
+  uses for `/activity`), or `port::RepositoryAnalytics` (`activity.rs`:
+  git, CI and task figures for a set of repositories over a window against
+  the one before, per bucket; what the organizations metrics board reads).
+  All are published in `init`.
 - [`docs/insight-quickstart.md`](../../../docs/insight-quickstart.md)
   has worked queries with their real answers and how to check the wiring.
 
 ## Working here
 
-- `components.rs` builds every SQL statement. A new value interpolated into one
+- `components.rs` and `activity.rs` build every SQL statement. A new value interpolated into one
   is validated and passed through `sql_string`, both.
 - A new typed operation is a change here and nowhere else; `pull`/`push` stay
   as the escape hatch until it exists.

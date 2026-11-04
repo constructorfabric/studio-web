@@ -1071,6 +1071,66 @@ async fn get_organization_overview(
     Ok(Json(answer))
 }
 
+/// `?range=` and the narrower scope, if any.
+#[derive(Debug, serde::Deserialize)]
+pub struct MetricsQuery {
+    #[serde(default)]
+    pub range: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
+async fn get_organization_metrics(
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
+    Extension(metrics): Extension<Option<Arc<super::metrics::Metrics>>>,
+    axum::extract::Query(query): axum::extract::Query<MetricsQuery>,
+) -> ApiResult<JsonBody<super::metrics::OrgMetricsDto>> {
+    use super::metrics::{Range, Scope};
+    let metrics = metrics.ok_or_else(|| {
+        CanonicalError::service_unavailable()
+            .with_detail("account-management is not available, so nothing can be measured")
+            .create()
+    })?;
+    let range = Range::parse(query.range.as_deref()).ok_or_else(|| {
+        OrganizationError::invalid_argument()
+            .with_constraint("range must be 7d, 30d or 90d")
+            .create()
+    })?;
+    let uuid = |raw: &str, field: &str| {
+        Uuid::parse_str(raw.trim()).map_err(|_| {
+            OrganizationError::invalid_argument()
+                .with_constraint(format!("{field} must be a uuid"))
+                .create()
+        })
+    };
+    let scope = match (query.project_id.as_deref(), query.workspace_id.as_deref()) {
+        (Some(p), _) if !p.trim().is_empty() => Scope::Project(uuid(p, "project_id")?),
+        (_, Some(w)) if !w.trim().is_empty() => Scope::Workspace(uuid(w, "workspace_id")?),
+        _ => Scope::Organization,
+    };
+    let org = ctx.subject_tenant_id();
+    let now = time::OffsetDateTime::now_utc();
+    let answer = metrics
+        .answer(&ctx, org, scope, range, now)
+        .await
+        .map_err(|_| {
+            OrganizationError::not_found(format!(
+                "there is no {} {} in organization {org} for this caller",
+                scope.kind(),
+                match scope {
+                    Scope::Organization => org,
+                    Scope::Workspace(id) | Scope::Project(id) => id,
+                }
+            ))
+            .with_resource(org.to_string())
+            .create()
+        })?;
+    Ok(Json(answer))
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -1078,6 +1138,7 @@ pub fn register_routes(
     creation: CreationPolicy,
     sources: Option<Arc<super::rollups::Sources>>,
     overview: Option<Arc<super::overview::Overview>>,
+    metrics: Option<Arc<super::metrics::Metrics>>,
     access: Option<crate::org_scope::OrgAccess>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-organizations/v1/capabilities")
@@ -1451,8 +1512,41 @@ Labels are deliberately              absent: what a privilege is called belongs 
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/studio-organizations/v1/metrics")
+        .operation_id("studio_organizations.get_organization_metrics")
+        .summary("An organization's delivery, quality, money and people, over a range")
+        .description(
+            "The leaders' metrics board for an organization -- or, with `workspace_id` or              `project_id`, for one workspace or project in it -- over `range` (`7d`, `30d`              or `90d`, default `30d`) against the same number of days before it, bucketed              by day (7d) or Monday week.
+
+             Studio's part is the spend (null unless the caller holds `cost.view`; people's              own keys never count), per bucket and per workspace. Insight's part is git, CI              and task figures for the repositories the scope's projects are made of, built              and aggregated on the server; `insight.state` says when there is none and why              (`unconfigured`, `unreachable`, `failed`, `absent`, `no_repositories`), and              the Studio part answers regardless. 404 when the organization is not the              caller's, or the workspace or project is not in it.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .query_param("range", false, "7d, 30d (default) or 90d")
+        .query_param("workspace_id", false, "Narrow the board to this workspace")
+        .query_param("project_id", false, "Narrow the board to this project")
+        .handler(get_organization_metrics)
+        .json_response_with_schema::<super::metrics::OrgMetricsDto>(
+            openapi,
+            StatusCode::OK,
+            "The metrics board",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     let router = router
         .layer(Extension(service))
+        .layer(Extension(metrics))
         .layer(Extension(creation))
         .layer(Extension(sources))
         .layer(Extension(overview));
