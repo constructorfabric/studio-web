@@ -33,6 +33,10 @@ use super::preflight;
 use crate::connectors::sdk::{ClusterAccess, Connectors, RegistryAccess, same_registry};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
+// Installing a product's infra services before its release (ADR-0064 §5).
+#[path = "infra_install.rs"]
+mod infra_install;
+
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "environments.deploy";
 
@@ -110,6 +114,9 @@ pub struct DeployPayload {
     /// routed once the release is installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<super::preview::PreviewRoute>,
+    /// The product's infra services, as this run brings them (ADR-0064).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra: Vec<super::infra::InfraInstall>,
 }
 
 pub struct DeployTask {
@@ -314,6 +321,14 @@ impl TaskHandler for DeployTask {
             if let Err(e) = write_pull_secret(&client, &payload.namespace, registry).await {
                 return TaskOutcome::Failed(format!("{e:#}"));
             }
+        }
+        // The product's infra services come first (ADR-0064 §5): what they
+        // provide is part of the configuration written next.
+        if !payload.infra.is_empty()
+            && let Err(e) =
+                infra_install::bring(&self.hub, ctx, &access, registry.as_ref(), &payload).await
+        {
+            return TaskOutcome::Failed(format!("{e:#}"));
         }
         if !payload.secret_keys.is_empty() {
             ctx.progress("writing the release's configuration secrets")
@@ -1243,7 +1258,7 @@ mod tests {
         assert_eq!(user.api_group.as_deref(), Some("rbac.authorization.k8s.io"));
     }
 
-    fn payload() -> DeployPayload {
+    pub(super) fn payload() -> DeployPayload {
         DeployPayload {
             deployment_id: Uuid::nil(),
             organization_id: Uuid::nil(),
@@ -1264,6 +1279,7 @@ mod tests {
             research: None,
             build_namespace: None,
             preview: None,
+            infra: Vec::new(),
         }
     }
 

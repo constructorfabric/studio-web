@@ -39,6 +39,7 @@ mod deploy;
 mod image_tasks; // delete, copy (promote, import) and sweep of image records
 pub(crate) mod images; // a project's images and charts as records (ADR-0062 §4)
 pub(crate) mod images_sink; // a pipeline's published images, recorded (ADR-0062 §4)
+pub(crate) mod infra; // a product's infra services, placed and installed with it (ADR-0064)
 mod migrations;
 mod model;
 mod placement; // a project's slug, namespaces and registry path (ADR-0062 §3, §7)

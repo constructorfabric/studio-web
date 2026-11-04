@@ -27,6 +27,9 @@ use crate::org_scope::OrgCtx;
 #[path = "rest_images.rs"]
 mod images_routes;
 
+#[path = "rest_infra.rs"]
+mod infra_routes;
+
 /// Errors attributable to an environment or a deployment as a resource.
 #[resource_error(gts_id!("cf.studio.environments.environment.v1~"))]
 pub struct StudioEnvironmentsError;
@@ -129,6 +132,9 @@ pub struct EnvironmentDto {
     /// The namespaces the cluster gives when Studio may not make its own.
     pub namespaces: Option<Vec<String>>,
     pub allow_broad_registry_token: bool,
+    /// Where a product's infra services run here (ADR-0064 §3); absent:
+    /// with the product.
+    pub infra: Option<infra_routes::InfraPlacementDto>,
     /// What should be fixed but does not stop a build or a deploy, e.g. "the
     /// cluster gets a credential that can write".
     pub warnings: Vec<String>,
@@ -201,6 +207,7 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         build_namespace: b.build_namespace,
         namespaces: b.namespaces,
         allow_broad_registry_token: b.allow_broad_registry_token,
+        infra: infra_routes::placement_dto(b.infra),
         warnings,
         id: e.id,
         name: e.name,
@@ -417,6 +424,11 @@ pub struct EnvironmentRequest {
     /// pushing and pulling; default no (`REGISTRY_TOKEN_TOO_BROAD`).
     #[serde(default)]
     pub allow_broad_registry_token: bool,
+    /// Where a product's infra services run (ADR-0064 §3): with the product
+    /// (default; always in a dev environment), or the organization's shared
+    /// place.
+    #[serde(default)]
+    pub infra: Option<infra_routes::InfraPlacementDto>,
 }
 
 fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> {
@@ -476,6 +488,7 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
             build_namespace: r.build_namespace,
             namespaces: r.namespaces,
             allow_broad_registry_token: r.allow_broad_registry_token,
+            infra: infra_routes::placement_of(r.infra)?,
         },
     })
 }
@@ -2232,6 +2245,7 @@ pub fn register_routes(
     // A project's images, the organization's registries, readiness,
     // namespace assignments and a build's plan (ADR-0062).
     router = images_routes::register(router, openapi);
+    router = infra_routes::register(router, openapi);
 
     router.layer(Extension(Environments(service)))
 }

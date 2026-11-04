@@ -119,6 +119,22 @@ of studio-user through `OrgAuthority`.
   with a Job running `psql` in the namespace, and writes the password into each
   secret the chart reads. The cluster connection needs to manage StatefulSets,
   Services, Jobs and Secrets there; `admin` does.
+- Infra services (`infra.rs`, `infra_install.rs`, ADR-0064): a project's list
+  (`GET`/`PUT /infra-services`) of `service.gdl` passports with `kind =
+  "infra"`, each naming its image (and optionally a ready chart) imported into
+  the project's path. An environment's `infra` says `with_product` (default;
+  always in a dev environment) or `shared` with the organization's places.
+  Before the release the run makes each service's secrets once
+  (`INFRA_<SERVICE>_<KEY>` in credstore), writes what it provides as the
+  release's configuration secrets (`oidc.issuer` -> `OIDC_ISSUER`), and
+  installs it as its own Helm release in the namespace: from its ready chart,
+  or from a chart generated from the passport (Deployment or StatefulSet with
+  a volume claim, Service, Secret). A service providing `postgres` is made by
+  the database step with its image. `GET /environments/{id}/infra-plan` says
+  all of it before a deploy; a deploy refuses `INFRA_IMAGE_NOT_IMPORTED`,
+  `IMAGE_NOT_IN_PROJECT_PATH` or `INFRA_NOT_IN_SHARED_PLACE`. The cluster
+  connection needs Deployments, StatefulSets, PVCs, Services and Secrets in
+  the namespace; `admin` there does.
 - A project's configuration per environment: chart `values` on the profile's
   binding, laid under the deploy's own (images, pull secret); secrets in
   credstore under `studio-env-config-<project>-<environment>-<key>`, written by

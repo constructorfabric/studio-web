@@ -30,6 +30,11 @@ use crate::connectors::sdk as connectors;
 mod images_service;
 pub use images_service::{RetentionOf, RetentionScope, RunsIn};
 
+// A project's infra services and what a deploy does with them (ADR-0064).
+#[path = "service_infra.rs"]
+mod infra_service;
+pub use infra_service::InfraPlan;
+
 /// The privilege that manages an organization's environments and decides
 /// about deploys to its protected ones (ADR-0043 §1, §3).
 pub const MANAGE_PRIVILEGE: &str = "environment.manage";
@@ -204,6 +209,8 @@ struct Config {
     /// The project's build namespace there, recorded with its namespace by
     /// the run (ADR-0062 §3).
     build_namespace: Option<String>,
+    /// The product's infra services, as the run brings them (ADR-0064).
+    infra: Vec<super::infra::InfraInstall>,
 }
 
 pub struct EnvironmentService {
@@ -1424,18 +1431,34 @@ impl EnvironmentService {
             .store
             .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
             .await?;
+        // Infra services run on a cluster (ADR-0064); a Research
+        // environment brings its own services.
+        let infra = if env.kind == EnvironmentKind::Kubernetes {
+            super::infra::installs(env.boundaries.infra.as_ref(), &list.infra)
+        } else {
+            Vec::new()
+        };
+        let mut secret_keys: Vec<String> = list
+            .secrets
+            .into_iter()
+            .filter(|s| s.environment_id == env.id)
+            .map(|s| s.key)
+            .collect();
+        // What the infra services provide reaches the product as more of
+        // its configuration secrets, written by the run before the release.
+        for v in super::infra::produced_variables(&infra) {
+            if !secret_keys.contains(&v) {
+                secret_keys.push(v);
+            }
+        }
         Ok(Config {
+            infra,
             values: list
                 .items
                 .into_iter()
                 .find(|b| b.profile == profile && b.environment_id == env.id)
                 .and_then(|b| b.values),
-            secret_keys: list
-                .secrets
-                .into_iter()
-                .filter(|s| s.environment_id == env.id)
-                .map(|s| s.key)
-                .collect(),
+            secret_keys,
             build_namespace: None,
         })
     }
@@ -1461,7 +1484,11 @@ impl EnvironmentService {
             environment_id: env.id,
             secret_keys: config.secret_keys.clone(),
             database: env.database,
-            database_image: env.database_image.clone(),
+            // The product's own database server runs the image its infra
+            // service imported (ADR-0064 §5), else the environment's.
+            database_image: super::infra::database_image(&config.infra)
+                .or_else(|| env.database_image.clone()),
+            infra: config.infra.clone(),
             chart,
             chart_ref: d.chart_ref.clone(),
             connections_from: env.project_id,
@@ -1679,6 +1706,9 @@ impl EnvironmentService {
         }
         let mut config = self.project_config(ctx, project, &env, &d.profile).await?;
         config.build_namespace = Some(place.build_namespace.clone());
+        if d.action == DeploymentAction::Install {
+            self.check_infra(&env, &place.prefix, &config.infra)?;
+        }
         let previewing = d.preview.is_some();
         let d = self.submit(org, &env, d, chart, config).await?;
         if previewing {

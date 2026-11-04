@@ -171,6 +171,10 @@ pub struct Boundaries {
     /// and pulling. Off: refused, `REGISTRY_TOKEN_TOO_BROAD`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_broad_registry_token: bool,
+    /// Where a product's infra services run here (ADR-0064 §3); `None`:
+    /// with the product.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub infra: Option<super::infra::InfraPlacement>,
 }
 
 /// Is `image` an image reference: no scheme, the characters of one.
@@ -251,6 +255,7 @@ fn check_boundaries(b: &Boundaries, env_name: &str, registry: &str) -> Result<Bo
         build_namespace,
         namespaces,
         allow_broad_registry_token: b.allow_broad_registry_token,
+        infra: b.infra,
     })
 }
 
@@ -476,7 +481,14 @@ pub fn checked(
              e.g. ghcr.io/acme",
         ));
     }
-    let boundaries = check_boundaries(&input.boundaries, &name, &registry)?;
+    let mut boundaries = check_boundaries(&input.boundaries, &name, &registry)?;
+    let dev = input.strictness.unwrap_or(if input.protected {
+        Strictness::Prod
+    } else {
+        Strictness::Dev
+    }) == Strictness::Dev;
+    boundaries.infra = super::infra::check_placement(boundaries.infra.take(), dev)
+        .map_err(|e| invalid("infra", e))?;
     Ok(Environment {
         id: own,
         name,
@@ -778,6 +790,9 @@ pub struct BindingList {
     /// and Helm chart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<OwnBuild>,
+    /// The infra services the product runs beside its gears (ADR-0064).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra: Vec<super::infra::InfraService>,
 }
 
 /// A project built without a product description (ADR-0054 §7): the
@@ -1008,6 +1023,7 @@ pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
         secrets: Vec::new(),
         environments: Vec::new(),
         build: None,
+        infra: Vec::new(),
     })
 }
 
