@@ -282,3 +282,5 @@ component into the organization's catalogue without moving its code.
   one).
 - Extends ADR-0044 (a project publishes a component at a version).
 - Amends ADR-0050 (a passport may name its documents).
+
+> Amended by ADR-0064 ([a product's infra services are catalogue components, deployed with it](0064-a-products-infra-services-are-catalogue-components-deployed-with-it.md)): `service.gdl` takes `kind = "infra"` for a third-party service a product runs beside its gears, with `args`, `config`, `secrets`, `provides` as a dict of capability to template, `stateful`/`storage`/`data_path` and a ready `chart`/`chart_version`. The catalogue keeps them under `infra` on the service node, with `service_kind`.

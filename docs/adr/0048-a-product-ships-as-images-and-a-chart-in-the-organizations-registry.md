@@ -300,3 +300,5 @@ This decision directly addresses the following requirements or design elements:
 * `cpt-studio-adr-deployment-environments`
 * `cpt-studio-adr-project-builds`
 * `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server`
+
+> Amended by ADR-0064 ([a product's infra services are catalogue components, deployed with it](0064-a-products-infra-services-are-catalogue-components-deployed-with-it.md)): when the project has an infra service that provides `postgres`, the product's database server runs that service's image, imported into the project's path, instead of `database_image` or `pgvector/pgvector:pg18`.
