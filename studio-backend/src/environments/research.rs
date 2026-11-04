@@ -1063,7 +1063,10 @@ pub async fn rollout(
 
 /// The end of each service's log of the environment's application, read with
 /// the caller's sign-in. A service Research has no log for yet says so rather
-/// than being left out, so the reader sees every service.
+/// than being left out, so the reader sees every service. The services are
+/// read at once (each read takes up to ten seconds) and listed in their own
+/// order. A read Research refused says so, not that there is no log; when
+/// every read failed, the first failure is the answer.
 pub async fn logs(
     api: &ResearchApi,
     project: &str,
@@ -1073,20 +1076,39 @@ pub async fn logs(
     let Some(app) = api.application_named(project, application).await? else {
         bail!("Constructor Research has no application {application} in this project");
     };
-    let mut out = Vec::with_capacity(app.services.len());
-    for s in app.services {
-        let text = api
-            .service_log_tail(&s.id, lines)
-            .await
-            .unwrap_or_else(|| format!("(Constructor Research has no log of {} now)", s.name));
-        out.push(super::deploy::ContainerLog {
+    let tails = futures_util::future::join_all(
+        app.services
+            .iter()
+            .map(|s| api.service_log_tail(&s.id, lines)),
+    )
+    .await;
+    if !tails.is_empty() && tails.iter().all(Result::is_err) {
+        let first = tails.into_iter().find_map(Result::err);
+        return Err(first
+            .unwrap_or_else(|| anyhow!("no service log could be read"))
+            .context("reading the environment's logs"));
+    }
+    Ok(app
+        .services
+        .into_iter()
+        .zip(tails)
+        .map(|(s, tail)| super::deploy::ContainerLog {
+            text: log_text(&s.name, tail),
             pod: s.name,
             container: "main".to_owned(),
             previous: false,
-            text,
-        });
+        })
+        .collect())
+}
+
+/// What a service's log entry says: its tail, that Research has none, or
+/// why it could not be read.
+fn log_text(service: &str, tail: anyhow::Result<Option<String>>) -> String {
+    match tail {
+        Ok(Some(text)) => text,
+        Ok(None) => format!("(Constructor Research has no log of {service} now)"),
+        Err(e) => format!("(Studio could not read the log of {service}: {e:#})"),
     }
-    Ok(out)
 }
 
 #[cfg(test)]

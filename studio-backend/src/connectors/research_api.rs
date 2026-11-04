@@ -796,8 +796,13 @@ impl ResearchApi {
     }
 
     /// The last lines of an image's build log, while Research still has it
-    /// (the build's Job; Research keeps no log after it).
-    pub async fn build_log_tail(&self, image: &str, lines: usize) -> Option<String> {
+    /// (the build's Job; Research keeps no log after it). `Ok(None)` when
+    /// the log says nothing; an error when Research could not be asked.
+    pub async fn build_log_tail(
+        &self,
+        image: &str,
+        lines: usize,
+    ) -> anyhow::Result<Option<String>> {
         let url = format!(
             "{}/api/platform-keeper/image-builds/{}/logs",
             self.base,
@@ -809,7 +814,13 @@ impl ResearchApi {
     /// The last lines of a running service's log: what its newest pod has
     /// written. Research serves it only as a live stream with no tail of its
     /// own, so the stream is read for a few seconds and its end kept.
-    pub async fn service_log_tail(&self, service: &str, lines: usize) -> Option<String> {
+    /// `Ok(None)` when the log says nothing; an error when Research could
+    /// not be asked, so a refused sign-in does not read as an empty log.
+    pub async fn service_log_tail(
+        &self,
+        service: &str,
+        lines: usize,
+    ) -> anyhow::Result<Option<String>> {
         let url = format!(
             "{}/api/platform-keeper/services/{}/logs",
             self.base,
@@ -819,8 +830,10 @@ impl ResearchApi {
     }
 
     /// An event stream read for up to ten seconds, its last `lines` data
-    /// lines kept. `None` when it cannot be opened or says nothing.
-    async fn stream_tail(&self, url: String, lines: usize) -> Option<String> {
+    /// lines kept. `Ok(None)` when it opens but says nothing; an error when
+    /// it cannot be opened (unreachable, refused, no answer in time).
+    async fn stream_tail(&self, url: String, lines: usize) -> anyhow::Result<Option<String>> {
+        let what = "reading a log";
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let res = tokio::time::timeout_at(
             deadline,
@@ -829,10 +842,10 @@ impl ResearchApi {
                 .send(),
         )
         .await
-        .ok()?
-        .ok()?;
+        .map_err(|_| anyhow!("Constructor Research did not answer {what} in time"))?
+        .map_err(|e| anyhow!("Constructor Research could not be reached for {what}: {e}"))?;
         if !res.status().is_success() {
-            return None;
+            return Err(Self::refused(res, what).await);
         }
         let mut stream = res.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
@@ -845,7 +858,7 @@ impl ResearchApi {
         let text = String::from_utf8_lossy(&buf);
         let kept: Vec<&str> = text.lines().filter_map(log_line).collect();
         let tail = kept[kept.len().saturating_sub(lines)..].join("\n");
-        (!tail.is_empty()).then_some(tail)
+        Ok((!tail.is_empty()).then_some(tail))
     }
 
     /// Follow a service's log until `until`, reopening the stream (after
@@ -1289,7 +1302,7 @@ impl ResearchApi {
                         pending[n] = (i, again, image.id);
                     }
                     "error" => {
-                        let tail = self.build_log_tail(&id, 30).await;
+                        let tail = self.build_log_tail(&id, 30).await.ok().flatten();
                         bail!(
                             "Constructor Research could not build image {} ({}), nor again as {name}{}",
                             retried[&i.key],
@@ -1391,7 +1404,7 @@ impl ResearchApi {
                         running.insert(id.clone());
                     }
                     "failed" => {
-                        let tail = self.service_log_tail(id, 20).await;
+                        let tail = self.service_log_tail(id, 20).await.ok().flatten();
                         bail!(
                             "service {svc} did not start in Constructor Research{}",
                             tail.map(|t| format!("; its last log lines:\n{t}"))
