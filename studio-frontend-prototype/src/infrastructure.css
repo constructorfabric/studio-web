@@ -92,3 +92,11 @@
 .infra-sheet .env-head .grow { display: none; }
 .infra-tabs button:hover:not(:disabled) { background: none; border-color: transparent; color: var(--foreground); }
 .infra-tabs button.on:hover:not(:disabled) { border-bottom-color: var(--primary); }
+
+/* "What this build will do", above Build in Studio (deploy-actions.tsx). */
+.build-plan { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); background: var(--card); }
+.build-plan summary { cursor: pointer; }
+.build-plan .warn code { color: var(--warning-foreground, #b45309); }
+
+/* A cluster's readiness on its place card, asked on demand. */
+[data-place-readiness] { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }

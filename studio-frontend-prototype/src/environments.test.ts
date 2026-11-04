@@ -6,12 +6,14 @@ import {
   canReadStatus,
   clusterConnections,
   emptyEnvironment,
+  environmentInput,
   environmentProblem,
   environmentProblems,
   environmentsByConnection,
   namespaceFor,
   registryConnections,
   researchConnections,
+  readinessBadge,
   registryHost,
   runningNow,
   slug,
@@ -224,5 +226,48 @@ describe("whose release the portal reads from its cluster", () => {
     expect(canReadStatus({ state: "queued", action: "install" })).toBe(false);
     expect(canReadStatus({ state: "awaiting_approval", action: "install" })).toBe(false);
     expect(canReadStatus({ state: "succeeded", action: "uninstall" })).toBe(false);
+  });
+});
+
+describe("how an environment's builds run", () => {
+  const ready = { ...emptyEnvironment(), name: "stage", connection_id: "c1" };
+  const pinned = `ghcr.io/acme/mirror/builder@sha256:${"a".repeat(64)}`;
+
+  it("takes a builder only by digest, and namespaces that are namespaces", () => {
+    expect(environmentProblems({ ...ready, builder_image: pinned }, []).builder_image).toBeUndefined();
+    expect(environmentProblems({ ...ready, builder_image: "ghcr.io/acme/builder:1" }, []).builder_image).toMatch(/by digest/);
+    expect(environmentProblems({ ...ready, build_namespace: "{project}-build" }, []).build_namespace).toBeUndefined();
+    expect(environmentProblems({ ...ready, build_namespace: "Build_{project}" }, []).build_namespace).toMatch(/namespace/);
+    expect(environmentProblems({ ...ready, namespaces: ["web-dev", "Web"] }, []).namespaces).toBe("'Web' is not a namespace.");
+  });
+
+  it("keeps what is stored, so a save does not clear it", () => {
+    const stored = env({ builder_image: pinned, registry_pull_connection_id: "r-ro", namespaces: ["web-dev"], allow_broad_registry_token: true });
+    const input = environmentInput(stored);
+    expect([input.builder_image, input.registry_pull_connection_id, input.namespaces, input.allow_broad_registry_token]).toEqual([
+      pinned,
+      "r-ro",
+      ["web-dev"],
+      true,
+    ]);
+  });
+});
+
+describe("a cluster's readiness", () => {
+  const base = { missing: [], namespaces: [], policy_enforced: true };
+  it("is a badge in its own words", () => {
+    expect(readinessBadge({ ...base, level: "bootstrapped", bootstrap_version: "3" })).toMatchObject({ label: "Bootstrapped", tone: "ok" });
+    expect(readinessBadge({ ...base, level: "namespace_limited", namespaces: ["web-dev"] })).toMatchObject({
+      label: "Namespaces given",
+      title: "Studio may use only web-dev, the namespaces the cluster gives.",
+    });
+    expect(readinessBadge({ ...base, level: "partial", missing: ["create namespaces", "network policy"] }).label).toBe(
+      "Partial: lacks create namespaces, network policy",
+    );
+    expect(readinessBadge({ ...base, level: "unreachable", detail: "connection refused" })).toEqual({
+      label: "Unreachable",
+      tone: "danger",
+      title: "connection refused",
+    });
   });
 });

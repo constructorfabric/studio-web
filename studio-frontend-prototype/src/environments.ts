@@ -3,7 +3,14 @@
  * from the React for their tests. The server checks all of these again;
  * here they say what is wrong before the form is sent. */
 
-import type { Connection, DeployEnvironment, DeployEnvironmentInput, Deployment, DeploymentState } from "./api";
+import type {
+  Connection,
+  DeployEnvironment,
+  DeployEnvironmentInput,
+  Deployment,
+  DeploymentState,
+  EnvironmentReadiness,
+} from "./api";
 
 /** Whether a deploy's release is worth reading from its cluster: one that
  *  installed, or one that failed -- whose pods say why -- or is installing. */
@@ -55,6 +62,12 @@ export function emptyEnvironment(): DeployEnvironmentInput {
     promote_from: null,
     projects: null,
     previews: null,
+    builder_image: null,
+    builder_registry_connection_id: null,
+    registry_pull_connection_id: null,
+    build_namespace: null,
+    namespaces: null,
+    allow_broad_registry_token: false,
   };
 }
 
@@ -76,6 +89,13 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
     promote_from: e.promote_from ?? null,
     projects: e.projects ?? null,
     previews: e.previews ?? null,
+    // Kept as stored: a form that left them out would clear them on save.
+    builder_image: e.builder_image ?? null,
+    builder_registry_connection_id: e.builder_registry_connection_id ?? null,
+    registry_pull_connection_id: e.registry_pull_connection_id ?? null,
+    build_namespace: e.build_namespace ?? null,
+    namespaces: e.namespaces ?? null,
+    allow_broad_registry_token: e.allow_broad_registry_token ?? false,
   };
 }
 
@@ -88,7 +108,13 @@ export type EnvironmentField =
   | "namespace_pattern"
   | "projects"
   | "research_project"
-  | "previews";
+  | "previews"
+  | "builder_image"
+  | "build_namespace"
+  | "namespaces";
+
+/** Where a build's Job runs unless the environment says otherwise. */
+export const DEFAULT_BUILD_NAMESPACE = "{project}-build";
 
 /** Everything wrong with a form, by field, in the words the person reads:
  *  shown together at their fields, so one fix does not uncover the next. */
@@ -126,6 +152,17 @@ export function environmentProblems(
       out.registry = `The prefix is not on ${host}, the registry this login is for.`;
   }
   if (input.projects && input.projects.length === 0) out.projects = "Choose at least one project, or let every project deploy here.";
+  const builder = (input.builder_image ?? "").trim();
+  // A builder named by tag is whatever the tag points at on the day: the
+  // build that passed yesterday is not the one that runs today.
+  if (builder && !/^[A-Za-z0-9._\-/:]+@sha256:[a-f0-9]{64}$/.test(builder))
+    out.builder_image = "Name it by digest from the organization's mirror, e.g. ghcr.io/acme/mirror/builder@sha256:….";
+  const buildNs = (input.build_namespace ?? "").trim();
+  if (buildNs && !isDnsLabel(namespaceFor(buildNs, "a-project", name || "env")))
+    out.build_namespace = `That does not make a namespace: '${namespaceFor(buildNs, "a-project", name || "env")}'.`;
+  const given = input.namespaces ?? [];
+  const notLabel = given.find((n) => !isDnsLabel(n));
+  if (notLabel !== undefined) out.namespaces = `'${notLabel}' is not a namespace.`;
   const previews = input.previews;
   if (previews) {
     const domain = previews.domain.trim().replace(/^\.+|\.+$/g, "");
@@ -273,4 +310,51 @@ export function clusterCards(
   const orphans = environments.filter((e) => !known.has(e.connection_id));
   if (orphans.length) out.push(card("", "A cluster this page cannot see", "", orphans));
   return out;
+}
+
+/** A cluster's readiness as a badge: its words, its tone, and the detail
+ *  behind it. "Namespaces given": Studio may not make its own, and uses the
+ *  ones the cluster's administrators gave. */
+export function readinessBadge(r: EnvironmentReadiness): { label: string; tone: "ok" | "info" | "warn" | "danger"; title: string } {
+  const detail = r.detail?.trim() ?? "";
+  switch (r.level) {
+    case "bootstrapped":
+      return {
+        label: "Bootstrapped",
+        tone: "ok",
+        title: [
+          `The cluster has Studio's bootstrap${r.bootstrap_version ? ` ${r.bootstrap_version}` : ""}.`,
+          r.policy_enforced ? "Its policy is enforced." : "Its policy is not enforced.",
+          detail,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      };
+    case "namespace_limited":
+      return {
+        label: "Namespaces given",
+        tone: "info",
+        title: [
+          r.namespaces.length
+            ? `Studio may use only ${r.namespaces.join(", ")}, the namespaces the cluster gives.`
+            : "Studio may not create namespaces, and the cluster gives none yet.",
+          detail,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      };
+    case "partial":
+      return {
+        label: r.missing.length ? `Partial: lacks ${r.missing.join(", ")}` : "Partial",
+        tone: "warn",
+        title: [
+          "Part of what Studio's bootstrap gives is missing: a cluster administrator applies deploy/k8s/studio-environments/bootstrap.yaml.",
+          detail,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      };
+    default:
+      return { label: "Unreachable", tone: "danger", title: detail || "The cluster did not answer." };
+  }
 }

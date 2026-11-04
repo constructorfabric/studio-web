@@ -859,3 +859,55 @@ describe("product save", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("images and registries client", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function jsonMock(body: unknown) {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      async () => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("sends only the image filters that are set", async () => {
+    const fetchMock = jsonMock({ items: [], total: 0 });
+    await api.projectImages("token", "p-1", { build_id: "b-1", app: "", kind: undefined, limit: 50 });
+    expect(fetchMock.mock.calls[0][0]).toBe("/cf/studio-environments/v1/images?project_id=p-1&build_id=b-1&limit=50");
+  });
+
+  it("encodes a repository whole: its slashes are part of its name", async () => {
+    // Left as path separators, `acme/web/api` would address another route.
+    const fetchMock = jsonMock({ items: [] });
+    await api.registryTags("token", "org-1", "c-1", "acme/web/api");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/cf/studio-environments/v1/registries/c-1/repositories/acme%2Fweb%2Fapi/tags?organization_id=org-1",
+    );
+    await api.deleteRegistryVersion("token", "org-1", "c-1", "acme/web/api", "sha256:abc");
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/cf/studio-environments/v1/registries/c-1/repositories/acme%2Fweb%2Fapi/versions/sha256%3Aabc?organization_id=org-1",
+    );
+    expect((fetchMock.mock.calls[1][1]?.headers as Record<string, string>)["Idempotency-Key"]).toBeTruthy();
+  });
+
+  it("asks a project's own environment's readiness as the project", async () => {
+    const fetchMock = jsonMock({ level: "bootstrapped", missing: [], namespaces: [], policy_enforced: true });
+    await api.environmentReadiness("token", "e-1", { org: "org-1" });
+    expect(fetchMock.mock.calls[0][0]).toBe("/cf/studio-environments/v1/environments/e-1/readiness?organization_id=org-1");
+    await api.environmentReadiness("token", "e-1", { org: "org-1", project: "p-1" });
+    expect(fetchMock.mock.calls[1][0]).toBe("/cf/studio-environments/v1/environments/e-1/readiness?project_id=p-1");
+  });
+
+  it("pins with PUT and unpins with DELETE", async () => {
+    const fetchMock = jsonMock({});
+    await api.pinImage("token", "p-1", "i-1", true);
+    await api.pinImage("token", "p-1", "i-1", false);
+    expect(fetchMock.mock.calls.map((c) => [c[0], c[1]?.method])).toEqual([
+      ["/cf/studio-environments/v1/images/i-1/pin?project_id=p-1", "PUT"],
+      ["/cf/studio-environments/v1/images/i-1/pin?project_id=p-1", "DELETE"],
+    ]);
+  });
+});

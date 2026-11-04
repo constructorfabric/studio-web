@@ -1669,8 +1669,39 @@ export interface DeployEnvironment {
   project_id?: string | null;
   /** Whether projects may preview a build here (ADR-0055); absent: no. */
   previews?: PreviewSettings | null;
+  /** The build Job's image, from the organization's own mirror and pinned by
+   *  digest (`image@sha256:…`); absent: the one Studio ships with. */
+  builder_image?: string | null;
+  /** The registry connection the cluster pulls the builder image with. */
+  builder_registry_connection_id?: string | null;
+  /** A read-only registry identity the cluster pulls the product with; absent:
+   *  it gets the push connection's credential, which can write. */
+  registry_pull_connection_id?: string | null;
+  /** Where a build runs: a pattern, `{project}-build` by default. */
+  build_namespace?: string | null;
+  /** The namespaces the cluster gives, when Studio may not create its own. */
+  namespaces?: string[] | null;
+  /** The registry token a build gets may reach past the project's own path. */
+  allow_broad_registry_token?: boolean | null;
+  /** What the server thinks is risky about how it is set up, one sentence each. */
+  warnings?: string[];
   updated_by: string;
   updated_at: string;
+}
+
+/** Whether an environment's cluster is ready for Studio (`GET …/readiness`). */
+export type ReadinessLevel = "bootstrapped" | "namespace_limited" | "partial" | "unreachable";
+
+export interface EnvironmentReadiness {
+  level: ReadinessLevel;
+  /** What the bootstrap would have given and the cluster does not. */
+  missing: string[];
+  /** The namespaces Studio may use there. */
+  namespaces: string[];
+  bootstrap_version?: string | null;
+  /** The cluster enforces Studio's policy on what runs in its namespaces. */
+  policy_enforced: boolean;
+  detail?: string | null;
 }
 
 /** What an environment says of previews (ADR-0055). */
@@ -1732,6 +1763,141 @@ export interface DeployEnvironmentInput {
   promote_from?: string | null;
   projects?: string[] | null;
   previews?: PreviewSettings | null;
+  builder_image?: string | null;
+  builder_registry_connection_id?: string | null;
+  registry_pull_connection_id?: string | null;
+  build_namespace?: string | null;
+  namespaces?: string[] | null;
+  allow_broad_registry_token?: boolean | null;
+}
+
+/** What a build would do, said before it is started (`POST /builds/plan`):
+ *  where it runs, with what, from which sources, into which repositories. */
+export interface BuildPlan {
+  environment_id: string;
+  environment: string;
+  profile: string;
+  product_file: string;
+  description_revision?: number | null;
+  strictness: "dev" | "prod";
+  /** Where the product is deployed. */
+  namespace: string;
+  /** Where the build's Job runs. */
+  build_namespace: string;
+  builder_image: string;
+  /** The builder image is named by digest. */
+  builder_pinned: boolean;
+  gearbox_version?: string | null;
+  registry_prefix: string;
+  image_repositories: string[];
+  chart_repository: string;
+  sources: BuildPlanSource[];
+  warnings: string[];
+  /** Why Studio would refuse to start it; absent: it would start. */
+  refusal?: { code: string; message: string } | null;
+}
+
+export interface BuildPlanSource {
+  id: string;
+  repository: string;
+  ref: string;
+  commit?: string | null;
+  connection_id?: string | null;
+  connection_label?: string | null;
+  connection_scope?: string | null;
+  connection_holder?: string | null;
+}
+
+/** Where a recorded image runs now. */
+export interface ImageRunning {
+  environment_id: string;
+  environment_name: string;
+  deployment_id: string;
+  namespace: string;
+  deployed_at: string;
+}
+
+export type ImageKind = "image" | "chart";
+export type ImageState = "present" | "missing" | "deleted" | "retained";
+
+/** An image or chart the project put in a registry, as Studio recorded it. */
+export interface ProjectImage {
+  id: string;
+  project_id: string;
+  registry_connection_id?: string | null;
+  registry_host: string;
+  repository: string;
+  /** What a deploy names it by: `host/repository@digest` or `:tag`. */
+  reference: string;
+  tags: string[];
+  digest: string;
+  media_type?: string | null;
+  size_bytes?: number | null;
+  platforms: string[];
+  build_id?: string | null;
+  app?: string | null;
+  commit?: string | null;
+  description_revision?: number | null;
+  lock_hash?: string | null;
+  pushed_by?: string | null;
+  pushed_at: string;
+  kind: ImageKind;
+  state: ImageState;
+  /** Kept whatever the retention says. */
+  pinned: boolean;
+  /** The image it was copied from, when it was promoted. */
+  promoted_from?: string | null;
+  /** The external reference it was imported from. */
+  source_ref?: string | null;
+  running_in: ImageRunning[];
+}
+
+/** How long a project's (or every project's) images are kept. */
+export interface ImageRetention {
+  scope: "project" | "organization";
+  keep_last?: number | null;
+  keep_days?: number | null;
+  /** The project has none of its own: the organization's applies. */
+  inherited: boolean;
+}
+
+/** One registry the organization's environments push to or pull from. */
+export interface OrgRegistry {
+  connection_id: string;
+  label: string;
+  host: string;
+  kind: "ghcr" | "harbor" | "oci";
+  prefixes: string[];
+  environments: { id: string; name: string }[];
+  role: "push" | "pull" | "push_pull";
+}
+
+export interface RegistryRepository {
+  name: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  /** How many of its versions Studio recorded. */
+  recorded: number;
+}
+
+export interface RegistryTag {
+  digest: string;
+  tags: string[];
+  size_bytes?: number | null;
+  pushed_at?: string | null;
+  image_id?: string | null;
+  project_id?: string | null;
+  running_in: ImageRunning[];
+}
+
+/** Something in a registry that nothing in Studio accounts for. */
+export interface RegistryOrphan {
+  repository: string;
+  digest?: string | null;
+  tags: string[];
+  reason: "unowned" | "unrecorded" | "undeployed" | "missing";
+  image_id?: string | null;
+  project_id?: string | null;
 }
 
 /** A Constructor Research project, as its integration service names it. */
@@ -2915,6 +3081,12 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
  */
 export function idempotent(key: string = crypto.randomUUID()): Record<string, string> {
   return { "Idempotency-Key": key };
+}
+
+/** `project_id=` or `organization_id=`: whose setting is read or written.
+ *  The project wins when both are given, as its own setting is the narrower. */
+function ownerQuery(owner: { org?: string; project?: string }): URLSearchParams {
+  return new URLSearchParams(owner.project ? { project_id: owner.project } : { organization_id: owner.org ?? "" });
 }
 
 /** A file the server writes, as a blob: the same auth and errors as `request`. */
@@ -4901,6 +5073,128 @@ export const api = {
   deploymentLogs: (token: string, org: string, id: string) =>
     request<{ containers: ContainerLog[] }>(
       `/studio-environments/v1/deployments/${encodeURIComponent(id)}/logs?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+
+  /** Whether the environment's cluster is ready for Studio, read from it now:
+   *  an organization's environment by `org`, a project's own by `project`. */
+  environmentReadiness: (token: string, id: string, owner: { org?: string; project?: string }) => {
+    const qs = new URLSearchParams();
+    if (owner.project) qs.set("project_id", owner.project);
+    else if (owner.org) qs.set("organization_id", owner.org);
+    return request<EnvironmentReadiness>(
+      `/studio-environments/v1/environments/${encodeURIComponent(id)}/readiness?${qs}`,
+      token,
+    );
+  },
+  /** What a build with this body would do, and whether Studio would refuse
+   *  it; nothing is started. */
+  planBuild: (
+    token: string,
+    projectId: string,
+    body: { environment_id: string; profile?: string; product_file?: string; ref?: string },
+  ) =>
+    request<BuildPlan>(`/studio-environments/v1/builds/plan?project_id=${encodeURIComponent(projectId)}`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** The images and charts the project put in registries, newest first. An
+   *  omitted filter is not sent. */
+  projectImages: (
+    token: string,
+    projectId: string,
+    filter: {
+      environment_id?: string;
+      app?: string;
+      kind?: ImageKind;
+      state?: ImageState;
+      build_id?: string;
+      /** Paged by `?offset=&limit=` (api-conventions B2). */
+      offset?: number;
+      limit?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams({ project_id: projectId });
+    for (const [k, v] of Object.entries(filter)) if (v !== undefined && v !== "") qs.set(k, String(v));
+    return request<{ items: ProjectImage[]; total: number }>(
+      `/studio-environments/v1/images?${qs}`,
+      token,
+    );
+  },
+  projectImage: (token: string, projectId: string, imageId: string) =>
+    request<ProjectImage>(
+      `/studio-environments/v1/images/${encodeURIComponent(imageId)}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** Keep an image whatever the retention says, or let it go again. */
+  pinImage: (token: string, projectId: string, imageId: string, pinned: boolean) =>
+    request<ProjectImage>(
+      `/studio-environments/v1/images/${encodeURIComponent(imageId)}/pin?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: pinned ? "PUT" : "DELETE" },
+    ),
+  /** Delete an image from its registry: 202 with the run that does it; 409
+   *  `IMAGE_RUNNING` or `IMAGE_PINNED` when it may not go. */
+  deleteImage: (token: string, projectId: string, imageId: string) =>
+    request<{ run_id: string; image_id: string }>(
+      `/studio-environments/v1/images/${encodeURIComponent(imageId)}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "DELETE", headers: idempotent() },
+    ),
+  /** Copy an image into another environment's registry. */
+  promoteImage: (token: string, projectId: string, imageId: string, environmentId: string) =>
+    request<{ run_id: string; image_id: string }>(
+      `/studio-environments/v1/images/${encodeURIComponent(imageId)}/promotions?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify({ environment_id: environmentId }), headers: idempotent() },
+    ),
+  /** Copy an external image (`docker.io/library/postgres:16`) into the
+   *  project's own path of an environment's registry, under `mirror/<name>`. */
+  importImage: (token: string, projectId: string, body: { environment_id: string; source: string; name?: string }) =>
+    request<{ run_id: string; image_id: string }>(
+      `/studio-environments/v1/images/imports?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body), headers: idempotent() },
+    ),
+  /** How long images are kept: a project's, or the organization's default. */
+  imageRetention: (token: string, owner: { org?: string; project?: string }) =>
+    request<ImageRetention>(`/studio-environments/v1/image-retention?${ownerQuery(owner)}`, token),
+  saveImageRetention: (
+    token: string,
+    owner: { org?: string; project?: string },
+    body: { keep_last?: number | null; keep_days?: number | null },
+  ) =>
+    request<ImageRetention>(`/studio-environments/v1/image-retention?${ownerQuery(owner)}`, token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  /** The registries the organization's environments use (`environment.manage`). */
+  orgRegistries: (token: string, org: string) =>
+    request<{ items: OrgRegistry[] }>(`/studio-environments/v1/registries?organization_id=${encodeURIComponent(org)}`, token),
+  registryRepositories: (token: string, org: string, connectionId: string) =>
+    request<{ items: RegistryRepository[] }>(
+      `/studio-environments/v1/registries/${encodeURIComponent(connectionId)}/repositories?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+  /** A repository's versions; its name has slashes, so it is encoded whole. */
+  registryTags: (token: string, org: string, connectionId: string, repository: string) =>
+    request<{ items: RegistryTag[] }>(
+      `/studio-environments/v1/registries/${encodeURIComponent(connectionId)}/repositories/${encodeURIComponent(repository)}/tags?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+  /** Delete one version from the registry: 202; 409 `IMAGE_RUNNING`. */
+  deleteRegistryVersion: (token: string, org: string, connectionId: string, repository: string, digest: string) =>
+    request<{ run_id: string }>(
+      `/studio-environments/v1/registries/${encodeURIComponent(connectionId)}/repositories/${encodeURIComponent(repository)}/versions/${encodeURIComponent(digest)}?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "DELETE", headers: idempotent() },
+    ),
+  /** What is in the registry that nothing in Studio accounts for, and why. */
+  registryOrphans: (token: string, org: string, connectionId: string) =>
+    request<{ items: RegistryOrphan[] }>(
+      `/studio-environments/v1/registries/${encodeURIComponent(connectionId)}/orphans?organization_id=${encodeURIComponent(org)}`,
       token,
     ),
 

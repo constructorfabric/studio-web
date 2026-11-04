@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 
 import {
   api,
+  type BuildPlan,
   type ConfigSecret,
   type Connection,
   type Deployment,
@@ -15,6 +16,7 @@ import {
   type EnvironmentBinding,
   type ProjectBuildSetting,
 } from "./api";
+import { planKey, planLines, planRefusalText } from "./build-plan";
 import { type IdeBuild, buildRefusalText } from "./builds";
 import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { ownBuildSummary } from "./project-build";
@@ -754,6 +756,45 @@ export function BuildInStudio({
   const [changing, setChanging] = useState(false);
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What the build would do, asked again whenever what it would build
+  // changes -- after a pause, as the fields change per key.
+  const [plan, setPlan] = useState<BuildPlan | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [started, setStarted] = useState(0);
+  const planEnv = choices.find((e) => e.id === envId) ?? choices[0];
+  const planBody = planEnv
+    ? {
+        environment_id: planEnv.id,
+        profile: profile ?? profileFor(bindings, planEnv.id),
+        ...((productFile ?? saved?.path ?? "").trim() ? { product_file: (productFile ?? saved?.path ?? "").trim() } : {}),
+        ...((gitRef ?? saved?.branch ?? "").trim() ? { ref: (gitRef ?? saved?.branch ?? "").trim() } : {}),
+      }
+    : null;
+  const asked = planBody ? planKey(planBody) : "";
+  useEffect(() => {
+    if (!planBody) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      api
+        .planBuild(token, projectId, planBody)
+        .then((p) => {
+          if (!live) return;
+          setPlan(p);
+          setPlanError(null);
+        })
+        .catch((e: unknown) => {
+          if (!live) return;
+          setPlan(null);
+          setPlanError(errText(e));
+        });
+    }, PLAN_PAUSE_MS);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+    // `asked` is the body's fields; the body itself is a new object every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked, token, projectId, started]);
   if (choices.length === 0) {
     return (
       <div data-build-studio-unavailable>
@@ -879,11 +920,18 @@ export function BuildInStudio({
           )}
         </div>
       )}
+      {plan && <BuildPlanView plan={plan} />}
+      {planError && (
+        <p className="hint" data-build-plan-unknown>
+          Studio could not say what the build will do: {planError}
+        </p>
+      )}
       <div className="row">
         <button
           type="button"
           className="primary"
-          disabled={building}
+          disabled={building || !!plan?.refusal}
+          title={plan?.refusal ? (planRefusalText(plan.refusal) ?? undefined) : undefined}
           onClick={async () => {
             setBuilding(true);
             setError(null);
@@ -900,6 +948,8 @@ export function BuildInStudio({
               setError(buildRefusalText(e, errText));
             } finally {
               setBuilding(false);
+              // What was true before may not be now: the plan is asked again.
+              setStarted((n) => n + 1);
             }
           }}
           data-build-start-studio
@@ -907,8 +957,55 @@ export function BuildInStudio({
           {building ? "Starting…" : isResearch(env) ? "Build in Research" : "Build in Studio"}
         </button>
       </div>
+      {plan?.refusal && (
+        <div className="error" data-build-refusal={plan.refusal.code}>
+          {planRefusalText(plan.refusal)}
+        </div>
+      )}
       {error && <div className="error">{error}</div>}
     </div>
+  );
+}
+
+/** How long the fields rest before the plan is asked again. */
+const PLAN_PAUSE_MS = 400;
+
+/** "What this build will do": where its Job runs, the builder, the code and
+ *  whose connection clones it, the repositories it pushes to, and what the
+ *  server warns of. Folded to its first lines; the rest on a click. */
+function BuildPlanView({ plan }: { plan: BuildPlan }) {
+  const lines = planLines(plan);
+  return (
+    <details className="build-plan" data-build-plan open={plan.warnings.length > 0 || lines.some((l) => l.warn)}>
+      <summary>
+        <b>What this build will do</b>{" "}
+        <span className="sub">
+          · {plan.environment}, namespace <code>{plan.build_namespace}</code>
+          {plan.warnings.length > 0 ? ` · ${plan.warnings.length} warning${plan.warnings.length === 1 ? "" : "s"}` : ""}
+        </span>
+      </summary>
+      <dl
+        className="sub"
+        style={{ margin: "6px 0 0", display: "grid", gridTemplateColumns: "max-content 1fr", gap: "2px 8px" }}
+      >
+        {lines.map((l, i) => (
+          <div key={`${l.label}-${i}`} style={{ display: "contents" }} data-build-plan-line={l.label}>
+            <dt>{l.label}</dt>
+            <dd style={{ margin: 0, overflowWrap: "anywhere" }} className={l.warn ? "warn" : undefined}>
+              <code>{l.value}</code>
+              {l.warn ? " ⚠" : ""}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {plan.warnings.length > 0 && (
+        <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }} data-build-plan-warnings>
+          {plan.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </details>
   );
 }
 

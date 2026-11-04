@@ -3,8 +3,9 @@
  *
  *   - The header (ui-standard.tsx) says where the product stands, read from
  *     the ladder (releaseStatus); the explanation is behind its "?".
- *   - Then the three steps, as a StepFlow of cards: 1 Build (builds-tab.tsx),
- *     2 Deploy, 3 History (folded until opened).
+ *   - Then the steps, as a StepFlow of cards: 1 Build (builds-tab.tsx),
+ *     2 Deploy, 3 Images (project-images.tsx) and 4 History, the last two
+ *     folded until opened.
  *   - In Deploy, the ladder: the environments the project may deploy to in
  *     `promote_from` order (releases.ts), each with what runs there, how its
  *     newest deploy went, whether one waits for approval, and the action that
@@ -33,6 +34,7 @@ import { deployableBuilds, productUrls, profilesBoundTo } from "./project-deploy
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 import { ladderSteps, newestRelease, releaseStatus, stepStatus, versionOf, type LadderStep } from "./releases";
+import { ProjectImages } from "./project-images";
 import { ProductSources } from "./source-roles-view";
 import { PageHeader, StatusChip, StepFlow, type Tone } from "./ui-standard";
 
@@ -219,6 +221,22 @@ export function ProjectReleases({
           ...(unavailable
             ? []
             : [
+                {
+                  id: "images",
+                  title: "Images",
+                  state: "todo" as const,
+                  quiet: true,
+                  status: "What the builds pushed, where each runs, and how long they are kept.",
+                  body: (
+                    <ProjectImages
+                      token={token}
+                      projectId={projectId}
+                      projectName={targets?.project_name ?? projectName ?? "project"}
+                      environments={targets?.environments.map((t) => t.environment) ?? []}
+                      round={round}
+                    />
+                  ),
+                },
                 {
                   id: "history",
                   title: "History",

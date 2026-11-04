@@ -29,12 +29,14 @@ import {
   type ContainerLog,
   type DeploymentStatus,
   type EnvironmentBinding,
+  type EnvironmentReadiness,
   type ProjectTargets,
   type ResearchHardware,
   type ResearchProject,
   type Tenant,
 } from "./api";
 import {
+  DEFAULT_BUILD_NAMESPACE,
   DEFAULT_NAMESPACE_PATTERN,
   type ClusterCard,
   type EnvironmentField,
@@ -50,6 +52,7 @@ import {
   researchConnections,
   registryHost,
   namespaceFor,
+  readinessBadge,
   shortCommit,
   stateTone,
 } from "./environments";
@@ -58,6 +61,7 @@ import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
 import { BoxIcon, CloudIcon, FlaskIcon, LockIcon } from "./icons";
 import { Modal } from "./modal";
+import { RegistryBrowser } from "./registry-browser-view";
 import { databaseWord, ladderOrder, versionOf, whatRunsWhere, type ProjectRuns } from "./releases";
 import { EmptyState, PageHeader, StatusChip, type Tone } from "./ui-standard";
 import "./infrastructure.css";
@@ -434,6 +438,10 @@ export function EnvironmentForm({
   ).map((p) =>
     namespaceFor(input.namespace_pattern ?? "", p, input.name || "dev"),
   );
+  const examplesProject = ownedBy?.projectName ?? projects[0]?.name ?? "Studio Web";
+  // Typed as text: a list rebuilt on every key would swallow the comma
+  // being typed.
+  const [namespacesText, setNamespacesText] = useState(() => (input.namespaces ?? []).join(", "));
   const save = async () => {
     setBusy(true);
     setError(null);
@@ -466,6 +474,7 @@ export function EnvironmentForm({
       connection_id: kind === "research" ? (researches.length === 1 ? researches[0].id : "") : clusters.length === 1 ? clusters[0].id : "",
       registry: "",
       registry_connection_id: null,
+      registry_pull_connection_id: null,
       research_project: null,
       research_hardware: null,
       database: i.database === "shared" ? "none" : i.database,
@@ -623,6 +632,121 @@ export function EnvironmentForm({
           }}
         />
       )}
+      <label className="field">
+        Pull login
+        <select
+          value={input.registry_pull_connection_id ?? ""}
+          onChange={(e) => set("registry_pull_connection_id", e.target.value || null)}
+          aria-label="Pull login"
+          data-registry-pull-login
+        >
+          <option value="">The registry login above</option>
+          {registries
+            .filter((c) => c.id !== input.registry_connection_id)
+            .map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label} — {c.base_url}
+              </option>
+            ))}
+        </select>
+        <span className="sub">
+          A read-only login for the cluster to pull with. Without one, the cluster gets the login builds push with,
+          which can write to the registry.
+        </span>
+      </label>
+      {(editing?.warnings ?? []).length > 0 && (
+        <ul className="hint" data-environment-warnings>
+          {editing!.warnings!.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+      <details
+        className="env-advanced"
+        open={
+          !!(input.builder_image || input.build_namespace || (input.namespaces ?? []).length || input.allow_broad_registry_token) ||
+          !!(shown("builder_image") || shown("build_namespace") || shown("namespaces"))
+        }
+        data-environment-builds
+      >
+        <summary>
+          How builds run here
+          <span className="sub">
+            {" "}
+            · in <code>{namespaceFor(input.build_namespace || DEFAULT_BUILD_NAMESPACE, examplesProject, input.name || "dev")}</code>,{" "}
+            {input.builder_image ? "with the organization's builder" : "with Studio's own builder"}
+          </span>
+        </summary>
+        <label className="field">
+          Builder image
+          <input
+            value={input.builder_image ?? ""}
+            onChange={(e) => set("builder_image", e.target.value.trim() || null)}
+            placeholder="ghcr.io/acme/mirror/builder@sha256:… — empty: the one Studio ships with"
+            aria-invalid={shown("builder_image") ? true : undefined}
+            data-builder-image
+          />
+          <span className="hint">From the organization&apos;s own mirror, named by digest, so every build runs the same builder.</span>
+          {shown("builder_image") && <span className="env-field-error">{shown("builder_image")}</span>}
+        </label>
+        <label className="field">
+          Builder login
+          <select
+            value={input.builder_registry_connection_id ?? ""}
+            onChange={(e) => set("builder_registry_connection_id", e.target.value || null)}
+            aria-label="Builder login"
+          >
+            <option value="">None — the builder image is public</option>
+            {registries.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label} — {c.base_url}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          Build namespace
+          <input
+            value={input.build_namespace ?? ""}
+            onChange={(e) => set("build_namespace", e.target.value.trim() || null)}
+            placeholder={DEFAULT_BUILD_NAMESPACE}
+            aria-invalid={shown("build_namespace") ? true : undefined}
+          />
+          <span className="hint">
+            A pattern like the namespace pattern: where a project&apos;s build Job runs, apart from what it deploys.
+          </span>
+          {shown("build_namespace") && <span className="env-field-error">{shown("build_namespace")}</span>}
+        </label>
+        <label className="field">
+          Namespaces the cluster gives
+          <input
+            value={namespacesText}
+            onChange={(e) => {
+              setNamespacesText(e.target.value);
+              const list = e.target.value
+                .split(/[\s,]+/)
+                .map((n) => n.trim())
+                .filter(Boolean);
+              set("namespaces", list.length ? list : null);
+            }}
+            placeholder="web-dev, web-build — empty: Studio creates its own"
+            aria-invalid={shown("namespaces") ? true : undefined}
+          />
+          <span className="hint">
+            When Studio may not create namespaces on this cluster, the ones its administrators made for Studio to use.
+          </span>
+          {shown("namespaces") && <span className="env-field-error">{shown("namespaces")}</span>}
+        </label>
+        <label className="env-check">
+          <input
+            type="checkbox"
+            checked={!!input.allow_broad_registry_token}
+            onChange={(e) => set("allow_broad_registry_token", e.target.checked)}
+          />{" "}
+          A build&apos;s registry token may reach past the project&apos;s own path (only for a registry that cannot scope
+          one)
+        </label>
+      </details>
       <details className="env-advanced" open={!patternIsDefault || !!shown("namespace_pattern")}>
         <summary>
           Namespaces: <code>{examples.join(", ")}</code>
@@ -1383,6 +1507,9 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
                     ))
                   )}
                 </div>
+                {p.kind === "cluster" && p.id && p.environments.length > 0 && (
+                  <PlaceReadiness token={token} org={org.id} environments={p.environments} />
+                )}
                 {p.kind === "cluster" && p.id && (
                   <label className="infra-toggle" title="A project may add environments of its own on it, without an administrator (ADR-0054 §2)">
                     <input
@@ -1522,6 +1649,15 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
               </ul>
             )}
 
+            {opened.kind === "registry" && opened.id && mayManage && (
+              <>
+                <h4 className="env-sub" data-registry-contents>
+                  What is in it
+                </h4>
+                <RegistryBrowser token={token} org={org.id} connectionId={opened.id} />
+              </>
+            )}
+
             {opened.card && (
               <>
                 <h4 className="env-sub" data-running-now>
@@ -1547,6 +1683,54 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
         </Modal>,
           document.body,
         )}
+    </div>
+  );
+}
+
+/** Whether a cluster is ready for Studio, per environment on it: asked when
+ *  a person asks, not when the page opens -- each answer is a walk of the
+ *  cluster's rights -- and never again by itself. */
+function PlaceReadiness({ token, org, environments }: { token: string; org: string; environments: DeployEnvironment[] }) {
+  const [answers, setAnswers] = useState<Record<string, EnvironmentReadiness | { error: string }> | null>(null);
+  const [asking, setAsking] = useState(false);
+  const ask = async () => {
+    setAsking(true);
+    const pairs = await Promise.all(
+      environments.map(async (e) => {
+        try {
+          const owner = e.project_id ? { project: e.project_id } : { org };
+          return [e.id, await api.environmentReadiness(token, e.id, owner)] as const;
+        } catch (err) {
+          return [e.id, { error: errText(err) }] as const;
+        }
+      }),
+    );
+    setAnswers(Object.fromEntries(pairs));
+    setAsking(false);
+  };
+  return (
+    <div className="env-cluster-envs" data-place-readiness>
+      {answers &&
+        environments.map((e) => {
+          const a = answers[e.id];
+          if (!a) return null;
+          if ("error" in a)
+            return (
+              <StatusChip key={e.id} tone="neutral" title={a.error} data-readiness="unknown">
+                {environments.length > 1 ? `${e.name}: ` : ""}not known
+              </StatusChip>
+            );
+          const badge = readinessBadge(a);
+          return (
+            <StatusChip key={e.id} tone={badge.tone} title={badge.title} data-readiness={a.level}>
+              {environments.length > 1 ? `${e.name}: ` : ""}
+              {badge.label}
+            </StatusChip>
+          );
+        })}
+      <button type="button" className="linklike" disabled={asking} onClick={() => void ask()} data-readiness-check>
+        {asking ? "Asking the cluster…" : answers ? "Check again" : "Check readiness"}
+      </button>
     </div>
   );
 }

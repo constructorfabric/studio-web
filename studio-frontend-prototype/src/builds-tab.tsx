@@ -19,6 +19,7 @@ import {
   type EnvironmentBinding,
   type ProjectBuildSetting,
   type ProjectConfig,
+  type ProjectImage,
 } from "./api";
 import {
   BUILD_STAGES,
@@ -61,7 +62,9 @@ import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-d
 import { buildsHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 import { productPathOf } from "./product";
+import { recordFor, whereItRuns } from "./images";
 import { HowItBuilds } from "./project-build-card";
+import { showImage } from "./project-images";
 import { EmptyState, InfoPopover, PageHeader, StatusChip, type Tone } from "./ui-standard";
 
 /** What the three ways of building are, behind a "?". */
@@ -810,13 +813,7 @@ function BuildDetails({
         </div>
       )}
       {b.images.length > 0 ? (
-        <ul className="sub" style={{ margin: "8px 0 0", paddingLeft: 16 }} data-build-images>
-          {b.images.map((i) => (
-            <li key={i.app}>
-              {i.app} → <code>{i.image}</code>
-            </li>
-          ))}
-        </ul>
+        <BuildImages token={token} projectId={projectId} build={b} />
       ) : b.outputs.length > 0 ? (
         <div className="sub">{b.outputs.join(", ")}</div>
       ) : null}
@@ -837,6 +834,54 @@ function BuildDetails({
         />
       )}
     </div>
+  );
+}
+
+/** The images a build published, each linked to its record under Images:
+ *  where it runs now, whether it is pinned or gone. The records are read
+ *  when the build is opened; an image Studio did not record (a build from
+ *  before the records, or one the IDE pushed) is its reference alone. */
+function BuildImages({ token, projectId, build: b }: { token: string; projectId: string; build: IdeBuild }) {
+  const [records, setRecords] = useState<ProjectImage[]>([]);
+  useEffect(() => {
+    let live = true;
+    api
+      .projectImages(token, projectId, { build_id: b.buildId })
+      .then((page) => live && setRecords(page.items))
+      .catch(() => live && setRecords([]));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, b.buildId]);
+  return (
+    <ul className="sub" style={{ margin: "8px 0 0", paddingLeft: 16 }} data-build-images>
+      {b.images.map((i) => {
+        const record = recordFor(i, records, b.buildId);
+        return (
+          <li key={i.app} data-build-image={i.app}>
+            {i.app} → <code>{i.image}</code>
+            {record && (
+              <>
+                {" "}
+                ·{" "}
+                <a
+                  href={`#image-${record.id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    showImage(record.id);
+                  }}
+                  title={`${whereItRuns(record.running_in)}${record.pinned ? " Pinned." : ""}`}
+                  data-build-image-record={record.id}
+                >
+                  its record
+                </a>
+                {record.state !== "present" && <span> ({record.state})</span>}
+              </>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
