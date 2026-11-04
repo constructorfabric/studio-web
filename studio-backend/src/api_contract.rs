@@ -46,6 +46,8 @@ use std::path::{Path, PathBuf};
 
 pub(crate) mod compat;
 pub(crate) mod events;
+#[cfg(test)]
+mod schema_names; // OpenAPI schema names, one namespace across every gear
 
 /// The domain registry: the first path segment of every Studio API.
 ///
