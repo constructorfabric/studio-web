@@ -762,8 +762,8 @@ export const SURFACES: Surface[] = [
     id: "environments",
     area: "organization",
     title: "Infrastructure",
-    does: "Lay out where the organization's products run (ADR-0056 §2): the places it holds -- its clusters and Constructor Research projects, each with its test, whether it is open to projects and the environments on it, and its registries; the environments as the ladder a release climbs, in promote_from order, each with its place, database and approval, added from the place it runs on; and what runs where, projects by environments with the version and state, with the deploys waiting for an administrator to approve or decline.",
-    components: ["OrgInfrastructure", "EnvironmentForm", "ResearchFields", "AddCluster", "AddRegistry", "OpenClusters"],
+    does: "Lay out where the organization's products run (ADR-0056 §2): the environments as the ladder a release climbs, in promote_from order, each with its place, approval, projects and deploys to decide; beside it, what runs where, projects by environments with the version and state, with the deploys waiting for an administrator to approve or decline; below, the places it holds -- clusters, Constructor Research projects and registries -- as one grid of cards, a cluster's \"open to projects\" a switch, each opening a side panel with its address, its test and the environments on it, where an environment is added. \"Add a place\" connects a cluster, a Research project or a registry.",
+    components: ["OrgInfrastructure", "EnvironmentForm", "ResearchFields", "AddCluster", "AddRegistry"],
     gears: ["account-management", "studio-connector", "studio-environments"],
   },
   {

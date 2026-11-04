@@ -14,7 +14,8 @@
  * images and sends the generated chart; the server installs it with the
  * environment's connection. */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { profileLabel } from "./product";
 import { oneEach } from "./project-deploys";
@@ -52,11 +53,14 @@ import {
   shortCommit,
   stateTone,
 } from "./environments";
-import { DataTable } from "./data-table";
+import { DataTable, RowMenu } from "./data-table";
 import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
+import { BoxIcon, CloudIcon, FlaskIcon, LockIcon } from "./icons";
+import { Modal } from "./modal";
 import { databaseWord, ladderOrder, versionOf, whatRunsWhere, type ProjectRuns } from "./releases";
-import { Tile } from "./view-mode";
+import { EmptyState, PageHeader, StatusChip, type Tone } from "./ui-standard";
+import "./infrastructure.css";
 
 const PROJECT_TYPE = /tenant\.project\.v1/;
 
@@ -214,6 +218,7 @@ function ResearchFields({
   org,
   input,
   researches,
+  fixed,
   set,
   shown,
 }: {
@@ -221,6 +226,8 @@ function ResearchFields({
   org: string;
   input: DeployEnvironmentInput;
   researches: Connection[];
+  /** Opened from its place: the connection is that one, not asked again. */
+  fixed?: boolean;
   set: <K extends keyof DeployEnvironmentInput>(k: K, v: DeployEnvironmentInput[K]) => void;
   shown: (f: EnvironmentField) => string | null;
 }) {
@@ -257,6 +264,7 @@ function ResearchFields({
   const typed = unreachable !== null || (projects !== null && projects.length === 0);
   return (
     <>
+      {!fixed && (
       <label className="field">
         Constructor Research connection
         <select
@@ -279,6 +287,7 @@ function ResearchFields({
         </span>
         {shown("connection_id") && <span className="env-field-error">{shown("connection_id")}</span>}
       </label>
+      )}
       {connection && (
         <label className="field">
           Research project
@@ -446,7 +455,8 @@ export function EnvironmentForm({
   const research = input.kind === "research";
   // Added from a place's card ("Add an environment here"): it runs there. The
   // form does not offer another place, nor Research beside a cluster.
-  const place = editing ? undefined : [...clusters, ...researches].find((c) => c.id === initialCluster);
+  // Changed: it stays on the place it runs on, which the form names too.
+  const place = [...clusters, ...researches].find((c) => c.id === (editing ? editing.connection_id : initialCluster));
   // Switching what runs the products starts its own fields over: a cluster's
   // registry means nothing to Research, and Research's project nothing to a cluster.
   const runOn = (kind: "kubernetes" | "research") =>
@@ -495,8 +505,10 @@ export function EnvironmentForm({
           </span>
           <span className="sub">
             {research
-              ? "The Constructor Research connection this was added from."
-              : "The cluster this was added from. Add an environment on another cluster from that cluster's card."}
+              ? "The Constructor Research project it runs in is chosen below; every member builds and deploys there with their own sign-in."
+              : editing
+                ? "The cluster it runs on."
+                : "The cluster this was added from. Add an environment on another cluster from that cluster's card."}
           </span>
         </div>
       ) : (
@@ -518,7 +530,7 @@ export function EnvironmentForm({
       </label>
       )}
       {research && (
-        <ResearchFields token={token} org={org} input={input} researches={place ? [place] : researches} set={set} shown={shown} />
+        <ResearchFields token={token} org={org} input={input} researches={place ? [place] : researches} fixed={!!place} set={set} shown={shown} />
       )}
       {!research && (
       <>
@@ -790,7 +802,94 @@ export function EnvironmentForm({
   );
 }
 
-/** The organization's Environments section. */
+/** What a place is: a cluster or a Constructor Research project products run
+ *  on, or a registry their images come from (ADR-0056 §1). */
+type PlaceKind = "cluster" | "research" | "registry";
+
+const PLACE_WORD: Record<PlaceKind, string> = { cluster: "Cluster", research: "Constructor Research", registry: "Registry" };
+
+/** A place's kind as its mark: the same one on its card, on a rung of the
+ *  ladder and in its panel. */
+function PlaceIcon({ kind, size = 16 }: { kind: PlaceKind; size?: number }) {
+  if (kind === "research") return <FlaskIcon size={size} aria-label="Constructor Research" />;
+  if (kind === "registry") return <BoxIcon size={size} aria-label="Registry" />;
+  return <CloudIcon size={size} aria-label="Kubernetes cluster" />;
+}
+
+/** One place as the page holds it: what it is, how it answered, and the
+ *  environments on it (or, for a registry, those that pull from it). */
+interface Place {
+  /** The connection's id; "" for environments on a cluster this page cannot see. */
+  id: string;
+  kind: PlaceKind;
+  label: string;
+  baseUrl: string;
+  environments: DeployEnvironment[];
+  card: ClusterCard | null;
+}
+
+/** Opens Organization › Connections, where a member signs in to Constructor
+ *  Research: the sign-in is the member's own (ADR-0049 §5), so it is not made
+ *  on this page. */
+function openConnections() {
+  window.history.pushState(null, "", `/connections${window.location.search}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/** "Add a place ▾": the one way a place is added, whatever its kind. */
+function AddPlaceMenu({ onPick }: { onPick: (kind: PlaceKind) => void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: PointerEvent) => {
+      if (wrap.current && e.target instanceof Node && !wrap.current.contains(e.target)) setOpen(false);
+    };
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("pointerdown", down);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("pointerdown", down);
+      document.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  const item = (kind: PlaceKind, sub: string) => (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        setOpen(false);
+        onPick(kind);
+      }}
+      data-add-place={kind}
+    >
+      <PlaceIcon kind={kind} />
+      <span>
+        <b>{PLACE_WORD[kind]}</b>
+        <span className="sub">{sub}</span>
+      </span>
+    </button>
+  );
+  return (
+    <div className="infra-menu" ref={wrap}>
+      <button type="button" className="primary" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} data-place-add>
+        Add a place ▾
+      </button>
+      {open && (
+        <div className="infra-menu-list" role="menu">
+          {item("cluster", "a Kubernetes cluster, by its kubeconfig")}
+          {item("research", "your sign-in to a Research project")}
+          {item("registry", "where images and charts are pushed")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The organization's Infrastructure section (ADR-0056 §2): one header, the
+ *  environments as the ladder a release climbs (or, in the tab beside it,
+ *  what runs where), then the places as one grid of cards. A place's details
+ *  open in a side panel; an environment is added from its place. */
 export function OrgInfrastructure({ token, org, workspaceIds }: { token: string; org: { id: string; name: string }; workspaceIds: string[] }) {
   const [environments, setEnvironments] = useState<DeployEnvironment[] | null>(null);
   const [mayManage, setMayManage] = useState(false);
@@ -799,19 +898,27 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [projects, setProjects] = useState<Tenant[]>([]);
   const [editing, setEditing] = useState<DeployEnvironment | "new" | null>(null);
-  // Where the form opened: a place's own list, or the ladder. It is drawn
-  // there, next to what it changes.
-  const [editingAt, setEditingAt] = useState<"place" | "ladder">("place");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
   const [reason, setReason] = useState("");
-  const [connectingCluster, setConnectingCluster] = useState(false);
-  const [connectingRegistry, setConnectingRegistry] = useState(false);
-  /** The cluster whose environments and deploys are shown below the cards. */
-  const [selected, setSelected] = useState<string | null>(null);
-  /** Each cluster's answer to a test, asked when the page opens. */
+  // "Connect a registry" elsewhere (a project's Releases) lands here with
+  // `?add=registry`: the form is open, and the address forgets it.
+  const [adding, setAdding] = useState<"cluster" | "registry" | null>(() => {
+    const asked = new URLSearchParams(window.location.search).get("add");
+    return asked === "registry" || asked === "cluster" ? asked : null;
+  });
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("add")) return;
+    url.searchParams.delete("add");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+  }, []);
+  const [tab, setTab] = useState<"ladder" | "where">("ladder");
+  /** The place whose side panel is open. */
+  const [panel, setPanel] = useState<string | null>(null);
+  /** Each place's answer to a test, asked when the page opens. */
   const [health, setHealth] = useState<Record<string, { state: "checking" | "ok" | "bad"; text: string; at: number }>>({});
   // What a Test answered, kept at the row it was asked from.
   const [answers, setAnswers] = useState<Record<string, { ok: boolean; text: string }>>({});
@@ -869,10 +976,28 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
   const clusters = useMemo(() => clusterConnections(connections), [connections]);
   const registries = useMemo(() => registryConnections(connections), [connections]);
   const researches = useMemo(() => researchConnections(connections), [connections]);
-  // A Research connection is a place products run, beside the clusters.
-  const places = useMemo(() => [...clusters, ...researches], [clusters, researches]);
-  const cards = useMemo(() => clusterCards(places, environments ?? [], deployments), [places, environments, deployments]);
-  const current: ClusterCard | null = cards.find((c) => c.id === selected) ?? cards[0] ?? null;
+  const cards = useMemo(() => clusterCards([...clusters, ...researches], environments ?? [], deployments), [clusters, researches, environments, deployments]);
+  // Every place in one list: clusters, Research projects, registries.
+  const places: Place[] = useMemo(() => {
+    const envs = environments ?? [];
+    const runs: Place[] = cards.map((c) => ({
+      id: c.id,
+      kind: researches.some((r) => r.id === c.id) || (c.id === "" && c.environments.every((e) => e.kind === "research")) ? "research" : "cluster",
+      label: c.label,
+      baseUrl: c.baseUrl,
+      environments: c.environments,
+      card: c,
+    }));
+    const pulls: Place[] = registries.map((r) => ({
+      id: r.id,
+      kind: "registry",
+      label: r.label,
+      baseUrl: r.base_url ?? "",
+      environments: envs.filter((e) => e.registry_connection_id === r.id),
+      card: null,
+    }));
+    return [...runs, ...pulls];
+  }, [cards, registries, researches, environments]);
   const check = useCallback(
     (id: string) => {
       setHealth((h) => ({ ...h, [id]: { state: "checking", text: "Checking…", at: Date.now() } }));
@@ -883,13 +1008,14 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
     },
     [token, org.id],
   );
-  // Every cluster is asked once when the page opens, so the cards say at a
-  // glance which answer and which do not.
-  const clusterIds = clusters.map((c) => c.id).join(",");
+  // Every cluster and registry is asked once when the page opens, so the
+  // cards say at a glance which answer. A Research sign-in is a member's own
+  // and is tested from Connections.
+  const testedIds = [...clusters, ...registries].map((c) => c.id).join(",");
   useEffect(() => {
-    for (const c of clusters) check(c.id);
+    for (const c of [...clusters, ...registries]) check(c.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clusterIds, check]);
+  }, [testedIds, check]);
   const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? id.slice(0, 8);
 
   const act = async (key: string, run: () => Promise<string>) => {
@@ -906,22 +1032,40 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
     }
   };
 
+  // "Open to projects", saved as soon as it is switched (ADR-0054 §2).
+  const setOpen = async (id: string, on: boolean) => {
+    const next = on ? [...new Set([...openClusters, id])] : openClusters.filter((c) => c !== id);
+    const before = openClusters;
+    setOpenClusters(next);
+    setBusy(`open:${id}`);
+    try {
+      setOpenClusters((await api.saveOpenClusters(token, org.id, next)).connection_ids);
+    } catch (e) {
+      setOpenClusters(before);
+      setError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const waiting = awaitingDecision(deployments);
   const ladder = useMemo(() => ladderOrder(environments ?? []), [environments]);
   const runsWhere = useMemo(() => whatRunsWhere(deployments), [deployments]);
-  const placeOf = (id: string) => places.find((c) => c.id === id);
+  const placeOf = (e: DeployEnvironment) => places.find((p) => p.id === e.connection_id && p.kind !== "registry") ?? places.find((p) => p.id === "" && p.environments.includes(e));
   const envName = (id: string) => environments?.find((e) => e.id === id)?.name ?? id;
-  const usedBy = (registry: string) => (environments ?? []).filter((e) => e.registry_connection_id === registry).map((e) => e.name);
-  const startEditing = (e: DeployEnvironment | "new", at: "place" | "ladder") => {
-    setEditing(e);
-    setEditingAt(at);
-  };
-  // The same actions wherever an environment is listed.
-  const environmentActions = (e: DeployEnvironment, at: "place" | "ladder") =>
+  const running = cards.reduce((n, c) => n + c.running.length, 0);
+  const unanswered = places.filter((p) => p.id === "" || health[p.id]?.state === "bad").length;
+  const environmentActions = (e: DeployEnvironment) =>
     mayManage
       ? [
           { label: busy === e.id ? "Asking…" : "Test", disabled: busy === e.id, onSelect: () => ask(e.id, async () => (await api.testEnvironment(token, org.id, e.id)).message) },
-          { label: "Change", onSelect: () => startEditing(e, at) },
+          {
+            label: "Change",
+            onSelect: () => {
+              setPanel(placeOf(e)?.id ?? e.connection_id);
+              setEditing(e);
+            },
+          },
           {
             label: "Remove",
             danger: { title: `Remove ${e.name}?`, body: "What runs in the cluster stays there.", confirmLabel: "Remove" },
@@ -933,602 +1077,474 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
           },
         ]
       : [];
-  // The form names the place it starts from (§5): a new environment the
-  // place it is added on, a changed one the place it runs on.
-  const form = (place: string) =>
-    editing !== null && (
-      <EnvironmentForm
-        token={token}
-        org={org.id}
-        editing={editing === "new" ? null : editing}
-        others={environments ?? []}
-        clusters={clusters}
-        registries={registries}
-        researches={researches}
-        projects={projects}
-        initialCluster={editing === "new" ? place : editing.connection_id}
-        onCancel={() => setEditing(null)}
-        onDone={() => {
-          setEditing(null);
-          load();
-        }}
-        onClusterAdded={(c) => setConnections((cs) => [...cs, c])}
-      />
-    );
+  const projectsWord = (e: DeployEnvironment) =>
+    e.project_id ? `${projectName(e.project_id)} only` : e.projects ? `${e.projects.length} project${e.projects.length === 1 ? "" : "s"}` : "every project";
+  const opened = places.find((p) => p.id === panel) ?? null;
 
   return (
-    <div className="envs" data-org-environments data-org-infrastructure>
+    <div className="envs infra" data-org-environments data-org-infrastructure>
       <style>{ENV_CSS}</style>
-      <h1>Infrastructure</h1>
-      <p className="subtitle">
-        Where {org.name}&apos;s products run: the places it holds -- a cluster, a Constructor Research project, the registry
-        images come from -- the environments it defines on them, dev to prod, and what runs where. A deploy runs on the server
-        with the environment&apos;s connection -- nobody&apos;s laptop holds the cluster&apos;s credentials.
-      </p>
+      <PageHeader
+        title="Infrastructure"
+        status={
+          environments === null ? (
+            <StatusChip tone="running">reading…</StatusChip>
+          ) : (
+            <>
+              <span data-infra-count>
+                {places.length} place{places.length === 1 ? "" : "s"} · {ladder.length} environment{ladder.length === 1 ? "" : "s"} · {running} running
+              </span>
+              {waiting.length > 0 && (
+                <StatusChip tone="warn" onClick={() => setTab("where")} data-deploys-awaiting-count>
+                  {waiting.length} waiting for a decision
+                </StatusChip>
+              )}
+              {unanswered > 0 && <StatusChip tone="danger">{unanswered} not answering</StatusChip>}
+            </>
+          )
+        }
+        info={
+          <>
+            <p>
+              Where {org.name}&apos;s products run: the places it holds (a cluster, a Constructor Research project, the
+              registry images come from), the environments it defines on them, dev to prod, and what runs where.
+            </p>
+            <p>
+              A deploy runs on the server with the environment&apos;s connection: nobody&apos;s laptop holds the
+              cluster&apos;s credentials. An environment is added from the place it runs on; a release climbs the ladder,
+              each environment taking from the one before it.
+            </p>
+          </>
+        }
+        actions={
+          mayManage ? (
+            <AddPlaceMenu
+              onPick={(kind) => {
+                if (kind === "research") openConnections();
+                else setAdding(kind);
+              }}
+            />
+          ) : undefined
+        }
+      />
       {error && <div className="error">{error}</div>}
       {notice && <div className="hint">{notice}</div>}
-      {waiting.length > 0 && (
-        <div className="hint" data-deploys-awaiting-count>
-          {waiting.length === 1 ? "A deploy waits" : `${waiting.length} deploys wait`} for a decision, under{" "}
-          <button
-            type="button"
-            className="linklike"
-            onClick={() => document.querySelector("[data-what-runs-where]")?.scrollIntoView({ behavior: "smooth" })}
-          >
-            What runs where
-          </button>
-          .
+      {adding === "cluster" && (
+        <section className="card">
+          <AddCluster
+            token={token}
+            org={org.id}
+            onCancel={() => setAdding(null)}
+            onAdded={(c) => {
+              setAdding(null);
+              setNotice(`Connected ${c.label}.`);
+              setPanel(c.id);
+              load();
+            }}
+          />
+        </section>
+      )}
+      {adding === "registry" && (
+        <section className="card">
+          <AddRegistry
+            token={token}
+            org={org.id}
+            onCancel={() => setAdding(null)}
+            onAdded={(c) => {
+              setAdding(null);
+              setNotice(`Connected ${c.label}.`);
+              setConnections((cs) => [...cs, c]);
+            }}
+          />
+        </section>
+      )}
+
+      <div className="infra-tabs" role="tablist" aria-label="Environments">
+        <button type="button" role="tab" aria-selected={tab === "ladder"} className={tab === "ladder" ? "on" : ""} onClick={() => setTab("ladder")} data-infra-tab="ladder">
+          Environments
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "where"} className={tab === "where" ? "on" : ""} onClick={() => setTab("where")} data-infra-tab="where">
+          What runs where
+          {waiting.length > 0 && <span className="badge warn">{waiting.length}</span>}
+        </button>
+      </div>
+
+      {tab === "ladder" ? (
+        <section className="card" data-environment-ladder data-infra-environments>
+          {environments === null ? (
+            <p className="hint">Loading…</p>
+          ) : ladder.length === 0 ? (
+            <EmptyState
+              title="No environment yet · add dev, stage or prod from a place"
+              action={
+                mayManage && places.some((p) => p.kind !== "registry" && p.id) ? (
+                  <button type="button" onClick={() => setPanel(places.find((p) => p.kind !== "registry" && p.id)!.id)}>
+                    Open a place
+                  </button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <ol className="infra-ladder" aria-label="The environments a release climbs">
+              {ladder.map((e, i) => {
+                const place = placeOf(e);
+                const pending = waiting.filter((d) => d.environment_id === e.id).length;
+                const before = i > 0 ? ladder[i - 1] : null;
+                return (
+                  <li key={e.id} className="infra-rung" data-ladder-environment={e.name}>
+                    <div className="infra-rung-head">
+                      <b>{e.name}</b>
+                      {e.protected && (
+                        <span className="infra-lock" title="Protected: a deploy waits for an administrator's approval" aria-label="needs approval">
+                          <LockIcon size={13} />
+                        </span>
+                      )}
+                      {pending > 0 && (
+                        <StatusChip tone="warn" onClick={() => setTab("where")} data-rung-pending>
+                          {pending} to decide
+                        </StatusChip>
+                      )}
+                      <span className="grow" />
+                      <RowMenu label={e.name} actions={environmentActions(e)} onRun={(a) => void a.onSelect()} />
+                    </div>
+                    {place ? (
+                      <button type="button" className="infra-place-chip" onClick={() => setPanel(place.id)} data-rung-place={place.kind}>
+                        <PlaceIcon kind={place.kind} size={13} />
+                        {place.label}
+                      </button>
+                    ) : (
+                      <span className="sub">a place this page cannot see</span>
+                    )}
+                    <div className="sub">
+                      {projectsWord(e)} · {databaseWord(e)}
+                      {e.promote_from && e.promote_from !== before?.id && <> · takes from {envName(e.promote_from)}</>}
+                      {!e.promote_from && i > 0 && <> · takes any build</>}
+                    </div>
+                    <Answer id={e.id} />
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </section>
+      ) : (
+        <div data-what-runs-where>
+          {waiting.length > 0 && (
+            <section className="card" data-deploys-awaiting>
+              <h3>Waiting for a decision</h3>
+              <ul className="env-list">
+                {waiting.map((d) => (
+                  <li key={d.id}>
+                    <DeploymentLine d={d} showProject />
+                    {mayManage ? (
+                      <div className="env-actions">
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={busy === d.id}
+                          data-deploy-approve
+                          onClick={() =>
+                            void act(d.id, async () => {
+                              await api.decideDeployment(token, org.id, d.id, "approve");
+                              return `Approved: ${d.product} goes to ${d.environment_name}.`;
+                            })
+                          }
+                        >
+                          Approve
+                        </button>
+                        <button type="button" disabled={busy === d.id} onClick={() => setDeclining(declining === d.id ? null : d.id)}>
+                          Decline…
+                        </button>
+                        {declining === d.id && (
+                          <>
+                            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="required: why not" aria-label="Reason" />
+                            <button
+                              type="button"
+                              disabled={busy === d.id || !reason.trim()}
+                              onClick={() =>
+                                void act(d.id, async () => {
+                                  await api.decideDeployment(token, org.id, d.id, "decline", reason.trim());
+                                  setDeclining(null);
+                                  setReason("");
+                                  return `Declined the deploy of ${d.product} to ${d.environment_name}.`;
+                                })
+                              }
+                            >
+                              Decline
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="hint">An organization administrator decides.</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          <div className="card" data-runs-where>
+            <DataTable<ProjectRuns>
+              list="what-runs-where"
+              rows={environments === null ? null : runsWhere}
+              rowKey={(r) => r.projectId}
+              rowLabel={(r) => r.projectName}
+              defaultView="table"
+              empty={{ title: "Nothing runs anywhere yet · deploy from a project's Releases" }}
+              columns={[
+                {
+                  id: "project",
+                  header: "Project",
+                  compare: (a, b) => a.projectName.localeCompare(b.projectName),
+                  cell: (r) => <b>{r.projectName}</b>,
+                },
+                ...ladder.map((e) => ({
+                  id: `env-${e.id}`,
+                  header: e.name,
+                  cell: (r: ProjectRuns) => {
+                    const cell = r.cells.get(e.id);
+                    if (!cell) return <span className="sub">—</span>;
+                    const runs = cell.runs ? versionOf(cell.runs) : null;
+                    const asked = versionOf(cell.latest);
+                    // What runs, as a chip; the newest deploy beside it when it
+                    // is not what runs: waiting, deploying, failed, taken out.
+                    return (
+                      <div className="infra-cell" data-runs-cell={`${r.projectName}/${e.name}`} title={`newest deploy ${relTime(cell.latest.requested_at)}`}>
+                        {runs ? <StatusChip tone="ok">{runs}</StatusChip> : <span className="sub">nothing runs</span>}
+                        {cell.latest.id !== cell.runs?.id && (
+                          <StatusChip tone={CHIP_TONE[stateTone(cell.latest.state)]} data-deployment-state={cell.latest.state}>
+                            {asked ? `${asked} · ` : ""}
+                            {STATE_LABELS[cell.latest.state] ?? cell.latest.state}
+                          </StatusChip>
+                        )}
+                      </div>
+                    );
+                  },
+                })),
+              ]}
+            />
+          </div>
         </div>
       )}
 
       <h2 className="env-part" data-infra-places>
         Places
       </h2>
-      <p className="hint">The clusters and Constructor Research projects products run on, and the registries their images come from.</p>
-      <div className="card" data-clusters>
-        <DataTable<ClusterCard>
-          list="clusters"
-          title="Clusters and Research projects"
-          rows={environments === null ? null : cards}
-          rowKey={(c) => c.id || "unseen"}
-          rowLabel={(c) => c.label}
-          onOpen={(c) => setSelected(c.id)}
-          search={{ placeholder: "Search clusters" }}
-          searchText={(c) => [c.label, c.baseUrl, ...c.environments.map((e) => e.name)]}
-          defaultView="table"
-          primary={
-            mayManage ? (
-              <button type="button" className="primary" onClick={() => setConnectingCluster(true)} data-cluster-add>
-                Connect a cluster
-              </button>
-            ) : undefined
-          }
-          empty={{ title: "No cluster connected yet.", body: "Connect one to add the environments products run in." }}
-          columns={[
-            {
-              id: "cluster",
-              header: "Cluster",
-              compare: (a, b) => a.label.localeCompare(b.label),
-              cell: (c) => (
-                <div className={`env-cluster-cell${current?.id === c.id ? " on" : ""}`}>
-                  <span className={`env-dot env-dot-${c.id ? (health[c.id]?.state ?? "checking") : "bad"}`} aria-hidden />
-                  <div>
-                    <div className="pname">{c.label}</div>
-                    <div className="sub">{c.baseUrl ? c.baseUrl.replace(/^https?:\/\//, "") : "its connection is out of reach"}</div>
-                  </div>
-                </div>
-              ),
-            },
-            {
-              id: "health",
-              header: "Answers",
-              cell: (c) => (
-                <span className={`env-cluster-health ${c.id ? (health[c.id]?.state ?? "") : "bad"}`}>
-                  {c.id ? (health[c.id]?.text ?? "Checking…") : "—"}
-                </span>
-              ),
-            },
-            {
-              id: "environments",
-              header: "Environments",
-              compare: (a, b) => a.environments.length - b.environments.length,
-              cell: (c) =>
-                c.environments.length === 0 ? (
-                  <span className="sub">none yet</span>
-                ) : (
-                  <span className="env-cluster-envs">
-                    {c.environments.map((e) => (
-                      <span key={e.id} className={`env-chip${e.protected ? " protected" : ""}`} title={e.protected ? "Protected: a deploy waits for approval" : undefined}>
-                        {e.protected ? "🔒 " : ""}
-                        {e.name}
-                      </span>
-                    ))}
+      {environments !== null && places.length === 0 ? (
+        <section className="card">
+          <EmptyState
+            title="No place yet · connect a cluster, a Research project or a registry"
+            action={mayManage ? <AddPlaceMenu onPick={(kind) => (kind === "research" ? openConnections() : setAdding(kind))} /> : undefined}
+          />
+        </section>
+      ) : (
+        <div className="infra-places" data-clusters data-registries>
+          {places.map((p) => {
+            const h = p.id ? health[p.id] : { state: "bad" as const, text: "its connection is out of reach", at: 0 };
+            const isOpen = openClusters.includes(p.id);
+            return (
+              <article
+                key={`${p.kind}:${p.id}`}
+                className={`card infra-place${panel === p.id ? " on" : ""}${p.id ? "" : " unseen"}`}
+                data-place={p.label}
+                data-place-kind={p.kind}
+              >
+                <button type="button" className="infra-place-open" onClick={() => setPanel(p.id)} aria-label={`Open ${p.label}`}>
+                  <span className="infra-place-top">
+                    <PlaceIcon kind={p.kind} />
+                    <b>{p.label}</b>
+                    {h && <span className={`env-dot env-dot-${h.state}`} aria-hidden />}
                   </span>
-                ),
-            },
-            { id: "running", header: "Running", num: true, compare: (a, b) => a.running.length - b.running.length, cell: (c) => c.running.length },
-            {
-              id: "deployed",
-              header: "Last deploy",
-              compare: (a, b) => (a.lastDeploy ?? "").localeCompare(b.lastDeploy ?? ""),
-              cell: (c) => (c.lastDeploy ? relTime(c.lastDeploy) : <span className="sub">never</span>),
-            },
-          ]}
-          actions={(c) => (c.id ? [{ label: "Test again", onSelect: () => check(c.id) }] : [])}
-          tile={(c, open) => (
-            <Tile
-              tone={current?.id === c.id ? "env-tile-on" : undefined}
-              icon={<span className={`env-dot env-dot-${c.id ? (health[c.id]?.state ?? "checking") : "bad"}`} aria-hidden />}
-              title={c.label}
-              subtitle={
-                <span className={`env-cluster-health ${c.id ? (health[c.id]?.state ?? "") : "bad"}`}>
-                  {c.id ? (health[c.id]?.text ?? "Checking…") : "its connection is out of reach"}
-                </span>
-              }
-              onClick={open}
-              stats={[
-                { label: "envs", value: c.environments.length },
-                { label: "running", value: c.running.length },
-                { label: "deployed", value: c.lastDeploy ? relTime(c.lastDeploy) : "never" },
-              ]}
-              footer={
-                c.environments.length ? (
-                  <span className="env-cluster-envs">
-                    {c.environments.map((e) => (
+                  <span className="sub">
+                    {PLACE_WORD[p.kind]}
+                    {p.baseUrl ? ` · ${p.kind === "registry" ? registryHost(p.baseUrl) || p.baseUrl : p.baseUrl.replace(/^https?:\/\//, "")}` : ""}
+                  </span>
+                  <span className={`env-cluster-health ${h?.state ?? ""}`}>
+                    {h ? h.text : p.kind === "research" ? "each member signs in with their own account" : ""}
+                  </span>
+                </button>
+                <div className="env-cluster-envs">
+                  {p.environments.length === 0 ? (
+                    <span className="sub">{p.kind === "registry" ? "no environment pulls from it" : "no environment on it"}</span>
+                  ) : (
+                    p.environments.map((e) => (
                       <span key={e.id} className={`env-chip${e.protected ? " protected" : ""}`}>
                         {e.protected ? "🔒 " : ""}
                         {e.name}
                       </span>
-                    ))}
-                  </span>
-                ) : undefined
-              }
-            />
-          )}
-        />
-      </div>
-      {connectingCluster && (
-        <section className="card">
-          <AddCluster
-            token={token}
-            org={org.id}
-            onCancel={() => setConnectingCluster(false)}
-            onAdded={(c) => {
-              setConnectingCluster(false);
-              setNotice(`Connected ${c.label}.`);
-              setSelected(c.id);
-              load();
-            }}
-          />
-        </section>
-      )}
-      {cards.length === 0 && !connectingCluster && (
-        <p className="empty">No cluster connected yet. Connect one to add the environments products run in.</p>
+                    ))
+                  )}
+                </div>
+                {p.kind === "cluster" && p.id && (
+                  <label className="infra-toggle" title="A project may add environments of its own on it, without an administrator (ADR-0054 §2)">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={isOpen}
+                      disabled={!mayManage || busy === `open:${p.id}`}
+                      onChange={(ev) => void setOpen(p.id, ev.target.checked)}
+                      data-open-cluster={p.label}
+                    />
+                    <span className="infra-switch" aria-hidden />
+                    Open to projects
+                  </label>
+                )}
+              </article>
+            );
+          })}
+        </div>
       )}
 
-      {current && (
-        <section className="card env-detail" data-cluster-detail={current.label}>
-          <div className="card-head">
-            <div>
-              <h3>{current.label}</h3>
-              {current.baseUrl && <code className="sub">{current.baseUrl}</code>}
+      {/* Over the whole page, top bar included: drawn at the document's end. */}
+      {opened &&
+        createPortal(
+        <Modal
+          label={opened.label}
+          onClose={() => {
+            setPanel(null);
+            setEditing(null);
+          }}
+          backdropClassName="infra-sheet-back"
+          cardClassName="infra-sheet"
+        >
+          <section className="envs" data-cluster-detail={opened.label} data-place-panel={opened.kind}>
+            <div className="infra-sheet-head">
+              <PlaceIcon kind={opened.kind} size={20} />
+              <h3>{opened.label}</h3>
+              <button
+                type="button"
+                className="ghost"
+                aria-label="Close"
+                onClick={() => {
+                  setPanel(null);
+                  setEditing(null);
+                }}
+              >
+                ✕
+              </button>
             </div>
-            <div className="env-actions">
-              {current.id && (
-                <button type="button" className="ghost" disabled={health[current.id]?.state === "checking"} onClick={() => check(current.id)}>
-                  {health[current.id]?.state === "checking" ? "Asking…" : "Test again"}
-                </button>
+            <dl className="env-facts">
+              <dt>Kind</dt>
+              <dd>{PLACE_WORD[opened.kind]}</dd>
+              {opened.baseUrl && (
+                <>
+                  <dt>Address</dt>
+                  <dd>
+                    <code>{opened.baseUrl}</code>
+                  </dd>
+                </>
               )}
-              {mayManage && editing === null && current.id && (
-                <button type="button" className="primary" onClick={() => startEditing("new", "place")} data-environment-add>
+              <dt>Check</dt>
+              <dd>
+                {opened.id && health[opened.id] ? (
+                  <span className={`env-cluster-health ${health[opened.id].state}`}>{health[opened.id].text}</span>
+                ) : opened.kind === "research" ? (
+                  <span className="sub">Each member builds and deploys with their own sign-in (ADR-0049 §5).</span>
+                ) : (
+                  <span className="sub">{opened.id ? "not asked yet" : "its connection is out of reach"}</span>
+                )}{" "}
+                {opened.id && opened.kind !== "research" && (
+                  <button type="button" className="linklike" disabled={health[opened.id]?.state === "checking"} onClick={() => check(opened.id)}>
+                    {health[opened.id]?.state === "checking" ? "Asking…" : "Test again"}
+                  </button>
+                )}
+              </dd>
+              {opened.kind === "cluster" && opened.id && (
+                <>
+                  <dt>Projects</dt>
+                  <dd>{openClusters.includes(opened.id) ? "may add environments of their own here" : "use only the organization's environments here"}</dd>
+                </>
+              )}
+            </dl>
+
+            <div className="infra-sheet-sub">
+              <h4 className="env-sub">{opened.kind === "registry" ? "Environments that pull from it" : "Environments on it"}</h4>
+              {mayManage && editing === null && opened.id && opened.kind !== "registry" && (
+                <button type="button" className="primary" onClick={() => setEditing("new")} data-environment-add>
                   Add an environment here
                 </button>
               )}
             </div>
-          </div>
-
-          <h4 className="env-sub">Environments on it</h4>
-          {editingAt === "place" && form(current.id)}
-          <DataTable<DeployEnvironment>
-            list="cluster-environments"
-            rows={environments === null ? null : current.environments}
-            rowKey={(e) => e.id}
-            rowLabel={(e) => e.name}
-            empty={{
-              title: "No environment on this cluster yet.",
-              body: mayManage ? "Add dev, stage or prod here." : "An organization administrator adds them.",
-            }}
-            columns={[
-              {
-                id: "name",
-                header: "Environment",
-                compare: (a, b) => a.name.localeCompare(b.name),
-                cell: (e) => (
-                  <div data-environment={e.name}>
+            {editing !== null && opened.kind !== "registry" && (
+              <EnvironmentForm
+                token={token}
+                org={org.id}
+                editing={editing === "new" ? null : editing}
+                others={environments ?? []}
+                clusters={clusters}
+                registries={registries}
+                researches={researches}
+                projects={projects}
+                initialCluster={editing === "new" ? opened.id : editing.connection_id}
+                onCancel={() => setEditing(null)}
+                onDone={() => {
+                  setEditing(null);
+                  load();
+                }}
+                onClusterAdded={(c) => setConnections((cs) => [...cs, c])}
+              />
+            )}
+            {opened.environments.length === 0 ? (
+              editing === null && <p className="sub">None yet.</p>
+            ) : (
+              <ul className="env-list">
+                {opened.environments.map((e) => (
+                  <li key={e.id} data-environment={e.name}>
                     <div className="env-head">
                       <b>{e.name}</b>
-                      {e.protected && <span className="badge">protected</span>}
-                      {e.database === "shared" && <span className="badge">shared database</span>}
+                      {e.protected && <StatusChip tone="info">needs approval</StatusChip>}
+                      <span className="sub">
+                        {projectsWord(e)} · {databaseWord(e)}
+                        {e.kind === "research" ? (
+                          <> · Research project <code>{e.research_project}</code></>
+                        ) : (
+                          <>
+                            {" "}
+                            · <code>{namespaceFor(e.namespace_pattern, projects[0]?.name ?? "Studio Web", e.name)}</code>
+                          </>
+                        )}
+                      </span>
+                      <span className="grow" />
+                      <RowMenu label={e.name} actions={environmentActions(e)} onRun={(a) => void a.onSelect()} />
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     <Answer id={e.id} />
-                  </div>
-                ),
-              },
-              { id: "images", header: "Images", cell: (e) => (e.registry ? <code>{e.registry}</code> : <span className="sub">where the chart says</span>) },
-              {
-                id: "namespaces",
-                header: "Namespaces",
-                cell: (e) => (
-                  <>
-                    <code>{namespaceFor(e.namespace_pattern, projects[0]?.name ?? "Studio Web", e.name)}</code>
-                    {projects.length > 1 ? " …" : ""}
-                  </>
-                ),
-              },
-              {
-                id: "projects",
-                header: "Projects",
-                cell: (e) => (e.projects ? (e.projects.length ? e.projects.map(projectName).join(", ") : "none yet") : "every project"),
-              },
-              {
-                id: "running",
-                header: "Running",
-                cell: (e) => {
-                  const here = current.running.filter((d) => d.environment_id === e.id);
-                  return here.length ? here.map((d) => d.project_name).join(", ") : <span className="sub">nothing yet</span>;
-                },
-              },
-            ]}
-            actions={(e) => environmentActions(e, "place")}
-          />
+                  </li>
+                ))}
+              </ul>
+            )}
 
-          <h4 className="env-sub" data-running-now>
-            What runs here
-          </h4>
-          {current.running.length === 0 ? (
-            <p className="empty">Nothing deployed to this cluster yet. A project deploys from its Releases tab, or from the desktop after Generate.</p>
-          ) : (
-            <ul className="env-list">
-              {current.running.map((d) => (
-                <li key={d.id}>
-                  <DeploymentLine d={d} showProject />
-                  <StatusButton token={token} org={org.id} d={d} place={current.environments.some((e) => e.kind === "research") ? "Research" : "the cluster"} />
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <h4 className="env-sub">Deploys to it</h4>
-          {current.deployments.length === 0 ? (
-            <p className="empty">None yet.</p>
-          ) : (
-            <ul className="env-list">
-              {current.deployments.slice(0, 20).map((d) => (
-                <li key={d.id}>
-                  <DeploymentLine d={d} showProject />
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
-      <div className="card" data-registries>
-        <DataTable<Connection>
-          list="registries"
-          title="Registries"
-          rows={environments === null ? null : registries}
-          rowKey={(r) => r.id}
-          rowLabel={(r) => r.label}
-          defaultView="table"
-          primary={
-            mayManage ? (
-              <button type="button" onClick={() => setConnectingRegistry(true)} data-registry-add>
-                Connect a registry
-              </button>
-            ) : undefined
-          }
-          empty={{
-            title: "No registry connected yet.",
-            body: "A build in Studio pushes its images and chart to one, and a cluster pulls from it (ADR-0048).",
-          }}
-          columns={[
-            {
-              id: "registry",
-              header: "Registry",
-              compare: (a, b) => a.label.localeCompare(b.label),
-              cell: (r) => (
-                <div>
-                  <div className="pname">{r.label}</div>
-                  <code className="sub">{registryHost(r.base_url ?? "") || r.base_url}</code>
-                  <Answer id={r.id} />
-                </div>
-              ),
-            },
-            {
-              id: "used",
-              header: "Environments that use it",
-              cell: (r) => {
-                const names = usedBy(r.id);
-                return names.length ? names.join(", ") : <span className="sub">none yet</span>;
-              },
-            },
-          ]}
-          actions={(r) => [
-            {
-              label: busy === r.id ? "Asking…" : "Test",
-              disabled: busy === r.id,
-              onSelect: () => ask(r.id, async () => (await api.testConnection(token, r.id, org.id)).account),
-            },
-          ]}
-        />
-        {connectingRegistry && (
-          <AddRegistry
-            token={token}
-            org={org.id}
-            onCancel={() => setConnectingRegistry(false)}
-            onAdded={(c) => {
-              setConnectingRegistry(false);
-              setNotice(`Connected ${c.label}.`);
-              setConnections((cs) => [...cs, c]);
-            }}
-          />
-        )}
-      </div>
-      {clusters.length > 0 && (
-        <OpenClusters
-          key={openClusters.join(",")}
-          token={token}
-          org={org.id}
-          clusters={clusters}
-          open={openClusters}
-          mayManage={mayManage}
-          onSaved={(ids) => setOpenClusters(ids)}
-        />
-      )}
-
-      <h2 className="env-part" data-infra-environments>
-        Environments
-      </h2>
-      <p className="hint">
-        The stages of a release, in the order it goes through them: each environment after the one it takes from. An
-        environment is added from the place it runs on, under Places.
-      </p>
-      <div className="card" data-environment-ladder>
-        {editingAt === "ladder" && form("")}
-        <DataTable<DeployEnvironment>
-          list="environment-ladder"
-          rows={environments === null ? null : ladder}
-          rowKey={(e) => e.id}
-          rowLabel={(e) => e.name}
-          defaultView="table"
-          empty={{
-            title: "No environment yet.",
-            body: mayManage ? "Open a place under Places and add dev, stage or prod there." : "An organization administrator adds them.",
-          }}
-          columns={[
-            {
-              id: "name",
-              header: "Environment",
-              cell: (e) => (
-                <div data-ladder-environment={e.name}>
-                  <div className="env-head">
-                    <b>{e.name}</b>
-                    {e.project_id && <span className="badge">a project&apos;s own</span>}
-                  </div>
-                  <div className="sub">{e.promote_from ? `takes from ${envName(e.promote_from)}` : "takes from nobody"}</div>
-                  <Answer id={e.id} />
-                </div>
-              ),
-            },
-            {
-              id: "place",
-              header: "Place",
-              cell: (e) => {
-                const place = placeOf(e.connection_id);
-                return place ? (
-                  <button type="button" className="linklike" onClick={() => setSelected(place.id)}>
-                    {place.label}
-                  </button>
+            {opened.card && (
+              <>
+                <h4 className="env-sub" data-running-now>
+                  Runs here
+                </h4>
+                {opened.card.running.length === 0 && opened.card.deployments.length === 0 ? (
+                  <EmptyState title="Nothing runs here · deploy from a project's Releases" />
                 ) : (
-                  <span className="sub">a place this page cannot see</span>
-                );
-              },
-            },
-            { id: "database", header: "Database", cell: (e) => databaseWord(e) },
-            {
-              id: "approval",
-              header: "Approval",
-              cell: (e) => (e.protected ? <span className="badge">an administrator approves</span> : <span className="sub">none</span>),
-            },
-            {
-              id: "projects",
-              header: "Projects",
-              cell: (e) =>
-                e.project_id
-                  ? projectName(e.project_id)
-                  : e.projects
-                    ? e.projects.length
-                      ? e.projects.map(projectName).join(", ")
-                      : "none yet"
-                    : "every project",
-            },
-          ]}
-          actions={(e) => environmentActions(e, "ladder")}
-        />
-      </div>
-
-      <h2 className="env-part" data-what-runs-where>
-        What runs where
-      </h2>
-      <p className="hint">
-        Each project in each environment: the version it runs and how its newest deploy went. A project deploys from its
-        Releases tab.
-      </p>
-      {waiting.length > 0 && (
-        <section className="card" data-deploys-awaiting>
-          <h3>Waiting for a decision</h3>
-          <ul className="env-list">
-            {waiting.map((d) => (
-              <li key={d.id}>
-                <DeploymentLine d={d} showProject />
-                {mayManage ? (
-                  <div className="env-actions">
-                    <button
-                      type="button"
-                      className="primary"
-                      disabled={busy === d.id}
-                      data-deploy-approve
-                      onClick={() =>
-                        void act(d.id, async () => {
-                          await api.decideDeployment(token, org.id, d.id, "approve");
-                          return `Approved: ${d.product} goes to ${d.environment_name}.`;
-                        })
-                      }
-                    >
-                      Approve
-                    </button>
-                    <button type="button" disabled={busy === d.id} onClick={() => setDeclining(declining === d.id ? null : d.id)}>
-                      Decline…
-                    </button>
-                    {declining === d.id && (
-                      <>
-                        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="required: why not" aria-label="Reason" />
-                        <button
-                          type="button"
-                          disabled={busy === d.id || !reason.trim()}
-                          onClick={() =>
-                            void act(d.id, async () => {
-                              await api.decideDeployment(token, org.id, d.id, "decline", reason.trim());
-                              setDeclining(null);
-                              setReason("");
-                              return `Declined the deploy of ${d.product} to ${d.environment_name}.`;
-                            })
-                          }
-                        >
-                          Decline
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <p className="hint">An organization administrator decides.</p>
+                  <ul className="env-list">
+                    {(opened.card.running.length ? opened.card.running : opened.card.deployments.slice(0, 10)).map((d) => (
+                      <li key={d.id}>
+                        <DeploymentLine d={d} showProject />
+                        {opened.card!.running.includes(d) && (
+                          <StatusButton token={token} org={org.id} d={d} place={opened.kind === "research" ? "Research" : "the cluster"} />
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <div className="card" data-runs-where>
-        <DataTable<ProjectRuns>
-          list="what-runs-where"
-          rows={environments === null ? null : runsWhere}
-          rowKey={(r) => r.projectId}
-          rowLabel={(r) => r.projectName}
-          defaultView="table"
-          empty={{ title: "Nothing deployed yet.", body: "A project deploys from its Releases tab, or from the desktop after Generate." }}
-          columns={[
-            {
-              id: "project",
-              header: "Project",
-              compare: (a, b) => a.projectName.localeCompare(b.projectName),
-              cell: (r) => <b>{r.projectName}</b>,
-            },
-            ...ladder.map((e) => ({
-              id: `env-${e.id}`,
-              header: e.name,
-              cell: (r: ProjectRuns) => {
-                const cell = r.cells.get(e.id);
-                if (!cell) return <span className="sub">—</span>;
-                const runs = cell.runs ? versionOf(cell.runs) : null;
-                const asked = versionOf(cell.latest);
-                return (
-                  <div data-runs-cell={`${r.projectName}/${e.name}`}>
-                    {runs ? <code>{runs}</code> : <span className="sub">nothing runs</span>}
-                    {/* The newest deploy, when it is not what runs: waiting,
-                        running, failed, or the uninstall that took it out. */}
-                    {cell.latest.id !== cell.runs?.id && (
-                      <div>
-                        <StateBadge d={cell.latest} /> {asked && <code>{asked}</code>}
-                      </div>
-                    )}
-                    <div className="sub">{relTime(cell.latest.requested_at)}</div>
-                  </div>
-                );
-              },
-            })),
-          ]}
-        />
-      </div>
+              </>
+            )}
+          </section>
+        </Modal>,
+          document.body,
+        )}
     </div>
   );
 }
 
-/** Which of the organization's clusters its projects may put environments of
- *  their own on (ADR-0054 §2). A project may always use a cluster it holds. */
-function OpenClusters({
-  token,
-  org,
-  clusters,
-  open,
-  mayManage,
-  onSaved,
-}: {
-  token: string;
-  org: string;
-  clusters: Connection[];
-  open: string[];
-  mayManage: boolean;
-  onSaved: (ids: string[]) => void;
-}) {
-  const [picked, setPicked] = useState<string[]>(open);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const changed = [...picked].sort().join(",") !== [...open].sort().join(",");
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      onSaved((await api.saveOpenClusters(token, org, picked)).connection_ids);
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className="card" data-open-clusters>
-      <h3>Clusters projects may use</h3>
-      <p className="sub">
-        A project adds environments of its own on these, with its own registry and namespaces, without an administrator. It
-        may always use a cluster it connected itself.
-      </p>
-      <ul className="env-projects">
-        {clusters.map((c) => (
-          <li key={c.id}>
-            <label>
-              <input
-                type="checkbox"
-                disabled={!mayManage}
-                checked={picked.includes(c.id)}
-                onChange={(e) => setPicked((p) => (e.target.checked ? [...p, c.id] : p.filter((id) => id !== c.id)))}
-                data-open-cluster={c.label}
-              />{" "}
-              {c.label} <span className="sub">{c.base_url}</span>
-            </label>
-          </li>
-        ))}
-      </ul>
-      {error && <div className="error">{error}</div>}
-      {mayManage && (
-        <button type="button" className="primary" disabled={busy || !changed} onClick={() => void save()}>
-          Save
-        </button>
-      )}
-    </section>
-  );
-}
+/** A deploy state's tone (environments.ts) as a StatusChip's. */
+const CHIP_TONE: Record<ReturnType<typeof stateTone>, Tone> = { ok: "ok", warn: "warn", bad: "danger", idle: "neutral" };
 
 /** A project's environments: its profiles' bindings and its deployments.
  *  Releases draws the two apart (ADR-0056 §4) -- the history under the
