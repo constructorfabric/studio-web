@@ -11,6 +11,7 @@ import type { Candidate, PlanRow } from "./api";
 import {
   KUBERNETES_PROFILES,
   PRODUCT_PROFILES,
+  checkLanded,
   checkOf,
   corpusErrors,
   defaultPicks,
@@ -238,6 +239,16 @@ describe("profiles and their verdicts (ADR-0057)", () => {
     expect(checkOf(old, "dev")).toBe(old.last_preview);
     expect(checkOf(old, "prod")).toBeNull();
     expect(verdictOf(old, "dev").state).toBe("ok");
+  });
+
+  it("tells when a save's background check has landed on the record", () => {
+    const product = { checks: { prod: { ...check, gdl_sha256: "saved" } } };
+    expect(checkLanded(product, "prod", "saved")).toBe(true);
+    // Still the check of the description before the save, or another profile.
+    expect(checkLanded({ checks: { prod: { ...check, gdl_sha256: "before" } } }, "prod", "saved")).toBe(false);
+    expect(checkLanded(product, "dev", "saved")).toBe(false);
+    // An older backend says no hash: nothing to match.
+    expect(checkLanded(product, "prod", "")).toBe(false);
   });
 });
 

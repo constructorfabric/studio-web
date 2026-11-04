@@ -2872,12 +2872,22 @@ async function requestBlob(path: string, token: string): Promise<Blob> {
 /** How many more times a product preview is asked after a gateway timeout. */
 const PREVIEW_RETRIES = 3;
 
-async function retryOnTimeout<T>(ask: () => Promise<T>, retries: number): Promise<T> {
+/** How many more times a product save is sent after the gateway lost its
+ *  answer. */
+const SAVE_RETRIES = 2;
+
+/** `ask`, asked again (at most `retries` more times) while it fails with one
+ *  of `statuses`: the gateway's answer for a request it gave up on. */
+async function retryOnTimeout<T>(
+  ask: () => Promise<T>,
+  retries: number,
+  statuses: readonly number[] = [504],
+): Promise<T> {
   for (let left = retries; ; left--) {
     try {
       return await ask();
     } catch (e) {
-      if (left === 0 || !(e instanceof ApiError) || e.status !== 504) throw e;
+      if (left === 0 || !(e instanceof ApiError) || !statuses.includes(e.status)) throw e;
     }
   }
 }
@@ -3358,6 +3368,11 @@ export interface ProductPreview {
   written?: { branch: string; commit_sha: string; pr_url?: string | null } | null;
   /** Set when `write` saved it as a revision Studio keeps (ADR-0053). */
   description_revision?: { revision: number; created: boolean; sha256: string } | null;
+  /** A save answered before the engine finished checking it: `ok`,
+   *  `diagnostics`, `applications` and `gears` are not known yet. The check
+   *  carries on and lands in the product's `checks[profile]`. Absent from an
+   *  older backend. */
+  checking?: boolean;
 }
 
 /** What `importDomainModel` loaded. */
@@ -6285,7 +6300,9 @@ export const api = {
   /** Compose a product.gdl from picked gears and resolve it with the Gearbox
    *  engine. `write` also saves it as the project's next description revision,
    *  which Studio keeps (ADR-0053); a 409 (`descriptionConflictOf`) when
-   *  `base_revision` is no longer the latest. `publish` also writes it to the
+   *  `base_revision` is no longer the latest and the text is not the latest's.
+   *  A save answers within the gateway's limit: a check still running then
+   *  comes back as `checking`, and is kept on the product record. `publish` also writes it to the
    *  repository -- onto `product/<id>` with one pull request, or onto the base
    *  branch as its source's share mode says -- unless `open_pr` / `onto_base`
    *  say otherwise. */
@@ -6314,9 +6331,16 @@ export const api = {
         { method: "POST", body: JSON.stringify(body) },
       );
     // A large product resolves past the gateway's 30 s; the backend finishes
-    // the run and keeps its answer, so asking again (a read only -- a write
-    // is never repeated) picks it up instead of reporting a timeout.
-    if (body.write) return productChanged(projectId, ask());
+    // the run and keeps its answer, so asking again picks it up instead of
+    // reporting a timeout. A save is sent again too, when the gateway lost
+    // its answer (502/504): the same text against the same base is the
+    // revision the first attempt made (`created: false`), never a conflict
+    // or a second revision (ADR-0053, amendment 2026-11-04). Not a
+    // publish: that also commits to the repository, not repeated blind.
+    if (body.write) {
+      const publishes = !!(body.publish || body.open_pr || body.onto_base);
+      return productChanged(projectId, publishes ? ask() : retryOnTimeout(ask, SAVE_RETRIES, [502, 504]));
+    }
     return productChanged(projectId, retryOnTimeout(ask, PREVIEW_RETRIES));
   },
   /** Create a new repository via the connector and set it as the project's gear repo. */

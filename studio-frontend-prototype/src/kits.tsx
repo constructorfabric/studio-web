@@ -30,6 +30,7 @@ import { GearConfigForm } from "./gear-config-form";
 import { ProductConfigurator, useGearCatalogue, useKeptEntities, useRunning } from "./product-configurator-view";
 import {
   PRODUCT_PROFILES,
+  checkLanded,
   checkOf,
   currentDescription,
   defaultPicks,
@@ -1497,6 +1498,11 @@ function ProfileVerdicts({
  *  the project's repository, and into the IDE where the language server keeps
  *  checking it. */
 
+/** How often, and how many times, the record is read again for a save's
+ *  check that was still running when the save answered: five minutes. */
+const BACKGROUND_CHECK_EVERY_MS = 5_000;
+const BACKGROUND_CHECK_READS = 60;
+
 function ProductCard({
   token,
   projectId,
@@ -1599,7 +1605,11 @@ function ProductCard({
         ...(write ? { write: true, ...(baseRevision !== undefined ? { base_revision: baseRevision } : {}) } : {}),
         ...(write && publish ? { publish: true } : {}),
       });
-      setPreviews((all) => ({ ...all, [profile]: { preview: result, asked: question } }));
+      // A save answers before a long check is done: the check lands on the
+      // record, which is read again until it does. Its empty diagnostics are
+      // no verdict to show.
+      if (result.checking) setBackground({ profile, sha256: result.gdl_sha256 ?? "", tries: 0 });
+      else setPreviews((all) => ({ ...all, [profile]: { preview: result, asked: question } }));
       setConflict(null);
       if (write && result.description_revision) setKeptText(result.product_gdl);
       await product.refresh();
@@ -1614,6 +1624,23 @@ function ProductCard({
       setChecking(null);
     }
   };
+
+  /** A save's check still running on the server, for its profile and the
+   *  description it is about: the record is read again until it lands. */
+  const [background, setBackground] = useState<{ profile: string; sha256: string; tries: number } | null>(null);
+  useEffect(() => {
+    if (!background) return;
+    if (checkLanded(record, background.profile, background.sha256) || background.tries >= BACKGROUND_CHECK_READS) {
+      setBackground(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      void product.refresh().finally(() => setBackground((b) => b && { ...b, tries: b.tries + 1 }));
+    }, BACKGROUND_CHECK_EVERY_MS);
+    return () => clearTimeout(t);
+    // `product` is a fresh object every render; the record is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [background, record]);
 
   /** Check every profile an environment runs, one after another: the engine
    *  takes one product at a time. A newer round makes an older one stop. */
@@ -1856,6 +1883,8 @@ function ProductCard({
         <span style={{ fontSize: 12 }} data-product-verdict>
           {busy === "preview" && checking === shown ? (
             <StatusChip tone="running">checking…</StatusChip>
+          ) : background?.profile === shown ? (
+            <StatusChip tone="running">saved · checking in the background…</StatusChip>
           ) : preview && !stale ? (
             <StatusChip tone={preview.ok ? "ok" : "danger"}>
               {preview.ok ? `resolves for ${profileLabel(preview.profile)}` : `${errors} error${errors === 1 ? "" : "s"}`}

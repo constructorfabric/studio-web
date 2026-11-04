@@ -191,10 +191,10 @@ function SaveStep({
     setErr(null);
     try {
       const ask = { product_id: productId, name: product?.name ?? productId, gears, profile, config: product?.config };
-      // A save is not repeated when the gateway gives up, a check is. Check
-      // first: it waits out the engine's queue, and the save then takes the
-      // engine's answer from that check instead of running it again.
-      if (write) await api.previewProduct(token, projectId, ask);
+      // A save answers within the gateway's limit and is sent again when the
+      // gateway loses its answer (the same save is the same revision), so it
+      // need not wait out a check first: one still running when the save
+      // answers lands on the product's record by itself.
       const result = await api.previewProduct(token, projectId, {
         ...ask,
         ...(write ? { write: true, ...(kept ? { base_revision: kept.revision } : {}) } : {}),

@@ -67,6 +67,12 @@ export function checkOf(product: CheckFacts, profile: string): ProductCheck | nu
   return !product?.checks && last?.profile === profile ? last : null;
 }
 
+/** Whether `profile`'s kept check is about the description hashing to
+ *  `sha256`: a check a save left running on the server has landed. */
+export function checkLanded(product: CheckFacts, profile: string, sha256: string): boolean {
+  return !!sha256 && checkOf(product, profile)?.gdl_sha256 === sha256;
+}
+
 /** The description the record is about now: the hash of the last check's, which
  *  every change of the product makes again. `null` for a record from before. */
 export function currentDescription(product: CheckFacts): string | null {

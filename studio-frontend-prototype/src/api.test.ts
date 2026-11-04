@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   api,
@@ -808,5 +808,54 @@ describe("uploadProjectArtifact", () => {
       value: "manual",
     });
     expect(fetchMock.mock.calls[1]?.[0]).toBe("https://storage.example/upload/signed");
+  });
+});
+
+describe("product save", () => {
+  beforeEach(() => {
+    // A save tells the page the product changed.
+    vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const json = (body: unknown, status: number) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  const saved = { product_gdl: "product shop {}", profile: "dev", ok: true, description_revision: { revision: 3, created: false, sha256: "s" } };
+  const timedOut = () => json({ title: "Gateway Timeout", detail: "Request exceeded 30s timeout" }, 504);
+  const ask = { product_id: "shop", gears: ["a"], write: true, base_revision: 2 };
+
+  it("is sent again when the gateway lost its answer: the same save is the revision it made", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(timedOut())
+      .mockResolvedValueOnce(json({}, 502))
+      .mockResolvedValueOnce(json(saved, 200));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await api.previewProduct("token", "p-1", ask);
+    expect(result.description_revision).toEqual({ revision: 3, created: false, sha256: "s" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // Each attempt is the same save, against the same base.
+    for (const call of fetchMock.mock.calls) expect(JSON.parse(String(call[1]?.body))).toEqual(ask);
+  });
+
+  it("gives up after a bounded number of attempts", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => timedOut());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.previewProduct("token", "p-1", ask)).rejects.toMatchObject({ status: 504 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("is not sent again on a conflict, nor when it publishes", async () => {
+    let fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json({ title: "Conflict" }, 409));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.previewProduct("token", "p-1", ask)).rejects.toMatchObject({ status: 409 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => timedOut());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.previewProduct("token", "p-1", { ...ask, publish: true })).rejects.toMatchObject({ status: 504 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
