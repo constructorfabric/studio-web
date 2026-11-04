@@ -10,6 +10,8 @@ date: 2026-10-14
 
 Status: **proposed** · Date: 2026-10-14 · Extends `cpt-studio-adr-component-registry` (a state between `registered` and `published`) · Extends `cpt-studio-adr-component-tiers` (a third tier, `imported`)
 
+Amended by ADR-0061 (2026-11-04): beside extraction, a project may publish one of its components into the organization's catalogue at a version (a ref and the passport's version), which an organization administrator approves.
+
 ## Table of Contents
 
 <!-- toc -->

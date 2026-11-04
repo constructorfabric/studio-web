@@ -948,6 +948,12 @@ than one corpus are later phases.
 | `POST` | `/sync` | Queue a `catalog.sync` run over `crates_io`, `repositories` and `roadmaps`; poll `GET /studio-tasks/v1/runs/{id}`. Without `repositories` it reads the stored sources and walks the registry after them. An organization's run leaves to the platform the sources it already reads and the default crates.io keyword while the platform syncs crates.io; the result names them (`left_to_platform`), and reads no source whose connection is not the organization's own (`not_owned`). 400 `SOURCE_TENANT_NOT_OWNED` for a body source naming a tenant outside the organization | unstable |
 | `GET` | `/components` | Every node of every type this organization marks as a component: the platform's and the organization's, each with its `tier`; `shadowed` names the organization's left out because the platform has the same name (ADR-0042) | unstable |
 | `GET` | `/project-components?project_id=` | **Beyond gears** (`services.rs`, issue #739): the services and applications a project's repositories declare through a build tool (go.mod, pyproject.toml, pom.xml, package.json, Cargo.toml, Dockerfile, Helm chart) outside any gear, with contract files (OpenAPI, AsyncAPI, protobuf), tests, README, the people who changed each most (commit history, not typed in), open pull requests changing it, and a `ready` / `caution` / `not_ready` signal with every reason: no tests is not ready; one author, no contract, no README, more than three open pull requests or a year untouched is "ask first". Read live through the project's connections; history for at most 25 components a call | unstable |
+| `GET` | `/components?project_id=` | A project's catalogue (ADR-0061): the organization's components and the project's own (`tier: project`), read from its repositories by their passports into the project's tenant; the caller must reach the project. A platform component the organization pins says `pinned_ref` | unstable |
+| `POST` | `/project-catalogue/sync?project_id=` | Queue a `catalog.sync` of one project's own catalogue now (202, `run_id`); the hourly registry walk queues it when the project's repositories' fingerprints move | unstable |
+| `GET` / `PUT` | `/platform/pins` | The organization's platform release: every platform source it sees (none can be hidden) and the tag or commit it holds each at; `PUT` is an organization administrator's | unstable |
+| `GET` / `POST` | `/publications` | A project's proposals to put one of its components into the organization's catalogue at a version (ref and passport version; `artifact` for later); `project_id`, `state` narrow the list | unstable |
+| `POST` | `/publications/{id}/decisions` | An organization administrator's `approve` (the component at that version joins the organization's catalogue, `published_from`) or `decline` with a reason | unstable |
+| `GET` | `/components/{name}/docs?path=` | One document a component's passport lists (`docs`, or the README beside it), read at the ref it was read at, cut at 200 KiB; `project_id` for a project's own | unstable |
 | `GET` | `/versions` | Ingested crate versions; `crate` narrows to one | unstable |
 | `GET` | `/reference` | The catalogue joined with the engine's gears; `days` (default 90, `0` skips the warehouse), `include=all` | unstable |
 | `GET` | `/component-values` | Each component's fields with its three sources reconciled, its grade and its `tier`; a platform component's values are the platform's with the organization's annotation over them | unstable |
@@ -1111,6 +1117,19 @@ it is configured by environment.
 
 The `STUDIO_GEARBOX_*` variables are studio-product's
 ([studio-product](studio-product.md#38-deployment-topology)).
+
+### 3.9 Component passports (ADR-0061)
+
+A component is found by the one GDL passport in its directory, in every
+source whatever its mode: `gear.gdl` (gear, plugin), `frontx.gdl` (shell,
+micro-frontend, library), `service.gdl` (an own service, node type
+`catalog.service.v1~`) and `kit.gdl` (a kit). Studio reads them without
+evaluating (`gdl_literal.rs`, `service_gdl.rs`, `kit_gdl.rs`,
+`frontx_gdl.rs`); the vocabularies are in ADR-0061. Every passport may list
+`docs`; the catalogue stores them from the repository root and falls back to
+the README beside the component. A registry read is keyed by the
+repository's address (`owner/name@ref`), never by the connection, and older
+keys are moved at the next walk.
 
 ## 4. Additional context
 

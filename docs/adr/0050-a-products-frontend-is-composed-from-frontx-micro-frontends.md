@@ -10,6 +10,8 @@ date: 2026-10-23
 
 Status: **proposed** · Date: 2026-10-23 · Issue #874 · Extends ADR-0041 (an organization's registry of its components), ADR-0046 (gears come from connected gear repositories) and ADR-0048 (a product ships as images and a chart) · Answers PRD §13 "how a product's FrontX micro-frontends are composed with its gears"
 
+Amended by ADR-0061 (2026-11-04): every component passport may name its documents (`docs = [...]`); `service.gdl` and `kit.gdl` join `gear.gdl` and `frontx.gdl`.
+
 ## Table of Contents
 
 <!-- toc -->
