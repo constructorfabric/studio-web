@@ -6639,6 +6639,11 @@ const CATEGORIES: { key: string; title: string; blurb: string }[] = [
   },
 ];
 
+/** A provider whose connections only the organization holds: a cluster or a
+ *  registry, which only the server uses. */
+const ORG_ONLY_PROVIDER = (p: { provider: string; category?: string }) =>
+  p.category === "cluster" || p.category === "registry" || p.provider === "kubernetes" || p.provider === "registry";
+
 /** Where a connection is attached, and how widely its token is readable.
  *  One choice sets both: the tenant holding the catalogue row (its reach) and
  *  the credstore sharing mode of the token (who may read it). */
@@ -7664,6 +7669,12 @@ function ConnectorsView({
   );
   const own = listed?.filter((c) => c.owner_tenant_id === ws.id) ?? null;
   const shown = owner === "project" && ownOnly ? own : listed;
+  // A cluster or a registry is the organization's, never a person's (see
+  // CATEGORIES): a profile neither offers nor asks for one.
+  const offered = useMemo(
+    () => (owner === "personal" ? (providers ?? []).filter((p) => !ORG_ONLY_PROVIDER(p)) : (providers ?? [])),
+    [providers, owner],
+  );
 
   return (
     <>
@@ -7721,7 +7732,7 @@ function ConnectorsView({
         <AddConnector
           token={token}
           workspace={ws}
-          providers={providers ?? []}
+          providers={offered}
           category={adding || undefined}
           only={owner === "personal" ? "personal" : undefined}
           onClose={() => setAdding(null)}
@@ -7737,7 +7748,7 @@ function ConnectorsView({
         <ConnectionList
           token={token}
           workspace={ws}
-          providers={providers ?? []}
+          providers={offered}
           connections={shown ?? []}
           loading={shown === null}
           sourcesTick={sourcesTick}
@@ -7795,7 +7806,10 @@ function AddConnector({
   // choice is the organization or yourself, and the organization is the default.
   const atOrg = workspace.id === workspace.orgId;
   const defaultReach: Reach = only ?? (atOrg ? "organization" : "workspace");
-  const [reach, setReach] = useState<Reach>(defaultReach);
+  const [reachChoice, setReach] = useState<Reach>(defaultReach);
+  // When the page decides who it is for, nothing chosen below overrides it:
+  // a profile never sends an organization-wide connection.
+  const reach: Reach = only ?? reachChoice;
   const [busy, setBusy] = useState<"probe" | "save" | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
