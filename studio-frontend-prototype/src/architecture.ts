@@ -716,7 +716,7 @@ export const SURFACES: Surface[] = [
     id: "project-team",
     area: "project",
     title: "Team",
-    does: "See who works on the project.",
+    does: "See who works on the project and with which role; add someone from the organization in a dialog, change a role, remove one.",
     components: ["PeopleView"],
     gears: ["account-management", "studio-organizations", "studio-user"],
   },

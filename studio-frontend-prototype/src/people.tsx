@@ -27,7 +27,7 @@ import { api, type Colleague } from "./api";
 import { DataTable, When } from "./data-table";
 import { errText, initials } from "./format";
 import { Modal } from "./modal";
-import { PageHeader, StatusChip } from "./ui-standard";
+import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
 import {
   normalizeAccessConfig,
   type AccessConfig,
@@ -72,6 +72,8 @@ export function PeopleView({
   const [inviting, setInviting] = useState(false);
   const [addPick, setAddPick] = useState("");
   const [addRole, setAddRole] = useState("");
+  /** The Team's add dialog. */
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -185,6 +187,7 @@ export function PeopleView({
       scopeName: teamRoot.name,
     };
     setAddPick("");
+    setAdding(false);
     void saveConfig({ ...cfg, grants: [...cfg.grants, grant] });
   }
 
@@ -375,15 +378,53 @@ export function PeopleView({
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>Team</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            People working on {teamRoot?.name ?? "this project"} — a subset of{" "}
-            {org?.name ?? "the organization"}.
-          </p>
-        </div>
-      </div>
+      {/* One header: who is on the team, in a chip; adding someone is its
+          action, in a dialog, rather than a form and a paragraph open under
+          the table on every visit. */}
+      <PageHeader
+        title="Team"
+        info={
+          <>
+            <p>
+              Choose who works here: the people working on {teamRoot?.name ?? "this project"}, a subset of{" "}
+              {org?.name ?? "the organization"}, each with a role on this project.
+            </p>
+            <p>
+              Adding someone writes a role grant to {org?.name ?? "the organization"}&apos;s access config -- the same
+              store the Studio PDP enforces. New people are invited on the organization&apos;s People page first.
+            </p>
+          </>
+        }
+        status={
+          people !== null &&
+          cfg !== null &&
+          teamRoot &&
+          (roleBased ? (
+            <StatusChip tone={teamGrants.length > 0 ? "neutral" : "warn"} data-team-count>
+              {teamGrants.length} {teamGrants.length === 1 ? "person" : "people"}
+            </StatusChip>
+          ) : (
+            <StatusChip tone="info" title="Switch to role-based access in Admin → Access to grant roles here">
+              tenant access
+            </StatusChip>
+          ))
+        }
+        actions={
+          roleBased &&
+          teamRoot && (
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || candidates.length === 0}
+              title={candidates.length === 0 ? "Everyone in the organization is on the team" : undefined}
+              onClick={() => setAdding(true)}
+              data-team-add-open
+            >
+              Add to team
+            </button>
+          )
+        }
+      />
 
       {error && <div className="error">{error}</div>}
 
@@ -393,11 +434,10 @@ export function PeopleView({
         <p className="empty">No project in context.</p>
       ) : !roleBased ? (
         <div className="card">
-          <p className="hint" style={{ margin: 0 }}>
-            <b>{org?.name ?? "This organization"} uses tenant access.</b> Everyone in the
-            organization can work in this project, so there's no per-project team to manage. Switch
-            to <b>Role-based access</b> in Admin → Access to grant roles to specific people here.
-          </p>
+          <EmptyState
+            title={`${org?.name ?? "This organization"} uses tenant access: there is no per-project team to manage.`}
+            body="Switch to Role-based access in Admin → Access to grant roles to specific people here."
+          />
         </div>
       ) : (
         <div className="card">
@@ -406,7 +446,14 @@ export function PeopleView({
             rows={teamGrants}
             rowKey={(g) => g.id}
             rowLabel={(g) => personName(g)}
-            empty={{ title: "Nobody on the team yet.", body: "Add someone from the organization below, so they can review specs and open the IDE." }}
+            empty={{
+              title: "Nobody on the team yet.",
+              action: (
+                <button type="button" className="primary" disabled={candidates.length === 0} onClick={() => setAdding(true)}>
+                  Add to team
+                </button>
+              ),
+            }}
             columns={[
               {
                 id: "name",
@@ -473,34 +520,46 @@ export function PeopleView({
             }
           />
 
-          <div className="inline" style={{ marginTop: 14, gap: 8 }}>
-            <select value={addPick} onChange={(e) => setAddPick(e.target.value)}>
-              <option value="">
-                {candidates.length ? "Add from organization…" : "Everyone is already on the team"}
-              </option>
+        </div>
+      )}
+
+      {adding && cfg && teamRoot && (
+        <Modal label="Add to the team" onClose={() => setAdding(false)}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              addToTeam();
+            }}
+            style={{ display: "flex", flexDirection: "column", gap: 10 }}
+            data-team-add-dialog
+          >
+            <h2 style={{ margin: 0 }}>Add to {teamRoot.name}</h2>
+            <select aria-label="Person" value={addPick} onChange={(e) => setAddPick(e.target.value)} autoFocus>
+              <option value="">Someone from {org?.name ?? "the organization"}…</option>
               {candidates.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
             </select>
-            <select value={addRole} onChange={(e) => setAddRole(e.target.value)}>
-              <option value="">Role…</option>
+            <select aria-label="Role" value={addRole} onChange={(e) => setAddRole(e.target.value)}>
+              <option value="">Role: {cfg.roles.find((r) => r.key === "editor")?.name ?? cfg.roles[0]?.name ?? "default"}</option>
               {cfg.roles.map((r) => (
                 <option key={r.key} value={r.key}>
                   {r.name}
                 </option>
               ))}
             </select>
-            <button className="primary" disabled={busy || !addPick} onClick={addToTeam}>
-              Add to team
-            </button>
-          </div>
-          <p className="hint">
-            Adding someone writes a role grant to {org?.name ?? "the organization"}'s access config —
-            the same store the Studio PDP enforces. Invite new people on the People page first.
-          </p>
-        </div>
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="ghost" onClick={() => setAdding(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="primary" disabled={busy || !addPick}>
+                Add to team
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </>
   );

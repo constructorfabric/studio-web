@@ -106,11 +106,10 @@ describe("the repositories step", () => {
 
 describe("TAB_HOWTO", () => {
   it("has a line for the tabs a new member needs", () => {
-    // Overview, Specs and Sources say it behind their header's "?", not in a banner.
-    for (const tab of ["kits", "people"] as const) {
-      expect(TAB_HOWTO[tab]?.lead, tab).toBeTruthy();
+    // The tabs on the UI standard say it behind their header's "?", not in a banner.
+    expect(TAB_HOWTO.kits?.lead).toBeTruthy();
+    for (const tab of ["overview", "sources", "artifacts", "people"] as const) {
+      expect(TAB_HOWTO[tab], tab).toBeUndefined();
     }
-    expect(TAB_HOWTO.overview).toBeUndefined();
-    expect(TAB_HOWTO.sources).toBeUndefined();
   });
 });
