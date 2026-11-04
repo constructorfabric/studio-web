@@ -80,6 +80,9 @@ pub struct BuildReport {
     /// The revision of the product description it was built with, which
     /// Studio keeps (ADR-0053 §2), beside `commit`.
     pub description_revision: Option<i64>,
+    /// Where a build Studio ran, and with what. Nobody reports it through
+    /// REST; a field left out keeps what the start said.
+    pub place: super::port::BuildPlace,
 }
 
 /// The id of a pipeline's build: its run's.
@@ -146,6 +149,7 @@ pub fn manifest_report(
         chart_ref: m.chart.as_ref().map(|c| c.reference.clone()),
         chart_version: m.chart.map(|c| c.version),
         description_revision: m.description_revision,
+        place: Default::default(),
     })
 }
 
@@ -472,6 +476,15 @@ pub fn record(
                 .and_then(Value::as_i64)
         })),
     );
+    // Where it ran and with what: what the start said, unless a later
+    // record says it again (the end names the engine).
+    for (key, value) in report.place.fields() {
+        let value = match clean(value, key, 300)? {
+            Some(v) => Some(v),
+            None => earlier_text(key),
+        };
+        put(key, json!(value));
+    }
     // Who started it stays who started it: the end may come from the same
     // person on another connection, never from someone else's report.
     put(

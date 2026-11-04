@@ -33,6 +33,7 @@ mod deploy;
 mod model;
 mod preflight; // what a deploy checks before and while it installs
 mod preview; // a build tried in a namespace of its own, removed when it expires (ADR-0055)
+mod readiness; // what a build or a deploy checks before it is queued
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod rest;

@@ -16,6 +16,7 @@ use super::model::{
     EnvironmentList, Invalid, Preview,
 };
 use super::preview::{self, PreviewRoute, SweepPayload};
+use super::readiness::{self, Role};
 use super::research;
 use super::store::{Store, service_context};
 use super::workflow;
@@ -425,6 +426,141 @@ impl EnvironmentService {
         connectors::check_owned(am, ctx, org, org, Some(holder))
             .await
             .map_err(|e| Refusal::Invalid(format!("{e}")))
+    }
+
+    /* ── what the run will read, read before it is queued ── */
+
+    /// One connection read the way a run reads it: as `reader`, found from
+    /// `tenant`, its credential taken out of credstore. What was seen of it,
+    /// and its credential when that could be read.
+    async fn read_connection(
+        &self,
+        reader: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+    ) -> (readiness::Seen, Option<connectors::ConnectionAuth>) {
+        let Some(service) = connectors::Connectors::new(Arc::clone(&self.hub)).get() else {
+            return (
+                readiness::Seen {
+                    unreadable: Some("connections are not available in this deployment".into()),
+                    ..readiness::Seen::default()
+                },
+                None,
+            );
+        };
+        match service.driver_and_auth(reader, tenant, id).await {
+            Ok((_, auth, c)) => (
+                readiness::Seen {
+                    label: Some(c.label),
+                    scope: Some(c.scope),
+                    unreadable: None,
+                },
+                Some(auth),
+            ),
+            Err(e) => {
+                // Name it as far as it can be found, whoever's it is.
+                let named =
+                    connectors::connection_by_id(self.store.am().as_ref(), reader, tenant, id)
+                        .await
+                        .map(|(_, c)| c);
+                (
+                    readiness::Seen {
+                        label: named.as_ref().map(|c| c.label.clone()),
+                        scope: named.map(|c| c.scope),
+                        unreadable: Some(format!("{e:#}")),
+                    },
+                    None,
+                )
+            }
+        }
+    }
+
+    /// The repository a build clones must be reached through a connection
+    /// the build can read: as the organization's service, as the run reads
+    /// it (`build::BuildTask::start`). Its label, for the build's record.
+    async fn check_source_readable(&self, org: Uuid, repo: &build::RepoRef) -> Result<String> {
+        let reader = self.service(org)?;
+        let (seen, _) = self
+            .read_connection(&reader, repo.tenant, repo.connection_id)
+            .await;
+        if let Some((code, why)) = readiness::connection_refusal(
+            Role::Source,
+            &repo.connection_id.to_string(),
+            &seen,
+            Some(&repo.repo),
+        ) {
+            return Err(Refusal::Precondition(code, why));
+        }
+        Ok(seen.label.unwrap_or_default())
+    }
+
+    /// The environment's connections read as the run will read them, and its
+    /// cluster asked whether the connection may do there what a build or a
+    /// deploy does in `namespace` (ADR-0043): each refusal names its cause
+    /// before anything is queued.
+    async fn check_cluster_ready(
+        &self,
+        org: Uuid,
+        env: &Environment,
+        namespace: &str,
+        registry: Option<Uuid>,
+    ) -> Result<()> {
+        let from = env.connections_from(org);
+        let reader = self.service(from)?;
+        if let Some(id) = registry.filter(|id| !id.is_nil()) {
+            let (seen, _) = self.read_connection(&reader, from, id).await;
+            if let Some((code, why)) =
+                readiness::connection_refusal(Role::Registry, &id.to_string(), &seen, None)
+            {
+                return Err(Refusal::Precondition(code, why));
+            }
+        }
+        let (seen, auth) = self.read_connection(&reader, from, env.connection_id).await;
+        if let Some((code, why)) = readiness::connection_refusal(
+            Role::Cluster,
+            &env.connection_id.to_string(),
+            &seen,
+            None,
+        ) {
+            return Err(Refusal::Precondition(code, why));
+        }
+        let auth = auth.ok_or_else(|| {
+            Refusal::Internal("the cluster connection was read without its credential".into())
+        })?;
+        let unusable = |e: anyhow::Error| {
+            Refusal::Precondition(
+                readiness::CLUSTER_CONNECTION_UNREADABLE,
+                format!(
+                    "the environment's cluster connection '{}' cannot be used: {e:#}",
+                    seen.label.as_deref().unwrap_or_default()
+                ),
+            )
+        };
+        let access =
+            connectors::ClusterAccess::parse(&auth.base_url, &auth.token).map_err(unusable)?;
+        let unreachable = |why: String| {
+            Refusal::Precondition(
+                "ENVIRONMENT_CLUSTER_UNREACHABLE",
+                format!("{}: {why}", env.name),
+            )
+        };
+        let client = access
+            .client()
+            .await
+            .map_err(|e| unreachable(format!("{e:#}")))?;
+        // A cluster that does not answer is said in seconds, not after the
+        // client's own minutes.
+        let facts = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            readiness::cluster_facts(&client, namespace),
+        )
+        .await
+        .map_err(|_| unreachable("the cluster did not answer in 20 seconds".into()))?
+        .map_err(|e| unreachable(format!("{e:#}")))?;
+        match readiness::cluster_refusal(&facts) {
+            Some((code, why)) => Err(Refusal::Precondition(code, why)),
+            None => Ok(()),
+        }
     }
 
     /* ── a project's own environments (ADR-0054) ── */
@@ -1292,6 +1428,10 @@ impl EnvironmentService {
             }
         }
         d.preview = preview;
+        if d.action == DeploymentAction::Install {
+            self.check_cluster_ready(org, &env, &d.namespace, env.registry_connection_id)
+                .await?;
+        }
         let config = self.project_config(ctx, project, &env, &d.profile).await?;
         let previewing = d.preview.is_some();
         let d = self.submit(org, &env, d, chart, config).await?;
@@ -1830,7 +1970,28 @@ impl EnvironmentService {
                 )
                 .await;
         }
+        let repo = build::RepoRef {
+            tenant: target.tenant,
+            connection_id,
+            repo: target.repo.clone(),
+            branch: target.base_branch.clone(),
+        };
+        // Every connection the run reads, read now as it will read them, and
+        // the cluster asked: a build that cannot start says why here.
+        let source_label = self.check_source_readable(org, &repo).await?;
+        self.check_cluster_ready(org, &env, &namespace, Some(registry_connection_id))
+            .await?;
         let build_id = format!("studio-{}", &Uuid::new_v4().simple().to_string()[..12]);
+        let place = crate::artifact_ingest::port::BuildPlace {
+            environment_id: Some(env.id.to_string()),
+            environment: Some(env.name.clone()),
+            namespace: Some(namespace.clone()),
+            git_ref: git_ref.clone().or_else(|| Some(repo.branch.clone())),
+            source_connection_id: Some(connection_id.to_string()),
+            source_connection: Some(source_label).filter(|l| !l.is_empty()),
+            builder_image: Some(builder_image.clone()),
+            gearbox_version: None,
+        };
         let payload = build::BuildPayload {
             build_id: build_id.clone(),
             organization_id: org,
@@ -1841,12 +2002,7 @@ impl EnvironmentService {
             prefix: env.registry.clone(),
             profile: profile.clone(),
             product_file,
-            repo: build::RepoRef {
-                tenant: target.tenant,
-                connection_id,
-                repo: target.repo.clone(),
-                branch: target.base_branch.clone(),
-            },
+            repo,
             git_ref,
             builder_image,
             buildkit_image: build::buildkit_image(),
@@ -1866,6 +2022,7 @@ impl EnvironmentService {
                 &profile,
             );
             running.description_revision = payload.description_revision;
+            running.place = place;
             builds
                 .record(ctx, &project.to_string(), &running)
                 .await
@@ -2562,11 +2719,16 @@ impl EnvironmentService {
                 format!("project {project} has no build {build_id}"),
             )
         };
-        records
+        let record = records
             .build(ctx, &project.to_string(), build_id)
             .await
             .map_err(|e| Refusal::Internal(format!("{e:#}")))?
             .ok_or_else(missing)?;
+        // A build that failed as it started never had a pod: its record
+        // says why, and is the whole log.
+        if let Some(log) = start_failure_log(&record) {
+            return Ok(log);
+        }
         let org = self.organization_of_project(ctx, project).await?;
         let project_name = self.store.tenant_name(ctx, project).await;
         let mut unreachable = None;
@@ -2612,6 +2774,27 @@ impl EnvironmentService {
     }
 }
 
+/// The log of a build that failed as it started (`failure_step` `start`):
+/// one failed `start` step whose log is the reason its record keeps. `None`
+/// for any other build, whose log is its pod's.
+fn start_failure_log(record: &crate::artifact_ingest::port::BuildRecord) -> Option<BuildLog> {
+    if record.status != "failed" || record.failure_step.as_deref() != Some("start") {
+        return None;
+    }
+    Some(BuildLog {
+        environment: record.place.environment.clone().unwrap_or_default(),
+        namespace: record.place.namespace.clone().unwrap_or_default(),
+        steps: vec![build::StepLog {
+            step: "start".into(),
+            state: "failed".into(),
+            log: record
+                .failure
+                .clone()
+                .unwrap_or_else(|| "the build failed before it reached the cluster".into()),
+        }],
+    })
+}
+
 /// A build's steps, read from its pod.
 #[derive(Debug, Clone)]
 pub struct BuildLog {
@@ -2624,6 +2807,43 @@ pub struct BuildLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_that_failed_as_it_started_logs_its_reason_not_a_missing_pod() {
+        use crate::artifact_ingest::port::{BuildPlace, BuildRecord};
+        let failed = BuildRecord {
+            build_id: "studio-1".into(),
+            status: "failed".into(),
+            failure: Some("the token for connection 'GitHub (alice)' is not readable".into()),
+            failure_step: Some("start".into()),
+            place: BuildPlace {
+                environment: Some("dev".into()),
+                namespace: Some("shop-dev".into()),
+                ..BuildPlace::default()
+            },
+            ..BuildRecord::default()
+        };
+        let log = start_failure_log(&failed).expect("the start's reason");
+        assert_eq!(log.environment, "dev");
+        assert_eq!(log.namespace, "shop-dev");
+        assert_eq!(log.steps.len(), 1);
+        assert_eq!(log.steps[0].step, "start");
+        assert_eq!(log.steps[0].state, "failed");
+        assert!(log.steps[0].log.contains("not readable"));
+        // Any other build's log is its pod's.
+        for (status, step) in [
+            ("failed", Some("build")),
+            ("running", None),
+            ("passed", None),
+        ] {
+            let other = BuildRecord {
+                status: status.into(),
+                failure_step: step.map(str::to_owned),
+                ..failed.clone()
+            };
+            assert!(start_failure_log(&other).is_none(), "{status}");
+        }
+    }
 
     #[test]
     fn a_hash_is_hex_of_a_sensible_length() {

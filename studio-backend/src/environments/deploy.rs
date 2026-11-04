@@ -443,8 +443,10 @@ fn tail(s: &str, n: usize) -> String {
 }
 
 /// Make sure the namespace exists, creating it when the connection may. A
-/// connection limited to its namespaces cannot read namespaces at all, and is
-/// trusted to have been given this one.
+/// connection that may not even read the namespace is refused with the
+/// reason: it used to be trusted to have been given it, and then failed
+/// later with a bare 403 (see `readiness`, which asks before anything is
+/// queued).
 pub(super) async fn prepare_namespace(
     client: &kube::Client,
     namespace: &str,
@@ -503,10 +505,13 @@ async fn make_namespace(
                 })?;
             grant_self_admin(client, namespace).await
         }
-        Err(kube::Error::Api(status)) if status.code == 403 => {
-            warn!(namespace = %namespace, "studio-environments: cannot read namespaces; assuming it exists");
-            Ok(())
-        }
+        Err(kube::Error::Api(status)) if status.code == 403 => Err(anyhow!(
+            "the cluster connection may not read namespace {namespace}, so whether it exists \
+             cannot be told: a cluster administrator applies {}, or gives the connection's \
+             account admin in {namespace} ({})",
+            crate::connectors::sdk::BOOTSTRAP_FILE,
+            status.message
+        )),
         Err(e) => Err(anyhow!("the cluster did not answer: {e}")),
     }
 }

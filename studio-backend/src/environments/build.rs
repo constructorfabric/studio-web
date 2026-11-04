@@ -959,6 +959,10 @@ impl WatchTask {
                     images: m.images.into_iter().map(|i| (i.app, i.image)).collect(),
                     chart_ref: Some(m.chart.reference),
                     chart_version: Some(m.chart.version),
+                    place: crate::artifact_ingest::port::BuildPlace {
+                        gearbox_version: m.gearbox,
+                        ..Default::default()
+                    },
                     ..BuildOutcome::default()
                 },
                 Err(e) => BuildOutcome::failed(
@@ -1099,6 +1103,11 @@ pub struct Manifest {
     pub lock_hash: Option<String>,
     pub images: Vec<ManifestImage>,
     pub chart: ManifestChart,
+    /// The engine's commit in the image `publish` ran in, so the build's
+    /// record says which Gearbox generated it. Absent from a manifest
+    /// written before it was recorded, and from a pipeline's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gearbox: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1310,6 +1319,18 @@ pub fn say_failure(e: &anyhow::Error) {
         end -= 1;
     }
     let _ = std::fs::write("/dev/termination-log", &text[..end]);
+}
+
+/// The engine's commit in this image: `STUDIO_GEARBOX_REV`, else the file
+/// the image's `gearbox` stage writes beside the binary (the record
+/// `product::gearbox` reads too; `gearbox --version` does not tell commits
+/// apart).
+fn engine_revision() -> Option<String> {
+    std::env::var("STUDIO_GEARBOX_REV")
+        .ok()
+        .or_else(|| std::fs::read_to_string("/usr/local/share/gearbox/REVISION").ok())
+        .map(|s| s.trim().chars().take(64).collect::<String>())
+        .filter(|s| !s.is_empty())
 }
 
 fn gearbox() -> String {
@@ -1749,6 +1770,7 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
             reference: format!("oci://{prefix}/charts/{}", prepared.product),
             version,
         },
+        gearbox: engine_revision(),
     };
     let text = serde_json::to_string(&manifest)?;
     // The kubelet keeps a container's termination message (at most 4 KiB):
