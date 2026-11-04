@@ -714,7 +714,11 @@ async fn patch_connection(
                 .with_constraint(format!("{e:#}"))
                 .create()
         })?;
-    let mine = connection.created_by == ctx.subject_id().to_string();
+    // Whose it is, by the rule the list uses: another sign-in of the same
+    // person counts as theirs.
+    let mine = super::service::same_person(&ctx, &connection.created_by, people.0.as_deref())
+        .await
+        .unwrap_or(false);
     Ok(Json(to_test_dto(connection, identity, mine)))
 }
 
@@ -829,6 +833,7 @@ async fn confirm_sign_in(
 async fn test_connection(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
+    Extension(people): Extension<People>,
     Path(id): Path<Uuid>,
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<JsonBody<ConnectionTestDto>> {
@@ -845,7 +850,11 @@ async fn test_connection(
             )
             .create()
     })?;
-    let mine = connection.created_by == ctx.subject_id().to_string();
+    // Whose it is, by the rule the list uses: another sign-in of the same
+    // person counts as theirs.
+    let mine = super::service::same_person(&ctx, &connection.created_by, people.0.as_deref())
+        .await
+        .unwrap_or(false);
     Ok(Json(to_test_dto(connection, identity, mine)))
 }
 
