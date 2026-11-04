@@ -1513,6 +1513,10 @@ function ProductCard({
   const cardRef = useRef<HTMLElement | null>(null);
   /** The engine's completion of a product that does not resolve, as fixes. */
   const [fixes, setFixes] = useState<Fix[] | null>(null);
+  /** The errors and their fixes, unfolded. Folded to one line on arrival:
+   *  every open checks the bound profiles again, and a product that does not
+   *  pass one would otherwise greet each visit with the whole list. */
+  const [fixesOpen, setFixesOpen] = useState(false);
   /** The ⋯ menu's "Old product branches", by the time it was asked. */
   const [showBranches, setShowBranches] = useState(0);
   /** A gear whose settings a fix asks for, opened on the map. */
@@ -1705,7 +1709,10 @@ function ProductCard({
     if (!command) return;
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (command.kind === "preview") void run(false);
-    if (command.kind === "fix" && fixes && fixes.length > 0) document.getElementById("product-fixes")?.focus();
+    if (command.kind === "fix") {
+      setFixesOpen(true);
+      if (fixes && fixes.length > 0) setTimeout(() => document.getElementById("product-fixes")?.focus(), 0);
+    }
     if (command.kind === "save") void run(true);
     if (command.kind === "build") void buildInTheia();
     if (command.kind === "open") openOnDesktop();
@@ -1961,7 +1968,18 @@ function ProductCard({
         </div>
       )}
 
-      {preview && !preview.ok && !stale && (
+      {preview && !preview.ok && !stale && !fixesOpen && (
+        <div className="hint" style={{ fontSize: 12, marginTop: 10, display: "flex", alignItems: "center", gap: 8 }} data-product-errors-folded>
+          <StatusChip tone="danger">
+            {errors} error{errors === 1 ? "" : "s"} for {profileLabel(preview.profile)}
+          </StatusChip>
+          <span>the product as it is does not pass this profile's rules.</span>
+          <button className="ghost" onClick={() => setFixesOpen(true)} data-product-errors-show>
+            {fixes && fixes.length > 0 ? `Show ${fixes.length} fix${fixes.length === 1 ? "" : "es"}` : "Show the errors"}
+          </button>
+        </div>
+      )}
+      {preview && !preview.ok && !stale && fixesOpen && (
         <ul className="error" style={{ fontSize: 12, margin: "10px 0 0", paddingLeft: 18 }} data-product-errors>
           {preview.diagnostics
             .filter((d) => d.severity === "error")
@@ -1972,7 +1990,7 @@ function ProductCard({
             ))}
         </ul>
       )}
-      {fixes && fixes.length > 0 && (
+      {fixesOpen && fixes && fixes.length > 0 && (
         <div
           id="product-fixes"
           tabIndex={-1}
@@ -1993,6 +2011,9 @@ function ProductCard({
                 Apply all
               </button>
             )}
+            <button className="ghost" style={fixes.some((f) => f.kind !== "setup") ? undefined : { marginLeft: "auto" }} onClick={() => setFixesOpen(false)}>
+              Hide
+            </button>
           </div>
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {fixes.map((f) => (
@@ -2037,7 +2058,7 @@ function ProductCard({
           </ul>
         </div>
       )}
-      {preview && !preview.ok && !stale && fixes && fixes.length === 0 && (
+      {fixesOpen && preview && !preview.ok && !stale && fixes && fixes.length === 0 && (
         <p className="hint" style={{ fontSize: 12 }}>
           The engine offers no change that makes it resolve; the errors below say what it needs.
         </p>
