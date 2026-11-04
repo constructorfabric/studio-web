@@ -10,6 +10,13 @@ date: 2026-10-29
 
 Status: **proposed** · Date: 2026-10-29 · Changes where the product description ADR-0045 builds from lives (`cpt-studio-adr-project-builds`) · Keeps the image and chart contract of ADR-0048 (`cpt-studio-adr-product-images`) · Uses the gear repositories of ADR-0046 (`cpt-studio-adr-gear-repositories`)
 
+Amended by ADR-0060 (2026-11-04): a revision is saved with a lock, the commit
+of every source it uses, and a protected environment builds only that. A
+description is published only to the source marked `publish_here`; with none
+marked, Studio keeps the revisions only. A save never drops a section the
+previous revision had — see
+[ADR-0060](0060-a-project-is-one-list-of-sources-and-a-revision-pins-each.md).
+
 ## Table of Contents
 
 <!-- toc -->

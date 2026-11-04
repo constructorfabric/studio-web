@@ -249,11 +249,14 @@ a pull request (`open_pull_request`); how the provider makes that commit
 through the connector and records it as the project's gear repository in one
 step.
 
-**Where a new gear goes** (ADR-0042 §2), in this order
+**Where a new gear goes** (ADR-0042 §2, ADR-0060 §1), in this order
 (`service::pick_scaffold_target`):
 
-1. The project's own gear repository (`project_gear_repo`), when it has one:
-   it wins for its project.
+1. The project's source marked `gears_here`, when it has one: it wins for
+   its project. A project's old gear repository (`project_gear_repo`) is
+   folded into its sources as that source the first time it is read
+   (`fold_legacy_gear_repo`); where the config cannot be written, the old
+   record is still read, for one release.
 2. Else the organization's gear repository, which the catalogue keeps
    (`components_catalog::port::Registry::gear_repository`); the organization
    is found by walking up from the project
@@ -262,13 +265,33 @@ step.
    readable. The catalogue answers only a setting whose connection is the
    organization's own, never one inherited from the platform's root, so a
    project's gear is never written with the platform's token.
-3. Else the repository the project config names first (`sources[]`).
+3. Else the project's home source (`project_sources::description_home`).
 
 The scaffold's answer names the repository (`repo`) and which of the three
 it was (`target`: `project`, `organization`, `sources`); a dry run says where
-it would go, so a screen can state it before anything is written. A
-product's `product.gdl` is still written into the project's gear repository,
-else its sources: the organization's repository holds gears, not products.
+it would go, so a screen can state it before anything is written.
+
+**Where a product's description goes** (ADR-0060 §1). Studio keeps it by
+revision (ADR-0053). It is published only to the source marked
+`publish_here`; with none marked, a publish is refused and the revisions are
+all there is. Where new gears go decides nothing about the product.
+
+**What a revision pins** (ADR-0060 §3). A save records, beside the revision,
+the commit of every source the text uses (`sources_lock`): each project
+source at the head of its branch, read through its connection; any other
+`git(...)` source at its `rev` when that is a commit. A dev environment
+builds each source's branch and records the commits it got
+(`source_commits`); a protected one builds only the lock, and refuses a
+revision without one (`REVISION_NOT_PINNED`). A description that names one
+repository twice is refused at save (§2); a save composes from the whole
+product record and never drops a picked gear or the frontend silently (§4).
+
+**How the server checks a description** (ADR-0060 §6). The engine runs on
+the description laid in an overlay of the project's home checkout, at its
+branch, with the home repository's own catalogue over the organization's
+corpus: a `path("../..")` source resolves as it does in a build. An
+environment of dev strictness has the checked profile marked
+`development = True` (§5).
 
 The skeleton is generated in one place (`new_gear.rs`) for both callers: the
 project's route, and `port::GearScaffolds::scaffold_into`, through which the
@@ -389,8 +412,8 @@ which calls this engine; moving it here is a follow-up.
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `GET` | `/projects/{project_id}/gear-repo` | The project's gear repository, 0 or 1 node | unstable |
-| `POST` | `/projects/{project_id}/gear-repo` | Connect or replace it; the branch defaults to `main` | unstable |
+| `GET` | `/projects/{project_id}/gear-repo` | The project's source marked `gears_here` (ADR-0060), 0 or 1 node | unstable |
+| `POST` | `/projects/{project_id}/gear-repo` | Mark the source new gears go to, adding it to the sources when it is not one | unstable |
 | `POST` | `/projects/{project_id}/create-repo` | Create a repository through the connector and record it | unstable |
 | `POST` | `/projects/{project_id}/scaffold` | Write a gear skeleton on a branch, optionally as a pull request: into the project's gear repository, else the organization's, else the project's sources; answers `repo` and `target` (`project`, `organization`, `sources`), on a dry run too | unstable |
 | `GET` | `/projects/{project_id}/product` | The product being composed | unstable |

@@ -71,6 +71,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0057](0057-a-profile-is-chosen-per-environment-and-checked-per-profile.md) | A profile is chosen per environment and checked per profile | proposed | 2026-11-03 |
 | [0058](0058-the-process-comes-from-the-specs-and-the-domain-model.md) | The process comes from the specs and the domain model, not a hand-edited catalogue | proposed | 2026-11-04 |
 | [0059](0059-a-build-or-deploy-names-its-cause-before-it-starts.md) | A build or a deploy names its cause before it starts | proposed | 2026-11-04 |
+| [0060](0060-a-project-is-one-list-of-sources-and-a-revision-pins-each.md) | A project is one list of source repositories, and each description revision pins the commit of every source it uses | proposed | 2026-11-04 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
