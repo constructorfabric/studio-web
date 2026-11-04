@@ -70,12 +70,14 @@ jobs:
         run: |
           set -euo pipefail
           # A Windows checkout may carry CRLF; a stray CR would end up in the ref.
-          pin() { tr -d '\r' < theia/Dockerfile | sed -n "s/^ARG $1=//p"; }
+          # Read once, then search the text: no pipe for `grep -q` to close early.
+          dockerfile=$(tr -d '\r' < theia/Dockerfile)
+          pin() { sed -n "s/^ARG $1=//p" <<< "$dockerfile"; }
           repo=$(pin STUDIO_GEARBOX_REPO)
           release=$(pin STUDIO_GEARBOX_RELEASE)
           engine_version=$(pin STUDIO_GEARBOX_VERSION)
           ref=$(pin STUDIO_GEARBOX_REF)
-          if ! tr -d '' < theia/Dockerfile | grep -q "^ARG ${{ matrix.sha256 }}="; then
+          if ! grep -q "^ARG ${{ matrix.sha256 }}=" <<< "$dockerfile"; then
             echo "::error::theia/Dockerfile no longer pins ${{ matrix.sha256 }}"
             exit 1
           fi
@@ -102,8 +104,13 @@ jobs:
         shell: bash
         run: |
           vsix="constructorfabric.gearbox-engine-$ENGINE_VERSION-${{ matrix.target }}.vsix"
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] \
-            && gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$vsix"; then
+          # The asset list is read whole first: `shell: bash` runs with pipefail,
+          # and `grep -q` closing the pipe early would read as "not published".
+          assets=""
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            assets=$(gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)
+          fi
+          if [ -n "$assets" ] && grep -qx "$vsix" <<< "$assets"; then
             echo "$vsix is already published in $ENGINE_TAG; nothing to build"
             echo "done=true" >> "$GITHUB_OUTPUT"
           fi
