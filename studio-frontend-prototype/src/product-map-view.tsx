@@ -19,6 +19,7 @@ import {
   type ProjectTargets,
   type ScreenPreview as ScreenPicture,
 } from "./api";
+import { HeaderMenu } from "./header-menu";
 import { gearKey, librariesFrom, mfesFrom, shellsFrom, splitTemplates, type Library, type Mfe, type Shell } from "./frontend-constructor";
 import { errText } from "./problem";
 import { lineDiff } from "./product-flow";
@@ -46,6 +47,7 @@ import {
 import { profilesToCheck } from "./product";
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
 import { previewBuild, shortCommit, type PreviewBuild } from "./screen-previews";
+import { StatusChip } from "./ui-standard";
 
 type Read = {
   product: ProjectProduct | null;
@@ -302,7 +304,10 @@ export function ProductMap({
   const shown = selected ? nodeById.get(selected) ?? null : null;
   return (
     <section className="card pmap" data-product-section="map" data-product-map>
-      <div className="pmap-bar">
+      {/* One row: the view (Diagram | product.gdl -- not "Map" again, the
+          Product page's own tab is Map), the look, Find, the verdict, and
+          the rarer actions (layers, fold) behind the "⋯". */}
+      <div className="pmap-bar" data-pmap-bar>
         <div className="doc-views" role="tablist" aria-label="View">
           {(["map", "gdl"] as const).map((v) => (
             <button
@@ -313,33 +318,12 @@ export function ProductMap({
               className={`doc-view${view === v ? " on" : ""}`}
               onClick={() => setView(v)}
               data-pmap-view={v}
+              title={v === "map" ? "The product drawn: its parts and the links between them" : "The same product as the text Studio commits"}
             >
-              {v === "map" ? "Map" : "product.gdl"}
+              {v === "map" ? "Diagram" : "product.gdl"}
             </button>
           ))}
         </div>
-        {view === "map" && (
-          <div className="pmap-filters" aria-label="Layers">
-            {MAP_LAYERS.map((l) => (
-              <label key={l.id} title={l.hint}>
-                <input
-                  type="checkbox"
-                  checked={layers.has(l.id)}
-                  onChange={() =>
-                    setLayers((s) => {
-                      const n = new Set(s);
-                      if (n.has(l.id)) n.delete(l.id);
-                      else n.add(l.id);
-                      return n;
-                    })
-                  }
-                  data-pmap-layer-toggle={l.id}
-                />{" "}
-                {l.title}
-              </label>
-            ))}
-          </div>
-        )}
         {view === "map" && (
           <div className="doc-views" role="tablist" aria-label="Look">
             {(["subsystems", "compact"] as const).map((l) => (
@@ -359,36 +343,63 @@ export function ProductMap({
           </div>
         )}
         {view === "map" && (
-          <>
-            <input
-              className="pmap-find"
-              type="search"
-              placeholder="Find on the map"
-              value={find}
-              onChange={(e) => setFind(e.target.value)}
-              aria-label="Find on the map"
-              data-pmap-find
-            />
-            <button type="button" className="iconbtn" onClick={() => setCollapsed(new Set(map.nodes.filter((n) => n.layer !== "frontend").map((n) => `${n.layer}:${n.group}`)))} data-pmap-fold-all>
-              Fold all
-            </button>
-            <button type="button" className="iconbtn" onClick={() => setCollapsed(new Set())} data-pmap-unfold-all>
-              Unfold all
-            </button>
-          </>
+          <input
+            className="pmap-find"
+            type="search"
+            placeholder="Find on the map"
+            value={find}
+            onChange={(e) => setFind(e.target.value)}
+            aria-label="Find on the map"
+            data-pmap-find
+          />
         )}
         <span className="grow" />
         {busy && <span className="muted">{busy}</span>}
         {/* The engine's verdict is the product's, not a node's: the map names
             it and the Backend section lists it. */}
         {(product?.last_preview?.errors ?? 0) > 0 && (
-          <button type="button" className="badge danger" onClick={() => onSection("backend")} data-pmap-engine-errors={product?.last_preview?.errors}>
+          <StatusChip tone="danger" onClick={() => onSection("backend")} data-pmap-engine-errors={product?.last_preview?.errors}>
             {product?.last_preview?.errors} engine error{product?.last_preview?.errors === 1 ? "" : "s"} · Backend
-          </button>
+          </StatusChip>
         )}
-        <span className={`badge ${problems.some((p) => p.node.state !== "unused") ? "danger" : "ok"}`} data-pmap-problems={problems.length}>
+        <StatusChip tone={problems.some((p) => p.node.state !== "unused") ? "danger" : "ok"} data-pmap-problems={problems.length}>
           {problems.length === 0 ? "nothing wrong between the parts" : `${problems.length} problem${problems.length === 1 ? "" : "s"} between the parts`}
-        </span>
+        </StatusChip>
+        {view === "map" && (
+          <HeaderMenu
+            label={layers.size < MAP_LAYERS.length ? `⋯ ${layers.size}/${MAP_LAYERS.length} layers` : "⋯"}
+            title="More: layers, fold all, unfold all"
+          >
+            {/* A layer's box keeps the menu open: several are often turned at once. */}
+            <div className="pmap-menu-layers" aria-label="Layers" onClick={(e) => e.stopPropagation()}>
+              <span className="pmap-menu-k">Layers</span>
+              {MAP_LAYERS.map((l) => (
+                <label key={l.id} title={l.hint}>
+                  <input
+                    type="checkbox"
+                    checked={layers.has(l.id)}
+                    onChange={() =>
+                      setLayers((s) => {
+                        const n = new Set(s);
+                        if (n.has(l.id)) n.delete(l.id);
+                        else n.add(l.id);
+                        return n;
+                      })
+                    }
+                    data-pmap-layer-toggle={l.id}
+                  />{" "}
+                  {l.title}
+                </label>
+              ))}
+            </div>
+            <button type="button" role="menuitem" onClick={() => setCollapsed(new Set(map.nodes.filter((n) => n.layer !== "frontend").map((n) => `${n.layer}:${n.group}`)))} data-pmap-fold-all>
+              Fold all
+            </button>
+            <button type="button" role="menuitem" onClick={() => setCollapsed(new Set())} data-pmap-unfold-all>
+              Unfold all
+            </button>
+          </HeaderMenu>
+        )}
       </div>
       {err && <div className="error">{err}</div>}
       {problems.length > 0 && (

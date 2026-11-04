@@ -61,7 +61,21 @@ import { buildsHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 import { productPathOf } from "./product";
 import { HowItBuilds } from "./project-build-card";
-import { EmptyState, StatusChip, type Tone } from "./ui-standard";
+import { EmptyState, InfoPopover, PageHeader, StatusChip, type Tone } from "./ui-standard";
+
+/** What the three ways of building are, behind a "?". */
+const BUILD_INFO = (
+  <>
+    <p>
+      Build the product one way at a time: <b>In Studio</b>, as a Job in the organization&apos;s cluster; <b>On my
+      machine</b>, in the desktop IDE; or <b>In CI</b>, by the repository&apos;s workflow.
+    </p>
+    <p>
+      Every build shows in the table below whichever way it ran: how far it got (prepare, images, publish), what
+      failed and whose it is to fix, and, once it published its chart, Deploy.
+    </p>
+  </>
+);
 
 /** At most this many runs are read: the sync keeps the newest few hundred
  *  per repository. */
@@ -245,7 +259,13 @@ export function ProjectBuilds({
 
   return (
     <section data-release-builds>
-      {!embedded && <h2>Builds</h2>}
+      {!embedded && (
+        <PageHeader
+          title="Builds"
+          status={<StatusChip tone={running ? "running" : "neutral"}>{running ? "a build runs" : `${builds.length} build${builds.length === 1 ? "" : "s"}`}</StatusChip>}
+          info={BUILD_INFO}
+        />
+      )}
       <PipelineLine hint={buildsHint(builds, canBuildInStudio)} onOpenTab={onOpenTab} here="releases" />
       {note && (
         <div className="hint" data-builds-note>
@@ -254,7 +274,12 @@ export function ProjectBuilds({
       )}
       <HowItBuilds token={token} projectId={projectId} projectName={projectName ?? "app"} build={build} onSaved={setBuild} />
       <section className="card" data-build-the-product>
-        <h2>Build the product</h2>
+        <div className="card-head">
+          <h2>
+            Build the product{" "}
+            <InfoPopover label="About building the product">{BUILD_INFO}</InfoPopover>
+          </h2>
+        </div>
         <div className="doc-views" role="tablist" aria-label="How to build" data-build-scenarios>
           {(Object.keys(SCENARIO_LABEL) as BuildScenario[]).map((s) => (
             <button
@@ -341,10 +366,12 @@ function OnMyMachine({
   return (
     <div data-build-on-my-machine>
       <p>
-        The desktop IDE builds on your machine: it opens the project, <b>Generates</b> the product and starts{" "}
-        <b>Build</b> by itself. <b>Publish</b> then pushes the images and the chart to an environment&apos;s registry
-        with a push-only token Studio gives for it. Each build reports itself and shows below, where it says{" "}
-        <code>desktop</code>.
+        The desktop IDE opens the project, generates the product and builds it on your machine.{" "}
+        <InfoPopover label="How a build on my machine works">
+          The desktop IDE opens the project, <b>Generates</b> the product and starts <b>Build</b> by itself.{" "}
+          <b>Publish</b> then pushes the images and the chart to an environment&apos;s registry with a push-only token
+          Studio gives for it. Each build reports itself and shows below, where it says <code>desktop</code>.
+        </InfoPopover>
       </p>
       <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <button
@@ -500,13 +527,24 @@ function InCi({
           <div className="card-head" style={{ flexWrap: "wrap", gap: 8, marginTop: 12 }}>
             <div>
               <h3 data-builds-headline>{buildsHeadline(runs, chosen || null, branch || null)}</h3>
-              <p className="subtitle">
-                {chosenIsTheBuild
-                  ? "The project's build workflow; Build in CI starts it."
-                  : setting
-                    ? `The project's build workflow is ${setting.workflow} in ${setting.repo}.`
-                    : "Which workflow builds the product is not set yet; pick it and use it as the build workflow."}
-              </p>
+              <div className="subtitle" data-builds-workflow-state>
+                {chosenIsTheBuild ? (
+                  <StatusChip tone="ok">the project&apos;s build workflow</StatusChip>
+                ) : setting ? (
+                  <StatusChip tone="neutral" title={`The project's build workflow is ${setting.workflow} in ${setting.repo}.`}>
+                    build workflow: {setting.workflow}
+                  </StatusChip>
+                ) : (
+                  <StatusChip tone="warn">no build workflow set</StatusChip>
+                )}{" "}
+                <InfoPopover label="About the build workflow">
+                  {chosenIsTheBuild
+                    ? "This is the project's build workflow; Build in CI starts it."
+                    : setting
+                      ? `The project's build workflow is ${setting.workflow} in ${setting.repo}.`
+                      : "Which workflow builds the product is not set yet: pick it and use it as the build workflow."}
+                </InfoPopover>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <select

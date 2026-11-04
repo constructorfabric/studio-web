@@ -7,6 +7,7 @@
  *  shows up without anybody resetting anything. */
 import { useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 
+import { StatusChip } from "./ui-standard";
 import { applyOrder, isDefaultOrder, moveTo, parseOrder, serializeOrder } from "./tab-order";
 import { usePreference } from "./view-mode";
 
@@ -125,7 +126,8 @@ export function OrderedSections<Id extends string>({
             </span>
             {t.label}
             {t.attention && (
-              <span
+              <StatusChip
+                tone={t.attention.tone === "failed" ? "danger" : "warn"}
                 className={`tab-attention ${t.attention.tone}`}
                 title={t.attention.text}
                 aria-label={t.attention.text}
@@ -133,12 +135,12 @@ export function OrderedSections<Id extends string>({
                 data-tab-attention={t.attention.tone}
               >
                 {t.attention.count}
-              </span>
+              </StatusChip>
             )}
             {t.experimental && (
-              <span className="badge-experimental" title="Experimental: it works, and it may change or go">
+              <StatusChip tone="warn" className="badge-experimental" title="Experimental: it works, and it may change or go">
                 exp
-              </span>
+              </StatusChip>
             )}
           </button>
         );

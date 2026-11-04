@@ -16,7 +16,7 @@ import { buildsOf, type BuildRun } from "./builds";
 import { DataTable, When } from "./data-table";
 import { errText } from "./format";
 import { documentRows, expiryText, formatBytes, groupOutputs, outputVersions, type DocumentRow, type OutputVersion } from "./outputs";
-import { StatusChip } from "./ui-standard";
+import { EmptyState, StatusChip } from "./ui-standard";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 
 /** The sync keeps the newest few hundred runs per repository. */
@@ -208,9 +208,9 @@ export function ProjectOutputs({
               cell: (r) => (
                 <>
                   {r.title}
-                  {r.tag && r.tag !== r.title ? <span className="sub"> · {r.tag}</span> : null}
-                  {r.prerelease ? <span className="badge neutral">pre-release</span> : null}
-                  {r.draft ? <span className="badge neutral">draft</span> : null}
+                  {r.tag && r.tag !== r.title ? <span className="sub"> · {r.tag}</span> : null}{" "}
+                  {r.prerelease ? <StatusChip tone="info">pre-release</StatusChip> : null}{" "}
+                  {r.draft ? <StatusChip tone="neutral">draft</StatusChip> : null}
                 </>
               ),
             },
@@ -227,7 +227,7 @@ export function ProjectOutputs({
           }
           expand={(r) =>
             r.assets.length === 0 ? (
-              <p className="sub">No files attached: the release is its tag and notes.</p>
+              <EmptyState title="No files attached." body="The release is its tag and notes." />
             ) : (
               <ul className="output-files" data-release-files>
                 {r.assets.map((a) => (
@@ -327,7 +327,7 @@ export function ProjectDocuments({
           {
             id: "typed",
             header: "Typed by",
-            cell: (r) => (r.confirmed ? "a person" : <span className="sub">detected</span>),
+            cell: (r) => (r.confirmed ? "a person" : <StatusChip tone="neutral">detected</StatusChip>),
           },
           {
             id: "conforms",
@@ -336,9 +336,9 @@ export function ProjectDocuments({
               r.conforms === null ? (
                 "—"
               ) : r.conforms ? (
-                <span className="badge ok">yes</span>
+                <StatusChip tone="ok">yes</StatusChip>
               ) : (
-                <span className="badge warn">gaps</span>
+                <StatusChip tone="warn">gaps</StatusChip>
               ),
           },
         ]}

@@ -3171,3 +3171,20 @@ div.dm-block { padding-left: 0; }
 .pmap-gdl-line.owned { cursor: pointer; }
 .pmap-gdl-line.owned:hover { background: var(--accent); }
 .pmap-gdl-line.on { background: color-mix(in oklab, var(--primary) 18%, var(--card)); box-shadow: inset 3px 0 0 var(--primary); }
+
+/* wave 4C */
+.pmap-bar { flex-wrap: nowrap; gap: 10px; }
+@media (max-width: 1100px) { .pmap-bar { flex-wrap: wrap; } }
+.pmap-bar > .grow { flex: 1; }
+/* The "⋯" is a HeaderMenu (details.org-menu); the path bar's dropdown of the
+   same class is absolutely placed, which would tear it out of the row. */
+.pmap-bar details.org-menu { position: relative; inset: auto; z-index: auto; display: block; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.pmap-bar .org-menu summary { white-space: nowrap; }
+.pmap-menu-layers { display: flex; flex-direction: column; gap: 2px; padding: 4px 10px 6px; border-bottom: 1px solid var(--border); margin-bottom: 4px; font-size: 12.5px; }
+.pmap-menu-layers label { display: flex; align-items: center; gap: 6px; padding: 3px 0; cursor: pointer; }
+.pmap-menu-k { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); }
+/* A section tab's count and "exp" mark are StatusChips sized to the tab. */
+.psection .badge.tab-attention { display: inline-grid; padding: 0 4px; border: 0; font-size: 10px; font-weight: 700; line-height: 1; color: #fff; }
+.psection .badge.tab-attention.failed { background: var(--destructive); }
+.psection .badge.tab-attention.todo { background: var(--warning); }
+.psection .badge.badge-experimental { padding: 0 5px; border: 0; font-size: 10px; font-weight: 600; line-height: 16px; }

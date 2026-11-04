@@ -7,6 +7,7 @@ import { api } from "./api";
 import { buildsOf, latestFinished, mainBranch } from "./builds";
 import type { ProjTab } from "./project-overview";
 import { type PathFacts, type PathStep, TAB_HOWTO, pathProgress, projectPath, specQueues } from "./project-path";
+import { InfoPopover, StatusChip } from "./ui-standard";
 
 /** The read behind a step, or null when it failed: a gear that is down marks
  *  its step unknown and leaves the rest of the path alone. */
@@ -98,11 +99,18 @@ export function ProjectPath({
   return (
     <div className="card ppath" data-project-path>
       <div className="card-head">
-        <h2>Path of the project</h2>
+        <h2>
+          Path of the project{" "}
+          <InfoPopover label="About the path of the project">
+            The steps a project goes through, from its sources to a running product, in the order they are done. Each
+            says where it stands, read from the project&apos;s data, and opens the tab where it is done; a step whose
+            data could not be read is marked unknown and leaves the rest alone.
+          </InfoPopover>
+        </h2>
         {progress && (
-          <span className="sub">
+          <StatusChip tone={progress.done === progress.total ? "ok" : "neutral"} data-path-progress>
             {progress.done} of {progress.total} done
-          </span>
+          </StatusChip>
         )}
       </div>
       {steps === null ? (
@@ -117,7 +125,12 @@ export function ProjectPath({
               <div className="ppath-body">
                 <div className="ppath-title">
                   {s.title}
-                  {s.state === "unknown" && <span className="badge neutral">unknown</span>}
+                  {s.state === "unknown" && (
+                    <>
+                      {" "}
+                      <StatusChip tone="neutral">unknown</StatusChip>
+                    </>
+                  )}
                 </div>
                 <div className="ppath-status">{s.status}</div>
               </div>
@@ -139,8 +152,7 @@ export function ProjectTabHowto({ tab }: { tab: ProjTab }) {
   if (!line) return null;
   return (
     <p className="dm-howto" data-tab-howto={tab}>
-      <b>{line.lead}</b>
-      {line.rest}
+      <b>{line.lead}</b> <InfoPopover label="What you do here">{line.rest}</InfoPopover>
     </p>
   );
 }

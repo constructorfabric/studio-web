@@ -19,7 +19,7 @@ import { lineDiff, productFlow, type DiffLine, type FlowState, type FlowStep as 
 import { profilesToCheck } from "./product";
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
 import { deployableBuilds } from "./project-deploys";
-import { StepFlow, type FlowStep, type StepState } from "./ui-standard";
+import { StatusChip, StepFlow, type FlowStep, type StepState } from "./ui-standard";
 
 /** A flow state as the StepFlow strip draws it. */
 const STEP_STATE: Record<FlowState, StepState> = { done: "done", todo: "warn", failed: "failed", unknown: "todo", none: "todo" };
@@ -230,12 +230,24 @@ function SaveStep({
       {err && <div className="error">{err}</div>}
       {draft && diff && (
         <div data-flow-diff>
-          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-            {changes === 0
-              ? `The product as configured is revision ${kept?.revision} as it is: nothing to save.`
-              : `${changes} line${changes === 1 ? "" : "s"} change against ${kept ? `revision ${kept.revision}` : "nothing saved"}${
-                  draft.ok ? "" : "; the engine does not resolve it yet (Backend says why)"
-                }.`}
+          <div className="row" style={{ gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 12, marginBottom: 4 }} data-flow-diff-summary>
+            {changes === 0 ? (
+              <StatusChip tone="ok">nothing to save</StatusChip>
+            ) : (
+              <StatusChip tone="info">
+                {changes} line{changes === 1 ? "" : "s"} change
+              </StatusChip>
+            )}
+            {!draft.ok && (
+              <StatusChip tone="warn" title="The engine does not resolve it yet; Backend says why">
+                does not resolve yet
+              </StatusChip>
+            )}
+            <span className="muted">
+              {changes === 0
+                ? `The product as configured is revision ${kept?.revision} as it is.`
+                : `Against ${kept ? `revision ${kept.revision}` : "nothing saved"}.`}
+            </span>
           </div>
           <Diff lines={diff} />
         </div>
@@ -340,7 +352,11 @@ function Revisions({
               <div className="grow">
                 <div className="name">
                   Revision {r.revision}
-                  {r.revision === latest.revision && <span className="badge ok" style={{ marginLeft: 6 }}>current</span>}
+                  {r.revision === latest.revision && (
+                    <StatusChip tone="ok" style={{ marginLeft: 6 }}>
+                      current
+                    </StatusChip>
+                  )}
                 </div>
                 <div className="sub">
                   {new Date(r.created_at).toLocaleString()} · {r.author === "studio" ? "Studio" : r.author.slice(0, 8)} ·{" "}
