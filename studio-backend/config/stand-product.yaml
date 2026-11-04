@@ -461,6 +461,19 @@ gears:
         idle_timeout: "5m"
         max_lifetime: "30m"
 
+  # ── studio-environments (slugs, namespace assignments, image records, ADR-0062) ──
+  # A few rows per build and deploy. One connection: each one here is one
+  # more per replica on pg_main's budget.
+  studio-environments:
+    database:
+      server: "pg_main"
+      dbname: "studio_environments"
+      pool:
+        max_conns: 1
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+
   # ── studio-artifact-ingest (the artifact index) ──
   # A mirror of the artifact graph's listing fields — scope, repo, type,
   # updated_at — as indexed columns, so a project's artifacts, specs and

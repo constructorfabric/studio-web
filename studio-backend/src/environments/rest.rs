@@ -24,6 +24,9 @@ use super::model::{
 use super::service::{DeployRequest, EnvironmentService, PreviewAsk, Refusal};
 use crate::org_scope::OrgCtx;
 
+#[path = "rest_images.rs"]
+mod images_routes;
+
 /// Errors attributable to an environment or a deployment as a resource.
 #[resource_error(gts_id!("cf.studio.environments.environment.v1~"))]
 pub struct StudioEnvironmentsError;
@@ -52,6 +55,9 @@ fn problem(r: Refusal) -> CanonicalError {
             .create(),
         Refusal::Precondition(kind, detail) => StudioEnvironmentsError::failed_precondition()
             .with_precondition_violation("environment", detail, kind)
+            .create(),
+        Refusal::Conflict(reason, detail) => StudioEnvironmentsError::aborted(detail)
+            .with_reason(reason)
             .create(),
         Refusal::Unavailable(detail) => CanonicalError::service_unavailable()
             .with_detail(detail)
@@ -109,6 +115,23 @@ pub struct EnvironmentDto {
     /// Whether projects may preview a build here, and how (ADR-0055);
     /// absent: no previews.
     pub previews: Option<PreviewSettingsDto>,
+    /// The organization's mirror of the builder image, by digest; absent:
+    /// the platform's (ADR-0062 §1).
+    pub builder_image: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub builder_registry_connection_id: Option<Uuid>,
+    /// The read-only connection the cluster pulls with; absent: the
+    /// registry connection (ADR-0062 §2).
+    #[schema(value_type = Option<String>)]
+    pub registry_pull_connection_id: Option<Uuid>,
+    /// The build namespace pattern; absent: `{project}-build`.
+    pub build_namespace: Option<String>,
+    /// The namespaces the cluster gives when Studio may not make its own.
+    pub namespaces: Option<Vec<String>>,
+    pub allow_broad_registry_token: bool,
+    /// What should be fixed but does not stop a build or a deploy, e.g. "the
+    /// cluster gets a credential that can write".
+    pub warnings: Vec<String>,
     pub updated_by: String,
     pub updated_at: String,
 }
@@ -169,7 +192,16 @@ fn kind_str(k: EnvironmentKind) -> &'static str {
 
 fn env_dto(e: Environment) -> EnvironmentDto {
     let strictness = e.strictness().as_str().to_owned();
+    let warnings = e.warnings();
+    let b = e.boundaries;
     EnvironmentDto {
+        builder_image: b.builder_image,
+        builder_registry_connection_id: b.builder_registry_connection_id,
+        registry_pull_connection_id: b.registry_pull_connection_id,
+        build_namespace: b.build_namespace,
+        namespaces: b.namespaces,
+        allow_broad_registry_token: b.allow_broad_registry_token,
+        warnings,
         id: e.id,
         name: e.name,
         description: e.description,
@@ -359,6 +391,32 @@ pub struct EnvironmentRequest {
     /// on a protected or a Research environment.
     #[serde(default)]
     pub previews: Option<PreviewSettingsDto>,
+    /// The image a build's `prepare` and `publish` run in, by digest: an
+    /// organization's mirror of the platform's builder (ADR-0062 §1).
+    /// Absent: the platform's.
+    #[serde(default)]
+    pub builder_image: Option<String>,
+    /// The `registry` connection that builder image is pulled with, when it
+    /// is on another registry than the environment's.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub builder_registry_connection_id: Option<Uuid>,
+    /// A read-only `registry` connection the cluster pulls with (ADR-0062
+    /// §2). Absent: the registry connection, which can write.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub registry_pull_connection_id: Option<Uuid>,
+    /// The pattern of the namespace builds run in; default `{project}-build`.
+    #[serde(default)]
+    pub build_namespace: Option<String>,
+    /// The namespaces the cluster gives Studio when it may not make its own
+    /// (namespace-limited); an administrator assigns them to projects.
+    #[serde(default)]
+    pub namespaces: Option<Vec<String>>,
+    /// Let a server build push with a registry token whose scopes reach past
+    /// pushing and pulling; default no (`REGISTRY_TOKEN_TOO_BROAD`).
+    #[serde(default)]
+    pub allow_broad_registry_token: bool,
 }
 
 fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> {
@@ -411,6 +469,14 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
         projects: r.projects,
         previews: r.previews.map(preview_settings),
         strictness,
+        boundaries: super::model::Boundaries {
+            builder_image: r.builder_image,
+            builder_registry_connection_id: r.builder_registry_connection_id,
+            registry_pull_connection_id: r.registry_pull_connection_id,
+            build_namespace: r.build_namespace,
+            namespaces: r.namespaces,
+            allow_broad_registry_token: r.allow_broad_registry_token,
+        },
     })
 }
 
@@ -1210,9 +1276,15 @@ async fn start_build(
             body.profile.as_deref().unwrap_or("prod"),
             body.product_file.as_deref(),
             body.git_ref,
+            false,
         )
         .await
         .map_err(problem)?;
+    let super::service::BuildAsked::Started(started) = started else {
+        return Err(problem(Refusal::Internal(
+            "a build was planned, not started".into(),
+        )));
+    };
     Ok((
         StatusCode::ACCEPTED,
         Json(StudioBuildDto {
@@ -2156,6 +2228,10 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    // A project's images, the organization's registries, readiness,
+    // namespace assignments and a build's plan (ADR-0062).
+    router = images_routes::register(router, openapi);
 
     router.layer(Extension(Environments(service)))
 }

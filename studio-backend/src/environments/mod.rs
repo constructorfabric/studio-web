@@ -17,8 +17,14 @@
 //! deployment records on the organization, the bindings on the project. The
 //! first two are written by this gear alone, as the service, after its own
 //! administrator check; the PDP refuses a write of them by anybody else
-//! (`studio_authz_plugin::GEAR_HELD_METADATA`). No database of its own: the
-//! records are bounded (`model::HISTORY`) and read per organization.
+//! (`studio_authz_plugin::GEAR_HELD_METADATA`). The records are bounded
+//! (`model::HISTORY`) and read per organization.
+//!
+//! Its own tables (`records`, ADR-0062) keep what is not bounded and must
+//! not be a member's to write: each project's immutable slug, the namespace
+//! it was given in each environment, and its image and chart records. Without
+//! a database the gear stands down to what it did before: namespaces from the
+//! pattern, paths from the project's name, and the image routes answer 503.
 //!
 //! ## What it does not do yet
 //!
@@ -30,10 +36,16 @@
 pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
 mod database;
 mod deploy;
+mod image_tasks; // delete, copy (promote, import) and sweep of image records
+pub(crate) mod images; // a project's images and charts as records (ADR-0062 §4)
+pub(crate) mod images_sink; // a pipeline's published images, recorded (ADR-0062 §4)
+mod migrations;
 mod model;
+mod placement; // a project's slug, namespaces and registry path (ADR-0062 §3, §7)
 mod preflight; // what a deploy checks before and while it installs
 mod preview; // a build tried in a namespace of its own, removed when it expires (ADR-0055)
 mod readiness; // what a build or a deploy checks before it is queued
+mod records; // the gear's own tables (ADR-0062)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod rest;
@@ -41,14 +53,14 @@ mod service;
 mod store;
 mod workflow; // the build workflow proposed to a product's repository (ADR-0048)
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use axum::Router;
 use toolkit::api::OpenApiRegistry;
-use toolkit::contracts::RestApiCapability;
+use toolkit::contracts::{DatabaseCapability, RestApiCapability};
 use toolkit::{Gear, GearCtx};
-use tracing::info;
+use tracing::{info, warn};
 
 /// The organization's environments.
 pub const ENVIRONMENTS_METADATA_TYPE: &str =
@@ -63,14 +75,41 @@ pub const DEPLOYMENTS_METADATA_TYPE: &str =
 #[toolkit::gear(
     name = "studio-environments",
     deps = [account_management],
-    capabilities = [rest]
+    capabilities = [db, rest]
 )]
 #[derive(Default)]
-pub struct StudioEnvironmentsGear;
+pub struct StudioEnvironmentsGear {
+    /// The gear's own tables; `None` when no database is configured.
+    records: OnceLock<Option<Arc<records::Records>>>,
+}
+
+impl DatabaseCapability for StudioEnvironmentsGear {
+    fn migrations(&self) -> Vec<Box<dyn toolkit_db::sea_orm_migration::MigrationTrait>> {
+        use toolkit_db::sea_orm_migration::MigratorTrait;
+        migrations::Migrator::migrations()
+    }
+}
 
 #[async_trait]
 impl Gear for StudioEnvironmentsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        let records = match ctx.db_required() {
+            Ok(db) => Some(Arc::new(records::Records::new(db.db()))),
+            Err(e) => {
+                warn!(
+                    "studio-environments: no database configured -- namespaces follow the                      pattern, image paths the project's name, and the image routes answer 503                      until a `database:` section is added: {e}"
+                );
+                None
+            }
+        };
+        // The runs find the tables where every gear finds its clients.
+        if let Some(r) = &records {
+            ctx.client_hub().register::<records::Records>(Arc::clone(r));
+        }
+        let _ = self.records.set(records);
+        // Deleting and copying images, and the retention sweep (ADR-0062 §4).
+        crate::tasks::sdk::register(Arc::new(image_tasks::ImageTask::new(ctx.client_hub())))?;
+        crate::tasks::sdk::register(Arc::new(image_tasks::SweepTask::new(ctx.client_hub())))?;
         crate::tasks::sdk::register(Arc::new(deploy::DeployTask::new(ctx.client_hub())))?;
         // A build in the organization's cluster, and the watch that records it (ADR-0048 §9).
         crate::tasks::sdk::register(Arc::new(build::BuildTask::new(ctx.client_hub())))?;
@@ -101,6 +140,12 @@ impl RestApiCapability for StudioEnvironmentsGear {
             store::Store::new(am),
             ctx.client_hub(),
         ));
+        if let Some(records) = self.records.get().cloned().flatten() {
+            service.set_records(records);
+        }
+        // A pipeline's manifest, read by studio-artifact-ingest, becomes image
+        // records here too (ADR-0062 §4).
+        images_sink::set(Arc::clone(&service));
         let router = rest::register_routes(router, openapi, service);
         // `?organization_id=` resolves through it; without it a request that
         // names an organization is refused rather than served from the

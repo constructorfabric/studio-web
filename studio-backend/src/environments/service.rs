@@ -15,13 +15,20 @@ use super::model::{
     DeploymentList, DeploymentState, Environment, EnvironmentInput, EnvironmentKind,
     EnvironmentList, Invalid, Preview,
 };
+use super::placement;
 use super::preview::{self, PreviewRoute, SweepPayload};
 use super::readiness::{self, Role};
+use super::records::Records;
 use super::research;
 use super::store::{Store, service_context};
 use super::workflow;
 use super::{BINDINGS_METADATA_TYPE, DEPLOYMENTS_METADATA_TYPE, ENVIRONMENTS_METADATA_TYPE};
 use crate::connectors::sdk as connectors;
+
+// A project's images and an organization's registries (ADR-0062 §4, §5).
+#[path = "service_images.rs"]
+mod images_service;
+pub use images_service::{RetentionOf, RetentionScope, RunsIn};
 
 /// The privilege that manages an organization's environments and decides
 /// about deploys to its protected ones (ADR-0043 §1, §3).
@@ -38,6 +45,8 @@ pub enum Refusal {
     Invalid(String),
     /// 400 failed_precondition: not now, in this state.
     Precondition(&'static str, String),
+    /// 409: not while the thing is in this state: the code, and why.
+    Conflict(&'static str, String),
     /// 503: a gear this needs is missing.
     Unavailable(String),
     /// 500.
@@ -121,6 +130,52 @@ pub struct BuildStarted {
     pub namespace: String,
 }
 
+/// One source a build takes, as its plan says it (ADR-0062 §8).
+#[derive(Debug, Clone, Default)]
+pub struct PlanSource {
+    /// `home` for the project's repository, else the description's id.
+    pub id: String,
+    pub repository: String,
+    pub git_ref: String,
+    /// The commit, when the ref is one (a protected build's pin).
+    pub commit: Option<String>,
+    pub connection_id: Option<Uuid>,
+    pub connection_label: Option<String>,
+    pub connection_scope: Option<String>,
+    /// The tenant that holds the connection.
+    pub connection_holder: Option<Uuid>,
+}
+
+/// What a build would do, said before anything starts (ADR-0062 §8).
+#[derive(Debug, Clone)]
+pub struct BuildPlan {
+    pub environment_id: Uuid,
+    pub environment: String,
+    pub profile: String,
+    pub product_file: String,
+    pub description_revision: Option<i64>,
+    pub strictness: String,
+    pub namespace: String,
+    pub build_namespace: String,
+    pub builder_image: String,
+    pub builder_pinned: bool,
+    pub gearbox_version: Option<String>,
+    pub registry_prefix: String,
+    pub image_repositories: Vec<String>,
+    pub chart_repository: String,
+    pub sources: Vec<PlanSource>,
+    pub warnings: Vec<String>,
+    /// The refusal a build would meet now: its code and why.
+    pub refusal: Option<(String, String)>,
+}
+
+/// A build asked for, or only planned.
+#[derive(Debug, Clone)]
+pub enum BuildAsked {
+    Started(BuildStarted),
+    Planned(Box<BuildPlan>),
+}
+
 /// The build workflow as proposed.
 #[derive(Debug, Clone)]
 pub struct WorkflowProposal {
@@ -146,6 +201,9 @@ pub struct PushToken {
 struct Config {
     values: Option<serde_json::Value>,
     secret_keys: Vec<String>,
+    /// The project's build namespace there, recorded with its namespace by
+    /// the run (ADR-0062 §3).
+    build_namespace: Option<String>,
 }
 
 pub struct EnvironmentService {
@@ -153,6 +211,8 @@ pub struct EnvironmentService {
     hub: Arc<ClientHub>,
     /// For the registries' token services.
     http: reqwest::Client,
+    /// The gear's own tables (ADR-0062); unset without a database.
+    records: std::sync::OnceLock<Arc<Records>>,
 }
 
 /// A build or deploy that names no description, of a project whose product
@@ -202,7 +262,69 @@ impl EnvironmentService {
             .timeout(std::time::Duration::from_secs(20))
             .build()
             .unwrap_or_default();
-        Self { store, hub, http }
+        Self {
+            store,
+            hub,
+            http,
+            records: std::sync::OnceLock::new(),
+        }
+    }
+
+    pub fn set_records(&self, records: Arc<Records>) {
+        let _ = self.records.set(records);
+    }
+
+    fn records(&self) -> Option<&Arc<Records>> {
+        self.records.get()
+    }
+
+    fn records_or_unavailable(&self) -> Result<&Arc<Records>> {
+        self.records().ok_or_else(|| {
+            Refusal::Unavailable(
+                "image records are not kept in this deployment: the environments gear has no \
+                 database"
+                    .into(),
+            )
+        })
+    }
+
+    /// The project's immutable slug (ADR-0062 §3): recorded the first time,
+    /// from its name; without the tables, its name as a slug.
+    pub(super) async fn slug(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+    ) -> Result<String> {
+        let name = self.store.tenant_name(ctx, project).await;
+        match self.records() {
+            Some(r) => r
+                .slug(org, project, &name)
+                .await
+                .map_err(|e| Refusal::Internal(format!("{e:#}"))),
+            None => Ok(model::slug(&name)),
+        }
+    }
+
+    /// Where `project` goes in `env`: its recorded namespaces, else the
+    /// pattern's for its slug, and its own registry path.
+    pub(super) async fn place(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+    ) -> Result<placement::Place> {
+        let slug = self.slug(ctx, org, project).await?;
+        let assignment = match self.records() {
+            Some(r) => r
+                .assignment(org, project, env.id)
+                .await
+                .map_err(|e| Refusal::Internal(format!("{e:#}")))?,
+            None => None,
+        };
+        placement::place_of(env, &slug, assignment.as_ref())
+            .map_err(|(code, why)| Refusal::Precondition(code, why))
     }
 
     fn service(&self, tenant: Uuid) -> Result<SecurityContext> {
@@ -501,20 +623,103 @@ impl EnvironmentService {
     async fn check_cluster_ready(
         &self,
         org: Uuid,
+        project: Uuid,
         env: &Environment,
-        namespace: &str,
+        place: &placement::Place,
         registry: Option<Uuid>,
+        build: bool,
     ) -> Result<()> {
         let from = env.connections_from(org);
         let reader = self.service(from)?;
         if let Some(id) = registry.filter(|id| !id.is_nil()) {
-            let (seen, _) = self.read_connection(&reader, from, id).await;
+            let (seen, auth) = self.read_connection(&reader, from, id).await;
             if let Some((code, why)) =
                 readiness::connection_refusal(Role::Registry, &id.to_string(), &seen, None)
             {
                 return Err(Refusal::Precondition(code, why));
             }
+            // A build pushes as the organization's service, with a token
+            // that may push and pull packages and nothing more (ADR-0062 §2).
+            if build {
+                let label = seen.label.clone().unwrap_or_else(|| id.to_string());
+                if seen.scope.as_deref() == Some("personal") {
+                    return Err(Refusal::Precondition(
+                        readiness::REGISTRY_CONNECTION_PERSONAL,
+                        format!(
+                            "the environment's registry connection '{label}' is personal: a build \
+                             Studio runs pushes as the organization's service -- connect the \
+                             registry for the organization"
+                        ),
+                    ));
+                }
+                if let Some(auth) = auth
+                    && let Ok(access) =
+                        connectors::RegistryAccess::parse(&auth.base_url, &auth.token)
+                    && let Ok(connectors::TokenScopes::Known(scopes)) =
+                        connectors::token_scopes(&self.http, &access).await
+                    && let Some((code, why)) = readiness::token_refusal(
+                        &label,
+                        &connectors::too_broad(&scopes),
+                        env.boundaries.allow_broad_registry_token,
+                    )
+                {
+                    return Err(Refusal::Precondition(code, why));
+                }
+            }
         }
+        let client = self.cluster_client(org, env).await?;
+        let given = env.boundaries.namespaces.clone().unwrap_or_default();
+        let mut wanted = vec![place.namespace.as_str()];
+        if build && place.build_namespace != place.namespace {
+            wanted.push(place.build_namespace.as_str());
+        }
+        let unreachable = |why: String| {
+            Refusal::Precondition(
+                "ENVIRONMENT_CLUSTER_UNREACHABLE",
+                format!("{}: {why}", env.name),
+            )
+        };
+        // A cluster that does not answer is said in seconds, not after the
+        // client's own minutes.
+        let (level, facts) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let level = connectors::cluster_readiness(&client, &given).await?;
+            let mut facts = Vec::new();
+            for ns in &wanted {
+                facts.push(readiness::cluster_facts(&client, ns).await?);
+            }
+            anyhow::Ok((level, facts))
+        })
+        .await
+        .map_err(|_| unreachable("the cluster did not answer in 30 seconds".into()))?
+        .map_err(|e| unreachable(format!("{e:#}")))?;
+        // How far the cluster is bootstrapped (ADR-0062 §6), before any one
+        // namespace: a partial cluster says all it lacks at once.
+        if let Some((code, why)) = readiness::bootstrap_refusal(&level.readiness, &wanted) {
+            return Err(Refusal::Precondition(code, why));
+        }
+        for f in &facts {
+            if let Some((code, why)) = readiness::cluster_refusal(f) {
+                return Err(Refusal::Precondition(code, why));
+            }
+            if f.seen == readiness::NamespaceSeen::Exists
+                && let Some((code, why)) = placement::owner_refusal(
+                    &f.namespace,
+                    f.project_label.as_deref(),
+                    project,
+                    place.recorded,
+                )
+            {
+                return Err(Refusal::Precondition(code, why));
+            }
+        }
+        Ok(())
+    }
+
+    /// A client of the environment's cluster, its connection read as a run
+    /// reads it.
+    async fn cluster_client(&self, org: Uuid, env: &Environment) -> Result<kube::Client> {
+        let from = env.connections_from(org);
+        let reader = self.service(from)?;
         let (seen, auth) = self.read_connection(&reader, from, env.connection_id).await;
         if let Some((code, why)) = readiness::connection_refusal(
             Role::Cluster,
@@ -527,40 +732,62 @@ impl EnvironmentService {
         let auth = auth.ok_or_else(|| {
             Refusal::Internal("the cluster connection was read without its credential".into())
         })?;
-        let unusable = |e: anyhow::Error| {
-            Refusal::Precondition(
-                readiness::CLUSTER_CONNECTION_UNREADABLE,
-                format!(
-                    "the environment's cluster connection '{}' cannot be used: {e:#}",
-                    seen.label.as_deref().unwrap_or_default()
-                ),
-            )
-        };
         let access =
-            connectors::ClusterAccess::parse(&auth.base_url, &auth.token).map_err(unusable)?;
-        let unreachable = |why: String| {
+            connectors::ClusterAccess::parse(&auth.base_url, &auth.token).map_err(|e| {
+                Refusal::Precondition(
+                    readiness::CLUSTER_CONNECTION_UNREADABLE,
+                    format!(
+                        "the environment's cluster connection '{}' cannot be used: {e:#}",
+                        seen.label.as_deref().unwrap_or_default()
+                    ),
+                )
+            })?;
+        access.client().await.map_err(|e| {
             Refusal::Precondition(
                 "ENVIRONMENT_CLUSTER_UNREACHABLE",
-                format!("{}: {why}", env.name),
+                format!("{}: {e:#}", env.name),
             )
+        })
+    }
+
+    /// How far an environment's cluster is bootstrapped, asked now
+    /// (ADR-0062 §6).
+    pub async fn readiness(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Option<Uuid>,
+        environment: Uuid,
+    ) -> Result<connectors::ReadinessReport> {
+        let env = match project {
+            Some(p) => self.project_environment(ctx, org, p, environment).await?,
+            None => self.environment(ctx, org, environment).await?,
         };
-        let client = access
-            .client()
-            .await
-            .map_err(|e| unreachable(format!("{e:#}")))?;
-        // A cluster that does not answer is said in seconds, not after the
-        // client's own minutes.
-        let facts = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            readiness::cluster_facts(&client, namespace),
+        if env.kind != EnvironmentKind::Kubernetes {
+            return Err(Refusal::Precondition(
+                "ENVIRONMENT_NOT_A_CLUSTER",
+                format!("'{}' is not a Kubernetes environment", env.name),
+            ));
+        }
+        let client = self.cluster_client(org, &env).await?;
+        let given = env.boundaries.namespaces.clone().unwrap_or_default();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            connectors::cluster_readiness(&client, &given),
         )
         .await
-        .map_err(|_| unreachable("the cluster did not answer in 20 seconds".into()))?
-        .map_err(|e| unreachable(format!("{e:#}")))?;
-        match readiness::cluster_refusal(&facts) {
-            Some((code, why)) => Err(Refusal::Precondition(code, why)),
-            None => Ok(()),
-        }
+        .map_err(|_| {
+            Refusal::Precondition(
+                "ENVIRONMENT_CLUSTER_UNREACHABLE",
+                format!("{}: the cluster did not answer in 30 seconds", env.name),
+            )
+        })?
+        .map_err(|e| {
+            Refusal::Precondition(
+                "ENVIRONMENT_CLUSTER_UNREACHABLE",
+                format!("{}: {e:#}", env.name),
+            )
+        })
     }
 
     /* ── a project's own environments (ADR-0054) ── */
@@ -951,15 +1178,16 @@ impl EnvironmentService {
         let org = self.organization_of_project(ctx, project).await?;
         let project_name = self.store.tenant_name(ctx, project).await;
         let (admitted, own) = self.visible(ctx, org, project).await?;
-        let environments = admitted
-            .into_iter()
-            .chain(own)
-            .map(|e| {
-                let ns = model::namespace_for(&e.namespace_pattern, &project_name, &e.name)
-                    .unwrap_or_default();
-                (e, ns)
-            })
-            .collect();
+        let mut environments = Vec::new();
+        for e in admitted.into_iter().chain(own) {
+            // A namespace not assigned yet reads as none.
+            let ns = self
+                .place(ctx, org, project, &e)
+                .await
+                .map(|p| p.namespace)
+                .unwrap_or_default();
+            environments.push((e, ns));
+        }
         let list = self
             .store
             .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
@@ -1208,6 +1436,7 @@ impl EnvironmentService {
                 .filter(|s| s.environment_id == env.id)
                 .map(|s| s.key)
                 .collect(),
+            build_namespace: None,
         })
     }
 
@@ -1223,7 +1452,9 @@ impl EnvironmentService {
             organization_id: org,
             project_id: d.project_id,
             connection_id: env.connection_id,
-            registry_connection_id: env.registry_connection_id,
+            // The cluster pulls with the pull identity (ADR-0062 §2).
+            registry_connection_id: env.pull_connection(),
+            build_namespace: config.build_namespace.clone(),
             namespace: d.namespace.clone(),
             release: d.product.clone(),
             action: d.action,
@@ -1344,7 +1575,8 @@ impl EnvironmentService {
         }
         let product = Self::release_name(&req.product)?;
         let project_name = self.store.tenant_name(ctx, project).await;
-        let mut namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
+        let place = self.place(ctx, org, project, &env).await?;
+        let mut namespace = place.namespace.clone();
         let id = Uuid::new_v4();
         let preview = match req.preview.take() {
             None => None,
@@ -1409,7 +1641,9 @@ impl EnvironmentService {
                 (Some(chart), None) => d.chart_sha256 = Self::checked_chart(chart)?,
                 (None, Some(reference)) => {
                     let version = req.chart_version.unwrap_or_default();
-                    d.chart_ref = Some(model::check_chart_ref(&env, &reference, &version)?);
+                    let chart = model::check_chart_ref(&env, &reference, &version)?;
+                    model::check_chart_in_project(&chart, &place.prefix)?;
+                    d.chart_ref = Some(chart);
                 }
                 _ => {
                     return Err(Refusal::Invalid(
@@ -1421,7 +1655,16 @@ impl EnvironmentService {
             d.commit = check_hash("commit", req.commit)?;
             d.lock_hash = check_hash("lock_hash", req.lock_hash)?;
             d.build = check_build(req.build)?;
-            d.images = req.images;
+            // Only images under the project's own path (ADR-0062 §4).
+            d.images = req
+                .images
+                .into_iter()
+                .map(|i| {
+                    model::project_image(&env, &place.prefix, &i.image)
+                        .map(|image| DeployImage { app: i.app, image })
+                })
+                .collect::<std::result::Result<_, _>>()
+                .map_err(|e| Refusal::Precondition("IMAGE_NOT_IN_PROJECT_PATH", e.reason))?;
             // A preview is how a release is tried before it is promoted.
             if preview.is_none() {
                 self.check_promoted(ctx, org, &env, &d).await?;
@@ -1429,10 +1672,13 @@ impl EnvironmentService {
         }
         d.preview = preview;
         if d.action == DeploymentAction::Install {
-            self.check_cluster_ready(org, &env, &d.namespace, env.registry_connection_id)
+            let mut at = place.clone();
+            at.namespace = d.namespace.clone();
+            self.check_cluster_ready(org, project, &env, &at, env.pull_connection(), false)
                 .await?;
         }
-        let config = self.project_config(ctx, project, &env, &d.profile).await?;
+        let mut config = self.project_config(ctx, project, &env, &d.profile).await?;
+        config.build_namespace = Some(place.build_namespace.clone());
         let previewing = d.preview.is_some();
         let d = self.submit(org, &env, d, chart, config).await?;
         if previewing {
@@ -1811,7 +2057,9 @@ impl EnvironmentService {
     /// Build the product in the environment's cluster (ADR-0048 §9): a run
     /// that starts a Job in the project's namespace there, which clones,
     /// generates, builds and pushes, and is watched until it ends. The build
-    /// is recorded as running now, as the member who asked.
+    /// is recorded as running now, as the member who asked. With `dry_run`,
+    /// nothing starts: the plan says what would, and what would refuse it.
+    #[allow(clippy::too_many_arguments)]
     pub async fn request_build(
         &self,
         ctx: &SecurityContext,
@@ -1820,7 +2068,8 @@ impl EnvironmentService {
         profile: &str,
         product_file: Option<&str>,
         git_ref: Option<String>,
-    ) -> Result<BuildStarted> {
+        dry_run: bool,
+    ) -> Result<BuildAsked> {
         // A build is the code at a ref and a description revision (ADR-0053
         // §2): the latest revision Studio keeps, laid at its path. Without
         // one, naming neither builds what the Product step last wrote, where
@@ -1952,16 +2201,6 @@ impl EnvironmentService {
             }
             _ => git_ref,
         };
-        let builder_image = if research {
-            String::new()
-        } else {
-            build::builder_image().ok_or_else(|| {
-                Refusal::Unavailable(
-                    "this Studio does not know its own image to build with: set STUDIO_BUILDER_IMAGE"
-                        .into(),
-                )
-            })?
-        };
         let files = self
             .hub
             .get::<dyn crate::product::port::ProjectFiles>()
@@ -1981,9 +2220,40 @@ impl EnvironmentService {
                     .into(),
             )
         })?;
-        let project_name = self.store.tenant_name(ctx, project).await;
-        let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
         if research {
+            let slug = self.slug(ctx, org, project).await?;
+            let namespace = model::namespace_for(&env.namespace_pattern, &slug, &env.name)?;
+            if dry_run {
+                return Ok(BuildAsked::Planned(Box::new(BuildPlan {
+                    environment_id: env.id,
+                    environment: env.name.clone(),
+                    profile,
+                    product_file,
+                    description_revision: description.as_ref().map(|d| d.revision),
+                    strictness: env.strictness().as_str().to_owned(),
+                    namespace: namespace.clone(),
+                    build_namespace: namespace,
+                    builder_image: String::new(),
+                    builder_pinned: true,
+                    gearbox_version: None,
+                    registry_prefix: String::new(),
+                    image_repositories: Vec::new(),
+                    chart_repository: String::new(),
+                    sources: vec![PlanSource {
+                        id: "home".into(),
+                        repository: target.repo.clone(),
+                        git_ref: git_ref
+                            .clone()
+                            .unwrap_or_else(|| target.base_branch.clone()),
+                        connection_id: Some(connection_id),
+                        ..PlanSource::default()
+                    }],
+                    warnings: vec![
+                        "Constructor Research builds and keeps the images itself".into(),
+                    ],
+                    refusal: None,
+                })));
+            }
             return self
                 .request_research_build(
                     ctx,
@@ -2002,7 +2272,8 @@ impl EnvironmentService {
                     namespace,
                     description,
                 )
-                .await;
+                .await
+                .map(BuildAsked::Started);
         }
         let repo = build::RepoRef {
             tenant: target.tenant,
@@ -2010,21 +2281,163 @@ impl EnvironmentService {
             repo: target.repo.clone(),
             branch: target.base_branch.clone(),
         };
+        // Each check a run would fail on, in order. A plan collects the first
+        // refusal and says what it can of the rest; a build stops at it.
+        let mut refusal: Option<Refusal> = None;
+        let mut refuse = |r: Refusal| {
+            if refusal.is_none() {
+                refusal = Some(r);
+            }
+        };
+        let builder = match build::builder_for(&env) {
+            Ok(b) => Some(b),
+            Err((code, why)) => {
+                refuse(Refusal::Precondition(code, why));
+                None
+            }
+        };
+        // The product signs its people in with an IdP of its own (ADR-0062 §9).
+        if let Some(d) = &description
+            && let Some((code, why)) = super::preflight::platform_idp_refusal(
+                &d.text,
+                super::preflight::studio_issuer().as_deref(),
+            )
+        {
+            refuse(Refusal::Precondition(code, why));
+        }
+        let place = match self.place(ctx, org, project, &env).await {
+            Ok(p) => Some(p),
+            Err(e) => {
+                refuse(e);
+                None
+            }
+        };
         // Every connection the run reads, read now as it will read them, and
         // the cluster asked: a build that cannot start says why here.
-        let source_label = self.check_source_readable(org, &repo).await?;
-        self.check_cluster_ready(org, &env, &namespace, Some(registry_connection_id))
-            .await?;
+        let source_label = match self.check_source_readable(org, &repo).await {
+            Ok(l) => l,
+            Err(e) => {
+                refuse(e);
+                String::new()
+            }
+        };
+        if let Some(place) = &place
+            && let Err(e) = self
+                .check_cluster_ready(
+                    org,
+                    project,
+                    &env,
+                    place,
+                    Some(registry_connection_id),
+                    true,
+                )
+                .await
+        {
+            refuse(e);
+        }
+        let description_revision = description.as_ref().map(|d| d.revision);
+        if dry_run {
+            let am = self.store.am().as_ref();
+            let reader = self.service(org)?;
+            let home = connectors::connection_by_id(am, &reader, repo.tenant, connection_id).await;
+            let home_source = PlanSource {
+                id: "home".into(),
+                repository: repo.repo.clone(),
+                git_ref: git_ref.clone().unwrap_or_else(|| repo.branch.clone()),
+                commit: None,
+                connection_id: Some(connection_id),
+                connection_label: Some(source_label).filter(|l| !l.is_empty()),
+                connection_scope: home.as_ref().map(|(_, c)| c.scope.clone()),
+                connection_holder: home
+                    .as_ref()
+                    .map(|(at, c)| connectors::holder_of_row(c, *at)),
+            };
+            let mut sources = vec![home_source.clone()];
+            for (id, at) in &refs.git {
+                let pinned = at.len() >= 7 && at.bytes().all(|b| b.is_ascii_hexdigit());
+                sources.push(PlanSource {
+                    id: id.clone(),
+                    repository: id.clone(),
+                    git_ref: at.clone(),
+                    commit: pinned.then(|| at.clone()),
+                    ..home_source.clone()
+                });
+            }
+            let prefix = place.as_ref().map(|p| p.prefix.clone()).unwrap_or_default();
+            let image_repositories = match &own {
+                Some(o) => o
+                    .images
+                    .iter()
+                    .map(|i| format!("{prefix}/{}", i.name))
+                    .collect(),
+                None => vec![format!("{prefix}/<each application Gearbox names>")],
+            };
+            let mut warnings = env.warnings();
+            if let Some(d) = &description {
+                warnings.extend(super::preflight::unreachable_issuers(&self.http, &d.text).await);
+            }
+            if builder.as_ref().is_some_and(|b| !b.pinned) {
+                warnings.push(
+                    "the builder image names no digest: taken only because this stand allows it"
+                        .into(),
+                );
+            }
+            let refusal = refusal.map(|r| match r {
+                Refusal::Precondition(code, why) => (code.to_owned(), why),
+                Refusal::Forbidden(code) => (code.to_owned(), code.to_owned()),
+                Refusal::NotFound(_, why) => ("NOT_FOUND".to_owned(), why),
+                Refusal::Invalid(why) => ("INVALID".to_owned(), why),
+                Refusal::Unavailable(why) => ("UNAVAILABLE".to_owned(), why),
+                Refusal::Conflict(code, why) => (code.to_owned(), why),
+                Refusal::Internal(why) => ("INTERNAL".to_owned(), why),
+            });
+            return Ok(BuildAsked::Planned(Box::new(BuildPlan {
+                environment_id: env.id,
+                environment: env.name.clone(),
+                profile,
+                product_file,
+                description_revision,
+                strictness: env.strictness().as_str().to_owned(),
+                namespace: place
+                    .as_ref()
+                    .map(|p| p.namespace.clone())
+                    .unwrap_or_default(),
+                build_namespace: place
+                    .as_ref()
+                    .map(|p| p.build_namespace.clone())
+                    .unwrap_or_default(),
+                builder_image: builder
+                    .as_ref()
+                    .map(|b| b.image.clone())
+                    .unwrap_or_default(),
+                builder_pinned: builder.as_ref().is_some_and(|b| b.pinned),
+                gearbox_version: builder.and_then(|b| b.gearbox_version),
+                chart_repository: format!("oci://{prefix}/charts"),
+                registry_prefix: prefix,
+                image_repositories,
+                sources,
+                warnings,
+                refusal,
+            })));
+        }
+        if let Some(r) = refusal {
+            return Err(r);
+        }
+        let (Some(builder), Some(place)) = (builder, place) else {
+            return Err(Refusal::Internal("the build's place was not found".into()));
+        };
         let build_id = format!("studio-{}", &Uuid::new_v4().simple().to_string()[..12]);
-        let place = crate::artifact_ingest::port::BuildPlace {
+        let person = self.person(ctx).await;
+        let record_place = crate::artifact_ingest::port::BuildPlace {
             environment_id: Some(env.id.to_string()),
             environment: Some(env.name.clone()),
-            namespace: Some(namespace.clone()),
+            // Where it ran: the build namespace (ADR-0062 §7).
+            namespace: Some(place.build_namespace.clone()),
             git_ref: git_ref.clone().or_else(|| Some(repo.branch.clone())),
             source_connection_id: Some(connection_id.to_string()),
             source_connection: Some(source_label).filter(|l| !l.is_empty()),
-            builder_image: Some(builder_image.clone()),
-            gearbox_version: None,
+            builder_image: Some(builder.image.clone()),
+            gearbox_version: builder.gearbox_version.clone(),
             source_commits: None,
         };
         let payload = build::BuildPayload {
@@ -2033,16 +2446,23 @@ impl EnvironmentService {
             project_id: project,
             connection_id: env.connection_id,
             registry_connection_id,
-            namespace: namespace.clone(),
-            prefix: env.registry.clone(),
+            namespace: place.namespace.clone(),
+            // The project's own path (ADR-0062 §2).
+            prefix: place.prefix.clone(),
             profile: profile.clone(),
             product_file,
             repo,
             git_ref,
-            builder_image,
+            builder_image: builder.image,
+            builder_registry_connection_id: builder.pull_connection_id,
+            build_namespace: Some(place.build_namespace.clone()),
+            pull_registry_connection_id: env.boundaries.registry_pull_connection_id,
+            labels: build::image_labels(&now(), project, &build_id, description_revision),
+            requested_by: Some(person.id),
+            environment_id: Some(env.id),
             buildkit_image: build::buildkit_image(),
             records_in: Some(ctx.subject_tenant_id()),
-            description_revision: description.as_ref().map(|d| d.revision),
+            description_revision,
             description_text: description.map(|d| d.text),
             connections_from: env.project_id,
             own,
@@ -2059,7 +2479,7 @@ impl EnvironmentService {
                 &profile,
             );
             running.description_revision = payload.description_revision;
-            running.place = place;
+            running.place = record_place;
             builds
                 .record(ctx, &project.to_string(), &running)
                 .await
@@ -2070,16 +2490,16 @@ impl EnvironmentService {
             org,
             build::TASK_TYPE,
             serde_json::to_value(&payload).map_err(anyhow::Error::from)?,
-            &format!("build:{namespace}"),
+            &format!("build:{}", place.build_namespace),
             &build_id,
         )
         .await
         .map_err(|e| Refusal::Unavailable(format!("the build could not be queued: {e:#}")))?;
-        Ok(BuildStarted {
+        Ok(BuildAsked::Started(BuildStarted {
             build_id,
             run_id,
-            namespace,
-        })
+            namespace: place.build_namespace,
+        }))
     }
 
     /* ── Constructor Research (ADR-0049) ── */
@@ -2438,7 +2858,9 @@ impl EnvironmentService {
                 format!("environment '{}' has no registry login", env.name),
             ));
         };
-        let paths = model::push_paths(&env.registry, &repositories)?;
+        // Only under the project's own path (ADR-0062 §2).
+        let place = self.place(ctx, org, project, &env).await?;
+        let paths = model::push_paths(&place.prefix, &repositories)?;
         let from = env.connections_from(org);
         let svc = self.service(from)?;
         let access = deploy::registry_access(&self.hub, &svc, from, connection)
@@ -2450,7 +2872,7 @@ impl EnvironmentService {
             .map_err(|e| Refusal::Unavailable(format!("{e:#}")))?;
         Ok(PushToken {
             registry: access.host.clone(),
-            prefix: env.registry.clone(),
+            prefix: place.prefix,
             token,
             expires_in,
         })
@@ -2767,16 +3189,24 @@ impl EnvironmentService {
             return Ok(log);
         }
         let org = self.organization_of_project(ctx, project).await?;
-        let project_name = self.store.tenant_name(ctx, project).await;
         let mut unreachable = None;
         let (admitted, own) = self.visible(ctx, org, project).await?;
+        let ran_in = record.place.environment_id.clone();
         for env in admitted.into_iter().chain(own) {
+            if ran_in.as_deref().is_some_and(|id| id != env.id.to_string()) {
+                continue;
+            }
             let from = env.connections_from(org);
             let svc = self.service(from)?;
-            let Ok(namespace) =
-                model::namespace_for(&env.namespace_pattern, &project_name, &env.name)
-            else {
-                continue;
+            // Where it ran, as its record says; else the project's build
+            // namespace there, then its namespace (a build from before
+            // builds had their own).
+            let namespace = match record.place.namespace.clone() {
+                Some(ns) => ns,
+                None => match self.place(ctx, org, project, &env).await {
+                    Ok(p) => p.namespace,
+                    Err(_) => continue,
+                },
             };
             let found = match deploy::cluster_access(&self.hub, &svc, from, env.connection_id).await
             {

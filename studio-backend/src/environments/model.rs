@@ -123,12 +123,135 @@ pub struct Environment {
     /// §5); `None` follows [`Environment::protected`] ([`Self::strictness`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strictness: Option<Strictness>,
+    /// Who builds and pulls here, and where (ADR-0062).
+    #[serde(flatten)]
+    pub boundaries: Boundaries,
     pub updated_by: String,
     pub updated_at: String,
 }
 
 fn default_pattern() -> String {
     DEFAULT_NAMESPACE_PATTERN.to_owned()
+}
+
+/// The build namespace pattern an environment gets unless it says otherwise
+/// (ADR-0062 §7): one per project, beside its runtime namespaces.
+pub const DEFAULT_BUILD_NAMESPACE_PATTERN: &str = "{project}-build";
+
+/// What separates a project's build from Studio and from its runtime, per
+/// environment (ADR-0062): the builder image, the registry identities, the
+/// build namespace, and the namespaces a cluster gives when Studio may not
+/// make its own. Every field is optional; absent, the platform's default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Boundaries {
+    /// The image `prepare` and `publish` run in, by digest
+    /// (`registry.acme.example/mirror/studio-builder@sha256:…`): an
+    /// organization's mirror of the platform's builder. `None`: the
+    /// platform's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builder_image: Option<String>,
+    /// The `registry` connection the builder image is pulled with, when it
+    /// is on another registry than the environment's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builder_registry_connection_id: Option<Uuid>,
+    /// A read-only `registry` connection the cluster pulls with. `None`
+    /// falls back to [`Environment::registry_connection_id`], which can
+    /// write, and the environment says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_pull_connection_id: Option<Uuid>,
+    /// The pattern of the namespace builds run in; `None`:
+    /// [`DEFAULT_BUILD_NAMESPACE_PATTERN`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_namespace: Option<String>,
+    /// The namespaces the cluster gives Studio when its connection may not
+    /// make namespaces: each project is assigned one, by an administrator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespaces: Option<Vec<String>>,
+    /// A server build takes a registry token whose scopes reach past pushing
+    /// and pulling. Off: refused, `REGISTRY_TOKEN_TOO_BROAD`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_broad_registry_token: bool,
+}
+
+/// Is `image` an image reference: no scheme, the characters of one.
+pub fn is_image_reference(image: &str) -> bool {
+    !image.is_empty()
+        && !image.contains("://")
+        && image.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/' | b':' | b'@')
+        })
+}
+
+/// `input`'s boundaries, checked.
+fn check_boundaries(b: &Boundaries, env_name: &str, registry: &str) -> Result<Boundaries, Invalid> {
+    let b = b.clone();
+    let builder_image = b
+        .builder_image
+        .map(|i| i.trim().to_owned())
+        .filter(|i| !i.is_empty());
+    if let Some(image) = &builder_image
+        && !is_image_reference(image)
+    {
+        return Err(invalid(
+            "builder_image",
+            format!(
+                "'{image}' is not an image, e.g. registry.acme.example/studio-builder@sha256:…"
+            ),
+        ));
+    }
+    if b.builder_registry_connection_id.is_some() && builder_image.is_none() {
+        return Err(invalid(
+            "builder_registry_connection_id",
+            "a builder's registry connection goes with a builder image of the environment's own",
+        ));
+    }
+    if b.registry_pull_connection_id.is_some() && registry.is_empty() {
+        return Err(invalid(
+            "registry_pull_connection_id",
+            "a pull connection goes with a registry the images are pulled from",
+        ));
+    }
+    let build_namespace = b
+        .build_namespace
+        .map(|p| p.trim().to_owned())
+        .filter(|p| !p.is_empty());
+    if let Some(p) = &build_namespace {
+        if !p.contains("{project}") {
+            return Err(invalid(
+                "build_namespace",
+                "the build namespace pattern must contain {project}: a project's builds are its own",
+            ));
+        }
+        namespace_for(p, "a-project", env_name)
+            .map_err(|e| invalid("build_namespace", e.reason))?;
+    }
+    let namespaces = match b.namespaces {
+        None => None,
+        Some(list) => {
+            let mut out: Vec<String> = list
+                .into_iter()
+                .map(|n| n.trim().to_owned())
+                .filter(|n| !n.is_empty())
+                .collect();
+            if let Some(bad) = out.iter().find(|n| !is_dns_label(n)) {
+                return Err(invalid(
+                    "namespaces",
+                    format!("'{bad}' is not a Kubernetes namespace"),
+                ));
+            }
+            out.sort();
+            out.dedup();
+            (!out.is_empty()).then_some(out)
+        }
+    };
+    Ok(Boundaries {
+        builder_image,
+        builder_registry_connection_id: b.builder_registry_connection_id,
+        registry_pull_connection_id: b.registry_pull_connection_id,
+        build_namespace,
+        namespaces,
+        allow_broad_registry_token: b.allow_broad_registry_token,
+    })
 }
 
 /// The organization's environments: one metadata row on the organization.
@@ -190,6 +313,7 @@ pub struct EnvironmentInput {
     pub projects: Option<Vec<Uuid>>,
     pub previews: Option<PreviewSettings>,
     pub strictness: Option<Strictness>,
+    pub boundaries: Boundaries,
 }
 
 /// A refusal of an environment as written.
@@ -352,6 +476,7 @@ pub fn checked(
              e.g. ghcr.io/acme",
         ));
     }
+    let boundaries = check_boundaries(&input.boundaries, &name, &registry)?;
     Ok(Environment {
         id: own,
         name,
@@ -374,6 +499,7 @@ pub fn checked(
         project_id: None,
         previews,
         strictness: input.strictness,
+        boundaries,
         updated_by: by,
         updated_at: at,
     })
@@ -541,6 +667,40 @@ impl Environment {
     /// project holds is found and the organization's still inherited.
     pub fn connections_from(&self, org: Uuid) -> Uuid {
         self.project_id.unwrap_or(org)
+    }
+
+    /// The connection the cluster pulls with: the pull identity, else the
+    /// push one (which can write: [`Self::warnings`] says so).
+    pub fn pull_connection(&self) -> Option<Uuid> {
+        self.boundaries
+            .registry_pull_connection_id
+            .or(self.registry_connection_id)
+    }
+
+    /// What is not wrong enough to refuse but should be fixed, in a
+    /// sentence each.
+    pub fn warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.registry_connection_id.is_some()
+            && self.boundaries.registry_pull_connection_id.is_none()
+        {
+            out.push(
+                "the cluster gets a credential that can write: give the environment a read-only \
+                 pull connection"
+                    .to_owned(),
+            );
+        }
+        out
+    }
+
+    /// The namespace builds of a project with `slug` run in here.
+    pub fn build_namespace_for(&self, slug: &str) -> Result<String, Invalid> {
+        let pattern = self
+            .boundaries
+            .build_namespace
+            .as_deref()
+            .unwrap_or(DEFAULT_BUILD_NAMESPACE_PATTERN);
+        namespace_for(pattern, slug, &self.name).map_err(|e| invalid("build_namespace", e.reason))
     }
 
     /// An image as this environment's registry holds it. One already named
@@ -1451,6 +1611,53 @@ pub fn split_image(image: &str) -> (String, Option<String>) {
     }
 }
 
+/// An image of a deploy as the project's own path holds it (ADR-0062 §4):
+/// a bare name (`gbx-api:1`) is put under it; one already under it stays;
+/// anything else -- another project's path, an external registry -- is
+/// refused, since a deploy takes only images in the organization's registry
+/// under the project's path. An external image is imported first.
+pub fn project_image(
+    env: &Environment,
+    project_prefix: &str,
+    image: &str,
+) -> Result<String, Invalid> {
+    if env.registry.is_empty() {
+        return Ok(image.to_owned());
+    }
+    if super::images::is_under(image, project_prefix) {
+        return Ok(image.to_owned());
+    }
+    let first = image.split('/').next().unwrap_or_default();
+    let has_host =
+        image.contains('/') && (first.contains('.') || first.contains(':') || first == "localhost");
+    if has_host || image.starts_with(&format!("{}/", env.registry)) {
+        return Err(invalid(
+            "images",
+            format!(
+                "'{image}' is not under the project's path {project_prefix}: a deploy takes only \
+                 images in the organization's registry -- import an external image into the \
+                 project first (IMAGE_NOT_IN_PROJECT_PATH)"
+            ),
+        ));
+    }
+    Ok(format!("{project_prefix}/{image}"))
+}
+
+/// A published chart a deploy names must be under the project's own path.
+pub fn check_chart_in_project(chart: &ChartRef, project_prefix: &str) -> Result<(), Invalid> {
+    if super::images::is_under(&chart.reference, project_prefix) {
+        Ok(())
+    } else {
+        Err(invalid(
+            "chart_ref",
+            format!(
+                "'{}' is not under the project's path {project_prefix} (IMAGE_NOT_IN_PROJECT_PATH)",
+                chart.reference
+            ),
+        ))
+    }
+}
+
 /// An application name and an image as a deploy request may carry them.
 pub fn check_images(images: &[DeployImage]) -> Result<(), Invalid> {
     for i in images {
@@ -1497,7 +1704,105 @@ mod tests {
             projects: None,
             previews: None,
             strictness: None,
+            boundaries: Boundaries::default(),
         }
+    }
+
+    #[test]
+    fn a_projects_images_are_its_own_path_and_nothing_else() {
+        let e = env("dev");
+        let own = "ghcr.io/acme/shop";
+        assert_eq!(
+            project_image(&e, own, "gbx-api:1").unwrap(),
+            "ghcr.io/acme/shop/gbx-api:1"
+        );
+        assert_eq!(
+            project_image(&e, own, "ghcr.io/acme/shop/api@sha256:1").unwrap(),
+            "ghcr.io/acme/shop/api@sha256:1"
+        );
+        for bad in [
+            "ghcr.io/acme/other/api:1",
+            "ghcr.io/acme/api:1",
+            "docker.io/library/postgres:16",
+            "quay.io/x/y",
+        ] {
+            assert!(project_image(&e, own, bad).is_err(), "{bad}");
+        }
+        let chart = ChartRef {
+            reference: "oci://ghcr.io/acme/charts/shop".into(),
+            version: "1".into(),
+        };
+        assert!(check_chart_in_project(&chart, own).is_err());
+        let chart = ChartRef {
+            reference: "oci://ghcr.io/acme/shop/charts/shop".into(),
+            version: "1".into(),
+        };
+        assert!(check_chart_in_project(&chart, own).is_ok());
+    }
+
+    #[test]
+    fn an_environment_says_when_the_cluster_pulls_with_a_writing_credential() {
+        let mut e = env("dev");
+        assert!(
+            e.warnings().is_empty(),
+            "no registry, nothing pulled with it"
+        );
+        e.registry_connection_id = Some(Uuid::from_u128(1));
+        assert_eq!(e.pull_connection(), Some(Uuid::from_u128(1)));
+        assert!(e.warnings()[0].contains("can write"));
+        e.boundaries.registry_pull_connection_id = Some(Uuid::from_u128(2));
+        assert_eq!(e.pull_connection(), Some(Uuid::from_u128(2)));
+        assert!(e.warnings().is_empty());
+        assert_eq!(e.build_namespace_for("shop").unwrap(), "shop-build");
+    }
+
+    #[test]
+    fn boundaries_are_checked_as_they_are_written() {
+        let mut i = input("dev");
+        i.boundaries.build_namespace = Some("builds".into());
+        let e = checked(
+            &EnvironmentList::default(),
+            None,
+            i,
+            String::new(),
+            "t".into(),
+        )
+        .unwrap_err();
+        assert_eq!(e.field, "build_namespace");
+        let mut i = input("dev");
+        i.boundaries.namespaces = Some(vec!["Shop_Dev".into()]);
+        let e = checked(
+            &EnvironmentList::default(),
+            None,
+            i,
+            String::new(),
+            "t".into(),
+        )
+        .unwrap_err();
+        assert_eq!(e.field, "namespaces");
+        let mut i = input("dev");
+        i.boundaries.builder_image = Some(" mirror.acme.example/studio-builder@sha256:ab ".into());
+        i.boundaries.namespaces = Some(vec!["shop-dev".into(), "shop-dev".into()]);
+        let e = checked(
+            &EnvironmentList::default(),
+            None,
+            i,
+            String::new(),
+            "t".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            e.boundaries.builder_image.as_deref(),
+            Some("mirror.acme.example/studio-builder@sha256:ab")
+        );
+        assert_eq!(e.boundaries.namespaces, Some(vec!["shop-dev".to_owned()]));
+        let json = serde_json::to_value(&e).unwrap();
+        assert!(
+            json.get("allow_broad_registry_token").is_none(),
+            "off is not written"
+        );
+        let back: Environment = serde_json::from_value(json).unwrap();
+        assert_eq!(back, e);
     }
 
     #[test]

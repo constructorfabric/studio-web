@@ -139,6 +139,69 @@ pub struct ClusterFacts {
     /// [`ClusterRight::describe`] says it: the namespace's own when it
     /// exists, the bootstrap manifest's when it does not.
     pub denied: Vec<String>,
+    /// Its `studio.constructor.tech/project` label, when it exists and has
+    /// one (ADR-0062 §3).
+    pub project_label: Option<String>,
+}
+
+/// The cluster is not bootstrapped far enough for Studio: what is missing.
+pub const CLUSTER_NOT_BOOTSTRAPPED: &str = "CLUSTER_NOT_BOOTSTRAPPED";
+/// The environment's registry connection is personal: a server build pushes
+/// as the organization's service.
+pub const REGISTRY_CONNECTION_PERSONAL: &str = "REGISTRY_CONNECTION_PERSONAL";
+/// The registry token reaches past pushing and pulling.
+pub const REGISTRY_TOKEN_TOO_BROAD: &str = "REGISTRY_TOKEN_TOO_BROAD";
+
+/// Whether a registry token's scopes stop a server build: any that
+/// administers, deletes or reaches the repositories, unless the environment
+/// allows it.
+pub fn token_refusal(label: &str, broad: &[String], allowed: bool) -> Option<Refused> {
+    if broad.is_empty() || allowed {
+        return None;
+    }
+    Some((
+        REGISTRY_TOKEN_TOO_BROAD,
+        format!(
+            "the environment's registry connection '{label}' holds a token that may also {}: a              build Studio runs pushes only with a token that pushes and pulls packages              (write:packages, read:packages). Replace the token, or let the environment take a              broad one",
+            broad.join(", ")
+        ),
+    ))
+}
+
+/// What a cluster's readiness stops: a partial bootstrap, or a cluster that
+/// gives namespaces when the project's are not among them.
+pub fn bootstrap_refusal(
+    r: &crate::connectors::sdk::Readiness,
+    namespaces: &[&str],
+) -> Option<Refused> {
+    use crate::connectors::sdk::Readiness;
+    match r {
+        Readiness::Bootstrapped { .. } => None,
+        Readiness::Partial { missing } => Some((
+            CLUSTER_NOT_BOOTSTRAPPED,
+            format!(
+                "the cluster is not bootstrapped for Studio; missing: {}",
+                missing.join("; ")
+            ),
+        )),
+        Readiness::NamespaceLimited { namespaces: given } => {
+            let absent: Vec<&str> = namespaces
+                .iter()
+                .copied()
+                .filter(|n| !given.iter().any(|g| g == n))
+                .collect();
+            (!absent.is_empty()).then(|| {
+                (
+                    super::placement::NAMESPACE_NOT_ASSIGNED,
+                    format!(
+                        "the cluster gives Studio only {} and may not make namespaces: {} is not                          among them -- an administrator assigns the project one in Infrastructure",
+                        given.join(", "),
+                        absent.join(", ")
+                    ),
+                )
+            })
+        }
+    }
 }
 
 /// Whether what the cluster said stops the operation now.
@@ -178,8 +241,15 @@ pub fn cluster_refusal(f: &ClusterFacts) -> Option<Refused> {
 /// error is a cluster that did not answer.
 pub async fn cluster_facts(client: &kube::Client, namespace: &str) -> anyhow::Result<ClusterFacts> {
     let namespaces: kube::Api<Namespace> = kube::Api::all(client.clone());
+    let mut project_label = None;
     let seen = match namespaces.get_opt(namespace).await {
-        Ok(Some(_)) => NamespaceSeen::Exists,
+        Ok(Some(found)) => {
+            project_label = found
+                .metadata
+                .labels
+                .and_then(|l| l.get(super::placement::PROJECT_LABEL).cloned());
+            NamespaceSeen::Exists
+        }
         Ok(None) => NamespaceSeen::Missing,
         Err(kube::Error::Api(status)) if status.code == 403 => {
             NamespaceSeen::Forbidden(status.message)
@@ -204,6 +274,7 @@ pub async fn cluster_facts(client: &kube::Client, namespace: &str) -> anyhow::Re
         namespace: namespace.to_owned(),
         seen,
         denied,
+        project_label,
     })
 }
 
@@ -284,7 +355,37 @@ mod tests {
             namespace: "shop-dev".into(),
             seen,
             denied: denied.iter().map(|s| s.to_string()).collect(),
+            project_label: None,
         }
+    }
+
+    #[test]
+    fn a_broad_registry_token_is_refused_unless_the_environment_allows_it() {
+        let broad = vec!["admin:org".to_owned()];
+        let (code, why) = token_refusal("GHCR acme", &broad, false).unwrap();
+        assert_eq!(code, REGISTRY_TOKEN_TOO_BROAD);
+        assert!(why.contains("admin:org"), "{why}");
+        assert!(token_refusal("GHCR acme", &broad, true).is_none());
+        assert!(token_refusal("GHCR acme", &[], false).is_none());
+    }
+
+    #[test]
+    fn a_partial_cluster_is_refused_with_what_it_lacks() {
+        use crate::connectors::sdk::Readiness;
+        let partial = Readiness::Partial {
+            missing: vec!["create namespaces".into()],
+        };
+        let (code, why) = bootstrap_refusal(&partial, &["shop-dev"]).unwrap();
+        assert_eq!(code, CLUSTER_NOT_BOOTSTRAPPED);
+        assert!(why.contains("create namespaces"), "{why}");
+        let limited = Readiness::NamespaceLimited {
+            namespaces: vec!["studio-web-dev".into()],
+        };
+        assert!(bootstrap_refusal(&limited, &["studio-web-dev"]).is_none());
+        let (code, _) =
+            bootstrap_refusal(&limited, &["studio-web-dev", "studioweb-build"]).unwrap();
+        assert_eq!(code, crate::environments::placement::NAMESPACE_NOT_ASSIGNED);
+        assert!(bootstrap_refusal(&Readiness::Bootstrapped { version: 2 }, &["x"]).is_none());
     }
 
     #[test]

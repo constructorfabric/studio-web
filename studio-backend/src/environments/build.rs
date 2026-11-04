@@ -1,16 +1,19 @@
 //! A product built by Studio, in the organization's cluster (ADR-0048 §9).
 //!
 //! The portal never compiles anything itself: Build asks the server, the
-//! server starts a Kubernetes Job in the project's namespace of the chosen
-//! environment, and the Job does the work on the organization's nodes:
+//! server starts a Kubernetes Job in the project's build namespace of the
+//! chosen environment (ADR-0062 §7), and the Job does the work on the
+//! organization's nodes:
 //!
-//! 1. `prepare` (the Studio backend image, `studio-backend build-prepare`):
+//! 1. `prepare` (the builder image, `studio-builder@sha256:…`, never the
+//!    server's own: ADR-0062 §1; `studio-backend build-prepare`):
 //!    clones the product's repository and the gear sources its description
 //!    names, runs `gearbox generate` for the profile with the engine this
 //!    Studio runs, and makes the tree buildable (constructorfabric/gearbox#12);
 //! 2. `build` (BuildKit, rootless, daemonless): builds each application's
-//!    image and pushes it under the environment's registry prefix with the
-//!    namespace's registry login;
+//!    image, labelled with where it came from, and pushes it under the
+//!    project's own path `<prefix>/<project-slug>/` with a push token scoped
+//!    to that path alone (ADR-0062 §2);
 //! 3. `publish` (`studio-backend build-publish`): packages and pushes the chart
 //!    beside the images, and leaves the manifest -- images by digest, chart
 //!    and version -- as its termination message.
@@ -18,8 +21,9 @@
 //! The run that starts the Job ends at once; a watch run follows it, a few
 //! minutes at a time, and records the build when the Job ends, so a build
 //! outlives the task queue's lease and a restart of the portal. The
-//! repository's token is a Secret in the namespace for the Job's lifetime and
-//! is removed when the build is recorded.
+//! repository's token and the push token are Secrets in the build namespace
+//! for the Job's lifetime and are removed when the build is recorded; the
+//! runtime namespace gets only the pull secret.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -94,8 +98,34 @@ pub struct BuildPayload {
     /// A branch, tag or commit; the repository's branch when absent.
     #[serde(default)]
     pub git_ref: Option<String>,
-    /// The image `prepare` and `publish` run in: this Studio's backend.
+    /// The image `prepare` and `publish` run in: the builder, by digest
+    /// (ADR-0062 §1).
     pub builder_image: String,
+    /// The `registry` connection the builder image is pulled with, when it
+    /// is on another registry than the project's: a pull secret of its own
+    /// in the Job, never the project's push login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builder_registry_connection_id: Option<Uuid>,
+    /// The namespace the Job runs in (ADR-0062 §7); absent from a build
+    /// queued before builds had one of their own, which runs in
+    /// [`Self::namespace`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_namespace: Option<String>,
+    /// The `registry` connection the runtime namespace pulls with: the
+    /// environment's read-only one, else [`Self::registry_connection_id`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_registry_connection_id: Option<Uuid>,
+    /// The OCI labels every image gets, `key=value` (ADR-0062 §2): source,
+    /// created, project, build, description revision. The revision is the
+    /// commit `prepare` checked out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<(String, String)>,
+    /// Who asked for the build, recorded on its images.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<String>,
+    /// The environment, whose namespace assignment the run records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<Uuid>,
     /// The image the `build` step runs BuildKit in. Absent from a build
     /// queued before it was recorded, which gets the default.
     #[serde(default = "default_buildkit_image")]
@@ -199,6 +229,13 @@ fn default_buildkit_image() -> String {
     BUILDKIT_IMAGE.to_owned()
 }
 
+impl BuildPayload {
+    /// Where the Job runs.
+    pub fn job_namespace(&self) -> &str {
+        self.build_namespace.as_deref().unwrap_or(&self.namespace)
+    }
+}
+
 /// What a watch run carries: the Job to follow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchPayload {
@@ -206,7 +243,26 @@ pub struct WatchPayload {
     pub organization_id: Uuid,
     pub project_id: Uuid,
     pub connection_id: Uuid,
+    /// The namespace the Job runs in: the build namespace.
     pub namespace: String,
+    /// The registry it pushed to, whose push token the watch renews and
+    /// whose records the published images go to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_connection_id: Option<Uuid>,
+    /// The project's prefix the build pushes under (`ghcr.io/acme/shop`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    /// The repository paths the push token was minted for, once `prepare`
+    /// named the images: empty until then.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub push_names: Vec<String>,
+    /// When the push token lapses, milliseconds since the epoch; `None` when
+    /// the registry did not say, or the build pushes with the login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_expires_at_ms: Option<i64>,
+    /// See [`BuildPayload::requested_by`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<String>,
     pub job: String,
     pub repository: String,
     pub profile: String,
@@ -250,6 +306,24 @@ pub fn git_secret_name(build_id: &str) -> String {
         .collect()
 }
 
+/// The push-token Secret of a build: a Docker config holding a token scoped
+/// to the project's path, for BuildKit and helm (ADR-0062 §2).
+pub fn push_secret_name(build_id: &str) -> String {
+    format!("{}-push", job_name(build_id))
+        .chars()
+        .take(63)
+        .collect()
+}
+
+/// The builder-pull Secret of a build, when the builder image is on a
+/// registry of its own (ADR-0062 §1).
+pub fn builder_secret_name(build_id: &str) -> String {
+    format!("{}-builder", job_name(build_id))
+        .chars()
+        .take(63)
+        .collect()
+}
+
 /// The image BuildKit runs in: `STUDIO_BUILDKIT_IMAGE`, else [`BUILDKIT_IMAGE`].
 pub fn buildkit_image() -> String {
     std::env::var("STUDIO_BUILDKIT_IMAGE")
@@ -259,31 +333,182 @@ pub fn buildkit_image() -> String {
         .unwrap_or_else(default_buildkit_image)
 }
 
-/// The image `prepare` and `publish` run in: `STUDIO_BUILDER_IMAGE`, else the
-/// published image of the commit this server was built from.
-pub fn builder_image() -> Option<String> {
-    if let Ok(image) = std::env::var("STUDIO_BUILDER_IMAGE") {
-        let image = image.trim().to_owned();
-        if !image.is_empty() {
-            return Some(image);
-        }
+/// The image a build's `prepare` and `publish` run in, and the engine in it
+/// (ADR-0062 §1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderSpec {
+    /// `…/studio-builder@sha256:…`.
+    pub image: String,
+    /// The Gearbox commit the image carries, when known before it runs.
+    pub gearbox_version: Option<String>,
+    /// Whether [`Self::image`] names a digest. A tag is taken only on a
+    /// local stand that says so (`STUDIO_BUILDER_ALLOW_TAG=1`).
+    pub pinned: bool,
+    /// `environment` (an organization's mirror) or `platform`.
+    pub from: &'static str,
+    /// The connection the image is pulled with, when it is on another
+    /// registry than the project's.
+    pub pull_connection_id: Option<Uuid>,
+}
+
+/// A builder that cannot be used, and why.
+pub const BUILDER_NOT_PINNED: &str = "BUILDER_NOT_PINNED";
+
+/// Whether `image` names a digest: `…@sha256:<64 hex>`.
+pub fn is_pinned(image: &str) -> bool {
+    image
+        .rsplit_once('@')
+        .is_some_and(|(_, d)| super::images::is_digest(d))
+}
+
+/// The builder for a build in `env`: the environment's own (an
+/// organization's mirror), else the platform's (`STUDIO_BUILDER_IMAGE`, the
+/// `studio-builder` CI published by digest). Never this server's image: a
+/// project's build must not depend on the version of Studio that runs it.
+/// Refused unless it names a digest, but on a stand that sets
+/// `STUDIO_BUILDER_ALLOW_TAG=1`.
+pub fn builder_for(env: &super::model::Environment) -> Result<BuilderSpec, (&'static str, String)> {
+    let platform = std::env::var("STUDIO_BUILDER_IMAGE")
+        .ok()
+        .map(|i| i.trim().to_owned())
+        .filter(|i| !i.is_empty());
+    let allow_tag = std::env::var("STUDIO_BUILDER_ALLOW_TAG")
+        .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"));
+    builder_from(env, platform.as_deref(), allow_tag)
+}
+
+/// [`builder_for`] with what the process environment says given.
+pub fn builder_from(
+    env: &super::model::Environment,
+    platform: Option<&str>,
+    allow_tag: bool,
+) -> Result<BuilderSpec, (&'static str, String)> {
+    let (image, from, gearbox) = match &env.boundaries.builder_image {
+        Some(own) => (own.clone(), "environment", None),
+        None => match platform {
+            Some(p) => (
+                p.to_owned(),
+                "platform",
+                std::env::var("STUDIO_BUILDER_GEARBOX")
+                    .ok()
+                    .map(|v| v.trim().to_owned())
+                    .filter(|v| !v.is_empty()),
+            ),
+            None => {
+                return Err((
+                    BUILDER_NOT_PINNED,
+                    "this Studio was deployed without a builder image: set \
+                     STUDIO_BUILDER_IMAGE to the studio-builder CI published, by digest \
+                     (…/studio-builder@sha256:…), or give the environment a builder image of \
+                     its own"
+                        .into(),
+                ));
+            }
+        },
+    };
+    let pinned = is_pinned(&image);
+    if !pinned && !allow_tag {
+        return Err((
+            BUILDER_NOT_PINNED,
+            format!(
+                "the builder image {image} ({from}) names no digest: a build must run in an \
+                 image that cannot change under it -- name it as …@sha256:…"
+            ),
+        ));
     }
-    let commit = env!("STUDIO_BUILD_COMMIT");
-    (!commit.is_empty())
-        .then(|| format!("ghcr.io/constructorfabric/studio-web/studio-backend:sha-{commit}"))
+    if !pinned {
+        warn!(%image, "studio-environments: the builder image names no digest; taken because STUDIO_BUILDER_ALLOW_TAG is set (a local stand only)");
+    }
+    Ok(BuilderSpec {
+        image,
+        gearbox_version: gearbox,
+        pinned,
+        from,
+        pull_connection_id: env.boundaries.builder_registry_connection_id,
+    })
+}
+
+/// A label value as BuildKit's options carry it: no spaces, commas or
+/// quotes, which would split an option.
+fn label_value(v: &str) -> String {
+    v.chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '"' | '\'' | '='))
+        .take(256)
+        .collect()
+}
+
+/// The OCI labels of a build's images (ADR-0062 §2), but the source, which
+/// the run adds once it has read the repository's address, and the revision,
+/// which the Job adds once it has checked the commit out.
+pub fn image_labels(
+    created: &str,
+    project: Uuid,
+    build_id: &str,
+    description_revision: Option<i64>,
+) -> Vec<(String, String)> {
+    let mut out = vec![
+        (
+            "org.opencontainers.image.created".to_owned(),
+            label_value(created),
+        ),
+        (
+            "studio.constructor.tech/project".to_owned(),
+            project.to_string(),
+        ),
+        (
+            "studio.constructor.tech/build".to_owned(),
+            label_value(build_id),
+        ),
+    ];
+    if let Some(r) = description_revision {
+        out.push((
+            "studio.constructor.tech/description-revision".to_owned(),
+            r.to_string(),
+        ));
+    }
+    out
+}
+
+/// The web address of a repository a clone URL names, without credentials:
+/// what `org.opencontainers.image.source` says.
+pub fn source_url(clone_url: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(clone_url) else {
+        return String::new();
+    };
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.as_str().trim_end_matches(".git").to_owned()
 }
 
 /// The script the `build` container runs: one rootless, daemonless BuildKit
 /// build per application `prepare` listed, pushed with the namespace's
 /// registry login.
 const BUILD_SCRIPT: &str = r#"set -eu
+# The push token comes once prepare has named the images: Studio mints it for
+# exactly those repositories and writes it into the mounted Secret.
+i=0
+until [ -f /home/user/.studio-registry/ready ]; do
+  i=$((i+1))
+  if [ "$i" -gt 180 ]; then echo "Studio gave no push token in 15 minutes" >&2; exit 1; fi
+  sleep 5
+done
 TAG="$(cat /work/tag)"
+REV="$(cat /work/commit 2>/dev/null || true)"
 mkdir -p /work/meta
+OPTS=""
+ANN=""
+for kv in ${STUDIO_LABELS:-} ${REV:+org.opencontainers.image.revision=$REV}; do
+  OPTS="$OPTS --opt label:$kv"
+  ANN="$ANN,annotation.$kv"
+done
 while read -r app name dockerfile context filename; do
   echo "building $app as $PREFIX/$name:$TAG"
+  # shellcheck disable=SC2086 # the labels are meant to split
   buildctl-daemonless.sh build --frontend dockerfile.v0 \
     --local context="$context" --local dockerfile="$dockerfile" --opt filename="${filename:-Dockerfile}" \
-    --output "type=image,name=$PREFIX/$name:$TAG,push=true" \
+    $OPTS \
+    --output "type=image,name=$PREFIX/$name:$TAG,push=true$ANN" \
     --metadata-file "/work/meta/$app.json"
 done < /work/apps
 "#;
@@ -379,6 +604,20 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
         "capabilities": { "drop": ["ALL"] },
         "seccompProfile": { "type": "RuntimeDefault" },
     });
+    let labels_env = p
+        .labels
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // The builder image comes from a registry of its own when it is pulled
+    // with a connection of its own; else it is public, or the cluster's own
+    // mirror. Never with the project's push login.
+    let pull_secrets = if p.builder_registry_connection_id.is_some() {
+        serde_json::json!([{ "name": builder_secret_name(&p.build_id) }])
+    } else {
+        serde_json::json!([])
+    };
     serde_json::json!({
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -393,6 +632,7 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
                     "restartPolicy": "Never",
                     "securityContext": { "fsGroup": 1000 },
                     "automountServiceAccountToken": false,
+                    "imagePullSecrets": pull_secrets,
                     "initContainers": [
                         {
                             "name": "prepare",
@@ -415,6 +655,7 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
                                 { "name": "PREFIX", "value": p.prefix },
                                 { "name": "BUILDKITD_FLAGS", "value": "--oci-worker-no-process-sandbox" },
                                 { "name": "DOCKER_CONFIG", "value": "/home/user/.studio-registry" },
+                                { "name": "STUDIO_LABELS", "value": labels_env },
                             ],
                             // What rootless BuildKit needs, and no more: no
                             // privilege, a non-root user, seccomp and AppArmor
@@ -455,9 +696,12 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
                     "volumes": [
                         { "name": "work", "emptyDir": { "sizeLimit": "20Gi" } },
                         { "name": "buildkit", "emptyDir": { "sizeLimit": "40Gi" } },
+                        // The push token, scoped to the images the build
+                        // pushes under the project's path: the only registry
+                        // credential the Job holds. Mounted whole, so the
+                        // token written after `prepare` reaches the pod.
                         { "name": "registry", "secret": {
-                            "secretName": deploy::PULL_SECRET,
-                            "items": [{ "key": ".dockerconfigjson", "path": "config.json" }],
+                            "secretName": push_secret_name(&p.build_id),
                         } },
                     ],
                 },
@@ -497,6 +741,11 @@ impl BuildTask {
     pub fn new(hub: Arc<ClientHub>) -> Self {
         Self { hub }
     }
+}
+
+/// `ghcr.io/acme/shop` → `acme/shop`: a prefix's path on its host.
+pub fn registry_path(prefix: &str) -> &str {
+    prefix.split_once('/').map(|(_, p)| p).unwrap_or("")
 }
 
 /// Queue a run as the service of `tenant`.
@@ -610,9 +859,79 @@ impl BuildTask {
             connection_reader(&ctx.security, p.organization_id, p.connections_from)?;
         let access = cluster_access(&self.hub, &reader, from, p.connection_id).await?;
         let client = access.client().await?;
+        let build_ns = p.job_namespace().to_owned();
+        // The runtime namespace gets the pull identity alone; the build
+        // namespace holds the Job and its tokens (ADR-0062 §7).
         deploy::prepare_namespace(&client, &p.namespace, p.project_id).await?;
-        let registry = registry_access(&self.hub, &reader, from, p.registry_connection_id).await?;
-        deploy::write_pull_secret(&client, &p.namespace, &registry).await?;
+        if build_ns != p.namespace {
+            deploy::prepare_namespace(&client, &build_ns, p.project_id).await?;
+        }
+        if let Some(environment) = p.environment_id {
+            super::placement::record(
+                &self.hub,
+                p.organization_id,
+                p.project_id,
+                environment,
+                p.connection_id,
+                &p.namespace,
+                &build_ns,
+            )
+            .await;
+        }
+        let pull = registry_access(
+            &self.hub,
+            &reader,
+            from,
+            p.pull_registry_connection_id
+                .unwrap_or(p.registry_connection_id),
+        )
+        .await?;
+        deploy::write_pull_secret(&client, &p.namespace, &pull).await?;
+        let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), &build_ns);
+        let managed = |name: &str, kind: &str, data: serde_json::Value| {
+            serde_json::json!({
+                "apiVersion": "v1", "kind": "Secret",
+                "metadata": { "name": name, "labels": { "app.kubernetes.io/managed-by": "constructor-studio", "studio.constructor.tech/build": p.build_id } },
+                "type": kind,
+                "stringData": data,
+            })
+        };
+
+        // The push token comes once `prepare` has named the images (the
+        // watch mints it, scoped to exactly those names under the project's
+        // path, ADR-0062 §2); until then the Secret holds no login, and the
+        // `build` step waits for it.
+        let push_name = push_secret_name(&p.build_id);
+        secrets
+            .patch(
+                &push_name,
+                &PatchParams::apply("constructor-studio").force(),
+                &Patch::Apply(&managed(
+                    &push_name,
+                    "Opaque",
+                    serde_json::json!({ "config.json": "{\"auths\":{}}" }),
+                )),
+            )
+            .await
+            .map_err(|e| anyhow!("the push token's Secret could not be made: {e}"))?;
+
+        // The builder from a registry of its own: its own pull secret.
+        if let Some(id) = p.builder_registry_connection_id {
+            let builder = registry_access(&self.hub, &reader, from, id).await?;
+            let name = builder_secret_name(&p.build_id);
+            secrets
+                .patch(
+                    &name,
+                    &PatchParams::apply("constructor-studio").force(),
+                    &Patch::Apply(&managed(
+                        &name,
+                        "kubernetes.io/dockerconfigjson",
+                        serde_json::json!({ ".dockerconfigjson": builder.docker_config_json() }),
+                    )),
+                )
+                .await
+                .map_err(|e| anyhow!("the builder's pull secret could not be written: {e}"))?;
+        }
 
         ctx.progress("reading the repository's access").await;
         let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&self.hub))
@@ -628,7 +947,6 @@ impl BuildTask {
         let (username, password) = driver.clone_credentials(&auth.token);
         let git_secret = !password.trim().is_empty();
         if git_secret {
-            let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), &p.namespace);
             let name = git_secret_name(&p.build_id);
             let object = serde_json::json!({
                 "apiVersion": "v1", "kind": "Secret",
@@ -648,25 +966,45 @@ impl BuildTask {
                 })?;
         }
 
-        ctx.progress(format!("starting the build Job in {}", p.namespace))
+        ctx.progress(format!("starting the build Job in {build_ns}"))
             .await;
         let job = job_name(&p.build_id);
-        let manifest = with_clone_url(job_manifest(p, git_secret), &url);
-        let jobs: kube::Api<Job> = kube::Api::namespaced(client.clone(), &p.namespace);
+        // The images say where they came from: the repository's address,
+        // without the clone's credentials.
+        let mut labelled = p.clone();
+        if labelled
+            .labels
+            .iter()
+            .all(|(k, _)| k != "org.opencontainers.image.source")
+        {
+            let source = label_value(&source_url(&url));
+            if !source.is_empty() {
+                labelled
+                    .labels
+                    .insert(0, ("org.opencontainers.image.source".into(), source));
+            }
+        }
+        let manifest = with_clone_url(job_manifest(&labelled, git_secret), &url);
+        let jobs: kube::Api<Job> = kube::Api::namespaced(client.clone(), &build_ns);
         jobs.patch(
             &job,
             &PatchParams::apply("constructor-studio").force(),
             &Patch::Apply(&manifest),
         )
         .await
-        .map_err(|e| anyhow!("the build Job could not be started in {}: {e}", p.namespace))?;
+        .map_err(|e| anyhow!("the build Job could not be started in {build_ns}: {e}"))?;
 
         let watch = WatchPayload {
             build_id: p.build_id.clone(),
             organization_id: p.organization_id,
             project_id: p.project_id,
             connection_id: p.connection_id,
-            namespace: p.namespace.clone(),
+            namespace: build_ns.clone(),
+            registry_connection_id: Some(p.registry_connection_id),
+            prefix: Some(p.prefix.clone()),
+            push_names: Vec::new(),
+            push_expires_at_ms: None,
+            requested_by: p.requested_by.clone(),
             job: job.clone(),
             repository: p.repo.repo.clone(),
             profile: p.profile.clone(),
@@ -754,6 +1092,68 @@ fn pod_messages(pod: &Pod) -> (Option<String>, Option<(String, String)>) {
         }
     }
     (publish, failed)
+}
+
+/// What `prepare` says it made, in its termination message: the product and
+/// the image names `build` pushes (relative to the project's prefix).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Named {
+    pub product: String,
+    pub images: Vec<String>,
+}
+
+/// A push token given to a build: the repositories it was minted for, and
+/// when it lapses.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PushGiven {
+    names: Vec<String>,
+    expires_at_ms: Option<i64>,
+}
+
+/// What `prepare` named, once it ended well.
+fn prepared_names(pod: &Pod) -> Option<Named> {
+    let status = pod.status.as_ref()?;
+    let prepare = status
+        .init_container_statuses
+        .as_ref()?
+        .iter()
+        .find(|c| c.name == "prepare")?;
+    let t = prepare.state.as_ref()?.terminated.as_ref()?;
+    if t.exit_code != 0 {
+        return None;
+    }
+    serde_json::from_str(t.message.as_deref()?.trim()).ok()
+}
+
+/// The repositories a build's push token is for: each image `prepare`
+/// named, and the chart, under the project's path `path` (`acme/shop`). A
+/// name that would step out of the path is refused.
+pub fn push_names(path: &str, named: &Named) -> anyhow::Result<Vec<String>> {
+    let ok = |n: &str| {
+        !n.is_empty()
+            && !n.contains("..")
+            && !n.starts_with('/')
+            && n.bytes().all(|b| {
+                b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || matches!(b, b'.' | b'-' | b'_' | b'/')
+            })
+    };
+    let mut out = Vec::new();
+    for n in &named.images {
+        if !ok(n) {
+            bail!("prepare named '{n}', which is not an image name under the project's path");
+        }
+        out.push(format!("{path}/{n}"));
+    }
+    if !ok(&named.product) {
+        bail!(
+            "prepare named product '{}', which is not a chart name",
+            named.product
+        );
+    }
+    out.push(format!("{path}/charts/{}", named.product));
+    Ok(out)
 }
 
 /// The step the build's pod is in: the first container, init or not, that
@@ -887,6 +1287,10 @@ impl WatchTask {
         let started = std::time::Instant::now();
         let pods: kube::Api<Pod> = kube::Api::namespaced(client.clone(), &p.namespace);
         let mut step = p.step.clone();
+        let mut push = PushGiven {
+            names: p.push_names.clone(),
+            expires_at_ms: p.push_expires_at_ms,
+        };
         loop {
             let Some(job) = jobs
                 .get_opt(&p.job)
@@ -916,6 +1320,22 @@ impl WatchTask {
                         self.finish(ctx, &client, p, Err((at, why))).await?;
                         let _ = jobs.delete(&p.job, &DeleteParams::background()).await;
                         return Ok(said);
+                    }
+                    // Once `prepare` named the images, mint the push token
+                    // for exactly them; renew it when it is about to lapse.
+                    if let Some(pod) = pod.as_ref() {
+                        let due = push.names.is_empty()
+                            || push
+                                .expires_at_ms
+                                .is_some_and(|t| t - super::records::now_ms() < 5 * 60 * 1000);
+                        if due && let Some(named) = prepared_names(pod) {
+                            match self.give_push_token(ctx, &client, p, &named).await {
+                                Ok(given) => push = given,
+                                Err(e) => {
+                                    warn!(build = %p.build_id, "studio-environments: the push token could not be given ({e:#})");
+                                }
+                            }
+                        }
                     }
                     let now = pod.as_ref().and_then(current_step);
                     if now.is_some() && now != step {
@@ -949,6 +1369,8 @@ impl WatchTask {
                         let next = WatchPayload {
                             round: p.round + 1,
                             step: step.clone(),
+                            push_names: push.names.clone(),
+                            push_expires_at_ms: push.expires_at_ms,
                             ..p.clone()
                         };
                         enqueue(
@@ -997,6 +1419,64 @@ impl WatchTask {
         }
     }
 
+    /// Mint a push token for the repositories `named` lists under the
+    /// project's path, and write it into the build's push Secret with the
+    /// `ready` mark the `build` step waits for. A registry without a token
+    /// service cannot scope one: the build then pushes with the registry
+    /// connection's own login, and says so.
+    async fn give_push_token(
+        &self,
+        ctx: &TaskContext,
+        client: &kube::Client,
+        p: &WatchPayload,
+        named: &Named,
+    ) -> anyhow::Result<PushGiven> {
+        let (Some(registry_id), Some(prefix)) = (p.registry_connection_id, p.prefix.as_deref())
+        else {
+            bail!("the build was queued before Studio minted push tokens");
+        };
+        let path = registry_path(prefix);
+        let names = push_names(path, named)?;
+        let (reader, from) =
+            connection_reader(&ctx.security, p.organization_id, p.connections_from)?;
+        let registry = registry_access(&self.hub, &reader, from, registry_id).await?;
+        let http = reqwest::Client::builder()
+            .user_agent("constructor-studio")
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
+        let (config, expires_at_ms) = match registry.push_token(&http, &names).await {
+            Ok((token, expires_in)) => (
+                registry.docker_config_with_token(&token),
+                expires_in.map(|s| super::records::now_ms() + i64::try_from(s).unwrap_or(0) * 1000),
+            ),
+            Err(e) => {
+                warn!(build = %p.build_id, "studio-environments: the registry gave no scoped push token ({e:#}); the build pushes with the registry connection's login");
+                (registry.docker_config_json(), None)
+            }
+        };
+        let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), &p.namespace);
+        let name = push_secret_name(&p.build_id);
+        let object = serde_json::json!({
+            "apiVersion": "v1", "kind": "Secret",
+            "metadata": { "name": name, "labels": { "app.kubernetes.io/managed-by": "constructor-studio", "studio.constructor.tech/build": p.build_id } },
+            "type": "Opaque",
+            "stringData": { "config.json": config, "ready": "1" },
+        });
+        secrets
+            .patch(
+                &name,
+                &PatchParams::apply("constructor-studio").force(),
+                &Patch::Apply(&object),
+            )
+            .await
+            .map_err(|e| anyhow!("the push token could not be written: {e}"))?;
+        Ok(PushGiven {
+            names,
+            expires_at_ms,
+        })
+    }
+
     async fn finish(
         &self,
         ctx: &TaskContext,
@@ -1005,32 +1485,36 @@ impl WatchTask {
         outcome: Result<String, (String, String)>,
     ) -> anyhow::Result<()> {
         use crate::artifact_ingest::port::BuildOutcome;
+        let mut chart_digest = None;
         let mut record_of = match outcome {
             Ok(manifest) => match serde_json::from_str::<Manifest>(manifest.trim()) {
-                Ok(m) => BuildOutcome {
-                    build_id: p.build_id.clone(),
-                    status: "passed".into(),
-                    product: Some(m.product),
-                    profile: Some(m.profile),
-                    repository: Some(p.repository.clone()),
-                    commit: Some(m.commit),
-                    lock_hash: m.lock_hash,
-                    images: m.images.into_iter().map(|i| (i.app, i.image)).collect(),
-                    chart_ref: Some(m.chart.reference),
-                    chart_version: Some(m.chart.version),
-                    place: crate::artifact_ingest::port::BuildPlace {
-                        gearbox_version: m.gearbox,
-                        source_commits: (!m.sources.is_empty()).then(|| {
-                            m.sources
-                                .iter()
-                                .map(|(id, c)| format!("{id}={c}"))
-                                .collect::<Vec<_>>()
-                                .join(",")
-                        }),
-                        ..Default::default()
-                    },
-                    ..BuildOutcome::default()
-                },
+                Ok(m) => {
+                    chart_digest = m.chart.digest.clone();
+                    BuildOutcome {
+                        build_id: p.build_id.clone(),
+                        status: "passed".into(),
+                        product: Some(m.product),
+                        profile: Some(m.profile),
+                        repository: Some(p.repository.clone()),
+                        commit: Some(m.commit),
+                        lock_hash: m.lock_hash,
+                        images: m.images.into_iter().map(|i| (i.app, i.image)).collect(),
+                        chart_ref: Some(m.chart.reference),
+                        chart_version: Some(m.chart.version),
+                        place: crate::artifact_ingest::port::BuildPlace {
+                            gearbox_version: m.gearbox,
+                            source_commits: (!m.sources.is_empty()).then(|| {
+                                m.sources
+                                    .iter()
+                                    .map(|(id, c)| format!("{id}={c}"))
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            }),
+                            ..Default::default()
+                        },
+                        ..BuildOutcome::default()
+                    }
+                }
                 Err(e) => BuildOutcome::failed(
                     &p.build_id,
                     &p.repository,
@@ -1048,6 +1532,34 @@ impl WatchTask {
             ),
         };
         record_of.description_revision = p.description_revision;
+        // Each image and the chart becomes a record of the project
+        // (ADR-0062 §4), from the manifest, before the build's own.
+        if record_of.status == "passed"
+            && let Ok(records) = self.hub.get::<super::records::Records>()
+        {
+            let made = super::images::from_manifest(
+                p.organization_id,
+                p.project_id,
+                p.registry_connection_id,
+                &p.build_id,
+                record_of.commit.as_deref(),
+                p.description_revision,
+                record_of.lock_hash.as_deref(),
+                p.requested_by.as_deref().unwrap_or("studio"),
+                super::records::now_ms(),
+                &record_of.images,
+                record_of
+                    .chart_ref
+                    .as_deref()
+                    .zip(record_of.chart_version.as_deref())
+                    .map(|(r, v)| (r, v, chart_digest.as_deref())),
+            );
+            for image in made {
+                if let Err(e) = records.record_image(&image).await {
+                    warn!(build = %p.build_id, "studio-environments: an image of the build could not be recorded ({e:#})");
+                }
+            }
+        }
         record(
             &self.hub,
             &ctx.security,
@@ -1056,14 +1568,18 @@ impl WatchTask {
             record_of,
         )
         .await?;
-        // The repository's token goes with the build.
+        // The repository's and the registry's tokens go with the build.
         let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), &p.namespace);
-        if let Err(e) = secrets
-            .delete(&git_secret_name(&p.build_id), &DeleteParams::default())
-            .await
-            && !matches!(&e, kube::Error::Api(s) if s.code == 404)
-        {
-            warn!(build = %p.build_id, "studio-environments: the build's repository token could not be removed ({e})");
+        for name in [
+            git_secret_name(&p.build_id),
+            push_secret_name(&p.build_id),
+            builder_secret_name(&p.build_id),
+        ] {
+            if let Err(e) = secrets.delete(&name, &DeleteParams::default()).await
+                && !matches!(&e, kube::Error::Api(s) if s.code == 404)
+            {
+                warn!(build = %p.build_id, "studio-environments: the build's secret {name} could not be removed ({e})");
+            }
         }
         Ok(())
     }
@@ -1190,6 +1706,18 @@ pub struct ManifestImage {
 pub struct ManifestChart {
     pub reference: String,
     pub version: String,
+    /// The digest `helm push` reported; absent from a manifest written
+    /// before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+/// The digest `helm push` prints (`Digest: sha256:…`).
+pub fn pushed_digest(output: &str) -> Option<String> {
+    output.lines().find_map(|l| {
+        let d = l.trim().strip_prefix("Digest:")?.trim();
+        super::images::is_digest(d).then(|| d.to_owned())
+    })
 }
 
 /// What `prepare` leaves for `build` and `publish`, in `/work/build.json`.
@@ -1693,6 +2221,8 @@ pub fn prepare_own(
     std::fs::write(work.join("apps"), list)?;
     let short: String = commit.chars().take(12).collect();
     std::fs::write(work.join("tag"), format!("sha-{short}"))?;
+    // The commit the images are labelled with (`org.opencontainers.image.revision`).
+    std::fs::write(work.join("commit"), &commit)?;
     let chart_dir = repo.join(&own.chart);
     let chart_yaml = std::fs::read_to_string(chart_dir.join("Chart.yaml"))
         .with_context(|| format!("{} has no Chart.yaml", own.chart))?;
@@ -1716,6 +2246,7 @@ pub fn prepare_own(
         work.join("build.json"),
         serde_json::to_vec_pretty(&prepared)?,
     )?;
+    name_for_studio(&prepared);
     println!(
         "prepared {} image(s) and chart {} of the repository's own",
         prepared.apps.len(),
@@ -1954,6 +2485,8 @@ pub fn prepare_as(
     std::fs::write(work.join("apps"), list)?;
     let short: String = commit.chars().take(12).collect();
     std::fs::write(work.join("tag"), format!("sha-{short}"))?;
+    // The commit the images are labelled with (`org.opencontainers.image.revision`).
+    std::fs::write(work.join("commit"), &commit)?;
 
     let chart_base = chart_base_version(
         &std::fs::read_to_string(chart_dir.join("Chart.yaml"))
@@ -1976,12 +2509,25 @@ pub fn prepare_as(
         work.join("build.json"),
         serde_json::to_vec_pretty(&prepared)?,
     )?;
+    name_for_studio(&prepared);
     println!(
         "prepared {} application(s) of {}",
         prepared.apps.len(),
         prepared.product
     );
     Ok(())
+}
+
+/// Leave what `prepare` made as its termination message, where Studio reads
+/// it to mint the push token for exactly these names (ADR-0062 §2).
+fn name_for_studio(prepared: &Prepared) {
+    let named = Named {
+        product: prepared.product.clone(),
+        images: prepared.apps.iter().map(|(_, n)| n.clone()).collect(),
+    };
+    if let Ok(text) = serde_json::to_string(&named) {
+        let _ = std::fs::write("/dev/termination-log", text);
+    }
 }
 
 /// The digest BuildKit wrote for a pushed image.
@@ -2033,7 +2579,7 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
         &charts.display().to_string(),
     ])?;
     let packaged = charts.join(format!("{}-{version}.tgz", prepared.product));
-    helm(&[
+    let pushed = helm(&[
         "push",
         &packaged.display().to_string(),
         &format!("oci://{prefix}/charts"),
@@ -2049,6 +2595,7 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
         chart: ManifestChart {
             reference: format!("oci://{prefix}/charts/{}", prepared.product),
             version,
+            digest: pushed_digest(&pushed),
         },
         gearbox: engine_revision(),
         sources: prepared.sources,
@@ -2094,7 +2641,158 @@ mod tests {
             own: None,
             source_refs: Vec::new(),
             strictness: None,
+            builder_registry_connection_id: None,
+            build_namespace: Some("studio-web-build".into()),
+            pull_registry_connection_id: None,
+            labels: vec![(
+                "studio.constructor.tech/build".into(),
+                "studio-0123456789ab".into(),
+            )],
+            requested_by: None,
+            environment_id: None,
         }
+    }
+
+    fn environment(builder: Option<&str>) -> super::super::model::Environment {
+        use super::super::model::*;
+        let mut e = checked(
+            &EnvironmentList::default(),
+            None,
+            EnvironmentInput {
+                name: "dev".into(),
+                description: String::new(),
+                kind: EnvironmentKind::Kubernetes,
+                connection_id: Uuid::nil(),
+                research: None,
+                registry: "ghcr.io/acme".into(),
+                registry_connection_id: None,
+                namespace_pattern: None,
+                database: DatabaseMode::None,
+                database_image: None,
+                protected: false,
+                promote_from: None,
+                projects: None,
+                previews: None,
+                strictness: None,
+                boundaries: Boundaries::default(),
+            },
+            String::new(),
+            "t".into(),
+        )
+        .unwrap();
+        e.boundaries.builder_image = builder.map(str::to_owned);
+        e
+    }
+
+    const PINNED: &str = "ghcr.io/constructorfabric/studio-web/studio-builder@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+
+    #[test]
+    fn a_build_runs_in_a_builder_pinned_by_digest_never_the_servers_image() {
+        let platform = builder_from(&environment(None), Some(PINNED), false).unwrap();
+        assert_eq!(
+            (platform.image.as_str(), platform.from),
+            (PINNED, "platform")
+        );
+        assert!(platform.pinned);
+        let mirror = "mirror.acme.example/studio-builder@sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        let own = builder_from(&environment(Some(mirror)), Some(PINNED), false).unwrap();
+        assert_eq!((own.image.as_str(), own.from), (mirror, "environment"));
+        let (code, why) = builder_from(
+            &environment(None),
+            Some("ghcr.io/x/studio-builder:sha-1"),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(code, BUILDER_NOT_PINNED);
+        assert!(why.contains("names no digest"), "{why}");
+        let tagged = builder_from(
+            &environment(None),
+            Some("ghcr.io/x/studio-builder:sha-1"),
+            true,
+        )
+        .unwrap();
+        assert!(!tagged.pinned, "a stand that allows a tag gets it, marked");
+        assert_eq!(
+            builder_from(&environment(None), None, true).unwrap_err().0,
+            BUILDER_NOT_PINNED
+        );
+    }
+
+    #[test]
+    fn the_job_runs_in_the_build_namespace_and_pushes_with_its_own_token() {
+        let job = job_manifest(&payload(), true);
+        let volumes = job
+            .pointer("/spec/template/spec/volumes")
+            .unwrap()
+            .to_string();
+        assert!(
+            volumes.contains(&push_secret_name("studio-0123456789ab")),
+            "{volumes}"
+        );
+        assert!(
+            !volumes.contains(deploy::PULL_SECRET),
+            "the pull secret is not the Job's"
+        );
+        let env = job
+            .pointer("/spec/template/spec/initContainers/1/env")
+            .unwrap()
+            .to_string();
+        assert!(
+            env.contains("studio.constructor.tech/build=studio-0123456789ab"),
+            "{env}"
+        );
+        assert_eq!(payload().job_namespace(), "studio-web-build");
+        let mut p = payload();
+        p.builder_registry_connection_id = Some(Uuid::nil());
+        let job = job_manifest(&p, true);
+        assert_eq!(
+            job.pointer("/spec/template/spec/imagePullSecrets/0/name")
+                .and_then(|v| v.as_str()),
+            Some(builder_secret_name("studio-0123456789ab").as_str())
+        );
+        assert!(BUILD_SCRIPT.contains("/home/user/.studio-registry/ready"));
+    }
+
+    #[test]
+    fn the_push_token_is_for_exactly_what_prepare_named() {
+        let named = Named {
+            product: "shop".into(),
+            images: vec!["gbx-api".into(), "gbx-ui".into()],
+        };
+        assert_eq!(
+            push_names("acme/shop", &named).unwrap(),
+            [
+                "acme/shop/gbx-api",
+                "acme/shop/gbx-ui",
+                "acme/shop/charts/shop"
+            ]
+        );
+        let bad = Named {
+            product: "shop".into(),
+            images: vec!["../other/api".into()],
+        };
+        assert!(push_names("acme/shop", &bad).is_err());
+        assert_eq!(registry_path("ghcr.io/acme/shop"), "acme/shop");
+    }
+
+    #[test]
+    fn a_chart_push_says_its_digest_and_a_source_its_address_without_credentials() {
+        let out = "Pushed: ghcr.io/acme/shop/charts/shop:0.1.0\nDigest: sha256:3333333333333333333333333333333333333333333333333333333333333333\n";
+        assert_eq!(
+            pushed_digest(out).as_deref(),
+            Some("sha256:3333333333333333333333333333333333333333333333333333333333333333")
+        );
+        assert_eq!(pushed_digest("nothing"), None);
+        assert_eq!(
+            source_url("https://x-access-token:secret@github.com/acme/shop.git"),
+            "https://github.com/acme/shop"
+        );
+        let labels = image_labels("2026-11-04T00:00:00Z", Uuid::nil(), "studio-1", Some(4));
+        assert!(
+            labels
+                .iter()
+                .any(|(k, v)| k == "studio.constructor.tech/description-revision" && v == "4")
+        );
     }
 
     #[test]
@@ -2508,9 +3206,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         assert!(build["securityContext"].get("privileged").is_none());
         assert_eq!(build["securityContext"]["runAsUser"], 1000);
         assert_eq!(spec["containers"][0]["name"], "publish");
+        // The push token, never the namespace's pull secret.
         assert_eq!(
             spec["volumes"][2]["secret"]["secretName"],
-            deploy::PULL_SECRET
+            push_secret_name("studio-0123456789ab")
         );
         assert_eq!(job["spec"]["backoffLimit"], 0);
         let plain = job_manifest(&payload(), false);

@@ -101,6 +101,11 @@ pub struct DeployPayload {
     /// prepares and where it puts the application. `None` for a cluster.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub research: Option<super::research::ResearchDeploy>,
+    /// The project's build namespace there, recorded with its namespace once
+    /// the run made or found it (ADR-0062 §3); absent from a deploy queued
+    /// before it was recorded, and for a preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_namespace: Option<String>,
     /// A preview (ADR-0055): its namespace is labelled as one, and its host
     /// routed once the release is installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -288,6 +293,21 @@ impl TaskHandler for DeployTask {
         if let Err(e) = ensure_namespace(&client, &payload).await {
             return TaskOutcome::Failed(format!("{e:#}"));
         }
+        if payload.preview.is_none() {
+            super::placement::record(
+                &self.hub,
+                payload.organization_id,
+                payload.project_id,
+                payload.environment_id,
+                payload.connection_id,
+                &payload.namespace,
+                payload
+                    .build_namespace
+                    .as_deref()
+                    .unwrap_or(&payload.namespace),
+            )
+            .await;
+        }
         if let Some(registry) = &registry {
             ctx.progress(format!("writing the pull secret for {}", registry.host))
                 .await;
@@ -359,6 +379,12 @@ impl TaskHandler for DeployTask {
                     Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
                 }
             }
+        }
+        // The product signs in through an IdP of its own (ADR-0062 §9).
+        if let Some((code, why)) =
+            preflight::platform_idp_refusal(&rendered, preflight::studio_issuer().as_deref())
+        {
+            return TaskOutcome::Failed(format!("{code}: {why}"));
         }
         ctx.progress("checking the namespace has every secret the chart reads")
             .await;
@@ -465,7 +491,21 @@ async fn make_namespace(
 ) -> anyhow::Result<()> {
     let namespaces: kube::Api<Namespace> = kube::Api::all(client.clone());
     match namespaces.get_opt(namespace).await {
-        Ok(Some(_)) => Ok(()),
+        // A namespace another project's label claims is never this one's
+        // (ADR-0062 §3); one without the label was assigned by hand, which
+        // the check before the run asked.
+        Ok(Some(found)) => {
+            let label = found
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|l| l.get(super::placement::PROJECT_LABEL))
+                .cloned();
+            match super::placement::owner_refusal(namespace, label.as_deref(), project, true) {
+                Some((_, why)) => Err(anyhow!(why)),
+                None => Ok(()),
+            }
+        }
         Ok(None) => {
             let mut labels: std::collections::BTreeMap<String, String> = [
                 (
@@ -1222,6 +1262,7 @@ mod tests {
             connections_from: None,
             values: serde_json::json!({}),
             research: None,
+            build_namespace: None,
             preview: None,
         }
     }

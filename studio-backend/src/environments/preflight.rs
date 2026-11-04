@@ -327,9 +327,163 @@ pub fn problems(pods: &[Pod]) -> Vec<String> {
         .collect()
 }
 
+/* ── the product's own identity provider (ADR-0062 §9) ── */
+
+/// A product whose OIDC settings point at Studio's own identity provider:
+/// a product signs its people in with an IdP of its own, never the
+/// platform's realm or the platform's clients.
+pub const PRODUCT_USES_PLATFORM_IDP: &str = "PRODUCT_USES_PLATFORM_IDP";
+
+/// Studio's own first-party OIDC clients: a product that names one would
+/// sign its people in as Studio.
+pub const PLATFORM_CLIENTS: [&str; 3] = ["studio-portal", "studio-desktop", "studio-cli"];
+
+/// The OIDC settings a text says: `(issuers, clients)`, read from the keys a
+/// product's description, values or rendered chart write them under
+/// (`issuer`, `issuer_url`, `oidc_issuer`, `client_id`, `audience`, in
+/// snake or camel case, `=` or `:`).
+pub fn oidc_settings(text: &str) -> (Vec<String>, Vec<String>) {
+    const ISSUER: [&str; 5] = [
+        "issuer_url",
+        "issuerurl",
+        "oidc_issuer",
+        "issuer_uri",
+        "issuer",
+    ];
+    const CLIENT: [&str; 4] = ["client_id", "clientid", "audience", "oidc_client_id"];
+    let mut issuers = Vec::new();
+    let mut clients = Vec::new();
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once(['=', ':']) else {
+            continue;
+        };
+        let key = k
+            .trim()
+            .trim_matches(['"', '\'', '-', ' '])
+            .to_ascii_lowercase()
+            .replace('-', "_");
+        let value = v
+            .trim()
+            .trim_end_matches([',', ';'])
+            .trim()
+            .trim_matches(['"', '\''])
+            .trim()
+            .to_owned();
+        if value.is_empty() {
+            continue;
+        }
+        let last = key.rsplit(['.', ' ']).next().unwrap_or(&key).to_owned();
+        if ISSUER.contains(&last.as_str()) && value.starts_with("http") {
+            issuers.push(value.trim_end_matches('/').to_owned());
+        } else if ISSUER.iter().any(|i| key.ends_with(i)) && line.contains("https://") {
+            if let Some(at) = line.find("https://") {
+                let url: String = line[at..]
+                    .chars()
+                    .take_while(|c| !c.is_whitespace() && !matches!(c, '"' | '\'' | ','))
+                    .collect();
+                issuers.push(url.trim_end_matches('/').to_owned());
+            }
+        } else if CLIENT.contains(&last.as_str()) {
+            clients.push(value);
+        }
+    }
+    issuers.sort();
+    issuers.dedup();
+    clients.sort();
+    clients.dedup();
+    (issuers, clients)
+}
+
+/// Whether `text` makes the product sign in through Studio's own IdP:
+/// its issuer is `studio_issuer`, or a client is one of Studio's.
+pub fn platform_idp_refusal(
+    text: &str,
+    studio_issuer: Option<&str>,
+) -> Option<(&'static str, String)> {
+    let (issuers, clients) = oidc_settings(text);
+    let studio = studio_issuer.map(|s| s.trim().trim_end_matches('/'));
+    if let Some(s) = studio.filter(|s| !s.is_empty())
+        && let Some(i) = issuers.iter().find(|i| i.as_str() == s)
+    {
+        return Some((
+            PRODUCT_USES_PLATFORM_IDP,
+            format!(
+                "the product's OIDC issuer {i} is Studio's own: a product signs its people in \
+                 with an identity provider of its own (its own realm), not the platform's"
+            ),
+        ));
+    }
+    if let Some(c) = clients
+        .iter()
+        .find(|c| PLATFORM_CLIENTS.contains(&c.as_str()))
+    {
+        return Some((
+            PRODUCT_USES_PLATFORM_IDP,
+            format!(
+                "the product's OIDC client '{c}' is one of Studio's own: give the product a \
+                 client of its own in its own realm"
+            ),
+        ));
+    }
+    None
+}
+
+/// Studio's own issuer, as its deployment names it.
+pub fn studio_issuer() -> Option<String> {
+    std::env::var("STUDIO_OIDC_ISSUER")
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+
+/// Each issuer whose discovery document does not answer, with why: a
+/// warning, since the IdP may be deployed with the product.
+pub async fn unreachable_issuers(http: &reqwest::Client, text: &str) -> Vec<String> {
+    let (issuers, _) = oidc_settings(text);
+    let mut out = Vec::new();
+    for i in issuers {
+        let url = format!("{i}/.well-known/openid-configuration");
+        let answered = http
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map(|r| r.status().is_success());
+        if !matches!(answered, Ok(true)) {
+            out.push(format!(
+                "the product's OIDC issuer {i} does not answer {url}: sign-in will fail until it \
+                 does (fine if the product brings its IdP with it)"
+            ));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_product_on_studios_own_idp_is_refused() {
+        let gdl = "plugin oidc-authn-plugin {\n  issuer_url = \"https://id.example.com/realms/studio/\"\n  client_id = \"shop-web\"\n}\n";
+        let (issuers, clients) = oidc_settings(gdl);
+        assert_eq!(issuers, ["https://id.example.com/realms/studio"]);
+        assert_eq!(clients, ["shop-web"]);
+        let (code, why) =
+            platform_idp_refusal(gdl, Some("https://id.example.com/realms/studio")).unwrap();
+        assert_eq!(code, PRODUCT_USES_PLATFORM_IDP);
+        assert!(why.contains("Studio's own"), "{why}");
+        assert!(platform_idp_refusal(gdl, Some("https://id.example.com/realms/shop")).is_none());
+        let yaml =
+            "oidc:\n  issuer: https://id.example.com/realms/shop\n  clientId: studio-portal\n";
+        let (code, why) = platform_idp_refusal(yaml, None).unwrap();
+        assert_eq!(code, PRODUCT_USES_PLATFORM_IDP);
+        assert!(why.contains("studio-portal"), "{why}");
+        assert_eq!(
+            oidc_settings(yaml).0,
+            ["https://id.example.com/realms/shop"]
+        );
+    }
 
     const CHART: &str = r#"
 apiVersion: v1
