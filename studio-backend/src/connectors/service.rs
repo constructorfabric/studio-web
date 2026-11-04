@@ -1753,15 +1753,35 @@ pub async fn own_connection(
     provider: &str,
 ) -> Option<(Uuid, Connection)> {
     let me = ctx.subject_id().to_string();
-    for &tenant in from {
-        let mine = reachable_connections(am, ctx, tenant)
-            .await
-            .into_iter()
-            .filter(|c| c.provider == provider && c.scope == "personal" && c.created_by == me)
-            .max_by_key(|c| c.created_at_epoch_secs);
-        if let Some(c) = mine {
-            let holder = holder_of_row(&c, tenant);
-            return Some((holder, c));
+    for &start in from {
+        // Tenant by tenant: the newest in the nearest tenant that has one,
+        // so a newer sign-in kept higher up never overrides a nearer one.
+        // Project → workspace → organization, as `reachable_connections`.
+        let mut tenant = Some(start);
+        for _ in 0..3 {
+            let Some(current) = tenant else { break };
+            let newest = load_catalogue(am, ctx, current)
+                .await
+                .ok()
+                .and_then(|catalogue| {
+                    catalogue
+                        .items
+                        .into_iter()
+                        .filter(|c| {
+                            c.provider == provider && c.scope == "personal" && c.created_by == me
+                        })
+                        .max_by_key(|c| c.created_at_epoch_secs)
+                });
+            if let Some(c) = newest {
+                let holder = holder_of_row(&c, current);
+                return Some((holder, c));
+            }
+            tenant = am
+                .get_tenant(ctx, current)
+                .await
+                .ok()
+                .and_then(|t| t.parent_id)
+                .map(|p| p.0);
         }
     }
     None

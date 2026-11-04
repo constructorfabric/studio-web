@@ -764,13 +764,14 @@ impl EnvironmentService {
         let from = env.connections_from(org);
         let svc = self.service(from)?;
         if env.kind == EnvironmentKind::Research {
+            let project_tenant = project;
             let project = env
                 .research
                 .as_ref()
                 .map(|r| r.project.clone())
                 .unwrap_or_default();
             let projects = self
-                .own_research_api(ctx, org)
+                .own_research_api(ctx, org, project_tenant)
                 .await?
                 .projects()
                 .await
@@ -1893,9 +1894,19 @@ impl EnvironmentService {
     /// build, deploy and read with the sign-in of the member who asks
     /// (ADR-0049 §1): Research's access keys are personal, and a project there
     /// is shared by adding its members, so nobody runs on another's sign-in.
-    async fn own_research(&self, ctx: &SecurityContext, org: Uuid) -> Result<research::SignIn> {
+    /// Looked for from the operation's project first (a member may keep their
+    /// sign-in there), then the organization, then the caller's own tenant.
+    async fn own_research(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Option<Uuid>,
+    ) -> Result<research::SignIn> {
         let am = self.store.am().as_ref();
-        let from = [org, ctx.subject_tenant_id()];
+        let from: Vec<Uuid> = project
+            .into_iter()
+            .chain([org, ctx.subject_tenant_id()])
+            .collect();
         connectors::own_connection(am, ctx, &from, connectors::RESEARCH_PROVIDER)
             .await
             .map(|(tenant, c)| research::SignIn {
@@ -1916,8 +1927,9 @@ impl EnvironmentService {
         &self,
         ctx: &SecurityContext,
         org: Uuid,
+        project: Option<Uuid>,
     ) -> Result<crate::connectors::sdk::research::ResearchApi> {
-        let sign_in = self.own_research(ctx, org).await?;
+        let sign_in = self.own_research(ctx, org, project).await?;
         self.research_api(ctx, sign_in.tenant, sign_in.connection_id)
             .await
     }
@@ -2005,7 +2017,7 @@ impl EnvironmentService {
             organization_id: org,
             project_id: project,
             connection_id: env.connection_id,
-            sign_in: Some(self.own_research(ctx, org).await?),
+            sign_in: Some(self.own_research(ctx, org, Some(project)).await?),
             research_project: target.project.clone(),
             profile: profile.clone(),
             product_file,
@@ -2201,7 +2213,7 @@ impl EnvironmentService {
                 profile,
                 commit: commit.unwrap_or_default(),
                 requested_by: Some(research::Requester::of(ctx)),
-                sign_in: Some(self.own_research(ctx, org).await?),
+                sign_in: Some(self.own_research(ctx, org, Some(project)).await?),
             }),
         };
         if d.action == DeploymentAction::Install {
@@ -2468,7 +2480,7 @@ impl EnvironmentService {
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
-            let api = self.own_research_api(ctx, org).await?;
+            let api = self.own_research_api(ctx, org, Some(d.project_id)).await?;
             let rollout = research::rollout(&api, &target.project, &d.namespace)
                 .await
                 .map_err(|e| {
@@ -2510,7 +2522,7 @@ impl EnvironmentService {
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
-            let api = self.own_research_api(ctx, org).await?;
+            let api = self.own_research_api(ctx, org, Some(d.project_id)).await?;
             let lines = usize::try_from(lines.clamp(1, deploy::LOG_LINES_MAX)).unwrap_or(200);
             return research::logs(&api, &target.project, &d.namespace, lines)
                 .await
