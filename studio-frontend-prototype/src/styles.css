@@ -3188,3 +3188,54 @@ div.dm-block { padding-left: 0; }
 .psection .badge.tab-attention.failed { background: var(--destructive); }
 .psection .badge.tab-attention.todo { background: var(--warning); }
 .psection .badge.badge-experimental { padding: 0 5px; border: 0; font-size: 10px; font-weight: 600; line-height: 16px; }
+
+/* wave 4E */
+/* The Workspaces table: a workspace row sums up its projects (their marks,
+   a health bar, the top spender), and its ▸ opens them as a tree whose cells
+   sit under the table's own columns. */
+.ws-name-cell { min-width: 0; }
+.ws-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; font-size: 12px; color: var(--muted-foreground); }
+.ws-marks { display: inline-flex; align-items: center; }
+.ws-mark { display: inline-flex; line-height: 0; margin-left: -3px; border-radius: 50%; box-shadow: 0 0 0 2px var(--card); }
+.ws-mark:first-child { margin-left: 0; }
+.ws-mark .level-mark { width: 18px; height: 18px; font-size: 9px; }
+.ws-mark .level-mark .icon, .ws-mark .level-mark svg { width: 11px; height: 11px; }
+.ws-marks-more { margin-left: 4px; font-size: 11.5px; color: var(--muted-foreground); }
+.ws-health-line { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.ws-health { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ws-health-bar { display: inline-flex; width: 44px; height: 6px; gap: 2px; border-radius: 3px; overflow: hidden; }
+.ws-health-seg { flex-basis: 0; min-width: 4px; height: 100%; }
+.ws-health-seg.ok { background: var(--success); }
+.ws-health-seg.warn { background: var(--warning); }
+.ws-health-seg.danger { background: var(--destructive); }
+.ws-health-seg.unknown { background: var(--border); }
+.ws-top { white-space: nowrap; }
+.ws-top b { font-weight: 600; color: var(--foreground); }
+.vtile .ws-health-line { font-size: 12px; color: var(--muted-foreground); }
+.ws-tile-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+
+/* The tree: no padding on the detail cell, so the nested columns line up. */
+.dt-table tr.dt-detail > td:has(> .ws-tree) { padding: 0; }
+.ws-tree { border-collapse: collapse; font-size: 12px; }
+.ptable .ws-tree tbody tr { height: 52px; }
+.ptable .ws-tree tbody td { padding: 6px 12px; line-height: 1rem; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
+.ptable .ws-tree tbody tr:last-child td { border-bottom: 0; }
+.ws-tree tr.ws-tree-row:hover td { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.ws-tree td.pnum { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+.ws-tree td.ws-hot.warn { color: var(--warning-foreground); font-weight: 600; }
+.ws-tree td.ws-hot.danger { color: var(--danger-foreground); font-weight: 600; }
+.ws-tree-kind, .ws-tree-team { color: var(--muted-foreground); white-space: nowrap; }
+/* Indented under the workspace's mark, joined to it by a line. */
+.ptable .ws-tree tbody td.ws-tree-name { position: relative; padding-left: 46px; overflow: visible; }
+.ws-tree td.ws-tree-name::before { content: ""; position: absolute; left: 24px; top: 0; bottom: 0; border-left: 1.5px solid var(--border); }
+.ws-tree tr.last td.ws-tree-name::before { bottom: 50%; }
+.ws-tree td.ws-tree-name::after { content: ""; position: absolute; left: 24px; top: 50%; width: 14px; border-top: 1.5px solid var(--border); }
+.ws-tree tr.last td.ws-tree-name::after { border-bottom-left-radius: 6px; }
+.ws-tree .pcell .pico.ticon-mark .level-mark { width: 22px; height: 22px; }
+.ws-tree-text { min-width: 0; }
+.ws-tree-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ws-tree-link { color: var(--foreground); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-tree-link:hover, .ws-tree-link:focus-visible { color: var(--primary); text-decoration: underline; }
+.ws-tree-title .ui-chip { flex: none; font-size: 11px; }
+.ws-tree-brief { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
+.ws-tree-empty .dt-state { padding: 14px 16px 14px 46px; text-align: left; }
