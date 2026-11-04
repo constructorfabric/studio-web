@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { matchesQuery } from "./activity-filter";
+import { collapseRuns, matchesQuery } from "./activity-filter";
 import type { ActivityEvent } from "./api";
 
 /* The fold that produces these rows moved to `artifact_ingest/activity.rs`.
@@ -39,5 +39,35 @@ describe("searching the feed", () => {
     const bare = event({ severity: null, recorded: null });
     expect(matchesQuery(bare, "prd")).toBe(true);
     expect(matchesQuery(bare, "high")).toBe(false);
+  });
+});
+
+describe("collapseRuns", () => {
+  const checks = (n: number, from = 0) =>
+    Array.from({ length: n }, (_, i) =>
+      event({ id: `c${from + i}`, by: i % 2 ? "leak" : "purpose", recorded: `2026-09-23T12:${String(59 - i).padStart(2, "0")}:00Z`, severity: null }),
+    );
+
+  it("folds a run of the same event into one row that keeps its events", () => {
+    const rows = collapseRuns([event({ id: "x", kind: "comment", event: "Commented", by: "ann" }), ...checks(220)]);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({
+      id: "run:c0",
+      event: "Document checked",
+      subject: "220 documents",
+      by: "purpose, leak",
+      recorded: "2026-09-23T12:59:00Z",
+    });
+    expect(rows[1].items).toHaveLength(220);
+  });
+
+  it("leaves comments one per row: each is something a person said", () => {
+    const said = Array.from({ length: 5 }, (_, i) => event({ id: `m${i}`, kind: "comment", event: "Comment" }));
+    expect(collapseRuns(said)).toHaveLength(5);
+  });
+
+  it("leaves a short run, and events that differ, as they are", () => {
+    const rows = collapseRuns([...checks(2), event({ id: "y", event: "Commented", kind: "comment" }), ...checks(2, 10)]);
+    expect(rows.map((r) => r.id)).toEqual(["c0", "c1", "y", "c10", "c11"]);
   });
 });

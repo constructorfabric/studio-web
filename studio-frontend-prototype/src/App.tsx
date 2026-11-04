@@ -5792,7 +5792,13 @@ function ProjectScreen({
           <ProjectReleases token={token} projectId={proj.id} projectName={proj.name} onOpenTab={setTab} />
         )}
         {tab === "tests" && (
-          <ProjectTests token={token} projectId={proj.id} workspaceId={workspace.id} onOpenSpecs={() => setTab("specs")} />
+          <ProjectTests
+            token={token}
+            projectId={proj.id}
+            workspaceId={workspace.id}
+            onOpenSpecs={() => setTab("specs")}
+            onOpenSources={() => setTab("sources")}
+          />
         )}
         {tab === "kits" && (
           <ProjectKits

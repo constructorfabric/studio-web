@@ -1644,6 +1644,8 @@ button.ui-chip-btn[aria-expanded="true"] { border-color: currentColor; }
 .product-tabs { margin-bottom: 12px; }
 /* A long value (a branch) as a chip that keeps one line. */
 .ui-chip.chip-trunc { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+/* Tests' CI runs: a commit is one line, cut at the end. */
+.tt-commit { white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
 
 /* Table headers, the shipped TableHead exactly: 10px uppercase in the MONO
    face at normal weight. The mono is the whole trick — it is what makes a
