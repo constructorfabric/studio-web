@@ -23,6 +23,7 @@ import {
   type StudioKit,
 } from "./api";
 import { DataTable, When, useConfirm } from "./data-table";
+import { EmptyState, InfoPopover, PageHeader, StatusChip, type Tone } from "./ui-standard";
 import { PRODUCT_COMMAND_EVENT, announceNext } from "./product-sections";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
@@ -395,26 +396,40 @@ export function ProjectKits({
       {section === "kits" && (
         <>
 
-      <div className="card-head">
-        <div>
-          <h2>Project kits</h2>
-          <p className="subtitle">
-            Reusable Studio workflows and conventions, pinned to a Git version for this project.
-          </p>
-        </div>
-        <button className="ghost" onClick={() => void reload()} disabled={busy !== null}>
-          Refresh
-        </button>
-      </div>
-
-      <div className="notice" data-kits-experimental>
-        <b>Experimental.</b> Kits work, and how they are installed and where they live may still change. A kit
-        requested when the project was created waits here until it is installed.
-      </div>
-      <div className="notice">
-        Open this project's IDE first. Install requests are sent through the authenticated backend
-        to its trusted <code>cfs</code> runner; the browser never executes repository scripts.
-      </div>
+      <PageHeader
+        title="Project kits"
+        info={
+          <>
+            <p>Reusable Studio workflows and conventions, pinned to a Git version for this project.</p>
+            <p>
+              <b>Experimental.</b> Kits work, and how they are installed and where they live may still change. A kit
+              requested when the project was created waits here until it is installed.
+            </p>
+            <p>
+              Open this project&apos;s IDE first. Install requests are sent through the authenticated backend to its
+              trusted <code>cfs</code> runner; the browser never executes repository scripts.
+            </p>
+          </>
+        }
+        status={
+          <>
+            <StatusChip tone="info" data-kits-experimental>
+              experimental
+            </StatusChip>
+            {catalog !== null && catalog.length > 0 && (
+              <StatusChip tone={installed.length > 0 ? "ok" : "neutral"}>
+                {installed.length} of {catalog.length} installed
+              </StatusChip>
+            )}
+            {installed.some((i) => i.status === "failed") && <StatusChip tone="danger">install failed</StatusChip>}
+          </>
+        }
+        actions={
+          <button className="ghost" onClick={() => void reload()} disabled={busy !== null}>
+            Refresh
+          </button>
+        }
+      />
       {repositoriesNote && (
         <div className="notice">
           The IDE has not reported its repositories yet, so a kit will be installed into the
@@ -424,12 +439,14 @@ export function ProjectKits({
       {error && <div className="error">{error}</div>}
 
       {catalog === null ? (
-        <p className="empty">Loading kit registry…</p>
+        <p className="hint">Loading kit registry…</p>
       ) : catalog.length === 0 ? (
-        <p className="empty">
-          No kits are published in this registry yet. Next: ask an organization admin to publish one; the project
-          works without kits meanwhile.
-        </p>
+        <div className="card">
+          <EmptyState
+            title="No kits are published in this registry yet."
+            body="Ask an organization admin to publish one; the project works without kits meanwhile."
+          />
+        </div>
       ) : (
         <div className="kit-grid">
           {catalog.map((kit) => {
@@ -439,11 +456,11 @@ export function ProjectKits({
               <article className="card kit-card" key={kit.slug}>
                 <div className="kit-card-head">
                   <div>
-                    <span className="badge info">{kit.publisher}</span>
+                    <StatusChip tone="neutral">{kit.publisher}</StatusChip>
                     <h3>{kit.name}</h3>
                   </div>
                   {installation && (
-                    <span className={`badge ${installation.status}`}>{installation.status}</span>
+                    <StatusChip tone={KIT_TONE[installation.status] ?? "neutral"}>{installation.status}</StatusChip>
                   )}
                 </div>
                 <p>{kit.description}</p>
@@ -515,7 +532,7 @@ export function ProjectKits({
                         {repositoryLabel(entry)} · <code>{entry.version}</code> ·{" "}
                         <When iso={entry.materialized_at} />
                         {entry.status === "failed" && (
-                          <span className="badge failed"> failed</span>
+                          <> <StatusChip tone="danger">failed</StatusChip></>
                         )}
                       </li>
                     ))}
@@ -545,6 +562,9 @@ export function ProjectKits({
     </section>
   );
 }
+
+/** An installation's state as a StatusChip's tone. */
+const KIT_TONE: Record<string, Tone> = { installed: "ok", failed: "danger", pending: "running", installing: "running" };
 
 /*
  * What this project could be built from, read off its own documents.
@@ -716,14 +736,14 @@ function SuggestedComponents({
   return (
     <section className="card" style={{ marginBottom: 16 }}>
       <div className="card-head">
-        <div>
-          <h2>1 · What your specs ask for</h2>
-          <p className="subtitle">
+        <h2>
+          1 · What your specs ask for{" "}
+          <InfoPopover label="About what your specs ask for">
             The capabilities this project&apos;s documents declare, and the components in the
             catalogue that provide each. Built components come first.
             {composing && " + puts one into the product below; a name opens its page in the catalogue."}
-          </p>
-        </div>
+          </InfoPopover>
+        </h2>
         <span style={{ display: "flex", gap: 6 }}>
           {composing && recommended.length > 0 && (
             <button
@@ -746,11 +766,14 @@ function SuggestedComponents({
 
       {plan !== null &&
         (plan.length === 0 ? (
-          <p className="empty" style={{ fontSize: 13 }}>
-            {docCount === 0
-              ? "No specification says what the product needs yet. Next: connect a repository on Sources and type its documents on Specs; the functional requirements they hold are read here as written."
-              : "The documents declare no capabilities to match."}
-          </p>
+          docCount === 0 ? (
+            <EmptyState
+              title="No specification says what the product needs yet."
+              body="Connect a repository on Sources and type its documents on Specs; the functional requirements they hold are read here as written."
+            />
+          ) : (
+            <EmptyState title="The documents declare no capabilities to match." />
+          )
         ) : (
           <>
             <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
@@ -856,17 +879,17 @@ function SuggestedComponents({
                           if (row.nonfunctional) return <span className="sub">the deployment profile</span>;
                           const cover = rowCoverage(row, product.picks);
                           return cover.cover === "covered" ? (
-                            <span className="badge ok" title="A gear in the product provides its contract, declares it, or a member confirmed it">
+                            <StatusChip tone="ok" title="A gear in the product provides its contract, declares it, or a member confirmed it">
                               closed by {cover.strong.join(", ")}
-                            </span>
+                            </StatusChip>
                           ) : cover.cover === "weak" ? (
-                            <span className="badge warn" title="The product's gears only mention its words: they talk about the subject, which does not prove they do the job">
+                            <StatusChip tone="warn" title="The product's gears only mention its words: they talk about the subject, which does not prove they do the job">
                               only by words · {cover.weak.length} gear{cover.weak.length === 1 ? "" : "s"}
-                            </span>
+                            </StatusChip>
                           ) : (
-                            <span className="badge danger" title="No gear in the product fills it">
+                            <StatusChip tone="danger" title="No gear in the product fills it">
                               not closed
-                            </span>
+                            </StatusChip>
                           );
                         },
                       },
@@ -879,9 +902,9 @@ function SuggestedComponents({
                     const inCode = codeFor(report, row.capability);
                     if (!inCode || row.nonfunctional) return <span className="sub">—</span>;
                     return (
-                      <span className={`badge ${inCode.status === "implemented" ? "ok" : ""}`} title="What the project's code depends on, read from its Cargo.toml files">
+                      <StatusChip tone={inCode.status === "implemented" ? "ok" : "neutral"} title="What the project's code depends on, read from its Cargo.toml files">
                         {inCode.status === "implemented" ? inCode.by.map((b) => gearLabel(b.name)).join(", ") : "not in the code"}
-                      </span>
+                      </StatusChip>
                     );
                   },
                 },
@@ -890,7 +913,7 @@ function SuggestedComponents({
                   header: "Offered",
                   cell: (row) => {
                     if (row.nonfunctional) return <span className="sub">answered by where it runs, not by a gear</span>;
-                    if (row.gap) return <span className="badge danger">nothing in the catalogue</span>;
+                    if (row.gap) return <StatusChip tone="danger">nothing in the catalogue</StatusChip>;
                     const best = row.candidates[0];
                     return (
                       <span>
@@ -1423,7 +1446,8 @@ function ProfileVerdicts({
         const v = verdictOf(record, p.id, current);
         const envs = environmentsRunning(bindings, p.id).map(nameOf);
         const on = p.id === shown;
-        const tone = checking === p.id ? "" : v.state === "ok" ? "ok" : v.state === "failed" ? "failed" : v.state === "stale" ? "warn" : "";
+        const tone: Tone =
+          checking === p.id ? "running" : v.state === "ok" ? "ok" : v.state === "failed" ? "danger" : v.state === "stale" ? "warn" : "neutral";
         const check = checkOf(record, p.id);
         return (
           <span
@@ -1440,9 +1464,9 @@ function ProfileVerdicts({
           >
             <b>{p.label}</b>
             <span className="muted">{envs.length > 0 ? `runs in ${envs.join(", ")}` : "not bound"}</span>
-            <span className={`badge ${tone}`} data-profile-verdict={v.state}>
+            <StatusChip tone={tone} data-profile-verdict={v.state}>
               {checking === p.id ? "checking…" : verdictText(v)}
-            </span>
+            </StatusChip>
             <button
               type="button"
               className="link"
@@ -1708,15 +1732,13 @@ function ProductCard({
   return (
     <section className="card" style={{ marginBottom: 16 }} ref={cardRef}>
       <div className="card-head">
-        <div>
-          <h2>
-            2 · Your product <code style={{ fontSize: 13, fontWeight: 500 }}>{productId}</code>
-          </h2>
-          <p className="subtitle">
+        <h2>
+          2 · Your product <code style={{ fontSize: 13, fontWeight: 500 }}>{productId}</code>{" "}
+          <InfoPopover label="About your product">
             The components this project ships as one product, composed and checked by the Gearbox
             engine, which checks it on every change. Save it, then open it in the desktop app to build it.
-          </p>
-        </div>
+          </InfoPopover>
+        </h2>
         <span className="hint" style={{ fontSize: 11 }}>
           {gearbox?.engine_version ?? "gearbox"} ·{" "}
           {gearbox?.sources?.length
@@ -1821,14 +1843,14 @@ function ProductCard({
         />
         <span style={{ fontSize: 12 }} data-product-verdict>
           {busy === "preview" && checking === shown ? (
-            <span className="badge">checking…</span>
+            <StatusChip tone="running">checking…</StatusChip>
           ) : preview && !stale ? (
-            <span className={`badge ${preview.ok ? "ok" : "failed"}`}>
+            <StatusChip tone={preview.ok ? "ok" : "danger"}>
               {preview.ok ? `resolves for ${profileLabel(preview.profile)}` : `${errors} error${errors === 1 ? "" : "s"}`}
-            </span>
+            </StatusChip>
           ) : null}
         </span>
-        {stale && preview && <span className="badge warn">the product changed since — preview again</span>}
+        {stale && preview && <StatusChip tone="warn">the product changed since — preview again</StatusChip>}
         {/* Saving is the page's, step 2 of the strip above: it shows what
             changes and keeps the revision. Here only whether there is
             anything to save. */}
@@ -2098,7 +2120,7 @@ function ProductCard({
                 {/* One row per code: errors open, a code said once per gear
                     folded to its count and first finding. */}
                 {diagnosticsByCode(preview.diagnostics).map((g) => {
-                  const tone = g.severity === "error" ? "danger" : g.severity === "warning" ? "warn" : "info";
+                  const tone: Tone = g.severity === "error" ? "danger" : g.severity === "warning" ? "warn" : "info";
                   const row = (d: (typeof g.items)[number], i: number) => (
                     <li key={`${d.code}-${i}`} style={{ margin: "0 0 6px" }}>
                       {d.message}
@@ -2117,7 +2139,7 @@ function ProductCard({
                     <li key={`${g.code}-${g.severity}`} style={{ margin: "0 0 6px" }} data-diagnostic-group={g.code}>
                       <details open={g.severity === "error"}>
                         <summary style={{ cursor: "pointer" }}>
-                          <span className={`badge ${tone}`}>{g.code}</span>
+                          <StatusChip tone={tone}>{g.code}</StatusChip>
                           {g.items.length > 1 && <b> × {g.items.length}</b>} {g.items[0].message}
                           {g.items.length > 1 && <span style={{ opacity: 0.6 }}> and {g.items.length - 1} more like it</span>}
                         </summary>

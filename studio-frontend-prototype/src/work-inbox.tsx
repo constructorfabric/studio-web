@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { BellIcon } from "./icons";
+import { EmptyState } from "./ui-standard";
 import { subscribeStudioEvents, type RunEventPayload, type StudioEvent } from "./studio-events";
 
 /** How many endings to keep. Older ones are answered by Background work. */
@@ -149,10 +150,10 @@ export function WorkInbox({
             </button>
           </div>
           {runs.length === 0 ? (
-            <p className="empty">
-              Nothing has finished since you opened the portal. Anything still running is on
-              the Background work screen.
-            </p>
+            <EmptyState
+              title="Nothing has finished since you opened the portal."
+              body="Anything still running is on the Background work screen."
+            />
           ) : (
             <ul className="work-inbox-list">
               {runs.map((run) => (

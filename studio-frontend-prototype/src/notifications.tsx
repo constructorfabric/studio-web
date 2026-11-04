@@ -30,6 +30,7 @@ import {
   type NotifyTarget,
 } from "./api";
 import { errText } from "./format";
+import { EmptyState, InfoPopover } from "./ui-standard";
 
 /** Providers whose connections can carry a message. */
 const NOTIFY_PROVIDERS = [
@@ -282,11 +283,13 @@ function ChatNotifier({
 
   return (
     <div className="card">
-      <h2>Send a notification</h2>
-      <p className="hint">
-        The driver renders it into the platform's own idiom, so nothing here has to know which of
-        Slack, Zulip or Discord is behind the connection.
-      </p>
+      <h2>
+        Send a notification{" "}
+        <InfoPopover label="About sending a notification">
+          The driver renders it into the platform's own idiom, so nothing here has to know which of
+          Slack, Zulip or Discord is behind the connection.
+        </InfoPopover>
+      </h2>
 
       <label>Through</label>
       <select value={connectionId} onChange={(e) => setConnectionId(e.target.value)}>
@@ -298,10 +301,7 @@ function ChatNotifier({
       </select>
 
       {fixedTarget ? (
-        <p className="hint">
-          An incoming webhook: its channel is fixed in the URL it was created from, so there is
-          nothing to pick and no target to send.
-        </p>
+        <p className="hint">An incoming webhook: its channel is fixed in its URL, nothing to pick.</p>
       ) : (
         <>
           <label>Channel</label>
@@ -335,7 +335,7 @@ function ChatNotifier({
         askTopic={askTopic}
       />
 
-      <div className="row" style={{ display: "flex", gap: 8, marginTop: 12 }}>
+      <div className="row" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
         <button
           type="button"
           className="primary"
@@ -353,13 +353,13 @@ function ChatNotifier({
         >
           {busy === "send" ? "Sending…" : "Send now"}
         </button>
+        <InfoPopover label="Queue it or send now?">
+          <b>Queue it</b> writes a <code>notify.deliver</code> run: retried with backoff,
+          dead-lettered rather than dropped, and visible in Background work. <b>Send now</b> posts
+          immediately and hands back what the platform said — the right way to check a new
+          connection, and the wrong way to send anything that matters.
+        </InfoPopover>
       </div>
-      <p className="hint">
-        <b>Queue it</b> writes a <code>notify.deliver</code> run: retried with backoff,
-        dead-lettered rather than dropped, and visible in Background work. <b>Send now</b> posts
-        immediately and hands back what the platform said — the right way to check a new
-        connection, and the wrong way to send anything that matters.
-      </p>
 
       {result && <p className="hint">{result}</p>}
       {error && <p className="error">{error}</p>}
@@ -411,13 +411,15 @@ function EditorNotifier({
 
   return (
     <div className="card">
-      <h2>Show it in the IDE</h2>
-      <p className="hint">
-        The same queue, addressed to a workspace instead of a channel: the message appears as a
-        notification inside the Theia session somebody has <b>{projectName}</b> open in. Needs a
-        live session — a message nobody could see is refused here rather than queued, and a session
-        with no browser tab attached reports back that it was taken but not shown.
-      </p>
+      <h2>
+        Show it in the IDE{" "}
+        <InfoPopover label="About IDE notifications">
+          The same queue, addressed to a workspace instead of a channel: the message appears as a
+          notification inside the Theia session somebody has <b>{projectName}</b> open in. Needs a
+          live session — a message nobody could see is refused here rather than queued, and a session
+          with no browser tab attached reports back that it was taken but not shown.
+        </InfoPopover>
+      </h2>
 
       <label>Level</label>
       <select
@@ -487,10 +489,10 @@ export function Notifications({
       {chats.length === 0 && (
         <div className="card">
           <h2>Send a notification</h2>
-          <p className="empty">
-            No chat connection yet — add a Slack, Zulip or Discord connector above and this becomes
-            a send form. The IDE below needs none.
-          </p>
+          <EmptyState
+            title="No chat connection yet."
+            body="Add a Slack, Zulip or Discord connector above and this becomes a send form. The IDE below needs none."
+          />
         </div>
       )}
       <ChatNotifier
