@@ -27,6 +27,7 @@ import { api, type Colleague } from "./api";
 import { DataTable, When } from "./data-table";
 import { errText, initials } from "./format";
 import { Modal } from "./modal";
+import { PageHeader, StatusChip } from "./ui-standard";
 import {
   normalizeAccessConfig,
   type AccessConfig,
@@ -68,6 +69,7 @@ export function PeopleView({
   const [contact, setContact] = useState<PersonRow | null>(null);
   const [cfg, setCfg] = useState<AccessConfig | null>(null);
   const [email, setEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
   const [addPick, setAddPick] = useState("");
   const [addRole, setAddRole] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -143,6 +145,7 @@ export function PeopleView({
       await api.inviteToOrg(token, orgId, { email: email.trim(), role: "member" });
       setNotice(`Invited ${email.trim()}. They join when they sign in with that address and accept.`);
       setEmail("");
+      setInviting(false);
     } catch (err) {
       setError(errText(err));
     } finally {
@@ -211,15 +214,30 @@ export function PeopleView({
   if (mode === "org") {
     return (
       <>
-        <div className="topbar">
-          <div>
-            <h1>People</h1>
-            <p className="subtitle" style={{ margin: 0 }}>
-              Everyone in {org?.name ?? "your organization"}. Invite a person to add them to the
-              organization; put them on specific projects from a project's Team tab.
-            </p>
-          </div>
-        </div>
+        <PageHeader
+          title="People"
+          status={
+            people === null ? undefined : (
+              <>
+                <StatusChip tone="neutral">
+                  {rows.length} {rows.length === 1 ? "person" : "people"}
+                </StatusChip>
+                {org && <span>in {org.name}</span>}
+              </>
+            )
+          }
+          info={
+            <>
+              Everyone in {org?.name ?? "your organization"}. Invite a person to add them to the organization; put them on
+              specific projects from a project&apos;s Team tab.
+            </>
+          }
+          actions={
+            <button type="button" className="primary" disabled={!org} onClick={() => setInviting(true)} data-invite-open>
+              Invite
+            </button>
+          }
+        />
 
         {error && <div className="error">{error}</div>}
         {notice && <div className="hint">{notice}</div>}
@@ -238,7 +256,14 @@ export function PeopleView({
               onOpen={(p) => setContact(p)}
               search={{ placeholder: "Search people" }}
               searchText={(p) => [p.name, p.email, describe(p)]}
-              empty={{ title: "Nobody here yet.", body: "Invite the first person below." }}
+              empty={{
+                title: "Nobody here yet.",
+                action: (
+                  <button type="button" className="primary" disabled={!org} onClick={() => setInviting(true)}>
+                    Invite
+                  </button>
+                ),
+              }}
               columns={[
                 {
                   id: "name",
@@ -309,22 +334,34 @@ export function PeopleView({
             />
           )}
 
-          <form className="inline" onSubmit={invite} style={{ marginTop: 14 }}>
-            <input
-              type="email"
-              placeholder="address to invite"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <button className="primary" disabled={busy || !email.trim() || !org}>
-              {busy ? "Inviting…" : "Invite to organization"}
-            </button>
-          </form>
-          <p className="hint">
-            The person sees the invitation when they sign in with this address, and becomes a
-            member of {org?.name ?? "the organization"} when they accept it. Put them on projects
-            from each project's Team tab.
-          </p>
+          {inviting && (
+          <Modal label="Invite to the organization" onClose={() => setInviting(false)}>
+            <form onSubmit={(e) => void invite(e)} style={{ display: "flex", flexDirection: "column", gap: 10 }} data-invite-dialog>
+              <h2 style={{ margin: 0 }}>Invite to {org?.name ?? "the organization"}</h2>
+              <input
+                autoFocus
+                type="email"
+                aria-label="Address to invite"
+                placeholder="name@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <p className="hint" style={{ margin: 0 }}>
+                They see the invitation when they sign in with this address, and become a member when they accept it.
+                Put them on projects from each project&apos;s Team tab.
+              </p>
+              {error && <div className="error">{error}</div>}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button type="button" className="ghost" onClick={() => setInviting(false)}>
+                  Cancel
+                </button>
+                <button className="primary" disabled={busy || !email.trim() || !org}>
+                  {busy ? "Inviting…" : "Invite"}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        )}
         </div>
       </>
     );
