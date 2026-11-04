@@ -10,7 +10,7 @@ The engine now lives at
 [`constructorfabric/gearbox`](https://github.com/constructorfabric/gearbox)
 under Apache-2.0, and the session image downloads it from the release
 `STUDIO_GEARBOX_RELEASE` names in `theia/Dockerfile`, at the commit
-`STUDIO_GEARBOX_REF`: `5f5a29a`, a snapshot on its author's fork of
+`STUDIO_GEARBOX_REF`: `c6bcfe5`, a snapshot on its author's fork of
 constructorfabric/gearbox#17 (GDL 1.5, with `frontx.gdl` as a package
 passport) plus gears taken from crates.io at the versions the product's own
 Cargo.lock pins (`--gears-from`), until those merge; before it, `361e703`;
