@@ -655,6 +655,8 @@ export const SURFACES: Surface[] = [
     title: "Releases",
     does: "Take the product from a build to production (ADR-0056 §4): see the ladder of the environments it may deploy to in promote_from order, each with the version it runs, how its newest deploy went and whether one waits for approval, and promote what the environment before it runs or deploy a published build there; roll back, uninstall, preview, and set the release's chart values and secrets per environment. Build the product in Studio as a Job in the organization's cluster, on the member's machine in the desktop IDE, or by proposing a CI workflow; follow each build's stages (prepare, images, publish) and read the end of each step's log from its pod, a failed one with its first error, a published one with its images and chart; read the CI runs of the project's repositories and the deploy history. Folded at the bottom, bind the product's kubernetes profiles and add, change or remove an environment of the project's own (ADR-0054).",
     components: [
+      "RungPlace",
+      "BuildForResearch",
       "ProjectReleases",
       "PromoteBuild",
       "ProjectBuilds",

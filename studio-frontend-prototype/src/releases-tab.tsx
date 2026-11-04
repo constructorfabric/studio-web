@@ -24,7 +24,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Connection, type DeployEnvironment, type Deployment, type ProjectTargets } from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
 import { ProjectBuilds } from "./builds-tab";
-import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews, useDeployRequest } from "./deploy-actions";
+import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews, RungPlace, useDeployRequest } from "./deploy-actions";
 import { EnvironmentForm, ProjectEnvironments } from "./environments-screen";
 import { clusterConnections, registryConnections, researchConnections } from "./environments";
 import { errText, relTime } from "./format";
@@ -452,6 +452,7 @@ function ReleaseLadder({
                   {status.text}
                 </StatusChip>
               </div>
+              <RungPlace token={token} projectId={projectId} step={s} onChanged={onChanged} />
               <div className="sub">
                 {e.kind === "research" ? (
                   <>
