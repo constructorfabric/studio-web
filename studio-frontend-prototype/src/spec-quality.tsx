@@ -22,6 +22,7 @@ import { weightedMixture } from "./analysis";
 import type { DocDuplication } from "./api";
 import type { ArtifactNode } from "./api";
 import { currentCursor, followRun } from "./studio-events";
+import { StatusChip } from "./ui-standard";
 
 /* ── Types ── */
 
@@ -1304,11 +1305,10 @@ function SqStatusChip({ token }: { token: string }) {
       live = false;
     };
   }, [token]);
-  const tone = state === "on" ? "ok" : state === "?" ? "muted" : "err";
   return (
-    <span className={`sq-badge ${tone}`} title={msg}>
-      {state === "on" ? "● service ready" : state === "off" ? "○ not configured" : state === "err" ? "○ unreachable" : "…"}
-    </span>
+    <StatusChip tone={state === "on" ? "ok" : state === "?" ? "neutral" : "danger"} title={msg} data-sq-status={state}>
+      {state === "on" ? "service ready" : state === "off" ? "not configured" : state === "err" ? "unreachable" : "…"}
+    </StatusChip>
   );
 }
 

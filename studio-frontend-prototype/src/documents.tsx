@@ -55,7 +55,7 @@ import { DomainQuestionsPanel } from "./domain-questions-panel";
 import { BriefPanel, RemarksPanel } from "./remarks-panel";
 import { PullRequestChecksChip, PullRequestChecksMenu, PullRequestChecksResult, usePullRequestChecks } from "./project-checks-view";
 import { journeyProgress, specsStatus } from "./specs-status";
-import { PageHeader, StatusChip } from "./ui-standard";
+import { PageHeader, StatusChip, type Tone } from "./ui-standard";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { subsystemOf } from "./product-configurator";
@@ -263,12 +263,12 @@ const STATE_LABEL: Record<DocBindingState, string> = {
 /** The product's own status colours, not ours: a proposal reads as information,
  *  a settled type as success, an undecided file as something still wanting
  *  attention, and a file we were told is not a document recedes. */
-const STATE_TONE: Record<DocBindingState, { bg: string; fg: string }> = {
-  detected: { bg: "var(--info-soft)", fg: "var(--info)" },
-  confirmed: { bg: "var(--success-soft)", fg: "var(--success)" },
-  manual: { bg: "var(--success-soft)", fg: "var(--success)" },
-  unknown: { bg: "var(--warning-soft)", fg: "var(--warning)" },
-  not_a_document: { bg: "var(--muted)", fg: "var(--muted-foreground)" },
+const STATE_TONE: Record<DocBindingState, Tone> = {
+  detected: "info",
+  confirmed: "ok",
+  manual: "ok",
+  unknown: "warn",
+  not_a_document: "neutral",
 };
 
 /** The tone for a state, including one this build has never heard of.
@@ -279,8 +279,7 @@ const STATE_TONE: Record<DocBindingState, { bg: string; fg: string }> = {
  *  at runtime. Read straight, `STATE_TONE[state].bg` then throws and takes the
  *  panel with it. Neutral is the right answer to a state we cannot interpret,
  *  and it is what `findingTone` next door already does. */
-export const stateTone = (state: string) =>
-  STATE_TONE[state as DocBindingState] ?? { bg: "var(--muted)", fg: "var(--muted-foreground)" };
+export const stateTone = (state: string): Tone => STATE_TONE[state as DocBindingState] ?? "neutral";
 
 /** Its label, likewise. An unrecognised state shows its own wire value rather
  *  than nothing: a reader can then say what the screen could not. */
@@ -296,17 +295,16 @@ const SOURCE_LABEL: Record<string, string> = {
 /** A detector says how it went in its own words. These are the ones the
  *  prototype writes (`materializeFinding` in spec-quality.tsx); anything else a
  *  future detector invents reads as neutral rather than as a failure. */
-const FINDING_TONE: Record<string, { bg: string; fg: string }> = {
-  "gate-passed": { bg: "var(--success-soft)", fg: "var(--success)" },
-  clean: { bg: "var(--success-soft)", fg: "var(--success)" },
-  "gate-failed": { bg: "var(--destructive-soft)", fg: "var(--destructive)" },
-  high: { bg: "var(--destructive-soft)", fg: "var(--destructive)" },
-  some: { bg: "var(--warning-soft)", fg: "var(--warning)" },
-  analyzed: { bg: "var(--info-soft)", fg: "var(--info)" },
+const FINDING_TONE: Record<string, Tone> = {
+  "gate-passed": "ok",
+  clean: "ok",
+  "gate-failed": "danger",
+  high: "danger",
+  some: "warn",
+  analyzed: "info",
 };
 
-const findingTone = (severity?: string | null) =>
-  FINDING_TONE[severity ?? ""] ?? { bg: "var(--muted)", fg: "var(--muted-foreground)" };
+const findingTone = (severity?: string | null): Tone => FINDING_TONE[severity ?? ""] ?? "neutral";
 
 /** What the Status column says: how many findings are open on this document.
  *
@@ -1766,13 +1764,13 @@ function IngestedDocumentsView({
                     a confirmed file and an undetermined one read the same. */}
                 <span>
                   {state ? (
-                    <span
+                    <StatusChip
                       className="ing-state"
-                      style={{ background: stateTone(state).bg, color: stateTone(state).fg }}
+                      tone={stateTone(state)}
                       title={b?.source ? (SOURCE_LABEL[b.source] ?? b.source) : undefined}
                     >
                       {stateLabel(state)}
-                    </span>
+                    </StatusChip>
                   ) : (
                     <span className="ing-dash">—</span>
                   )}
@@ -1987,15 +1985,9 @@ function IngestedDocumentsView({
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {(findings[key] ?? []).map((f) => (
                         <div key={f.detector} style={{ fontSize: 12 }}>
-                          <span
-                            className="ing-state"
-                            style={{
-                              background: findingTone(f.severity).bg,
-                              color: findingTone(f.severity).fg,
-                            }}
-                          >
+                          <StatusChip className="ing-state" tone={findingTone(f.severity)}>
                             {f.detector}
-                          </span>{" "}
+                          </StatusChip>{" "}
                           {f.severity ?? "recorded"}
                           {f.score != null && (
                             <span className="ing-conf"> · {Math.round(f.score * 100)}%</span>
@@ -2061,15 +2053,9 @@ function IngestedDocumentsView({
                       you ask about ONE document while deciding what to do with
                       it, and never while scanning the list. */}
                   <div className="ing-why" style={{ marginTop: 8 }}>
-                    <span
-                      className="ing-state"
-                      style={{
-                        background: stateTone(selected.state).bg,
-                        color: stateTone(selected.state).fg,
-                      }}
-                    >
+                    <StatusChip className="ing-state" tone={stateTone(selected.state)}>
                       {stateLabel(selected.state)}
-                    </span>
+                    </StatusChip>
                     {selected.confidence != null && selected.state === "detected" && (
                       <span className="ing-conf">{Math.round(selected.confidence * 100)}%</span>
                     )}
@@ -2560,7 +2546,7 @@ function JourneyPanel({
             </span>
             <span className="jr-reqs">
               {stage.requirements.map((r) => (
-                <span
+                <StatusChip
                   key={r.type_key}
                   className="ing-state"
                   title={
@@ -2574,12 +2560,12 @@ function JourneyPanel({
                             ? `Waiting for approval from ${(r.approvals_outstanding ?? []).join(", ")}`
                             : "Present, conforming, and past every gate"
                   }
-                  style={
+                  tone={
                     !r.present
-                      ? { background: "var(--warning-soft)", color: "var(--warning)" }
+                      ? "warn"
                       : !r.conforms || r.analyses_outstanding.length > 0 || (r.approvals_outstanding ?? []).length > 0
-                        ? { background: "var(--info-soft)", color: "var(--info)" }
-                        : { background: "var(--success-soft)", color: "var(--success)" }
+                        ? "info"
+                        : "ok"
                   }
                 >
                   {typeName(r.type_key)}
@@ -2589,7 +2575,7 @@ function JourneyPanel({
                   {r.present && (r.approvals_outstanding ?? []).length > 0 && (
                     <> · awaiting {(r.approvals_outstanding ?? []).join(", ")}</>
                   )}
-                </span>
+                </StatusChip>
               ))}
             </span>
           </div>
