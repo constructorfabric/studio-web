@@ -112,6 +112,27 @@ impl Product {
         super::gear_roots::scope_for(gearbox, &connectors, &self.hub, ctx, org, now).await
     }
 
+    /// The project's home repository, checked out (ADR-0060 §6). `Ok(None)`
+    /// when the project has none the server reads; an error while it is
+    /// still being cloned.
+    async fn home(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> anyhow::Result<Option<super::gearbox::HomeCheckout>> {
+        let (Some(gearbox), Ok(am)) = (
+            self.gearbox.as_ref(),
+            self.hub
+                .get::<dyn account_management_sdk::AccountManagementClient>(),
+        ) else {
+            return Ok(None);
+        };
+        let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&self.hub));
+        super::project_roots::home_checkout(gearbox, &connectors, am.as_ref(), ctx, project)
+            .await
+            .transpose()
+    }
+
     fn gearbox(&self) -> ApiResult<&Arc<Gearbox>> {
         self.gearbox.as_ref().ok_or_else(|| {
             CanonicalError::service_unavailable()
@@ -523,7 +544,8 @@ pub struct ProductPreviewRequest {
     /// Display name. Omitted means the id.
     pub name: Option<String>,
     /// Gears by crate name (`cf-gears-api-gateway`) or engine id (`api-gateway`).
-    /// Empty only with `write`: the description a product project starts from.
+    /// Empty: the product record's picks (ADR-0060 §4); with `write` and a
+    /// record with none, the description a product project starts from.
     pub gears: Vec<String>,
     /// The profile to check: `dev` (embedded), `local` (self-hosted) or
     /// `prod` (kubernetes). Default `dev`. The description names `dev` as its
@@ -549,7 +571,15 @@ pub struct ProductPreviewRequest {
     pub onto_base: Option<bool>,
     /// How the product configures its gears: gear crate name -> {field: value}.
     /// Written into `product.gdl` and kept with the project's product.
+    /// Absent: the record's configuration. The frontend is always the
+    /// record's (`PUT …/product`). A save that would still drop a gear or the
+    /// frontend the latest revision has is refused (ADR-0060 §4).
     pub config: Option<Value>,
+    /// `dev` checks the profile as a development one -- the production
+    /// rules' findings as warnings -- for an environment of dev strictness
+    /// (ADR-0060 §5). Absent or `prod`: as the description says. Only the
+    /// check: the saved text is unchanged.
+    pub strictness: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1749,11 +1779,6 @@ async fn preview_product(
             .with_constraint(format!("{e:#}"))
             .create()
     };
-    // Saving no gears is how a product project gets its `product.gdl` when it
-    // is created; previewing none has nothing to show.
-    if body.gears.is_empty() && !body.write.unwrap_or(false) {
-        return Err(invalid(anyhow::anyhow!("pick at least one gear")));
-    }
     let profile = body.profile.clone().unwrap_or_else(|| "dev".to_string());
     let name = body
         .name
@@ -1762,24 +1787,52 @@ async fn preview_product(
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| body.product_id.clone());
     let name_for_record = name.clone();
-    let config = super::gearbox::gear_config_from(body.config.as_ref()).map_err(invalid)?;
     // Three reads that do not need each other: the record, the corpus the
     // project's organization reads, and the repository the description goes
     // to. Read side by side; each stage's time is logged.
     let project = project_id.to_string();
-    let ((record, record_ms), (scope, scope_ms), (repo, repo_ms)) = tokio::join!(
+    let ((record, record_ms), (scope, scope_ms), (repo, repo_ms), (home, home_ms)) = tokio::join!(
         timed(product.service.get_project_product(&ctx, &project)),
         timed(product.scope(&ctx, project_id, false)),
         timed(product.service.write_repo(&ctx, &project)),
+        timed(product.home(&ctx, project_id)),
     );
     tracing::info!(
         %project_id,
         record_ms,
         scope_ms,
         repo_ms,
+        home_ms,
         "studio-product: preview inputs read"
     );
+    // The project's own repository is read as a build reads it (ADR-0060
+    // §6): a description of its gears without it would leave them out.
+    let home = home.map_err(|e| {
+        if e.downcast_ref::<super::gearbox::HomeStillReading>()
+            .is_some()
+        {
+            CanonicalError::service_unavailable()
+                .with_detail(format!("{e:#}"))
+                .create()
+        } else {
+            invalid(e)
+        }
+    })?;
     let record = record.map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // The whole product, with the request's fields only overriding (ADR-0060
+    // §4): a save that names only its gears keeps the record's configuration
+    // and frontend, and one that names none keeps its gears.
+    let composed = super::save_guard::compose_request(
+        &body.gears,
+        body.config.as_ref(),
+        record.as_ref().map(|n| &n.value),
+    );
+    // Saving no gears is how a product project gets its `product.gdl` when it
+    // is created; previewing none has nothing to show.
+    if composed.gears.is_empty() && !body.write.unwrap_or(false) {
+        return Err(invalid(anyhow::anyhow!("pick at least one gear")));
+    }
+    let config = super::gearbox::gear_config_from(composed.config.as_ref()).map_err(invalid)?;
     let product_path = product_path_for(record.as_ref().map(|n| &n.value), &body.product_id);
     // The frontend the Frontend section saved with the product: the
     // description is the whole product, its screens with its gears, once the
@@ -1794,7 +1847,7 @@ async fn preview_product(
         product_id: body.product_id.clone(),
         product_path: product_path.clone(),
         name,
-        gears: body.gears.clone(),
+        gears: composed.gears.clone(),
         profile: profile.clone(),
         config: config.clone(),
         repo,
@@ -1803,11 +1856,23 @@ async fn preview_product(
         // fresh run gives.
         reuse: true,
         frontend,
+        home,
+        development: body.strictness.as_deref().map(str::trim) == Some("dev"),
     };
     // The text first, without the engine: it is all a save keeps, so a save
     // never waits on a check to be kept (the check of a product of sixty
     // gears outlasted the gateway, and the save was lost with it).
-    let described = gearbox.describe(scope, &input).await.map_err(invalid)?;
+    let described = gearbox.describe(scope, &input).await.map_err(|e| {
+        if e.downcast_ref::<super::gearbox::HomeStillReading>()
+            .is_some()
+        {
+            CanonicalError::service_unavailable()
+                .with_detail(format!("{e:#}"))
+                .create()
+        } else {
+            invalid(e)
+        }
+    })?;
     let product_gdl = described.product_gdl.clone();
     let gdl_sha256 = super::descriptions::digest(&product_gdl);
     let composition = described.composition.clone();
@@ -1820,14 +1885,35 @@ async fn preview_product(
     let kept = product.service.descriptions().is_some();
     let write = body.write.unwrap_or(false);
     if write && kept {
+        let latest = product
+            .service
+            .latest_description(&ctx, project_id)
+            .await
+            .map_err(|e| descriptions_rest::internal(&e))?;
+        // Nothing the latest revision had and the product still wants is
+        // dropped without a word (ADR-0060 §4).
+        if let Some(latest) = &latest {
+            let frontend_kept = record
+                .as_ref()
+                .and_then(|n| n.value.get("frontend"))
+                .is_some_and(|f| !f.is_null());
+            let lost = super::save_guard::stripped(
+                &latest.text,
+                &product_gdl,
+                &composed.gears,
+                frontend_kept,
+            );
+            if !lost.is_empty() {
+                return Err(invalid(anyhow::anyhow!(
+                    "the save is refused, so revision {} is not stripped: {}",
+                    latest.revision,
+                    lost.join("; ")
+                )));
+            }
+        }
         let base = match body.base_revision {
             Some(b) => Some(b),
-            None => product
-                .service
-                .latest_description(&ctx, project_id)
-                .await
-                .map_err(|e| descriptions_rest::internal(&e))?
-                .map(|l| l.revision),
+            None => latest.as_ref().map(|l| l.revision),
         };
         let saved = product
             .service
@@ -1937,7 +2023,7 @@ async fn preview_product(
     let mut record = serde_json::Map::new();
     record.insert("product_id".into(), body.product_id.clone().into());
     record.insert("name".into(), name_for_record.into());
-    record.insert("gears".into(), serde_json::json!(body.gears));
+    record.insert("gears".into(), serde_json::json!(composed.gears));
     record.insert(
         "config".into(),
         serde_json::to_value(&config).unwrap_or(Value::Null),
@@ -2234,11 +2320,15 @@ pub fn register_routes(
 ) -> Router {
     let router = OperationBuilder::get("/studio-product/v1/projects/{project_id}/gear-repo")
         .operation_id("studio_product.get_project_repo")
-        .summary("The gear repository connected to a project (0 or 1 node)")
+        .summary("The project source new gears go to (0 or 1 node)")
         .description(
-            "Returns the repository a project's gears are scaffolded into, as \
-                 zero or one node — a project with none has simply not connected \
-                 one yet.",
+            "Returns the project's source marked `gears_here` (ADR-0060), the \
+                 repository \"Create a gear\" writes into, as zero or one node \
+                 `{tenant, connection_id, repo, branch, source: true}`. The old \
+                 per-project gear repository record is folded into the project's \
+                 sources the first time it is read, and answered as it was until \
+                 it can be. It decides neither where product.gdl is published nor \
+                 what a build clones.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -2257,11 +2347,12 @@ pub fn register_routes(
 
     let router = OperationBuilder::post("/studio-product/v1/projects/{project_id}/gear-repo")
         .operation_id("studio_product.set_project_repo")
-        .summary("Connect (or update) the gear repository for a project")
+        .summary("Mark the project source new gears go to")
         .description(
-            "Connects a project to the repository its gears are scaffolded \
-                 into, or replaces that connection. The branch defaults to \
-                 `main`. The repository is reached through a studio-connector \
+            "Marks the project source that is this repository `gears_here` \
+                 (ADR-0060), adding it to the project's sources when it is not \
+                 one, and clears the mark on every other source. The branch \
+                 defaults to the repository's default branch, else `main`. The repository is reached through a studio-connector \
                  connection, so its credential stays in credstore. The \
                  connection must be the organization's own -- held by it, a \
                  workspace or a project of it; one inherited from the platform \

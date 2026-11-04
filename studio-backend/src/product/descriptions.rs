@@ -23,7 +23,7 @@
 use sea_orm::{ColumnTrait, Condition, EntityTrait, Order};
 use sha2::{Digest, Sha256};
 use toolkit_db::Db;
-use toolkit_db::secure::{SecureEntityExt, SecureInsertExt};
+use toolkit_db::secure::{SecureEntityExt, SecureInsertExt, SecureUpdateExt};
 use toolkit_security::AccessScope;
 use uuid::Uuid;
 
@@ -65,6 +65,11 @@ pub mod entity {
         pub sha256: String,
         /// `studio` | `repository` | `migrated`.
         pub source: String,
+        /// The commit of each source the text uses, taken when it was saved
+        /// (ADR-0060 §3): a `super::super::sources_lock::SourcesLock` as
+        /// JSON. `None` for a revision saved before locks were kept.
+        #[sea_orm(column_type = "Text", nullable)]
+        pub sources_lock: Option<String>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter)]
@@ -88,6 +93,8 @@ pub struct Revision {
     pub created_at_ms: i64,
     pub sha256: String,
     pub source: String,
+    /// See [`entity::Model::sources_lock`].
+    pub sources_lock: Option<super::sources_lock::SourcesLock>,
 }
 
 impl From<entity::Model> for Revision {
@@ -99,6 +106,10 @@ impl From<entity::Model> for Revision {
             created_at_ms: m.created_at_ms,
             sha256: m.sha256,
             source: m.source,
+            sources_lock: m
+                .sources_lock
+                .as_deref()
+                .and_then(|t| serde_json::from_str(t).ok()),
         }
     }
 }
@@ -257,6 +268,7 @@ impl DescriptionStore {
             created_at_ms: now_ms(),
             sha256,
             source: new.source.to_owned(),
+            sources_lock: None,
         };
         let row = entity::ActiveModel {
             tenant_id: sea_orm::ActiveValue::Set(tenant),
@@ -267,6 +279,7 @@ impl DescriptionStore {
             created_at_ms: sea_orm::ActiveValue::Set(made.created_at_ms),
             sha256: sea_orm::ActiveValue::Set(made.sha256.clone()),
             source: sea_orm::ActiveValue::Set(made.source.clone()),
+            sources_lock: sea_orm::ActiveValue::Set(None),
         };
         let conn = self.db.conn()?;
         let inserted = entity::Entity::insert(row)
@@ -287,6 +300,35 @@ impl DescriptionStore {
                 _ => Err(e.into()),
             },
         }
+    }
+}
+
+impl DescriptionStore {
+    /// Keep `lock` beside revision `revision` (ADR-0060 §3).
+    pub async fn set_lock(
+        &self,
+        tenant: Uuid,
+        project: Uuid,
+        revision: i64,
+        lock: &super::sources_lock::SourcesLock,
+    ) -> anyhow::Result<()> {
+        use sea_orm::sea_query::Expr;
+        let conn = self.db.conn()?;
+        entity::Entity::update_many()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(tenant))
+            .filter(
+                Condition::all()
+                    .add(entity::Column::ProjectId.eq(project))
+                    .add(entity::Column::Revision.eq(revision)),
+            )
+            .col_expr(
+                entity::Column::SourcesLock,
+                Expr::value(serde_json::to_string(lock)?),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(())
     }
 }
 
@@ -318,6 +360,7 @@ mod tests {
             created_at_ms: 0,
             sha256: digest("product shop {}"),
             source: SOURCE_STUDIO.into(),
+            sources_lock: None,
         }
     }
 

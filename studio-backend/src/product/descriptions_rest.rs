@@ -54,6 +54,28 @@ pub struct ProductDescriptionRevisionDto {
     /// `studio`, `repository` (read back from the base branch) or `migrated`
     /// (taken from where the project last saved it).
     pub source: String,
+    /// The commit of each source the text uses, pinned when it was saved
+    /// (ADR-0060 §3). Empty for a revision saved before locks were kept.
+    pub sources_lock: Vec<LockedSourceDto>,
+}
+
+/// One source of a revision as its lock pins it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct LockedSourceDto {
+    /// The source's id in the description.
+    pub id: String,
+    /// `path` or `git`.
+    pub kind: String,
+    /// `owner/name` of the project source it is; absent for another
+    /// repository the description names by git.
+    pub repository: Option<String>,
+    pub url: String,
+    /// The branch a dev build takes it at.
+    pub branch: Option<String>,
+    /// The commit a protected environment builds; absent when it could not
+    /// be read at save.
+    pub commit: Option<String>,
 }
 
 /// A revision as a list shows it: without its text.
@@ -187,6 +209,22 @@ pub fn revision_dto(r: Revision) -> ProductDescriptionRevisionDto {
         author: r.author,
         sha256: r.sha256,
         source: r.source,
+        sources_lock: r
+            .sources_lock
+            .map(|l| {
+                l.sources
+                    .into_iter()
+                    .map(|s| LockedSourceDto {
+                        id: s.id,
+                        kind: s.kind,
+                        repository: s.repository,
+                        url: s.url,
+                        branch: s.branch,
+                        commit: s.commit,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -244,6 +282,13 @@ fn unavailable() -> CanonicalError {
 
 /// A project the caller does not reach is a 404; anything else a 500.
 pub fn internal(e: &anyhow::Error) -> CanonicalError {
+    if let Some(twice) = e.downcast_ref::<crate::product::sources_lock::OneRepositoryTwice>() {
+        return StudioProductError::invalid_argument()
+            .with_constraint(format!(
+                "the description names one repository twice: {twice}"
+            ))
+            .create();
+    }
     not_reachable(e).unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create())
 }
 

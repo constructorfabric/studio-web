@@ -21,6 +21,17 @@
 //! (`checkoutDirectory`), so "open this file in the editor" and the clone
 //! agree on where the file is.
 //!
+//! Two flags say what a source is for besides being cloned (ADR-0060):
+//!
+//! - `gears_here`: "Create a gear" puts new gears here. It is what the
+//!   separate project gear repository (`project_gear_repo`) used to be;
+//!   [`fold_gear_repo`] moves an old record into the list.
+//! - `publish_here`: a product description published to the repository
+//!   (ADR-0053 §3) goes here. Without one, Studio keeps the revisions only.
+//!
+//! Neither decides what a build clones: a build clones every source its
+//! product uses ([`description_home`] for the `path(...)` ones).
+//!
 //! `share_mode` is how the IDE's "Share with the team" lands a person's edits
 //! in that repository: `branch` commits and pushes to the working branch,
 //! `pull_request` pushes to the person's own branch and opens a pull request
@@ -81,7 +92,7 @@ impl ShareMode {
 }
 
 /// One repository of a project.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectSource {
     /// The connection it is read through. `None` when the entry names none or
     /// names it unreadably: it is still cloned, without credentials.
@@ -95,6 +106,14 @@ pub struct ProjectSource {
     pub dir: String,
     /// How "Share with the team" lands edits here.
     pub share_mode: ShareMode,
+    /// "Create a gear" puts new gears here.
+    pub gears_here: bool,
+    /// A published `product.gdl` goes here.
+    pub publish_here: bool,
+}
+
+fn flag(entry: &Value, key: &str) -> bool {
+    entry.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn text<'a>(entry: &'a Value, key: &str) -> Option<&'a str> {
@@ -159,6 +178,8 @@ pub fn parse(config: &Value) -> Vec<ProjectSource> {
             branch: text(entry, "branch").map(str::to_owned),
             dir,
             share_mode: ShareMode::parse(text(entry, "share_mode")),
+            gears_here: flag(entry, "gears_here"),
+            publish_here: flag(entry, "publish_here"),
         });
     }
     out
@@ -190,6 +211,132 @@ pub fn same_repository(a: &str, b: &str) -> bool {
         (Some(a), Some(b)) => a == b,
         _ => false,
     }
+}
+
+/// The source the product's description travels with: the one marked
+/// `publish_here`, else the first read through a connection, else the first.
+/// A `path(...)` source of the description resolves inside it, and a build
+/// lays the description in its checkout. `None` for a project with no
+/// sources.
+pub fn description_home(sources: &[ProjectSource]) -> Option<&ProjectSource> {
+    sources
+        .iter()
+        .find(|s| s.publish_here)
+        .or_else(|| sources.iter().find(|s| s.connection_id.is_some()))
+        .or_else(|| sources.first())
+}
+
+/// The source a published description goes to: only the one marked
+/// `publish_here`. `None` keeps the revisions in Studio alone.
+pub fn publish_source(sources: &[ProjectSource]) -> Option<&ProjectSource> {
+    sources.iter().find(|s| s.publish_here)
+}
+
+/// The source "Create a gear" writes into: the one marked `gears_here`.
+pub fn gears_source(sources: &[ProjectSource]) -> Option<&ProjectSource> {
+    sources.iter().find(|s| s.gears_here)
+}
+
+/// The source whose clone URL names the repository `url` names.
+pub fn source_for_url<'a>(sources: &'a [ProjectSource], url: &str) -> Option<&'a ProjectSource> {
+    sources.iter().find(|s| same_repository(&s.clone_url, url))
+}
+
+/// A project gear repository as it was recorded before it became a source
+/// (`project_gear_repo`: `{tenant, connection_id, repo, branch}`), folded
+/// into `config`'s `sources[]` as the source marked `gears_here`.
+///
+/// The source that is that repository already takes the flag; otherwise the
+/// repository is appended, with `clone_url` on `host` (GitHub when the
+/// connection's host is not known). Idempotent: a config with a `gears_here`
+/// source already is left as it is. `true` when `config` changed.
+pub fn fold_gear_repo(config: &mut Value, gear_repo: &Value, host: Option<&str>) -> bool {
+    let Some(repo) = text(gear_repo, "repo").map(str::to_owned) else {
+        return false;
+    };
+    if !config.is_object() {
+        *config = Value::Object(serde_json::Map::new());
+    }
+    let Some(obj) = config.as_object_mut() else {
+        return false;
+    };
+    let sources = obj
+        .entry("sources")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !sources.is_array() {
+        *sources = Value::Array(Vec::new());
+    }
+    let Some(list) = sources.as_array_mut() else {
+        return false;
+    };
+    if list.iter().any(|e| flag(e, "gears_here")) {
+        return false;
+    }
+    let host = host
+        .map(|h| h.trim().trim_end_matches('/'))
+        .filter(|h| !h.is_empty())
+        .unwrap_or("https://github.com");
+    let url = format!("{host}/{repo}.git");
+    let same = |e: &Value| {
+        text(e, "clone_url").is_some_and(|u| same_repository(u, &url))
+            || text(e, "full_path").is_some_and(|p| p.eq_ignore_ascii_case(&repo))
+    };
+    if let Some(entry) = list.iter_mut().find(|e| same(e)) {
+        if let Some(e) = entry.as_object_mut() {
+            e.insert("gears_here".into(), Value::Bool(true));
+        }
+        return true;
+    }
+    let mut entry = serde_json::Map::new();
+    if let Some(c) = text(gear_repo, "connection_id") {
+        entry.insert("connection_id".into(), Value::String(c.to_owned()));
+    }
+    entry.insert("full_path".into(), Value::String(repo));
+    entry.insert("clone_url".into(), Value::String(url));
+    if let Some(b) = text(gear_repo, "branch") {
+        entry.insert("branch".into(), Value::String(b.to_owned()));
+    }
+    entry.insert("gears_here".into(), Value::Bool(true));
+    entry.insert(
+        "folded_from".into(),
+        Value::String("project_gear_repo".into()),
+    );
+    list.push(Value::Object(entry));
+    true
+}
+
+/// Make `repo` (`{connection_id, repo, branch}`, cloned from `url`) the
+/// source marked `gears_here`: the flag moves to it, and it is added to the
+/// sources when it is not one. Always a change.
+pub fn set_gears_here(config: &mut Value, repo: &Value, url: &str, host: Option<&str>) -> bool {
+    if !mark_only(config, "gears_here", Some(url)) {
+        mark_only(config, "gears_here", None);
+        fold_gear_repo(config, repo, host);
+    }
+    true
+}
+
+/// Mark the source of `config` that is `url`'s repository with `key`, and
+/// clear it on every other: one source carries each flag. `false` when no
+/// source is that repository.
+pub fn mark_only(config: &mut Value, key: &str, url: Option<&str>) -> bool {
+    let Some(list) = config.get_mut("sources").and_then(Value::as_array_mut) else {
+        return url.is_none();
+    };
+    let mut found = url.is_none();
+    for entry in list.iter_mut() {
+        let this =
+            url.is_some_and(|u| text(entry, "clone_url").is_some_and(|c| same_repository(c, u)));
+        found |= this;
+        if let Some(e) = entry.as_object_mut() {
+            if this {
+                e.insert(key.into(), Value::Bool(true));
+            } else {
+                e.remove(key);
+            }
+        }
+    }
+    found
 }
 
 /// The project's sources, read under the caller's identity. `None` when its
@@ -286,6 +433,46 @@ pub async fn read_config(
         .await
         .ok()
         .map(|entry| entry.value)
+}
+
+/// Change the project's config as `ctx` and write it back, version-checked so
+/// a concurrent writer is not lost: `change` answers whether it changed
+/// anything, and nothing is written when it did not. `Ok(false)` when there
+/// was nothing to change.
+pub async fn update_config(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    project: Uuid,
+    mut change: impl FnMut(&mut Value) -> bool,
+) -> anyhow::Result<bool> {
+    let mut last = None;
+    for _ in 0..3 {
+        let (mut value, version) = match am
+            .get_metadata(ctx, project, GtsTypeId::new(PROJECT_CONFIG_TYPE))
+            .await
+        {
+            Ok(entry) => (entry.value, entry.version),
+            Err(e) => return Err(anyhow::anyhow!("the project's config cannot be read: {e}")),
+        };
+        if !change(&mut value) {
+            return Ok(false);
+        }
+        let mut request = account_management_sdk::UpsertMetadataRequest::new(
+            GtsTypeId::new(PROJECT_CONFIG_TYPE),
+            value,
+        );
+        if version > 0 {
+            request = request.with_expected_version(version);
+        }
+        match am.upsert_metadata(ctx, project, request).await {
+            Ok(_) => return Ok(true),
+            Err(e) => last = Some(e.to_string()),
+        }
+    }
+    Err(anyhow::anyhow!(
+        "the project's config could not be written: {}",
+        last.unwrap_or_default()
+    ))
 }
 
 /// A source with what its connection says about it.

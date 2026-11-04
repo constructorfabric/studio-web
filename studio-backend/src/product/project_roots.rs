@@ -201,37 +201,10 @@ async fn read_project(
         .unwrap_or_default();
     let mut unread = false;
     for source in sources {
-        let Some(connection) = source.connection_id else {
+        let Some((corpus, connection)) = source_corpus(service, ctx, project, &source).await else {
             continue;
         };
-        let Some(tenant) = service.locate(ctx, project, connection).await else {
-            continue;
-        };
-        let (driver, auth, _) = match service.driver_and_auth(ctx, tenant, connection).await {
-            Ok(found) => found,
-            Err(e) => {
-                warn!(project_id = %project, repo = %source.full_path, error = %format!("{e:#}"), "studio-product: a project source is not readable for its product file");
-                continue;
-            }
-        };
-        let Ok(url) = driver.clone_url(&auth.base_url, &source.full_path) else {
-            continue;
-        };
-        let (username, token) = driver.clone_credentials(&auth.token);
-        let branch = source.branch.clone().unwrap_or_default();
-        let corpus = CorpusSource {
-            label: if branch.is_empty() {
-                source.full_path.clone()
-            } else {
-                format!("{}@{branch}", source.full_path)
-            },
-            key: super::gear_roots::checkout_key(&url, &branch),
-            repo: source.full_path.clone(),
-            url,
-            username: username.to_owned(),
-            token: token.to_owned(),
-            git_ref: branch.clone(),
-        };
+        let branch = corpus.git_ref.clone();
         // Where the corpus reads the repository's roots from too: one clone.
         let probe = GearRoot {
             id: String::new(),
@@ -327,6 +300,98 @@ fn merge(
         files.push((project, file));
     }
     (roots, files)
+}
+
+/// A project source as the corpus reads a repository: its clone URL and
+/// credentials through its connection, at its branch. `None` for a source
+/// read through no connection the caller can use.
+async fn source_corpus(
+    service: &Arc<crate::connectors::sdk::ConnectorService>,
+    ctx: &SecurityContext,
+    project: Uuid,
+    source: &crate::project_sources::ProjectSource,
+) -> Option<(CorpusSource, Uuid)> {
+    let connection = source.connection_id?;
+    let tenant = service.locate(ctx, project, connection).await?;
+    let (driver, auth, _) = match service.driver_and_auth(ctx, tenant, connection).await {
+        Ok(found) => found,
+        Err(e) => {
+            warn!(project_id = %project, repo = %source.full_path, error = %format!("{e:#}"), "studio-product: a project source is not readable");
+            return None;
+        }
+    };
+    let url = driver.clone_url(&auth.base_url, &source.full_path).ok()?;
+    let (username, token) = driver.clone_credentials(&auth.token);
+    let branch = source.branch.clone().unwrap_or_default();
+    Some((
+        CorpusSource {
+            label: if branch.is_empty() {
+                source.full_path.clone()
+            } else {
+                format!("{}@{branch}", source.full_path)
+            },
+            key: super::gear_roots::checkout_key(&url, &branch),
+            repo: source.full_path.clone(),
+            url,
+            username: username.to_owned(),
+            token: token.to_owned(),
+            git_ref: branch,
+        },
+        connection,
+    ))
+}
+
+/// The project's home repository (the source its description travels with,
+/// `project_sources::description_home`), checked out on the server at its
+/// branch in the one clone the corpus reads it from (ADR-0060 §6): what a
+/// check resolves the description's `path(...)` sources in, as a build does.
+/// `None` for a project with no home source the server can read; an error
+/// while the first clone is still running, or when it failed.
+pub async fn home_checkout(
+    gearbox: &Arc<Gearbox>,
+    connectors: &Connectors,
+    am: &dyn account_management_sdk::AccountManagementClient,
+    ctx: &SecurityContext,
+    project: Uuid,
+) -> Option<anyhow::Result<super::gearbox::HomeCheckout>> {
+    let service = connectors.get()?;
+    let sources = crate::project_sources::read(am, ctx, project)
+        .await
+        .unwrap_or_default();
+    let home = crate::project_sources::description_home(&sources)?.clone();
+    let (corpus, connection) = source_corpus(&service, ctx, project, &home).await?;
+    let probe = GearRoot {
+        id: String::new(),
+        source: corpus.clone(),
+        connection_id: Some(connection),
+        organization: true,
+        subdir: Some(String::new()),
+    };
+    let dir = checkout_dir(gearbox.workdir(), &probe);
+    let (gb, at, src) = (Arc::clone(gearbox), dir.clone(), corpus.clone());
+    let job = tokio::task::spawn_blocking(move || gb.home_checkout_at(&at, &src));
+    let clone = match tokio::time::timeout(CHECKOUT_WAIT, job).await {
+        Ok(Ok(Ok(c))) => c,
+        Ok(Ok(Err(e))) => {
+            return Some(Err(
+                e.context(format!("{} could not be checked out", home.full_path))
+            ));
+        }
+        Ok(Err(e)) => return Some(Err(anyhow::anyhow!("the checkout task failed: {e}"))),
+        Err(_) => {
+            return Some(Err(super::gearbox::HomeStillReading(
+                home.full_path.clone(),
+            )
+            .into()));
+        }
+    };
+    Some(Ok(super::gearbox::HomeCheckout {
+        id: home.dir.clone(),
+        repo: home.full_path.clone(),
+        url: home.clone_url.clone(),
+        dir: clone.dir,
+        commit: clone.commit,
+    }))
 }
 
 /// How long a request waits for a project's repository to be cloned or

@@ -24,10 +24,12 @@ mod new_gear;
 pub mod port;
 mod project_roots;
 mod rest;
+mod save_guard;
 mod scaffold;
 pub mod sdk;
 mod service;
 mod skeleton;
+pub mod sources_lock;
 
 use std::sync::{Arc, OnceLock};
 

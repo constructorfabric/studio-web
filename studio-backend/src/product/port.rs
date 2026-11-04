@@ -73,12 +73,18 @@ pub trait ProjectProducts: Send + Sync + 'static {
 }
 
 /// [`ProjectProducts::latest_description`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DescriptionRevision {
     pub revision: i64,
     pub text: String,
     /// Where it goes in the repository, when the record says.
     pub path: Option<String>,
+    /// The commit of each source the text uses, pinned at save (ADR-0060
+    /// §3); `None` for a revision saved before locks were kept.
+    pub sources_lock: Option<super::sources_lock::SourcesLock>,
+    /// The project sources the text uses, each at its branch now: what a dev
+    /// build takes.
+    pub planned: Vec<super::sources_lock::LockedSource>,
 }
 
 /// [`ProjectProducts::saved_description`].
@@ -176,10 +182,23 @@ impl ProjectProducts for super::service::ProductService {
             .get_project_product(ctx, &project_id.to_string())
             .await?
             .map(|n| n.value);
+        let path = super::service::description_service::description_path(record.as_ref());
+        let sources = self.project_sources(ctx, &project_id.to_string()).await;
+        let planned = super::sources_lock::plan(
+            &super::sources_lock::sources(&latest.text),
+            path.as_deref().unwrap_or("product.gdl"),
+            &sources,
+            crate::project_sources::description_home(&sources),
+        )
+        .into_iter()
+        .map(|(l, _)| l)
+        .collect();
         Ok(Some(DescriptionRevision {
             revision: latest.revision,
             text: latest.text,
-            path: super::service::description_service::description_path(record.as_ref()),
+            path,
+            sources_lock: latest.sources_lock,
+            planned,
         }))
     }
 }

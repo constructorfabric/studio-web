@@ -2897,6 +2897,7 @@ mod publish_tests {
             branch: branch.map(str::to_string),
             dir: "specs".into(),
             share_mode: mode,
+            ..ProjectSource::default()
         }
     }
 
