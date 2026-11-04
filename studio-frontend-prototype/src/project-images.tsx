@@ -195,7 +195,7 @@ export function ProjectImages({
       {panel === "retention" && (
         <RetentionForm
           token={token}
-          projectId={projectId}
+          owner={{ project: projectId }}
           retention={retention}
           onSaved={(r) => {
             setRetention(r);
@@ -450,16 +450,17 @@ function ImageRow({
   );
 }
 
-/** How long the project's images are kept: the newest so many of each app,
- *  and what is younger than so many days. Empty is no limit. */
-function RetentionForm({
+/** How long images are kept -- a project's, or the organization's default:
+ *  the newest so many of each app, and what is younger than so many days.
+ *  Empty is no limit. */
+export function RetentionForm({
   token,
-  projectId,
+  owner,
   retention,
   onSaved,
 }: {
   token: string;
-  projectId: string;
+  owner: { org?: string; project?: string };
   retention: ImageRetention | null;
   onSaved: (r: ImageRetention) => void;
 }) {
@@ -479,7 +480,7 @@ function RetentionForm({
         setError(null);
         try {
           onSaved(
-            await api.saveImageRetention(token, { project: projectId }, {
+            await api.saveImageRetention(token, owner, {
               keep_last: keepLast.trim() ? Number(keepLast) : null,
               keep_days: keepDays.trim() ? Number(keepDays) : null,
             }),
@@ -491,8 +492,13 @@ function RetentionForm({
         }
       }}
     >
-      {retention?.inherited && (
+      {owner.project && retention?.inherited && (
         <p className="hint">The project follows the organization&apos;s retention; saving gives it its own.</p>
+      )}
+      {owner.org && (
+        <p className="hint">
+          Every project that has none of its own follows this. A project sets its own in Releases › Images.
+        </p>
       )}
       <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
         <label className="field">

@@ -1772,6 +1772,9 @@ export interface DeployEnvironmentInput {
   build_namespace?: string | null;
   namespaces?: string[] | null;
   allow_broad_registry_token?: boolean | null;
+  /** How strictly a product is checked for it (ADR-0060 §5); absent: `prod`
+   *  when protected, else `dev`. */
+  strictness?: "dev" | "prod" | null;
 }
 
 /** What a build would do, said before it is started (`POST /builds/plan`):
@@ -1862,6 +1865,20 @@ export interface ImageRetention {
   keep_days?: number | null;
   /** The project has none of its own: the organization's applies. */
   inherited: boolean;
+}
+
+/** The namespace a project was given in an environment (ADR-0062), and where
+ *  its builds run there. */
+export interface NamespaceAssignment {
+  project_id: string;
+  environment_id: string;
+  namespace: string;
+  /** Where its build Job runs; the answer says the namespace itself when the
+   *  assignment named none. */
+  build_namespace?: string | null;
+  /** Who assigned it: a member, or `studio` for a namespace a run made. */
+  assigned_by?: string | null;
+  assigned_at?: string | null;
 }
 
 /** One registry the organization's environments push to or pull from. */
@@ -5172,6 +5189,24 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+
+  /** The namespace each project was given in each environment. */
+  namespaceAssignments: (token: string, org: string) =>
+    request<{ items: NamespaceAssignment[]; total: number }>(
+      `/studio-environments/v1/namespace-assignments?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+  /** Give a project a namespace in an environment (an organization administrator). */
+  saveNamespaceAssignment: (
+    token: string,
+    org: string,
+    body: { project_id: string; environment_id: string; namespace: string; build_namespace?: string | null },
+  ) =>
+    request<NamespaceAssignment>(
+      `/studio-environments/v1/namespace-assignments?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
 
   /** The registries the organization's environments use (`environment.manage`). */
   orgRegistries: (token: string, org: string) =>

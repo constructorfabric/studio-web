@@ -68,6 +68,7 @@ export function emptyEnvironment(): DeployEnvironmentInput {
     build_namespace: null,
     namespaces: null,
     allow_broad_registry_token: false,
+    strictness: null,
   };
 }
 
@@ -96,7 +97,15 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
     build_namespace: e.build_namespace ?? null,
     namespaces: e.namespaces ?? null,
     allow_broad_registry_token: e.allow_broad_registry_token ?? false,
+    // Kept as stored, so a save does not fall back to what `protected` implies.
+    strictness: e.strictness ?? null,
   };
+}
+
+/** What an environment checks a product as, said: its own strictness, else
+ *  what being protected or not implies (ADR-0060 §5). */
+export function strictnessOf(e: { strictness?: "dev" | "prod" | null; protected: boolean }): "dev" | "prod" {
+  return e.strictness ?? (e.protected ? "prod" : "dev");
 }
 
 /** The fields of the environment form a problem can belong to. */

@@ -788,7 +788,7 @@ export const SURFACES: Surface[] = [
     id: "environments",
     area: "organization",
     title: "Infrastructure",
-    does: "Lay out where the organization's products run (ADR-0056 §2): the environments as the ladder a release climbs, in promote_from order, each with its place, approval, projects and deploys to decide; beside it, what runs where, projects by environments with the version and state, with the deploys waiting for an administrator to approve or decline; below, the places it holds -- clusters, Constructor Research projects and registries -- as one grid of cards, a cluster's \"open to projects\" a switch, each opening a side panel with its address, its test and the environments on it, where an environment is added -- with how its builds run there (the builder, the build namespace, the namespaces the cluster gives) and the read-only login the cluster pulls with; a cluster's card checks, when asked, whether it is ready for Studio; a registry's panel browses its repositories and their versions, and its orphans. \"Add a place\" connects a cluster, a Research project or a registry.",
+    does: "Lay out where the organization's products run (ADR-0056 §2): the environments as the ladder a release climbs, in promote_from order, each with its place, approval, projects and deploys to decide; beside it, what runs where, projects by environments with the version and state, with the deploys waiting for an administrator to approve or decline; below, the places it holds -- clusters, Constructor Research projects and registries -- as one grid of cards, a cluster's \"open to projects\" a switch, each opening a side panel with its address, its test and the environments on it, where an environment is added -- with how its builds run there (the builder, the build namespace, the namespaces the cluster gives) and the read-only login the cluster pulls with; a cluster's card checks, when asked, whether it is ready for Studio; a registry's panel browses its repositories and their versions, and its orphans; an environment says how strictly it checks a product (development or production) and the ladder marks one that differs from what its protection implies. For an administrator, two more tabs: Namespaces -- which namespace each project deploys into in each environment and where its builds run, assigned or changed there, a namespace a run made shown as Studio's -- and Image retention, the organization's default for every project without its own. \"Add a place\" connects a cluster, a Research project or a registry.",
     components: [
       "OrgInfrastructure",
       "EnvironmentForm",
@@ -798,6 +798,8 @@ export const SURFACES: Surface[] = [
       "PlaceReadiness",
       "RegistryBrowser",
       "RepositoryTags",
+      "NamespaceAssignments",
+      "OrgRetention",
     ],
     gears: ["account-management", "studio-connector", "studio-environments"],
   },

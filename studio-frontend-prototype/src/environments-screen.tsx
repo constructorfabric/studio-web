@@ -61,6 +61,7 @@ import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
 import { BoxIcon, CloudIcon, FlaskIcon, LockIcon } from "./icons";
 import { Modal } from "./modal";
+import { NamespaceAssignments, OrgRetention } from "./namespace-assignments-view";
 import { RegistryBrowser } from "./registry-browser-view";
 import { databaseWord, ladderOrder, versionOf, whatRunsWhere, type ProjectRuns } from "./releases";
 import { EmptyState, PageHeader, StatusChip, type Tone } from "./ui-standard";
@@ -427,6 +428,7 @@ export function EnvironmentForm({
       k !== "protected" &&
       k !== "database_image" &&
       k !== "promote_from" &&
+      k !== "strictness" &&
       k !== "kind" &&
       k !== "research_hardware"
     )
@@ -873,6 +875,26 @@ export function EnvironmentForm({
           {shown("previews") && <span className="env-field-error">{shown("previews")}</span>}
         </div>
       )}
+      {!research && (
+        <label className="field" data-environment-strictness>
+          Checks a product as
+          <select
+            value={input.strictness ?? ""}
+            onChange={(e) => set("strictness", (e.target.value || null) as DeployEnvironmentInput["strictness"])}
+            aria-label="Checks a product as"
+          >
+            <option value="">
+              {input.protected ? "production" : "development"}, as {input.protected ? "a protected" : "an unprotected"} environment does
+            </option>
+            <option value="dev">development: the production rules only warn</option>
+            <option value="prod">production: a production rule that fails stops the build</option>
+          </select>
+          <span className="sub">
+            What the engine checks the product against when it is built for here (ADR-0060). A development check lets a
+            product without an identity provider or a tenant resolver build, and says what it lacks.
+          </span>
+        </label>
+      )}
       {ownedBy ? (
         <p className="sub" data-own-environment-note>
           Only {ownedBy.projectName} sees and deploys to it. An environment whose deploys need approval is the
@@ -1039,7 +1061,7 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
     url.searchParams.delete("add");
     window.history.replaceState(window.history.state, "", url.pathname + url.search);
   }, []);
-  const [tab, setTab] = useState<"ladder" | "where">("ladder");
+  const [tab, setTab] = useState<"ladder" | "where" | "namespaces" | "retention">("ladder");
   /** The place whose side panel is open. */
   const [panel, setPanel] = useState<string | null>(null);
   /** Each place's answer to a test, asked when the page opens. */
@@ -1299,9 +1321,23 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
           What runs where
           {waiting.length > 0 && <span className="badge warn">{waiting.length}</span>}
         </button>
+        {mayManage && (
+          <>
+            <button type="button" role="tab" aria-selected={tab === "namespaces"} className={tab === "namespaces" ? "on" : ""} onClick={() => setTab("namespaces")} data-infra-tab="namespaces">
+              Namespaces
+            </button>
+            <button type="button" role="tab" aria-selected={tab === "retention"} className={tab === "retention" ? "on" : ""} onClick={() => setTab("retention")} data-infra-tab="retention">
+              Image retention
+            </button>
+          </>
+        )}
       </div>
 
-      {tab === "ladder" ? (
+      {tab === "namespaces" && mayManage ? (
+        <NamespaceAssignments token={token} org={org.id} environments={environments ?? []} projects={projects} />
+      ) : tab === "retention" && mayManage ? (
+        <OrgRetention token={token} org={org.id} />
+      ) : tab !== "where" ? (
         <section className="card" data-environment-ladder data-infra-environments>
           {environments === null ? (
             <p className="hint">Loading…</p>
@@ -1330,6 +1366,15 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
                         <span className="infra-lock" title="Protected: a deploy waits for an administrator's approval" aria-label="needs approval">
                           <LockIcon size={13} />
                         </span>
+                      )}
+                      {e.strictness && e.strictness !== (e.protected ? "prod" : "dev") && (
+                        <StatusChip
+                          tone={e.strictness === "dev" ? "warn" : "info"}
+                          title={e.strictness === "dev" ? "Products are checked as development ones here: the production rules only warn" : "Products are checked as production ones here"}
+                          data-rung-strictness={e.strictness}
+                        >
+                          {e.strictness} checks
+                        </StatusChip>
                       )}
                       {pending > 0 && (
                         <StatusChip tone="warn" onClick={() => setTab("where")} data-rung-pending>
