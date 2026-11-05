@@ -6716,6 +6716,15 @@ export const api = {
     );
     return r.nodes?.[0]?.value ?? null;
   },
+  /** A component's description file from the server's checkout: a gear's
+   *  `gear.gdl` (`gear`), or the `.gdl` at `path` (`frontx.gdl`, `service.gdl`). */
+  gdlFile: (token: string, projectId: string, what: { gear: string } | { path: string }) =>
+    request<{ source: string; path: string; text: string }>(
+      `/studio-product/v1/gdl-file?project_id=${encodeURIComponent(projectId)}&${
+        "gear" in what ? `gear=${encodeURIComponent(what.gear)}` : `path=${encodeURIComponent(what.path)}`
+      }`,
+      token,
+    ),
   /** The project's product description as Studio keeps it (ADR-0053). */
   productDescription: (token: string, projectId: string) =>
     request<ProductDescription>(`/studio-product/v1/product-description?project_id=${encodeURIComponent(projectId)}`, token),

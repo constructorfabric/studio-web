@@ -3364,6 +3364,9 @@ response	GET /studio-presence/v1/online	items.tenant_id	String	always
 response	GET /studio-presence/v1/online	items.user_id	String	always
 response	GET /studio-presence/v1/online	online_ttl_ms	i64	always
 response	GET /studio-presence/v1/online	total	u32	always
+response	GET /studio-product/v1/gdl-file	path	String	always
+response	GET /studio-product/v1/gdl-file	source	String	always
+response	GET /studio-product/v1/gdl-file	text	String	always
 response	GET /studio-product/v1/gear-explanations	items	Vec<{}>	always
 response	GET /studio-product/v1/gear-explanations	items.gear_id	String	always
 response	GET /studio-product/v1/gear-explanations	items.source	String	always
@@ -6541,6 +6544,7 @@ route	GET /studio-organizations/v1/organization-requests
 route	GET /studio-organizations/v1/overview
 route	GET /studio-organizations/v1/rollups
 route	GET /studio-presence/v1/online
+route	GET /studio-product/v1/gdl-file
 route	GET /studio-product/v1/gear-explanations
 route	GET /studio-product/v1/gearbox
 route	GET /studio-product/v1/gearbox/catalogue

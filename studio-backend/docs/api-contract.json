@@ -2655,6 +2655,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-product/v1/gdl-file",
+      "operation_id": "studio_product.get_gdl_file",
+      "tag": "StudioProduct",
+      "summary": "A component's description file, as the server's checkout holds it",
+      "authenticated": true,
+      "responses": [
+        "GdlFileDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-product/v1/gear-explanations",
       "operation_id": "studio_product.list_gear_explanations",
       "tag": "StudioProduct",

@@ -446,6 +446,28 @@ pub struct ContractOverlapDto {
     pub brought: Vec<String>,
 }
 
+/// A component's description file, as the server's checkout holds it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GdlFileDto {
+    /// The repository it was read from: a source id of the product, or a
+    /// gear repository of the corpus.
+    pub source: String,
+    /// Its path in that repository (`gears/x/gear.gdl`).
+    pub path: String,
+    pub text: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct GdlFileQuery {
+    pub project_id: Uuid,
+    /// A gear, by engine id or crate name: its `gear.gdl`.
+    pub gear: Option<String>,
+    /// A `.gdl` path in a repository: a micro-frontend's `frontx.gdl`, a
+    /// service's `service.gdl`.
+    pub path: Option<String>,
+}
+
 /// What adding a candidate would bring with it.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -1003,6 +1025,47 @@ async fn scaffold_gear(
         files: written,
         repo,
         target: into,
+    }))
+}
+
+async fn get_gdl_file(
+    OrgCtx(ctx): OrgCtx,
+    Extension(product): Extension<Product>,
+    Query(q): Query<GdlFileQuery>,
+) -> ApiResult<JsonBody<GdlFileDto>> {
+    let project_id = q.project_id;
+    let gear = q.gear.as_deref().map(str::trim).filter(|g| !g.is_empty());
+    let path = q.path.as_deref().map(str::trim).filter(|p| !p.is_empty());
+    if gear.is_some() == path.is_some() {
+        return Err(StudioProductError::invalid_argument()
+            .with_constraint("name a `gear` or a `path`, one of them".to_string())
+            .create());
+    }
+    let gearbox = product.gearbox()?;
+    let (scope, home) = tokio::join!(
+        product.scope(&ctx, project_id, false),
+        product.home(&ctx, project_id),
+    );
+    // A repository still being cloned is read on the next ask; the corpus
+    // answers meanwhile.
+    let home = home.ok().flatten().map(|h| (h.id, h.dir));
+    let found = gearbox
+        .gdl_file(scope, home, gear, path)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .ok_or_else(|| {
+            let what = gear.map_or_else(
+                || path.unwrap_or_default().to_owned(),
+                |g| format!("gear.gdl of {g}"),
+            );
+            StudioProductError::not_found(format!("no repository the server reads has {what}"))
+                .with_resource(what)
+                .create()
+        })?;
+    Ok(Json(GdlFileDto {
+        source: found.source,
+        path: found.path,
+        text: found.text,
     }))
 }
 
@@ -2449,6 +2512,27 @@ pub fn register_routes(
             StatusCode::OK,
             "Project product",
         )
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-product/v1/gdl-file")
+        .operation_id("studio_product.get_gdl_file")
+        .summary("A component's description file, as the server's checkout holds it")
+        .description(
+            "The `gear.gdl` of a gear (`gear`, engine id or crate name), or a `.gdl`              file at `path` (a micro-frontend's `frontx.gdl`, a service's              `service.gdl`), read from the project's own repository first and then              from the gear repositories its product reads. 404 when none has it.              Writes nothing.",
+        )
+        .tag("StudioProduct")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "Project tenant id")
+        .query_param("gear", false, "A gear's engine id or crate name")
+        .query_param("path", false, "A .gdl path relative to a repository's root")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(get_gdl_file)
+        .json_response_with_schema::<GdlFileDto>(openapi, StatusCode::OK, "The file")
+        .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)

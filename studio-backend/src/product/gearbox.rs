@@ -251,6 +251,10 @@ impl EngineCatalogue {
 pub struct EngineGear {
     pub id: String,
     pub package: EnginePackage,
+    /// Where its `gear.gdl` is, relative to the root of its `source`.
+    /// Absent from an engine before it was recorded.
+    #[serde(default)]
+    pub gdl_path: Option<String>,
     /// Set on a plugin: the extension point it fills, named by its SDK crate.
     ///
     /// The engine calls it `implements` since gearbox#2 (`fills` renamed, no
@@ -1278,6 +1282,85 @@ pub fn gear_brief(
         path: g.package.path.clone(),
         readme: None,
     })
+}
+
+/// How much of a description file is read.
+pub const MAX_GDL_BYTES: usize = 256 * 1024;
+
+/// A component's description file as one of the roots holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GdlFile {
+    /// The root's id: a source of the product, or the corpus repository.
+    pub source: String,
+    /// Relative to that root.
+    pub path: String,
+    pub text: String,
+}
+
+/// The description file `rel` (a `.gdl` path relative to a root) under the
+/// first of `roots` that has it, at most `max` bytes. `None` for a path that
+/// is not a description file, leaves its root, or is in none of them.
+pub fn read_gdl(roots: &[(String, PathBuf)], rel: &str, max: usize) -> Option<GdlFile> {
+    let rel = rel.trim().trim_start_matches("./");
+    let path = Path::new(rel);
+    if !rel.ends_with(".gdl")
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    roots.iter().find_map(|(id, dir)| {
+        let file = dir.join(path);
+        if !file.is_file() {
+            return None;
+        }
+        let mut buf = Vec::new();
+        std::fs::File::open(&file)
+            .ok()?
+            .take(max as u64)
+            .read_to_end(&mut buf)
+            .ok()?;
+        Some(GdlFile {
+            source: id.clone(),
+            path: rel.replace('\\', "/"),
+            text: String::from_utf8_lossy(&buf).into_owned(),
+        })
+    })
+}
+
+/// The checkout `dir` is a folder of: its outermost directory under
+/// `workdir` that is a Git repository. `None` when `dir` is that already, or
+/// is not under `workdir`.
+pub fn repository_top(workdir: &Path, dir: &Path) -> Option<PathBuf> {
+    let rel = dir.strip_prefix(workdir).ok()?;
+    let mut at = workdir.to_path_buf();
+    for part in rel.components() {
+        at.push(part);
+        if at.join(".git").exists() {
+            return (at != dir).then_some(at);
+        }
+    }
+    None
+}
+
+/// Where the `gear.gdl` of a gear whose package is at `package_path` is: in
+/// its crate's directory, beside its manifest.
+pub fn gear_gdl_path(package_path: &str) -> String {
+    let rel = Path::new(package_path.trim());
+    let dir = if rel.extension().is_some_and(|e| e == "toml") {
+        rel.parent().unwrap_or(rel)
+    } else {
+        rel
+    };
+    let dir = dir.to_string_lossy().replace('\\', "/");
+    let dir = dir.trim_end_matches('/');
+    if dir.is_empty() || dir == "." {
+        "gear.gdl".to_owned()
+    } else {
+        format!("{dir}/gear.gdl")
+    }
 }
 
 /// The README of the crate at `path` (relative to the corpus at `dir`), at
@@ -4034,6 +4117,47 @@ impl Gearbox {
         Ok(Some(brief))
     }
 
+    /// The description file of a component (ADR-0061): the `gear.gdl` of
+    /// the gear `gear` (engine id or crate name), or the `.gdl` at `path`.
+    /// Looked for in the project's own repository first (`home`), then in
+    /// each of `scope`'s gear repositories. `None` when none has it.
+    pub async fn gdl_file(
+        &self,
+        scope: Scope,
+        home: Option<(String, PathBuf)>,
+        gear: Option<&str>,
+        path: Option<&str>,
+    ) -> anyhow::Result<Option<GdlFile>> {
+        let (corpus, _, catalogue) = self.ensure_corpus(scope).await?;
+        // A gear says where its description is and in which source; an
+        // older engine leaves it beside the crate's manifest.
+        let (from, rel) = match (gear, path) {
+            (Some(g), _) => match catalogue.find(g.trim()) {
+                Some(g) => match (&g.gdl_path, &g.package.path) {
+                    (Some(at), _) => (g.source.clone(), at.clone()),
+                    (None, Some(p)) => (g.source.clone(), gear_gdl_path(p)),
+                    (None, None) => return Ok(None),
+                },
+                None => return Ok(None),
+            },
+            (None, Some(p)) => (None, p.to_owned()),
+            (None, None) => return Ok(None),
+        };
+        let mut roots: Vec<(String, PathBuf)> = home.into_iter().chain(corpus).collect();
+        // The gear's own source first; then each root's repository as a
+        // whole, since a source may be a folder of it (`studio-backend`) and a
+        // path is written from the repository's root.
+        if let Some(from) = from {
+            roots.sort_by_key(|(id, _)| *id != from);
+        }
+        let tops: Vec<(String, PathBuf)> = roots
+            .iter()
+            .filter_map(|(id, dir)| repository_top(self.workdir(), dir).map(|t| (id.clone(), t)))
+            .collect();
+        roots.extend(tops);
+        Ok(tokio::task::spawn_blocking(move || read_gdl(&roots, &rel, MAX_GDL_BYTES)).await?)
+    }
+
     /// [`complete`] against `scope`'s corpus.
     pub async fn complete(
         &self,
@@ -4859,6 +4983,57 @@ mod tests {
         assert_eq!(plugin.host.as_deref(), Some("Sign-in"));
         assert_eq!(plugin.maturity.as_deref(), Some("beta"));
         assert!(gear_brief(&c, &raw, "nothing").is_none());
+    }
+
+    #[test]
+    fn a_source_that_is_a_folder_is_read_from_its_repository_too() {
+        let work = std::env::temp_dir().join(format!("studio-top-{}", uuid::Uuid::new_v4()));
+        let repo = work.join("catalogue_x__acme_shop");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("studio-backend")).unwrap();
+        assert_eq!(
+            repository_top(&work, &repo.join("studio-backend")),
+            Some(repo.clone())
+        );
+        assert_eq!(repository_top(&work, &repo), None);
+        assert_eq!(repository_top(&work, Path::new("/elsewhere")), None);
+        let _ = std::fs::remove_dir_all(work);
+    }
+
+    #[test]
+    fn a_gears_description_is_beside_its_manifest() {
+        assert_eq!(gear_gdl_path("gears/x/Cargo.toml"), "gears/x/gear.gdl");
+        assert_eq!(gear_gdl_path("gears/x"), "gears/x/gear.gdl");
+        assert_eq!(gear_gdl_path("Cargo.toml"), "gear.gdl");
+    }
+
+    #[test]
+    fn a_description_file_is_read_from_the_first_root_that_has_it() {
+        let base = std::env::temp_dir().join(format!("studio-gdl-{}", uuid::Uuid::new_v4()));
+        let (home, corpus) = (base.join("home"), base.join("corpus"));
+        std::fs::create_dir_all(home.join("mfe")).unwrap();
+        std::fs::create_dir_all(corpus.join("mfe")).unwrap();
+        std::fs::write(corpus.join("mfe/frontx.gdl"), "corpus").unwrap();
+        std::fs::write(corpus.join("Cargo.toml"), "").unwrap();
+        let roots = vec![
+            ("shop".to_owned(), home.clone()),
+            ("gears-rust".to_owned(), corpus.clone()),
+        ];
+        let f = read_gdl(&roots, "mfe/frontx.gdl", 100).expect("in the corpus");
+        assert_eq!(
+            (f.source.as_str(), f.text.as_str()),
+            ("gears-rust", "corpus")
+        );
+        std::fs::write(home.join("mfe/frontx.gdl"), "home").unwrap();
+        assert_eq!(
+            read_gdl(&roots, "./mfe/frontx.gdl", 100).unwrap().source,
+            "shop"
+        );
+        // Only description files, and only inside a root.
+        assert_eq!(read_gdl(&roots, "Cargo.toml", 100), None);
+        assert_eq!(read_gdl(&roots, "../corpus/mfe/frontx.gdl", 100), None);
+        assert_eq!(read_gdl(&roots, "/etc/x.gdl", 100), None);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
