@@ -22,7 +22,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { ApiError, api, type Connection, type DeployEnvironment, type Deployment, type ProjectTargets } from "./api";
+import {
+  ApiError,
+  api,
+  type Connection,
+  type DeployEnvironment,
+  type Deployment,
+  type DeploymentStatus,
+  type ProjectTargets,
+  type TaskRun,
+} from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
 import { ProjectBuilds } from "./builds-tab";
 import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews, RungPlace, useDeployRequest } from "./deploy-actions";
@@ -284,6 +293,7 @@ export function ProjectReleases({
         <ReleaseLadder
           token={token}
           projectId={projectId}
+          organizationId={targets.organization_id}
           steps={steps}
           bindings={targets.bindings}
           open={open}
@@ -416,9 +426,83 @@ export function ProjectReleases({
 
 /** The ladder: the newest published build, then each environment in the
  *  order a release climbs them. */
+/** Where a deploy that is under way is: waiting for a runner, the phase its
+ *  run reported, and how many of the release's pods are ready. Read again
+ *  every few seconds; the tab reads again once the deploy ends. */
+function DeployProgress({
+  token,
+  organizationId,
+  deployment,
+  onEnded,
+}: {
+  token: string;
+  organizationId: string;
+  deployment: Deployment;
+  onEnded: (message: string) => void;
+}) {
+  const [run, setRun] = useState<TaskRun | null>(null);
+  const [rollout, setRollout] = useState<DeploymentStatus | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    let live = true;
+    const look = async () => {
+      setNow(Date.now());
+      const [r, st] = await Promise.all([
+        deployment.run_id ? api.taskRun(token, deployment.run_id, organizationId).catch(() => null) : null,
+        api.deploymentStatus(token, organizationId, deployment.id).catch(() => null),
+      ]);
+      if (!live) return;
+      setRun(r);
+      setRollout(st);
+      const ended = st?.deployment.state ?? (r && ["succeeded", "failed", "cancelled"].includes(r.state) ? r.state : null);
+      if (ended && ended !== "queued" && ended !== "running") {
+        live = false;
+        onEnded(`The deploy of ${versionOf(deployment) ?? deployment.product} to ${deployment.environment_name} ended: ${ended}.`);
+      }
+    };
+    void look();
+    const t = window.setInterval(() => void look(), 4000);
+    return () => {
+      live = false;
+      window.clearInterval(t);
+    };
+  }, [token, organizationId, deployment, onEnded]);
+  const workloads = rollout?.workloads ?? [];
+  const desired = workloads.reduce((n, w) => n + Math.max(w.desired, 0), 0);
+  const ready = workloads.reduce((n, w) => n + Math.max(Math.min(w.ready, w.desired), 0), 0);
+  const since = run?.started_at ?? deployment.decided_at ?? deployment.requested_at;
+  const seconds = since ? Math.max(0, Math.round((now - Date.parse(since)) / 1000)) : null;
+  const phase = !run || run.state === "queued" ? "waiting for a runner" : (run.progress ?? "starting");
+  return (
+    <div className="deploy-progress" data-deploy-progress>
+      {desired > 0 ? (
+        <progress max={desired} value={ready} aria-label="Pods ready" />
+      ) : (
+        <progress aria-label="Deploy under way" />
+      )}
+      <div className="sub">
+        {phase}
+        {desired > 0 && (
+          <>
+            {" "}
+            · {ready} of {desired} pods ready
+          </>
+        )}
+        {seconds !== null && <> · {seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`}</>}
+      </div>
+      {(rollout?.problems ?? []).slice(0, 3).map((p) => (
+        <div key={p} className="sub warn">
+          {p}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ReleaseLadder({
   token,
   projectId,
+  organizationId,
   steps,
   bindings,
   open,
@@ -427,6 +511,7 @@ function ReleaseLadder({
 }: {
   token: string;
   projectId: string;
+  organizationId: string;
   steps: LadderStep[];
   bindings: ProjectTargets["bindings"];
   open: string | null;
@@ -475,6 +560,9 @@ function ReleaseLadder({
                   {status.text}
                 </StatusChip>
               </div>
+              {s.state === "deploying" && s.latest && (
+                <DeployProgress token={token} organizationId={organizationId} deployment={s.latest} onEnded={onChanged} />
+              )}
               <RungPlace token={token} projectId={projectId} step={s} onChanged={onChanged} />
               <div className="sub">
                 {e.kind === "research" ? (
@@ -563,6 +651,8 @@ function PromoteBuild({
 }
 
 const RELEASES_CSS = `
+.deploy-progress { display: grid; gap: 2px; margin: 4px 0; }
+.deploy-progress progress { width: 100%; height: 6px; accent-color: var(--primary); }
 .project-deploys .deploy-env { margin:0 0 12px; }
 .project-deploys .deploy-env .card-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
 .project-deploys .deploy-env-head { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
