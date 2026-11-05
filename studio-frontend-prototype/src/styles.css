@@ -3074,7 +3074,7 @@ div.dm-block { padding-left: 0; }
 .pmap-canvas.subsystems .pmap-shell .pmap-node:hover { background: color-mix(in oklab, hsl(268 70% 60%) 10%, var(--card)); }
 .pmap-node-meta { font-size: 10.5px; color: hsl(268 45% 52%); font-weight: 500; margin-top: 2px; }
 /* A screen card's preview: a small window over the card while the pointer is on it. */
-.pmap-canvas.subsystems .pmap-shell .pmap-node { position: relative; }
+.pmap-canvas.subsystems .pmap-shell .pmap-node, .pmap-node.mfe { position: relative; }
 .pmap-shell { overflow: visible !important; }
 .pmap-lane:hover { z-index: 3; }
 .pmap-preview { position: absolute; z-index: 5; left: 0; top: calc(100% + 6px); width: 300px; display: flex; flex-direction: column; border: 1px solid hsl(268 40% 70% / .6); border-radius: 8px; background: var(--card); box-shadow: 0 10px 28px rgb(0 0 0 / .18); overflow: hidden; pointer-events: none; animation: pmap-pop .12s ease-out; }
@@ -3169,6 +3169,22 @@ div.dm-block { padding-left: 0; }
 .pmap-facts { margin: 0; padding-left: 16px; font-size: 12px; display: grid; gap: 2px; }
 .pmap-detail-links { max-height: 200px; overflow: auto; }
 .pmap-detail-links .linklike.bad { color: var(--destructive); }
+/* A node's parameters: its configuration, its passport, its database. */
+.pmap-params-h { display: block; margin-top: 8px; padding: 0; border: none; background: none; cursor: pointer; text-align: left; }
+.pmap-params-note { margin: 2px 0 4px; font-size: 11px; }
+.pmap-params { margin: 2px 0 0; display: grid; gap: 1px; font-size: 12px; max-height: 320px; overflow: auto; }
+.pmap-param { display: grid; grid-template-columns: minmax(0, 42%) minmax(0, 1fr); gap: 6px; padding: 2px 0; border-bottom: 1px dashed color-mix(in oklab, var(--border) 70%, transparent); }
+.pmap-param dt code { font-size: 11px; overflow-wrap: anywhere; }
+.pmap-param dd { margin: 0; overflow-wrap: anywhere; }
+.pmap-param.missing dt code, .pmap-param.missing dd { color: var(--destructive); }
+.pmap-param-secret { font-style: italic; color: var(--muted-foreground); }
+/* PostgreSQL and the databases under it, in its group's column. */
+.pmap-parent { display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; }
+.pmap-kids-h { border: none; background: none; padding: 0 2px; font-size: 11px; color: var(--muted-foreground); cursor: pointer; text-align: left; }
+.pmap-kids-h.linked { color: var(--primary); }
+.pmap-kids { display: flex; flex-wrap: wrap; gap: 3px; padding-left: 10px; border-left: 2px solid color-mix(in oklab, var(--border) 80%, transparent); margin-left: 6px; }
+.pmap-node.database { font: 11px ui-monospace, monospace; padding: 1px 6px; border-radius: 4px; }
+.pmap-canvas.subsystems .pmap-lane-body.row .pmap-kids .pmap-node.database { width: auto; padding: 1px 6px; }
 .pmap-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
 .pmap-legend { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
 .pmap-swatch { display: inline-block; width: 14px; height: 10px; border-radius: 3px; border: 1px solid var(--border); vertical-align: -1px; margin-right: 4px; }

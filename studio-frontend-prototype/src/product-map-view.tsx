@@ -15,6 +15,9 @@ import {
   api,
   type CatalogNode,
   type FrontendPick,
+  type GearConfigSchema,
+  type InfraPlan,
+  type InfraService,
   type ProductChange,
   type ProjectProduct,
   type ProjectTargets,
@@ -22,6 +25,7 @@ import {
 } from "./api";
 import { HeaderMenu } from "./header-menu";
 import { InfraLane } from "./infra-services-view";
+import { infraStore } from "./infra-store";
 import { gearKey, librariesFrom, mfesFrom, shellsFrom, splitTemplates, type Library, type Mfe, type Shell } from "./frontend-constructor";
 import { errText } from "./problem";
 import { lineDiff } from "./product-flow";
@@ -31,7 +35,10 @@ import {
   MAP_LAYERS,
   MISSING_GROUP,
   catalogueMfe,
+  describedConfigs,
   frontendAbsence,
+  gearConfigOf,
+  gearParams,
   frontendWith,
   frontendWithout,
   gearsWith,
@@ -46,6 +53,7 @@ import {
   type MapLink,
   type MapNode,
   type MapOverlay,
+  type NodeParam,
 } from "./product-map";
 import { profilesToCheck } from "./product";
 import { infrastructureOf, type ProductSectionId } from "./product-sections";
@@ -62,6 +70,12 @@ type Read = {
   components: CatalogNode[];
   /** Why the Frontend lane is empty, when it is (`frontendAbsence`). */
   absence: { text: string; tone: "none" | "warn" };
+  /** The project's infra services (ADR-0064) and each environment's plan
+   *  for them; null and empty when they could not be read. */
+  services: InfraService[] | null;
+  plans: InfraPlan[];
+  /** The newest saved product.gdl: the configuration as saved. */
+  description: { revision: number; text: string } | null;
 };
 
 const SECTION_TITLE: Record<"frontend" | "backend" | "infrastructure", string> = {
@@ -77,6 +91,7 @@ const KIND_WORDS: Record<MapNode["detail"]["kind"], string> = {
   plugin: "Plugin",
   "missing-gear": "Missing gear",
   technology: "Runs on",
+  database: "Database",
 };
 
 /** A node's kind at a glance, before its name. */
@@ -87,6 +102,7 @@ const KIND_GLYPH: Record<MapNode["detail"]["kind"], string> = {
   plugin: "⧉",
   "missing-gear": "⚠",
   technology: "⛁",
+  database: "▤",
 };
 
 /** Well-apart hues; a group keeps its own across renders and projects. */
@@ -175,8 +191,21 @@ export function ProductMap({
       api.listComponentProfiles(token, projectId).catch(() => ({ nodes: [] })),
       api.projectConfig(token, projectId).catch(() => null),
       api.productDescription(token, projectId).catch(() => null),
+      infraStore(token, projectId).load().then(
+        (r) => r.items,
+        (): InfraService[] | null => null,
+      ),
     ])
-      .then(([p, targets, components, profiles, cfg, description]) => {
+      .then(async ([p, targets, components, profiles, cfg, description, services]) => {
+        // What a deploy to each environment does with the infra services:
+        // what places Keycloak with the product or beside it.
+        const plans = services?.length
+          ? (
+              await Promise.all(
+                (targets?.environments ?? []).map(({ environment }) => api.infraPlan(token, projectId, environment.id).catch(() => null)),
+              )
+            ).filter((x): x is InfraPlan => !!x)
+          : [];
         if (!live) return;
         const byName: Record<string, Record<string, unknown>> = {};
         for (const n of profiles.nodes ?? []) {
@@ -195,6 +224,9 @@ export function ProductMap({
             picked: !!cfg?.frontend && typeof cfg.frontend === "object",
             described: description?.latest ? { revision: description.latest.revision, text: description.latest.text } : null,
           }),
+          services,
+          plans,
+          description: description?.latest ? { revision: description.latest.revision, text: description.latest.text } : null,
         });
         setProduct(p);
         setReadErr(null);
@@ -224,10 +256,36 @@ export function ProductMap({
             shells: read.shells,
             catalogue: index,
             components: read.components,
+            services: read.services,
+            plans: read.plans,
+            environments: (read.targets?.environments ?? []).map((e) => e.environment),
+            description: read.description,
           })
         : null,
     [read, product, index],
   );
+  /** Each gear's and plugin's config schema, by the name the node spells
+   *  it: read once for the map's gears, so a node opens with its fields. */
+  const schemaAsk = useMemo(
+    () =>
+      [...new Set((map?.nodes ?? []).filter((n) => (n.detail.kind === "gear" || n.detail.kind === "plugin") && n.detail.gear).map((n) => n.detail.gear!))]
+        .sort()
+        .join(","),
+    [map],
+  );
+  const [schemas, setSchemas] = useState<Map<string, GearConfigSchema> | null>(null);
+  useEffect(() => {
+    if (!schemaAsk) return;
+    let live = true;
+    api
+      .gearConfigSchemas(token, schemaAsk.split(","))
+      .then((r) => live && setSchemas(new Map(r.items.map((s) => [s.gear, s]))))
+      .catch(() => live && setSchemas(new Map()));
+    return () => {
+      live = false;
+    };
+  }, [token, schemaAsk]);
+  const described = useMemo(() => describedConfigs(read?.description?.text ?? ""), [read]);
   const nodeById = useMemo(() => new Map((map?.nodes ?? []).map((n) => [n.id, n])), [map]);
   /** Each screen card's catalogue entry, by node: what its pictures are kept under. */
   const pictured = useMemo(() => {
@@ -516,6 +574,7 @@ export function ProductMap({
         <Detail
           map={map}
           node={shown}
+          params={shown ? paramsOf(shown, product, described, schemas, read.description?.revision ?? null) : null}
           link={link}
           nodeById={nodeById}
           product={product}
@@ -768,6 +827,9 @@ function Canvas({
     const endOf = (id: string) => {
       const n = nodeById.get(id);
       if (!n || !layers.has(n.layer)) return null;
+      // A database is drawn only while its PostgreSQL is open: folded, the
+      // gear's link to PostgreSQL itself says the same.
+      if (n.parent && (collapsed.has(groupKey(n)) || collapsed.has(`dbs:${n.parent}`))) return null;
       const end = n.layer !== "frontend" && collapsed.has(groupKey(n)) ? `group:${groupKey(n)}` : id;
       const el = refs.current.get(end);
       const r = el?.getBoundingClientRect();
@@ -887,6 +949,8 @@ function Canvas({
 
   const chip = (n: MapNode) => {
     const run = overlay?.get(n.id);
+    // A screen card's screens, as its manifest names them.
+    const shows = n.detail.kind === "mfe" ? (n.detail.facts.find((f) => f.startsWith("Shows "))?.replace(/^Shows /, "").replace(/\.$/, "") ?? "") : "";
     return (
       <button
         key={n.id}
@@ -895,12 +959,16 @@ function Canvas({
         className={`pmap-node ${n.state} ${n.detail.kind}${selected === n.id ? " on" : ""}${found.has(n.id) ? " found" : ""}${linked.has(n.id) ? " linked" : ""}${focus && !linked.has(n.id) && lit !== n.id ? " dim" : ""}`}
         onMouseEnter={() => setHover(n.id)}
         onMouseLeave={() => setHover((h) => (h === n.id ? null : h))}
-        // A screen card shows its own preview; a tooltip would cover it.
-        title={look === "subsystems" && n.detail.kind === "mfe" ? undefined : `${KIND_WORDS[n.detail.kind]}: ${n.label}${STATE_WORDS[n.state] ? ` (${STATE_WORDS[n.state]})` : ""}`}
+        // A screen card shows its own preview, in either look; a tooltip would cover it.
+        title={n.detail.kind === "mfe" ? undefined :`${KIND_WORDS[n.detail.kind]}: ${n.label}${STATE_WORDS[n.state] ? ` (${STATE_WORDS[n.state]})` : ""}`}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(selected === n.id ? null : n.id);
         }}
+        // Clicking opens its detail -- what it is, its parameters and its
+        // configuration -- in the panel beside the map.
+        aria-expanded={selected === n.id}
+        aria-controls="pmap-detail"
         data-pmap-node={n.id}
         data-pmap-state={n.state}
       >
@@ -912,10 +980,9 @@ function Canvas({
           {n.label}
         </span>
         {n.state !== "ok" && <span className="pmap-node-state">{STATE_WORDS[n.state]}</span>}
-        {look === "subsystems" && n.detail.kind !== "mfe" && <span className="pmap-node-what">{n.detail.what}</span>}
+        {look === "subsystems" && n.detail.kind !== "mfe" && n.detail.kind !== "database" && <span className="pmap-node-what">{n.detail.what}</span>}
         {look === "subsystems" && n.detail.kind === "mfe" && (() => {
           // A screen card: what it shows and how many gears it calls.
-          const shows = n.detail.facts.find((f) => f.startsWith("Shows "))?.replace(/^Shows /, "").replace(/\.$/, "") ?? "";
           const calls = map.links.filter((l) => l.from === n.id && l.kind === "calls").length;
           return (
             <>
@@ -923,10 +990,12 @@ function Canvas({
               <span className="pmap-node-meta">
                 {shows ? `${shows.split(", ").length} screen${shows.split(", ").length === 1 ? "" : "s"} · ` : ""}calls {calls} gear{calls === 1 ? "" : "s"}
               </span>
-              {hover === n.id && <ScreenPreview name={n.label} screens={shows ? shows.split(", ") : []} token={token} pictured={pictured.get(n.id) ?? null} />}
             </>
           );
         })()}
+        {n.detail.kind === "mfe" && hover === n.id && (
+          <ScreenPreview name={n.label} screens={shows ? shows.split(", ") : []} token={token} pictured={pictured.get(n.id) ?? null} />
+        )}
         {(n.badges ?? []).map((b) => (
           <span key={b.text} className={`pmap-badge ${b.tone}`}>
             {b.text}
@@ -941,14 +1010,42 @@ function Canvas({
     );
   };
 
+  /** A node and what is drawn under it: PostgreSQL and its databases, which
+   *  fold under it on their own. */
+  const withChildren = (n: MapNode, all: readonly MapNode[]) => {
+    const kids = all.filter((k) => k.parent === n.id);
+    if (kids.length === 0) return chip(n);
+    const key = `dbs:${n.id}`;
+    const folded = collapsed.has(key) && !kids.some((k) => found.has(k.id));
+    return (
+      <div key={n.id} className="pmap-parent" data-pmap-parent={n.id}>
+        {chip(n)}
+        <button
+          type="button"
+          className={`pmap-kids-h${kids.some((k) => linked.has(k.id) || k.id === selected) && folded ? " linked" : ""}`}
+          aria-expanded={!folded}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleGroup(key);
+          }}
+          title={folded ? "Show the database each gear that keeps data gets" : "Fold the databases"}
+          data-pmap-kids-toggle={n.id}
+        >
+          {folded ? "▸" : "▾"} {kids.length} database{kids.length === 1 ? "" : "s"}
+        </button>
+        {!folded && <div className="pmap-kids">{kids.map(chip)}</div>}
+      </div>
+    );
+  };
+
   return (
     <div className={`pmap-canvas ${look}`} ref={box} onClick={() => onSelect(null)} data-pmap-canvas>
       <svg className="pmap-links" width={size.w} height={size.h} aria-hidden>
         {paths.map((p) => {
-          // Gear-to-gear links show only for what is selected: the lane would
-          // be a web otherwise.
+          // Gear-to-gear and gear-to-database links show only for what is
+          // selected or pointed at: the lanes would be a web otherwise.
           const on = p.links.some(touches);
-          if (p.links.every((l) => l.kind === "depends") && !on) return null;
+          if (p.links.every((l) => l.kind === "depends" || l.kind === "stores-in") && !on) return null;
           const cls = `pmap-link ${p.link.kind} ${p.link.state}${on ? " on" : focus ? " dim" : ""}`;
           return (
             <g key={p.key}>
@@ -1021,6 +1118,8 @@ function Canvas({
                         e.stopPropagation();
                         onSelect(selected === shell.id ? null : shell.id);
                       }}
+                      aria-expanded={selected === shell.id}
+                      aria-controls="pmap-detail"
                     >
                       shell: <b>{shell.label}</b> {shell.detail.facts[1]?.startsWith("It signs") ? "(signs in ✓)" : ""}
                       {shell.state !== "ok" && <span className="pmap-node-state"> {STATE_WORDS[shell.state]}</span>}
@@ -1079,9 +1178,9 @@ function Canvas({
                         }}
                         title={folded ? "Unfold: links to its nodes end here while it is folded" : "Fold"}
                       >
-                        {folded ? "▸" : "▾"} {g.group} <span className="muted">{g.nodes.length}</span>
+                        {folded ? "▸" : "▾"} {g.group} <span className="muted">{g.nodes.filter((n) => !n.parent).length}</span>
                       </button>
-                      {!folded && <div className="pmap-chips">{g.nodes.map(chip)}</div>}
+                      {!folded && <div className="pmap-chips">{g.nodes.filter((n) => !n.parent).map((n) => withChildren(n, g.nodes))}</div>}
                     </div>
                   );
                 })
@@ -1228,9 +1327,80 @@ function Palette({
 
 /* ── The detail panel ────────────────────────────────────────────────────── */
 
+/** What a node's Parameters say: a gear's or plugin's configuration --
+ *  the product's, over the saved product.gdl's -- read against its config
+ *  schema; anything else's as the map drew them. */
+type Params = { list: NodeParam[]; note: string | null };
+
+function paramsOf(
+  n: MapNode,
+  product: ProjectProduct | null,
+  described: ReadonlyMap<string, Record<string, unknown>>,
+  schemas: ReadonlyMap<string, GearConfigSchema> | null,
+  revision: number | null,
+): Params {
+  const d = n.detail;
+  if ((d.kind !== "gear" && d.kind !== "plugin") || !d.gear) return { list: d.params ?? [], note: null };
+  const config = gearConfigOf(d.gear, product?.config as Record<string, Record<string, unknown>> | undefined, described);
+  const schema = schemas?.get(d.gear);
+  const list = gearParams(d.gear, schema, config);
+  const from = revision !== null ? ` product.gdl is revision ${revision}.` : "";
+  return {
+    list,
+    note: !schemas
+      ? `Reading its config schema…${from}`
+      : !schema?.id
+        ? `The gear corpus does not describe its configuration: only what the product sets is shown.${from}`
+        : list.length === 0
+          ? "It takes no configuration."
+          : from.trim() || null,
+  };
+}
+
+/** A node's parameters, as a list of fields: a secret only as set. */
+function ParamList({ params }: { params: Params }) {
+  const [open, setOpen] = useState(true);
+  if (params.list.length === 0 && !params.note) return null;
+  return (
+    <>
+      <button
+        type="button"
+        className="pmap-detail-kind pmap-params-h"
+        aria-expanded={open}
+        aria-controls="pmap-params"
+        onClick={() => setOpen((o) => !o)}
+        data-pmap-params-toggle
+      >
+        {open ? "▾" : "▸"} Parameters ({params.list.length})
+      </button>
+      {open && (
+        <div id="pmap-params" data-pmap-params>
+          {params.note && <p className="muted pmap-params-note">{params.note}</p>}
+          {params.list.length > 0 && (
+            <dl className="pmap-params">
+              {params.list.map((p) => (
+                <div key={p.key} className={`pmap-param${p.missing ? " missing" : ""}${p.secret ? " secret" : ""}`} data-pmap-param={p.key}>
+                  <dt>
+                    <code>{p.key}</code>
+                  </dt>
+                  <dd title={p.full}>
+                    {p.secret ? <span className="pmap-param-secret">{p.value}</span> : p.value}
+                    {p.note && <span className="muted"> · {p.note}</span>}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function Detail({
   map,
   node,
+  params,
   link,
   nodeById,
   product,
@@ -1246,6 +1416,8 @@ function Detail({
 }: {
   map: ReturnType<typeof productMap>;
   node: MapNode | null;
+  /** Its parameters and configuration (`paramsOf`). */
+  params: Params | null;
   link: MapLink | null;
   nodeById: Map<string, MapNode>;
   product: ProjectProduct | null;
@@ -1262,7 +1434,7 @@ function Detail({
   const name = (id: string) => nodeById.get(id)?.label ?? id;
   if (link) {
     return (
-      <aside className="pmap-detail" data-pmap-detail="link">
+      <aside className="pmap-detail" id="pmap-detail" data-pmap-detail="link">
         <div className="pmap-detail-kind">Link: {link.kind}</div>
         <p className={link.state === "bad" ? "error" : ""} style={{ margin: "4px 0" }}>
           {link.why}
@@ -1281,7 +1453,7 @@ function Detail({
   }
   if (!node) {
     return (
-      <aside className="pmap-detail" data-pmap-detail="none">
+      <aside className="pmap-detail" id="pmap-detail" data-pmap-detail="none">
         <div className="pmap-detail-kind">The product map</div>
         <p className="muted" style={{ margin: "4px 0" }}>
           Click a node to see what it is and what it links to, or a link to see where it comes from. Add screens and gears
@@ -1299,7 +1471,7 @@ function Detail({
   const its = linksOf(map, node.id);
   const lacks = d.kind === "mfe" ? its.filter((l) => l.state === "bad" && l.from === node.id).map((l) => nodeById.get(l.to)) : [];
   return (
-    <aside className="pmap-detail" data-pmap-detail={node.id}>
+    <aside className="pmap-detail" id="pmap-detail" data-pmap-detail={node.id}>
       <div className="pmap-detail-kind">
         {KIND_WORDS[d.kind]}
         {node.state !== "ok" && <span className={`pmap-node-state ${node.state}`}> · {STATE_WORDS[node.state]}</span>}
@@ -1312,6 +1484,7 @@ function Detail({
           <li key={f}>{f}</li>
         ))}
       </ul>
+      {params && <ParamList key={node.id} params={params} />}
       {its.length > 0 && (
         <>
           <div className="pmap-detail-kind" style={{ marginTop: 8 }}>

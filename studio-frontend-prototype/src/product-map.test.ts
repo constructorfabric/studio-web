@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import type { FrontendPick, ProductTechnology } from "./api";
+import type { FrontendPick, InfraPlan, InfraService, ProductTechnology } from "./api";
 import type { Mfe, Shell } from "./frontend-constructor";
 import {
   authGear,
+  databaseName,
+  databaseOwners,
+  describedConfigs,
+  flattenParams,
+  gearConfigOf,
+  gearParams,
+  postgresServers,
+  secretField,
+  serviceParams,
   frontendAbsence,
   frontendWith,
   frontendWithout,
@@ -103,7 +112,8 @@ describe("the map's nodes", () => {
       "gear:studio-kits",
       "gear:studio-tasks",
     ]);
-    expect(m.nodes.filter((n) => n.layer === "infrastructure").map((n) => n.label)).toEqual(["PostgreSQL"]);
+    expect(m.nodes.filter((n) => n.layer === "infrastructure" && !n.parent).map((n) => n.label)).toEqual(["PostgreSQL"]);
+    expect(m.nodes.filter((n) => n.parent === "infra:postgres").map((n) => n.label)).toEqual(["account_management", "studio_documents"]);
   });
 
   it("says where a gear came from: picked, or pulled in by the engine", () => {
@@ -367,5 +377,191 @@ describe("an empty Frontend lane", () => {
 
   it("names a frontend picked before the product kept it", () => {
     expect(frontendAbsence({ picked: true, described: null }).text).toMatch(/picked before the product kept it/);
+  });
+});
+
+describe("the databases under PostgreSQL", () => {
+  it("names each the way generation does: the gear's id, - as _", () => {
+    expect(databaseName("cf-gears-account-management")).toBe("account_management");
+    expect(databaseName("studio-credstore-pg")).toBe("studio_credstore_pg");
+    expect(databaseName("credstore")).toBe("credstore");
+  });
+
+  it("takes the gears the check names and those that declare db, but not a crate of several gears", () => {
+    const owners = databaseOwners({
+      need: ["cf-gears-credstore", "cf-studio-backend", "studio-documents"],
+      gears: [
+        { key: "credstore", name: "credstore", picked: true, id: "credstore", caps: [] },
+        { key: "studio-backend", name: "cf-studio-backend", picked: false, id: "studio-assembly", caps: ["db"] },
+        { key: "studio-documents", name: "studio-documents", picked: true, id: null, caps: ["db", "rest"] },
+        { key: "studio-product", name: "studio-product", picked: true, id: "studio-product", caps: ["db"] },
+        { key: "studio-kits", name: "studio-kits", picked: true, id: "studio-kits", caps: ["rest"] },
+        { key: "tenant-resolver", name: "cf-gears-tenant-resolver", picked: false, id: "tenant-resolver", caps: ["db"] },
+      ],
+    });
+    expect(owners.map((o) => o.database)).toEqual(["credstore", "studio_documents", "studio_product", "tenant_resolver"]);
+    expect(owners.find((o) => o.key === "studio-documents")?.why).toBe("the engine's check says it needs PostgreSQL, and it declares db");
+  });
+
+  it("draws each under PostgreSQL, linked to its gear", () => {
+    const m = productMap(facts());
+    const db = byId(m, "db:studio_documents");
+    expect(db).toMatchObject({ layer: "infrastructure", parent: "infra:postgres", group: "Runs with the product" });
+    expect(db?.detail.kind).toBe("database");
+    expect(db?.detail.params?.[0]).toEqual({ key: "database", value: "studio_documents", note: "the gear's id, - as _" });
+    expect(linksOf(m, "db:studio_documents")).toEqual([
+      { from: "gear:studio-documents", to: "db:studio_documents", kind: "stores-in", state: "ok", why: "studio-documents keeps its data in studio_documents." },
+    ]);
+  });
+
+  it("says when the check names a crate in place of the gears that keep data", () => {
+    const pg = { ...postgres, gears: [...postgres.gears, "cf-studio-backend"] };
+    const m = productMap(facts({ infra: infra({ needs: [pg] }) }));
+    expect(byId(m, "infra:postgres")?.detail.facts.at(-1)).toMatch(/^The check also names cf-studio-backend, which is not one gear/);
+    expect(m.nodes.filter((n) => n.parent).map((n) => n.id)).toEqual(["db:account_management", "db:studio_documents"]);
+  });
+
+  it("reads each profile's server from product.gdl, the password only as the secret it comes from", () => {
+    const servers = postgresServers(GDL);
+    expect(servers).toEqual([
+      { profile: "dev", host: "127.0.0.1", user: "app", password: "${GEARS_PG_PASSWORD}", existingSecret: null },
+      { profile: "prod", host: "postgres", user: "app", password: "${GEARS_PG_PASSWORD}", existingSecret: "studioweb-db" },
+    ]);
+    const m = productMap(facts({ description: { revision: 8, text: GDL } }));
+    const params = byId(m, "infra:postgres")?.detail.params ?? [];
+    expect(params.find((p) => p.key === "prod password")).toEqual({ key: "prod password", value: "set via a secret", secret: true, note: "GEARS_PG_PASSWORD" });
+    expect(JSON.stringify(params)).not.toMatch(/\$\{GEARS/);
+  });
+});
+
+const GDL = `product(
+    id = "studioweb",
+    profiles = [
+        embedded(id = "dev", development = True,
+                 database = postgres(host = "127.0.0.1", user = "app", password = "\${GEARS_PG_PASSWORD}")),
+        kubernetes(id = "prod", discovery = "static",
+                   database = postgres(host = "postgres", user = "app", password = "\${GEARS_PG_PASSWORD}",
+                                       existing_secret = "studioweb-db")),
+    ],
+    gears = [
+        use_gear("oagw", source = "gears-rust", config = {"proxy_timeout_secs": 120}),
+        use_gear("authn-resolver", config = {"vendor": "cf"}, plugins = [plugin("oidc-authn-plugin", config = {"jwt": {"require_audience": False, "trusted_issuers": [{"issuer": "http://keycloak:8080/realms/product"}]}, "note": "a ) in a string"})]),
+        use_gear("grpc-hub", source = "gears-rust"),  # config = {"not": "this"}
+    ],
+)`;
+
+describe("an infra service on the map (ADR-0064)", () => {
+  const keycloak: InfraService = {
+    passport: {
+      name: "keycloak",
+      version: "26.0.7",
+      image: "quay.io/keycloak/keycloak:26.0.7",
+      ports: { http: 8080 },
+      health: "/health/ready",
+      args: ["start-dev"],
+      config: { KC_BOOTSTRAP_ADMIN_USERNAME: "admin", KC_DB_PASSWORD: "hunter2" },
+      secrets: ["KC_BOOTSTRAP_ADMIN_PASSWORD"],
+      provides: { "keycloak.admin_url": "http://{host}:{port.http}", "oidc.issuer": "{public_url}/realms/product" },
+      stateful: false,
+    },
+    image: "ghcr.io/acme/mirror/keycloak:26.0.7@sha256:abc",
+  };
+  const plan: InfraPlan = {
+    environment_id: "e1",
+    environment_name: "dev",
+    placement: "with_product",
+    namespace: "studioweb-dev",
+    items: [{ service: "keycloak", placement: "with_product", install: "generated", image: keycloak.image, provides: [{ capability: "oidc.issuer", variable: "OIDC_ISSUER" }] }],
+  };
+  const oidc: ProductTechnology = { id: "oidc", name: "OIDC identity provider", why: "signs people in", gears: ["oidc-authn-plugin"] };
+
+  it("runs with the product when the project has a service that provides it", () => {
+    const beside = productMap(facts({ infra: infra({ needs: [postgres, oidc] }) }));
+    expect(byId(beside, "infra:oidc")?.group).toBe("Runs beside it, outside Studio");
+    const m = productMap(facts({ infra: infra({ needs: [postgres, oidc] }), services: [keycloak], plans: [plan] }));
+    const n = byId(m, "infra:oidc");
+    expect(n?.group).toBe("Runs with the product");
+    expect(n?.detail.facts).toContain("dev (studioweb-dev): keycloak: installed from a chart generated from its passport (ghcr.io/acme/mirror/keycloak:26.0.7@sha256:abc).");
+  });
+
+  it("lists its passport, secrets by name only", () => {
+    const params = serviceParams(keycloak, [plan]);
+    const at = (k: string) => params.find((p) => p.key === k);
+    expect(at("image")).toEqual({ key: "image", value: keycloak.image, note: "imported into the project's path" });
+    expect(at("config.KC_BOOTSTRAP_ADMIN_USERNAME")?.value).toBe("admin");
+    expect(at("config.KC_DB_PASSWORD")).toMatchObject({ value: "set via a secret", secret: true });
+    expect(at("secrets.KC_BOOTSTRAP_ADMIN_PASSWORD")).toMatchObject({ value: "set via a secret", secret: true });
+    expect(at("dev OIDC_ISSUER")?.value).toBe("oidc.issuer");
+    expect(JSON.stringify(params)).not.toMatch(/hunter2/);
+  });
+});
+
+describe("a node's configuration", () => {
+  it("tells a secret by its field's last name", () => {
+    expect(secretField("admin_password")).toBe("value");
+    expect(secretField("auth.client_secret")).toBe("value");
+    expect(secretField("api_key")).toBe("value");
+    expect(secretField("KC_BOOTSTRAP_ADMIN_PASSWORD")).toBe("value");
+    expect(secretField("auth_config.secret_ref")).toBe("reference");
+    expect(secretField("embedding_remote_api_key_env")).toBe("reference");
+    expect(secretField("existing_secret")).toBe("reference");
+    expect(secretField("claim_mapping.token_scopes")).toBeNull();
+    expect(secretField("token_cache_ttl_secs")).toBeNull();
+    expect(secretField("proxy_timeout_secs")).toBeNull();
+  });
+
+  it("reads each gear's and plugin's config from product.gdl, not a comment's", () => {
+    const configs = describedConfigs(GDL);
+    expect(configs.get("oagw")).toEqual({ proxy_timeout_secs: 120 });
+    expect(configs.get("authn-resolver")).toEqual({ vendor: "cf" });
+    expect(configs.get("oidc-authn-plugin")).toEqual({
+      jwt: { require_audience: false, trusted_issuers: [{ issuer: "http://keycloak:8080/realms/product" }] },
+      note: "a ) in a string",
+    });
+    expect(configs.has("grpc-hub")).toBe(false);
+  });
+
+  it("takes the product's config over the saved description's, field by field", () => {
+    const c = gearConfigOf("cf-gears-oidc-authn-plugin", { "oidc-authn-plugin": { jwt: { require_audience: true } } }, describedConfigs(GDL));
+    expect(c.values).toEqual({ jwt: { require_audience: true }, note: "a ) in a string" });
+    expect(c.from).toEqual({ jwt: "product", note: "product.gdl" });
+  });
+
+  it("merges the config with the gear's schema: set, default, required and unset", () => {
+    const params = gearParams(
+      "oagw",
+      {
+        gear: "oagw",
+        id: "oagw",
+        fields: [
+          { name: "proxy_timeout_secs", required: false, default: 30, derived: false },
+          { name: "allow_http_upstream", required: false, default: false, derived: false },
+          { name: "upstream", required: true, default: null, derived: false },
+          { name: "bind_addr", required: false, derived: true },
+          { name: "ssrf_policy", required: false, default: null, derived: false },
+        ],
+      },
+      { values: { proxy_timeout_secs: 120, client_secret: "s3cret", auth: { header: "Authorization", api_key: "${OAGW_KEY}" } }, from: { proxy_timeout_secs: "product.gdl" } },
+    );
+    expect(params).toEqual([
+      { key: "proxy_timeout_secs", value: "120", note: "set in the product.gdl" },
+      { key: "allow_http_upstream", value: "false", note: "default" },
+      { key: "upstream", value: "not set", note: "required", missing: true },
+      { key: "bind_addr", value: "written by generation", note: "from the topology" },
+      { key: "ssrf_policy", value: "not set", note: "optional" },
+      { key: "client_secret", value: "set via a secret", secret: true, note: "not in the schema" },
+      { key: "auth.header", value: "Authorization", note: "not in the schema" },
+      { key: "auth.api_key", value: "set via a secret", secret: true, note: "OAGW_KEY" },
+    ]);
+  });
+
+  it("says what a gear without a schema sets, and cuts a long value short", () => {
+    const long = Array.from({ length: 40 }, (_, i) => `item-${i}`);
+    const [p] = flattenParams("entities", long);
+    expect(p.value.length).toBe(141);
+    expect(p.full).toBe(long.join(", "));
+    expect(gearParams("studio-product", { gear: "studio-product", id: null, fields: [] }, { values: { mode: "x" }, from: {} })).toEqual([
+      { key: "mode", value: "x" },
+    ]);
   });
 });
