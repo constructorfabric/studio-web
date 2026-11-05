@@ -108,34 +108,34 @@ uuid = { version = "1", features = ["serde", "v4", "v5"] }
 # transitively, so declaring them adds nothing to the build.
 sha2 = "0.10"
 hex = "0.4"
-toolkit-macros = { package = "cf-gears-toolkit-macros", version = "0.6.6" }
-credstore-sdk = { package = "cf-gears-credstore-sdk", version = "0.2.17" }
+toolkit-macros = { package = "cf-gears-toolkit-macros", version = "=0.7.0" }
+credstore-sdk = { package = "cf-gears-credstore-sdk", version = "=0.2.19" }
 # studio-git authenticates Git's Basic credentials itself (the gateway reads only Bearer).
-authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37" }
+authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "=0.3.39" }
 # Strict ${VAR} pre-expansion of the config file (#65): the toolkit loader
 # reads the YAML verbatim, so placeholders outside DSNs reached the runtime
 # as literals. Same expansion the toolkit itself applies to DSNs.
-toolkit-utils = { package = "cf-gears-toolkit-utils", version = "0.7.2" }
+toolkit-utils = { package = "cf-gears-toolkit-utils", version = "=0.7.3" }
 # studio-connector: GtsTypeId on the account-management metadata boundary.
 # Same version gears-rust pins in its workspace manifest.
-gts = "0.12"
+gts = "0.16"
 
 # ── keycloak-idp-plugin (in-crate; real user provisioning, ADR-0004) ──
 # "stream" is for the llm-proxy gear (SSE passthrough to the LLM upstream).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
-account-management-sdk = { package = "cf-gears-account-management-sdk", version = "0.7.5" }
-toolkit-odata = { package = "cf-gears-toolkit-odata", version = "0.9.7" }
-types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.9" }
-toolkit-security = { package = "cf-gears-toolkit-security", version = "0.11.0" }
+account-management-sdk = { package = "cf-gears-account-management-sdk", version = "=0.8.1" }
+toolkit-odata = { package = "cf-gears-toolkit-odata", version = "=0.10.0" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "=0.4.1" }
+toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.12.0" }
 # Optional: only pulled in by the `theia-event-broker` feature (ADR-0022
 # phase 3). Same gears-rust source as the toolkit crates above.
-event-broker-sdk = { package = "cf-gears-event-broker-sdk", version = "0.2.6", optional = true }
+event-broker-sdk = { package = "cf-gears-event-broker-sdk", version = "=0.3.1", optional = true }
 # `utoipa` is on for graph-storage: it renders its Problem responses into the
 # OpenAPI document.
-toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "0.9.5", features = ["axum", "utoipa"] }
+toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.10.0", features = ["axum", "utoipa"] }
 # The connector plugin spec as a type (connectors/gts.rs), so Gearbox can check
 # the point studio-connector declares against it; already in the tree.
-toolkit-gts = { package = "cf-gears-toolkit-gts", version = "0.1.6" }
+toolkit-gts = { package = "cf-gears-toolkit-gts", version = "=0.1.7" }
 # What the #[gts_type_schema] expansion names; the version toolkit-gts uses.
 schemars = "1.2.2"
 
@@ -145,7 +145,7 @@ schemars = "1.2.2"
 # encrypted in Postgres instead. `pg` + `sqlite` are named explicitly rather
 # than left to feature unification from the other gears: this crate is the one
 # that decides which engines the assembly can talk to.
-toolkit-db = { package = "cf-gears-toolkit-db", version = "0.16.2", features = ["pg", "sqlite"] }
+toolkit-db = { package = "cf-gears-toolkit-db", version = "=0.17.1", features = ["pg", "sqlite"] }
 # Entity/migration definitions. Feature set and the runtime-tokio (NOT
 # runtime-tokio-rustls) choice mirror the gears-rust workspace manifest: the
 # rustls variant would activate `ring` alongside aws-lc-rs and make rustls
@@ -166,7 +166,7 @@ base64 = "0.22"
 
 # ── studio-project (in-crate; projects with two creation shapes, ADR-0005) ──
 # Membership stays on Resource Group per ADR-0002, so the gear needs RG's client.
-resource_group_sdk = { package = "cf-gears-resource-group-sdk", version = "0.3.5" }
+resource_group_sdk = { package = "cf-gears-resource-group-sdk", version = "=0.3.6" }
 
 # ── graph-storage (knowledge-graph gear; behind the `graph` feature) ──
 # The gear and its SDK, as crates. Consumers (artifact-ingest, the gears
@@ -182,53 +182,53 @@ resource_group_sdk = { package = "cf-gears-resource-group-sdk", version = "0.3.5
 #
 # NB: this gear runs ONLY against `pg_graph` (PostgreSQL 19 + pgvector) — see
 # the graph-postgres service in docker-compose.yml.
-graph_storage = { package = "cf-gears-graph-storage", version = "0.1.4", optional = true }
-graph_storage_sdk = { package = "cf-gears-graph-storage-sdk", version = "0.1.1", optional = true }
+graph_storage = { package = "cf-gears-graph-storage", version = "=0.2.1", optional = true }
+graph_storage_sdk = { package = "cf-gears-graph-storage-sdk", version = "=0.2.0", optional = true }
 
 # ── Core toolkit ──
-toolkit = { package = "cf-gears-toolkit", version = "0.10.0", features = ["bootstrap"] }
+toolkit = { package = "cf-gears-toolkit", version = "=0.11.1", features = ["bootstrap"] }
 
 # ── System gears (required set) ──
-api_gateway = { package = "cf-gears-api-gateway", version = "0.5.2" }
-grpc_hub = { package = "cf-gears-grpc-hub", version = "0.3.2" }
-gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.2.3" }
-nodes_registry = { package = "cf-gears-nodes-registry", version = "0.1.43" }
-types_registry = { package = "cf-gears-types-registry", version = "0.4.0" }
-tenant_resolver = { package = "cf-gears-tenant-resolver", version = "0.1.41" }
-authn_resolver = { package = "cf-gears-authn-resolver", version = "0.2.37" }
-authz_resolver = { package = "cf-gears-authz-resolver", version = "0.2.5" }
-authz_resolver_sdk = { package = "cf-gears-authz-resolver-sdk", version = "0.5.2" }
-resource_group = { package = "cf-gears-resource-group", version = "0.4.5" }
+api_gateway = { package = "cf-gears-api-gateway", version = "=0.6.1" }
+grpc_hub = { package = "cf-gears-grpc-hub", version = "=0.4.1" }
+service_discovery = { package = "cf-gears-service-discovery", version = "=0.3.1" }
+nodes_registry = { package = "cf-gears-nodes-registry", version = "=0.1.45" }
+types_registry = { package = "cf-gears-types-registry", version = "=0.5.1" }
+tenant_resolver = { package = "cf-gears-tenant-resolver", version = "=0.1.43" }
+authn_resolver = { package = "cf-gears-authn-resolver", version = "=0.2.39" }
+authz_resolver = { package = "cf-gears-authz-resolver", version = "=0.3.1" }
+authz_resolver_sdk = { package = "cf-gears-authz-resolver-sdk", version = "=0.6.1" }
+resource_group = { package = "cf-gears-resource-group", version = "=0.4.7" }
 
 # ── Usage metering (issue #781) ──
 # The platform's metering store. Studio records what its model calls and IDE
 # sessions use through the SDK (src/usage); the records are kept by the storage
 # plugin, which is the published TimescaleDB plugin's code on a plain table
 # until the shared Postgres can have TimescaleDB (see its README).
-usage_collector = { package = "cf-gears-usage-collector", version = "0.4.0" }
-usage_collector_sdk = { package = "cf-gears-usage-collector-sdk", version = "0.3.14" }
+usage_collector = { package = "cf-gears-usage-collector", version = "=0.5.1" }
+usage_collector_sdk = { package = "cf-gears-usage-collector-sdk", version = "=0.3.16" }
 postgres_usage_collector_plugin = { package = "studio-postgres-usage-collector-plugin", path = "plugins/postgres-usage-collector-plugin" }
 rust_decimal = "1.39"
 # Reading the collector's sums (studio-usage costs): its query is OData, its
 # instants chrono, its sums BigDecimal.
-toolkit_odata = { package = "cf-gears-toolkit-odata", version = "0.9.7" }
+toolkit_odata = { package = "cf-gears-toolkit-odata", version = "=0.10.0" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 bigdecimal = "0.4"
 
 # ── Dev plugins (static auth for the demo; replace with OIDC for real deployments) ──
-static_authn_plugin = { package = "cf-gears-static-authn-plugin", version = "0.3.18" }
+static_authn_plugin = { package = "cf-gears-static-authn-plugin", version = "=0.3.20" }
 # Real login: OIDC JWT validation (used by config/oidc.yaml with Keycloak from compose)
-oidc_authn_plugin = { package = "cf-gears-oidc-authn-plugin", version = "0.2.13" }
-static_authz_plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.38" }
+oidc_authn_plugin = { package = "cf-gears-oidc-authn-plugin", version = "=0.3.1" }
+static_authz_plugin = { package = "cf-gears-static-authz-plugin", version = "=0.1.40" }
 
 # ── The gear under demonstration ──
 # account-management ships its own Tenant Resolver plugin (src/tr_plugin) in-crate.
-account_management = { package = "cf-gears-account-management", version = "0.10.0" }
-static_idp_plugin = { package = "cf-gears-static-idp-plugin", version = "0.1.18" }
+account_management = { package = "cf-gears-account-management", version = "=0.11.1" }
+static_idp_plugin = { package = "cf-gears-static-idp-plugin", version = "=0.1.20" }
 # Official Keycloak IdP plugin — full tenant/user/service-account lifecycle over
 # the Keycloak Admin API. Replaces the in-crate src/keycloak_idp_plugin.rs (which
 # is no longer `mod`-ed in main.rs). See docs/keycloak-idp-migration.md.
-keycloak_idp_plugin = { package = "cf-gears-keycloak-idp-plugin", version = "0.1.7" }
+keycloak_idp_plugin = { package = "cf-gears-keycloak-idp-plugin", version = "=0.2.1" }
 
 # ── Feature gears: AI chat, per-user settings, file storage ──
 # mini-chat hard-depends on oagw (LLM egress); oagw depends on credstore.
@@ -246,12 +246,12 @@ keycloak_idp_plugin = { package = "cf-gears-keycloak-idp-plugin", version = "0.1
 # no LLM chain, no oagw, and the boot reaches the run phase and bootstraps its
 # own root. That is the whole reason — it holds for any fresh database, not for
 # a particular environment.
-mini_chat = { package = "cf-gears-mini-chat", version = "0.4.5", optional = true }
-api_egress = { package = "cf-gears-oagw", version = "0.5.5", optional = true }
-credstore = { package = "cf-gears-credstore", version = "0.5.2" }
-static_credstore_plugin = { package = "cf-gears-static-credstore-plugin", version = "0.2.15" }
-simple_user_settings = { package = "cf-gears-simple-user-settings", version = "0.2.5" }
-file_storage = { package = "cf-gears-file-storage", version = "0.2.8" }
+mini_chat = { package = "cf-gears-mini-chat", version = "=0.5.1", optional = true }
+api_egress = { package = "cf-gears-oagw", version = "=0.6.1", optional = true }
+credstore = { package = "cf-gears-credstore", version = "=0.6.1" }
+static_credstore_plugin = { package = "cf-gears-static-credstore-plugin", version = "=0.2.17" }
+simple_user_settings = { package = "cf-gears-simple-user-settings", version = "=0.3.1" }
+file_storage = { package = "cf-gears-file-storage", version = "=0.4.0" }
 kube = { version = "4.2.0", default-features = false, features = ["client", "runtime", "rustls-tls"] }
 k8s-openapi = { version = "0.28.0", features = ["v1_32"] }
 rustls = "0.23.43"

@@ -48,7 +48,7 @@ fn a_product_description_names_its_gears_and_plugins() {
 fn product_gdl_names_what_this_binary_links() {
     // Linked, and named by no product: the toolkit's runtime, which every
     // assembly has and gears-rust gives no description.
-    const RUNTIME: &[&str] = &["gear-orchestrator"];
+    const RUNTIME: &[&str] = &["service-discovery"];
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../product.gdl");
     let gdl = std::fs::read_to_string(&path).expect("product.gdl at the repository root");
     let linked: BTreeSet<String> = super::linked()
