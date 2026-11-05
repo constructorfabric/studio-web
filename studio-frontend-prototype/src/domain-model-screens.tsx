@@ -45,6 +45,7 @@ import {
 import { DOC_QUALITY_LABEL, docQuality, relationSentence, type DocQualityItem } from "./doc-quality";
 import { PROVISIONAL_NOTE } from "./saved-entities";
 import { entityGears, type GearRef, type Keeper } from "./entity-gears";
+import { EmptyState, InfoPopover, StatusChip } from "./ui-standard";
 import {
   BASIS_LABEL,
   BASIS_ORDER,
@@ -262,7 +263,7 @@ export function ResolveView({
               id: "kind",
               header: "Kind",
               compare: (x, y) => x.kind.localeCompare(y.kind),
-              cell: (r) => <span className={`dm-pill dm-${r.tone}`}>{r.kind}</span>,
+              cell: (r) => <StatusChip tone={r.tone === "bad" ? "danger" : "warn"}>{r.kind}</StatusChip>,
             },
             { id: "title", header: "Issue", cell: (r) => <Prose text={r.title} /> },
             {
@@ -442,7 +443,7 @@ function QueueItem({
   return (
     <article className={`card dm-item${item.done ? " dm-done" : ""}`} data-item={item.key}>
       <header>
-        <span className={`dm-pill dm-${item.tone}`}>{item.concern ? "Possible conflict" : RESOLVE_LABEL[item.type]}</span>
+        <StatusChip tone={item.tone === "bad" ? "danger" : "warn"}>{item.concern ? "Possible conflict" : RESOLVE_LABEL[item.type]}</StatusChip>
         <b>
           <Prose text={item.title} />
         </b>
@@ -568,7 +569,7 @@ function DocItem({
   return (
     <article className="card dm-item" data-item={item.key}>
       <header>
-        <span className="dm-pill dm-warn">{DOC_QUALITY_LABEL[item.type]}</span>
+        <StatusChip tone="warn">{DOC_QUALITY_LABEL[item.type]}</StatusChip>
         <b>{item.title}</b>
       </header>
       <div className="hint">{item.hint}</div>
@@ -734,13 +735,13 @@ export function ModelMapView({
     [entities, gears, layerOfKey],
   );
 
-  if (entities.length === 0) return <div className="empty">Nothing read yet. Build the model to read the documents.</div>;
+  if (entities.length === 0) return <EmptyState title="Nothing read yet." body="Build the model to read the documents." />;
 
   return (
     <div className="dm-layered">
       <p className="dm-howto">
-        <b>See what the application is.</b> Pick a layer, then a card: what it holds, how it relates and which passages
-        say so. Missing a relation? A document has to declare it; the model reads it on the next build.
+        <b>See what the application is.</b>{" "}
+        <InfoPopover label="How to read this">Pick a layer, then a card: what it holds, how it relates and which passages say so. Missing a relation? A document has to declare it; the model reads it on the next build.</InfoPopover>
       </p>
       <div className="dm-layers" role="tablist" aria-label="Layer">
         {(Object.keys(LAYER_TITLE) as Layer[]).map((l) => (
@@ -1357,8 +1358,8 @@ export function RequirementsView({
   return (
     <>
     <p className="dm-howto">
-      <b>Follow a requirement to the code.</b> Pick one: the chain shows the passage that states it, what it rests
-      on, the work that names it and where the code and tests name it — a name found, not proof it is covered. An orange step is where it stops.
+      <b>Follow a requirement to the code.</b>{" "}
+      <InfoPopover label="How to read this">Pick one: the chain shows the passage that states it, what it rests on, the work that names it and where the code and tests name it — a name found, not proof it is covered. An orange step is where it stops.</InfoPopover>
     </p>
     {problems.length > 0 && (
       <details className="card dm-rproblems" aria-label="Problems in the requirements">
@@ -1370,9 +1371,9 @@ export function RequirementsView({
         </summary>
         {problems.map((p) => (
           <div key={`${p.severity}:${p.type}`} className={`dm-rproblem ${p.severity}`}>
-            <span className={`dm-pill ${p.severity === "missing" ? "dm-bad" : "dm-warn"}`}>
+            <StatusChip tone={p.severity === "missing" ? "danger" : "warn"}>
               {p.severity === "missing" ? "Missing" : p.severity === "few" ? "Too few" : "No basis"}
-            </span>
+            </StatusChip>
             <div>
               <b>{p.title}.</b> <span className="hint">{p.why}</span>
               <div className="dm-rwhere">
@@ -1551,15 +1552,15 @@ function Block({ text, onSelect }: { text: string; onSelect: (id: string) => voi
       switch (t.t) {
         case "done":
           return (
-            <span key={i} className="dm-pill dm-ok">
+            <StatusChip key={i} tone="ok">
               done
-            </span>
+            </StatusChip>
           );
         case "todo":
           return (
-            <span key={i} className="dm-pill dm-warn">
+            <StatusChip key={i} tone="warn">
               to do
-            </span>
+            </StatusChip>
           );
         case "priority":
           return (

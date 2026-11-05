@@ -37,7 +37,7 @@ use uuid::Uuid;
 
 use super::build::{self, RepoRef};
 use super::research_app::{self, Application, Inputs};
-use crate::connectors::sdk::research::{ImageBuild, Pace, Renew, ResearchApi};
+use crate::connectors::sdk::research::{ImageBuild, Pace, Renew, ResearchApi, Service, Watched};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 pub const BUILD_TASK_TYPE: &str = "environments.research.build";
@@ -70,6 +70,15 @@ impl Requester {
             .build()
             .map_err(|e| anyhow!("cannot act for the member who asked: {e}"))
     }
+}
+
+/// The Research sign-in a run uses: the requester's own connection and the
+/// tenant it is found from (ADR-0049 §1). Each member builds and deploys with
+/// their own, so it is chosen when they ask, not kept on the environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignIn {
+    pub tenant: Uuid,
+    pub connection_id: Uuid,
 }
 
 /// The access token of connection `connection_id`, read as `ctx`: each read
@@ -179,6 +188,7 @@ async fn prepare(
             },
             &product_file,
             &profile,
+            &build::SourceOptions::default(),
         )?;
         serde_json::from_slice(&std::fs::read(at.join("build.json"))?)
             .context("prepare left no build.json")
@@ -351,7 +361,8 @@ fn lay_out(
                 write(&context.join(&dir).join(path), &content)?;
             }
         }
-        let dockerfile = context.join(format!("Dockerfile.studio-{}", i.app));
+        // Research takes only `Dockerfile` or `<name>.dockerfile`.
+        let dockerfile = context.join(format!("studio-{}.dockerfile", i.app));
         write(&dockerfile, &text)?;
         // The generated ignore file sits beside the generated Dockerfile; it
         // goes beside this one, and keeps what Studio lays out.
@@ -360,7 +371,7 @@ fn lay_out(
         let ignore = std::fs::read_to_string(&generated).ok();
         if let Some(ignore) = &ignore {
             write(
-                &dockerfile.with_file_name(format!("Dockerfile.studio-{}.dockerignore", i.app)),
+                &dockerfile.with_file_name(format!("studio-{}.dockerfile.dockerignore", i.app)),
                 &format!("{ignore}{keep}"),
             )?;
         }
@@ -411,8 +422,12 @@ pub struct ResearchBuildPayload {
     pub build_id: String,
     pub organization_id: Uuid,
     pub project_id: Uuid,
-    /// The environment's `research` connection.
+    /// The environment's `research` connection: used only by a run queued
+    /// before `sign_in` was recorded.
     pub connection_id: Uuid,
+    /// The requester's own sign-in, which the build uses.
+    #[serde(default)]
+    pub sign_in: Option<SignIn>,
     /// The Research project the images are built in.
     pub research_project: String,
     pub profile: String,
@@ -492,11 +507,15 @@ impl ResearchBuildTask {
             let step = step.to_owned();
             move |e: anyhow::Error| (step, format!("{e:#}"))
         };
+        let sign_in = p.sign_in.unwrap_or(SignIn {
+            tenant: p.organization_id,
+            connection_id: p.connection_id,
+        });
         let api = api(
             &self.hub,
             &ctx.security,
-            p.organization_id,
-            p.connection_id,
+            sign_in.tenant,
+            sign_in.connection_id,
             p.requested_by.as_ref(),
         )
         .await
@@ -646,6 +665,10 @@ pub struct ResearchDeploy {
     /// Whose Research sign-in the deploy uses.
     #[serde(default)]
     pub requested_by: Option<Requester>,
+    /// Their own connection; absent in a deploy queued before it was kept,
+    /// which uses the environment's.
+    #[serde(default)]
+    pub sign_in: Option<SignIn>,
 }
 
 /// The credstore reference of a database server's password: kept, since the
@@ -784,11 +807,15 @@ pub async fn deploy(
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
 ) -> anyhow::Result<String> {
+    let sign_in = r.sign_in.unwrap_or(SignIn {
+        tenant: p.organization_id,
+        connection_id: p.connection_id,
+    });
     let api = api(
         hub,
         &ctx.security,
-        p.organization_id,
-        p.connection_id,
+        sign_in.tenant,
+        sign_in.connection_id,
         r.requested_by.as_ref(),
     )
     .await?;
@@ -914,10 +941,95 @@ pub async fn deploy(
     } else {
         format!(" (note: {})", notes.join("; "))
     };
+    // Running is not ready, and a container that crashes is replaced with
+    // its log: for a minute, ask the public links and follow every log.
+    ctx.progress(
+        "watching the services for a minute: whether their public addresses answer and \
+         whether they restart"
+            .to_owned(),
+    )
+    .await;
+    let until = tokio::time::Instant::now() + Pace::RESEARCH.ready_for;
+    let (silent, watched) = tokio::join!(
+        api.unanswered(&running, Pace::RESEARCH),
+        futures_util::future::join_all(running.services.iter().map(|s| api.watch_log(
+            &s.id,
+            until,
+            std::time::Duration::from_secs(2)
+        ))),
+    );
+    let watched: BTreeMap<&str, Watched> = running
+        .services
+        .iter()
+        .map(|s| s.id.as_str())
+        .zip(watched)
+        .collect();
+    let mut seen = Vec::new();
+    for s in &running.services {
+        if let Some(w) = watched.get(s.id.as_str())
+            && w.restarts > 0
+        {
+            seen.push(restarted(&s.name, w));
+        }
+    }
+    for s in &silent {
+        let log = watched
+            .get(s.id.as_str())
+            .and_then(|w| last_lines(&w.lines));
+        seen.push(not_answering(s, log));
+    }
+    let watch = if seen.is_empty() {
+        String::new()
+    } else {
+        format!(". After it started: {}", seen.join("; "))
+    };
     Ok(format!(
-        "{} runs in Constructor Research: {at}{noted}",
+        "{} runs in Constructor Research: {at}{noted}{watch}",
         p.namespace
     ))
+}
+
+/// The last twenty of `lines`, one string; `None` for none.
+fn last_lines(lines: &[String]) -> Option<String> {
+    (!lines.is_empty()).then(|| lines[lines.len().saturating_sub(20)..].join("\n"))
+}
+
+/// What a service whose container was replaced while watched says: how often,
+/// and what the container before printed, which Research no longer has.
+fn restarted(name: &str, w: &Watched) -> String {
+    let times = if w.restarts == 1 {
+        "once".to_owned()
+    } else {
+        format!("{} times", w.restarts)
+    };
+    match last_lines(&w.before) {
+        Some(log) => format!(
+            "{name} restarted {times} within a minute; the container before it printed:\n{log}"
+        ),
+        None => format!(
+            "{name} restarted {times} within a minute, and the container before it printed nothing"
+        ),
+    }
+}
+
+/// What a service whose public link does not answer says, with what its log
+/// says. A service whose log is empty has a container that stops before it
+/// prints anything: Research keeps no log of a container once it is gone.
+fn not_answering(s: &Service, log: Option<String>) -> String {
+    let at = s.link.as_deref().unwrap_or_default();
+    match log {
+        Some(log) => format!(
+            "{} does not answer at {at} within a minute; its last log lines:\n{log}",
+            s.name
+        ),
+        None => format!(
+            "{} does not answer at {at} within a minute, and its log is empty: \
+             a container that exits before it prints anything (an entrypoint \
+             script that is not executable, a wrong entrypoint path), or one \
+             that listens on 127.0.0.1 or on another port than the service's",
+            s.name
+        ),
+    }
 }
 
 /// A Research application as a release's rollout: each service a workload,
@@ -950,9 +1062,101 @@ pub async fn rollout(
     })
 }
 
+/// The end of each service's log of the environment's application, read with
+/// the caller's sign-in. A service Research has no log for yet says so rather
+/// than being left out, so the reader sees every service. The services are
+/// read at once (each read takes up to ten seconds) and listed in their own
+/// order. A read Research refused says so, not that there is no log; when
+/// every read failed, the first failure is the answer.
+pub async fn logs(
+    api: &ResearchApi,
+    project: &str,
+    application: &str,
+    lines: usize,
+) -> anyhow::Result<Vec<super::deploy::ContainerLog>> {
+    let Some(app) = api.application_named(project, application).await? else {
+        bail!("Constructor Research has no application {application} in this project");
+    };
+    let tails = futures_util::future::join_all(
+        app.services
+            .iter()
+            .map(|s| api.service_log_tail(&s.id, lines)),
+    )
+    .await;
+    if !tails.is_empty() && tails.iter().all(Result::is_err) {
+        let first = tails.into_iter().find_map(Result::err);
+        return Err(first
+            .unwrap_or_else(|| anyhow!("no service log could be read"))
+            .context("reading the environment's logs"));
+    }
+    Ok(app
+        .services
+        .into_iter()
+        .zip(tails)
+        .map(|(s, tail)| super::deploy::ContainerLog {
+            text: log_text(&s.name, tail),
+            pod: s.name,
+            container: "main".to_owned(),
+            previous: false,
+        })
+        .collect())
+}
+
+/// What a service's log entry says: its tail, that Research has none, or
+/// why it could not be read.
+fn log_text(service: &str, tail: anyhow::Result<Option<String>>) -> String {
+    match tail {
+        Ok(Some(text)) => text,
+        Ok(None) => format!("(Constructor Research has no log of {service} now)"),
+        Err(e) => format!("(Studio could not read the log of {service}: {e:#})"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restarted_service_says_how_often_and_what_the_container_before_printed() {
+        let w = Watched {
+            lines: vec!["10:11 up".into()],
+            restarts: 2,
+            before: vec!["10:00 up".into(), "10:01 panic: no config".into()],
+        };
+        assert_eq!(
+            restarted("web", &w),
+            "web restarted 2 times within a minute; the container before it printed:\n\
+             10:00 up\n10:01 panic: no config"
+        );
+        let quiet = Watched {
+            restarts: 1,
+            ..Watched::default()
+        };
+        assert_eq!(
+            restarted("web", &quiet),
+            "web restarted once within a minute, and the container before it printed nothing"
+        );
+    }
+
+    #[test]
+    fn a_service_that_does_not_answer_says_its_log_or_why_it_has_none() {
+        let s: Service = serde_json::from_value(serde_json::json!({
+            "id": "s-web", "name": "web", "status": "running", "link": "https://web.example"
+        }))
+        .unwrap();
+        assert_eq!(
+            not_answering(&s, Some("listening on 127.0.0.1:8080".into())),
+            "web does not answer at https://web.example within a minute; its last log lines:\nlistening on 127.0.0.1:8080"
+        );
+        let empty = not_answering(&s, None);
+        assert!(
+            empty.starts_with(
+                "web does not answer at https://web.example within a minute, and its log is empty: "
+            ),
+            "{empty}"
+        );
+        assert!(empty.contains("not executable"), "{empty}");
+    }
 
     #[test]
     fn the_images_prepare_listed_are_named_inside_the_tree() {
@@ -1040,7 +1244,7 @@ spec:
         let (builds, bakes) =
             lay_out(&work, &work.join("repo"), &images, &app, "postgres:18").unwrap();
         let read = |p: &str| std::fs::read_to_string(work.join(p)).unwrap();
-        let dockerfile = read("repo/Dockerfile.studio-shop");
+        let dockerfile = read("repo/studio-shop.dockerfile");
         let config = read("repo/studio-research/shop/files/etc/shop/shop.yaml");
         let ignore = read("repo/.dockerignore");
         let _ = std::fs::remove_dir_all(&work);
@@ -1050,7 +1254,7 @@ spec:
             [ImageBuild {
                 key: "shop".into(),
                 name: "gbx-shop".into(),
-                dockerfile: "Dockerfile.studio-shop".into(),
+                dockerfile: "studio-shop.dockerfile".into(),
             }]
         );
         assert_eq!(bakes["shop"], app.services[0].bake());

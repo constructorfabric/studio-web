@@ -10,6 +10,8 @@ date: 2026-10-09
 
 Status: **proposed** · Date: 2026-10-09 · Extends `cpt-studio-component-components-catalog` · Builds on the project-local gears of `cpt-studio-principle-spec-mapping-own-gears`
 
+Amended by ADR-0061 (2026-11-04): a registry read is keyed by the repository's address, not the connection (§3), and a project's repositories are also read for every component passport into the project's own catalogue (§1).
+
 ## Table of Contents
 
 <!-- toc -->

@@ -114,7 +114,7 @@ bridge is absent or no session runs, rather than an empty list that would read
 as "this project has no repositories". A backend built without the
 `theia-bridge` feature cannot materialize at all.
 
-#### The catalogue is compiled in
+#### The catalogue is the deployment's
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-kits-static-catalogue`
 
@@ -123,8 +123,12 @@ as "this project has no repositories". A backend built without the
 (`constructorfabric/studio-kits-pm`, a multi-kit repository whose root manifest
 lists one `[[kits]]` entry per kit, so the slug names the kit and not the
 repository). Each pins a default commit and the manifest path
-`.cf-studio-kit.toml`. Adding a kit is a code change; the gear reads no
-configuration.
+`.cf-studio-kit.toml`. That is the default; a deployment names its own kits
+in `STUDIO_KIT_CATALOGUE`, a JSON array of the same fields (see the gear's
+README), read once at start; the service refuses to start when it fails to parse.
+The IDE's installer keeps its own allow-list, slug to repository, so the
+catalogue may drop, re-describe or re-pin those kits but not add one or move
+one to another repository: such an entry is refused at start too.
 
 ## 3. Technical Architecture
 

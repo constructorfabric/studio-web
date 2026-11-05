@@ -11,6 +11,7 @@ import {
 } from "./api";
 import { DataTable, When } from "./data-table";
 import { errText, initials } from "./format";
+import { PageHeader, StatusChip } from "./ui-standard";
 
 const ROLE_LABEL: Record<string, string> = { owner: "Owner", admin: "Admin", member: "Member" };
 const roleLabel = (role: string) => ROLE_LABEL[role] ?? role;
@@ -110,17 +111,33 @@ export function IdentityDirectory({ token }: { token: string; query?: string }) 
     }
   }
 
+  const waiting = (identities ?? []).filter((i) => i.status === "unassigned").length;
+
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>Identity directory</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            Everyone whose identity exists in Studio Keycloak, including people waiting for
-            organization access.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Identity directory"
+        info={
+          <>
+            <p>
+              Everyone whose identity exists in Studio Keycloak, including people waiting for organization access.
+            </p>
+            <p>
+              This is an identity directory, not an OAuth failure log. A rejected login that never created a Keycloak
+              identity belongs in the security audit instead.
+            </p>
+          </>
+        }
+        status={
+          identities !== null &&
+          identities.length > 0 && (
+            <>
+              <StatusChip tone="neutral">{identities.length} identities</StatusChip>
+              {waiting > 0 && <StatusChip tone="warn">{waiting} waiting for access</StatusChip>}
+            </>
+          )
+        }
+      />
 
       {/* A failed read is the table's to show, with Retry; this is for a failed action on rows that are there. */}
       {error && (identities?.length ?? 0) > 0 && <div className="error">{error}</div>}
@@ -183,27 +200,27 @@ export function IdentityDirectory({ token }: { token: string; query?: string }) 
                 const drift = idpDrift(identity);
                 return (
                   <>
-                    {identity.status === "platform_admin" && <span className="badge workspace">Platform admin</span>}
+                    {identity.status === "platform_admin" && <StatusChip tone="info">Platform admin</StatusChip>}
                     {held === null ? (
                       /* Studio could not be asked: the IdP's word, labelled as such. */
                       identity.status === "assigned" ? (
                         <>
-                          <span className="badge workspace">{identity.home_tenant_name || "Assigned"}</span>
+                          <StatusChip tone="neutral">{identity.home_tenant_name || "Assigned"}</StatusChip>
                           <div className="sub" style={{ marginTop: 4 }}>
                             {identity.organization_role ? `${roleLabel(identity.organization_role)} · ` : ""}per Keycloak
                           </div>
                         </>
                       ) : identity.status === "unassigned" ? (
-                        <span className="badge warn">Waiting for access</span>
+                        <StatusChip tone="warn">Waiting for access</StatusChip>
                       ) : null
                     ) : held.length === 0 ? (
-                      identity.status !== "platform_admin" && <span className="badge warn">Waiting for access</span>
+                      identity.status !== "platform_admin" && <StatusChip tone="warn">Waiting for access</StatusChip>
                     ) : (
                       held.map((m) => (
                         <div key={m.org_id} style={{ marginBottom: 4 }}>
-                          <span className={`badge ${m.status === "active" ? "workspace" : "warn"}`} title={m.org_id}>
+                          <StatusChip tone={m.status === "active" ? "neutral" : "warn"} title={m.org_id}>
                             {m.org_name || m.org_id.slice(0, 8)}
-                          </span>
+                          </StatusChip>
                           <div className="sub">
                             {roleLabel(m.role)}
                             {m.status !== "active" ? " · suspended" : ""}
@@ -285,10 +302,6 @@ export function IdentityDirectory({ token }: { token: string; query?: string }) 
             },
           ]}
         />
-        <p className="hint" style={{ marginTop: 14 }}>
-          This is an identity directory, not an OAuth failure log. A rejected login that never
-          created a Keycloak identity belongs in the security audit instead.
-        </p>
       </div>
     </>
   );

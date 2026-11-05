@@ -110,3 +110,96 @@ pub trait ComponentDelivery: Send + Sync + 'static {
     /// Pull requests per component, counted by the state they are in now.
     async fn pull_requests(&self, query: &DeliveryQuery) -> anyhow::Result<PullRequestPage>;
 }
+
+// ── Activity of a set of repositories ────────────────────────────────────────
+
+/// How a window is cut for a chart: days for a week, Monday weeks otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityBucket {
+    Day,
+    Week,
+}
+
+/// "What moved in these repositories over this window, against the one
+/// before it?" -- the question an organization's (or a project's) dashboard
+/// asks. The repositories are the scope: Insight resolves people thinly and
+/// has no org units, so a repository is the finest owner it can be asked by.
+#[derive(Debug, Clone)]
+pub struct ActivityQuery {
+    /// `owner/name`, as a project source names it; matched case-insensitively.
+    pub repositories: Vec<String>,
+    /// The previous window is `[previous_from, current_from)`.
+    pub previous_from: time::Date,
+    /// The current window is `[current_from, to]`, `to` included.
+    pub current_from: time::Date,
+    pub to: time::Date,
+    pub bucket: ActivityBucket,
+}
+
+/// One measure over one bucket: `bucket` is `cur`, `prev`, or the first day
+/// of a bucket of the current window (`YYYY-MM-DD`). Aggregated in SQL.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActivityCell {
+    /// `git`, `ci` or `task`.
+    pub domain: String,
+    /// The warehouse's `measure_key`, or `contributors` (people who committed).
+    pub measure: String,
+    pub bucket: String,
+    pub total: f64,
+    /// The median observation; for the PR timings one observation is one PR.
+    pub median: Option<f64>,
+    /// How many observations.
+    pub n: u64,
+    /// How many distinct entities (people, bots left out where it matters).
+    pub people: u64,
+}
+
+/// How reviews spread over reviewers in one period (`cur` or `prev`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewSpread {
+    pub period: String,
+    pub reviewers: u64,
+    pub reviews: u64,
+    /// The fewest reviewers who did half of the reviews: the bus factor.
+    pub half: u64,
+    /// The five busiest reviewers' review counts, busiest first. No names.
+    pub top: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RepositoryActivity {
+    pub cells: Vec<ActivityCell>,
+    pub reviews: Vec<ReviewSpread>,
+    /// Rows in Insight's `ai_*` observations, warehouse-wide. `Some(0)` is
+    /// "the AI connectors were never ingested"; `None` is "could not ask".
+    pub ai_rows: Option<u64>,
+    /// Insight capped a page: some number above is over a prefix.
+    pub truncated: bool,
+}
+
+/// Why there is no answer, said so a screen can tell the reader which.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActivityUnavailable {
+    /// This deployment never wired Insight.
+    Unconfigured,
+    /// Insight did not answer, or refused our credential.
+    Unreachable(String),
+    /// Insight answered and the answer was not one (our statement, or rows
+    /// we could not read).
+    Failed(String),
+}
+
+/// Repository-level delivery, quality and people figures from Insight.
+#[async_trait]
+pub trait RepositoryAnalytics: Send + Sync + 'static {
+    async fn activity(
+        &self,
+        query: &ActivityQuery,
+    ) -> Result<RepositoryActivity, ActivityUnavailable>;
+}
+
+/// A repository as [`RepositoryAnalytics`] keys it (`owner/name`, lower
+/// case), or `None` for a path it would leave out.
+pub fn repository_key(raw: &str) -> Option<String> {
+    super::activity::repository(raw)
+}

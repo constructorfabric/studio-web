@@ -1,0 +1,33 @@
+# This micro-frontend's passport: everything a tool that assembles a product
+# from FrontX packages (Gearbox, Constructor Studio) needs to know about it, in
+# one file. It restates what package.json and mfe.json say, and those tools
+# check that they agree, so keep them in step when either changes.
+gdl_version = "1.5"
+
+mfe(
+    # Who it is: package.json's name and version (it has no description).
+    name = "@constructor-studio/search-mfe",
+    version = "0.2.0-alpha.0",
+
+    # The backend gears its screens call, by gear id. None yet: its only API
+    # service is the scaffold's _BlankApiService (`/api/blank`), which is mocked.
+    requires = [],
+
+    # What it brings, as mfe.json says: the label of its overlay, then the
+    # route of its extension (presentation.route).
+    screens = ["Search Constructor Studio"],
+    mounts = ["/search"],
+
+    # The FrontX it is written against: its @gears-frontx/react pin. A shell
+    # mounting it gives it the shell's own version, whatever this says.
+    frontx = "0.2.0-alpha.15",
+
+    # The permissions its overlay needs: none, it calls no gear.
+    roles = [],
+
+    # No route of its own is worth a screenshot: it is an overlay, opened
+    # over another screen.
+    preview = [],
+    # Mock data it renders with (_BlankApiService's mock map).
+    fixtures = "src/api/mocks.ts",
+)

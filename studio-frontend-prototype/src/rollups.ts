@@ -28,6 +28,7 @@
  *   * counts come from the store's `total`, never from `length`.
  */
 import { api, type RollupRow } from "./api";
+import { rememberIcon } from "./tenant-icon";
 
 /** What one workspace contains. */
 export interface WorkspaceRollup {
@@ -71,6 +72,14 @@ export async function portfolioRollups(
   const projects = new Map<string, PortfolioProject>();
   const page = await api.rollups(token, undefined, workspaceId);
   for (const row of page.items ?? []) {
+    // The icon chosen for each, said once here so no mark reads a config
+    // for it. A server that does not carry the field says nothing.
+    if (row.icon_glyph !== undefined)
+      rememberIcon(
+        row.id,
+        row.icon_glyph && row.icon_color ? { glyph: row.icon_glyph, color: row.icon_color } : null,
+        row.kind === "project" ? (row.project_kind ?? null) : undefined,
+      );
     if (row.kind === "workspace") {
       workspaces.set(row.id, { name: row.name, projects: row.projects ?? null });
     } else {

@@ -629,6 +629,7 @@ async fn saving_the_exclusions_keeps_what_the_last_walk_saw() {
         gear_repository: None,
         publication_requests: vec![],
         gear_curators: vec![],
+        ..SettingsRecord::default()
     };
     svc.sink
         .upsert(

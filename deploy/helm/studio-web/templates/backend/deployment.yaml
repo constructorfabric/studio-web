@@ -223,11 +223,30 @@ spec:
             - name: STUDIO_GEARBOX_CORPUS_REF
               value: {{ . | quote }}
             {{- end }}
+            {{- with .corpusId }}
+            - name: STUDIO_GEARBOX_CORPUS_ID
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .refreshSecs }}
             - name: STUDIO_GEARBOX_REFRESH_SECS
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
+            {{- end }}
+            # Where a product's frontend starts (product/frontx.rs); unset is
+            # FrontX's own templates.
+            {{- with .Values.backend.frontx.shellTemplate }}
+            - name: STUDIO_FRONTX_SHELL_TEMPLATE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.backend.frontx.source }}
+            - name: STUDIO_FRONTX_SOURCE
+              value: {{ . | quote }}
+            {{- end }}
+            # The kit catalogue (kit_registry); unset is Constructor's own kits.
+            {{- with .Values.backend.kitCatalogue }}
+            - name: STUDIO_KIT_CATALOGUE
+              value: {{ . | quote }}
             {{- end }}
             {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
             # Where ingest looks FIRST: the checkout the IDE shares. It reads
@@ -255,8 +274,10 @@ spec:
               value: {{ .Values.backend.telemetry.tracing | quote }}
             - name: STUDIO_OTLP_ENDPOINT
               value: {{ .Values.backend.telemetry.endpoint | quote }}
+            # The builder by digest (ADR-0062 §1), never this server's image:
+            # empty refuses every build with BUILDER_NOT_PINNED.
             - name: STUDIO_BUILDER_IMAGE
-              value: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+              value: {{ .Values.backend.builds.builderImage | quote }}
             - name: STUDIO_BUILDKIT_IMAGE
               value: {{ .Values.backend.builds.buildkitImage | quote }}
             - name: STUDIO_SESSION_ENABLED
@@ -314,6 +335,18 @@ spec:
               {{- else }}
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_signing_seed } }
               {{- end }}
+            # file-storage >= 0.4: the token the sidecar sends on its finalize
+            # callbacks. The sidecar gets the same key as FS_SIDECAR_INTERNAL_TOKEN.
+            - name: STUDIO_FS_FINALIZE_SECRET
+              {{- if .Values.backend.fileStorage.enabled }}
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: finalize_internal_secret } }
+              {{- else }}
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_finalize_secret } }
+              {{- end }}
+            # oagw's registry generation guard (config/k8s.yaml): monotonic
+            # across upgrades and rollbacks, which a Helm revision is.
+            - name: STUDIO_OAGW_GENERATION
+              value: {{ .Release.Revision | quote }}
             {{- if .Values.backend.fileStorage.enabled }}
             - name: STUDIO_FS_SIDECAR_BASE_URL
               value: {{ default (printf "https://%s" .Values.global.hostname) .Values.backend.fileStorage.publicBaseUrl | quote }}
@@ -400,6 +433,8 @@ spec:
               value: "/tmp"
             - name: FS_SIDECAR_PUBLIC_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: sidecar_public_key } }
+            - name: FS_SIDECAR_INTERNAL_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: finalize_internal_secret } }
             - name: FS_SIDECAR_CONTROL_URL
               value: "http://127.0.0.1:{{ .Values.backend.port }}/cf"
             - name: FS_SIDECAR_S3_BACKENDS

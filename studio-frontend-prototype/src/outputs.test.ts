@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ArtifactNode, BuildOutput, DocBinding } from "./api";
 import type { BuildRun } from "./builds";
-import { documentRows, expiryText, formatBytes, groupOutputs, storedFiles } from "./outputs";
+import { documentRows, expiryText, formatBytes, groupOutputs, outputVersions, storedFiles } from "./outputs";
 
 const output = (o: Partial<BuildOutput> & Pick<BuildOutput, "id" | "kind">): BuildOutput => ({
   title: o.id,
@@ -43,6 +43,35 @@ describe("groupOutputs", () => {
     );
     expect(builds).toHaveLength(2);
     expect(builds.every((b) => b.run === null)).toBe(true);
+  });
+});
+
+describe("outputVersions", () => {
+  const ran = (id: string, sha: string, status: BuildRun["status"], createdAt: string): BuildRun =>
+    ({ id, shortSha: sha, status, createdAt, branch: "main", workflow: "CI" }) as BuildRun;
+
+  it("groups the files by the commit built, passed ones only unless asked", () => {
+    const { builds } = groupOutputs(
+      [
+        output({ id: "a", kind: "build_artifact", run: "r1", title: "site" }),
+        output({ id: "b", kind: "build_artifact", run: "r2", title: "chart" }),
+        output({ id: "c", kind: "build_artifact", run: "r3", title: "site" }),
+      ],
+      [
+        ran("r1", "aaa1111", "passed", "2026-10-01T00:00:00Z"),
+        ran("r2", "aaa1111", "failed", "2026-10-02T00:00:00Z"),
+        ran("r3", "bbb2222", "cancelled", "2026-10-03T00:00:00Z"),
+      ],
+    );
+    const passed = outputVersions(builds, true);
+    expect(passed.map((v) => v.version)).toEqual(["aaa1111"]);
+    expect(passed[0].files.map((f) => f.title).sort()).toEqual(["chart", "site"]);
+    expect(passed[0].passed).toBe(true);
+    const all = outputVersions(builds, false);
+    expect(all.map((v) => [v.version, v.passed])).toEqual([
+      ["bbb2222", false],
+      ["aaa1111", true],
+    ]);
   });
 });
 

@@ -82,11 +82,20 @@ async fn register_driver(
 /// certificates (model providers are reached through studio-llm-proxy, not
 /// here); a self-hosted installation behind a private CA is a follow-up (same shape as
 /// keycloak-idp-plugin's `custom_ca_certificate_paths`).
+///
+/// A connection that cannot be opened fails after [`CONNECT_TIMEOUT`] rather
+/// than whenever the OS gives up: a provider this deployment has no route to
+/// (Research's dev stand from studio-dev, 2026-11-03) otherwise held a
+/// sign-in on "Finishing the sign-in..." for minutes. There is no overall
+/// timeout, because build logs and graph syncs stream for longer.
 fn http_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .user_agent("constructor-studio")
+        .connect_timeout(CONNECT_TIMEOUT)
         .build()?)
 }
+
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[path = "plugins/gitlab/mod.rs"]
 mod gitlab_plugin;

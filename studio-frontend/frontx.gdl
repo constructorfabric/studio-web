@@ -1,0 +1,69 @@
+# Studio's portal's passport: everything a tool that assembles a product from
+# FrontX packages (Gearbox, Constructor Studio) needs to know about it, in one
+# file. It restates what package.json says, and those tools check that the two
+# agree, so keep them in step when either changes. Each micro-frontend has its
+# own frontx.gdl under src-app/mfe_packages/.
+gdl_version = "1.5"
+
+shell(
+    # Who it is: package.json's name, version and description (still the
+    # stock template shell's, which this portal is a fork of).
+    name = "@gears-frontx/frontx-template-shell",
+    version = "0.1.0-alpha.2",
+    description = "Standard FrontX application template — target scaffold for template-side code relocation",
+
+    # How it is built: Node.js 24 (.nvmrc, Dockerfile.src's node:24 image and
+    # the CI jobs; package.json has no engines.node), npm with its
+    # package-lock.json, and `npm run build` after `npm ci`, as Dockerfile.src
+    # and CI (studio-delivery.yml) run it: the package, each micro-frontend,
+    # the manifests, the site and the micro-frontends' assets, into dist/.
+    node = "24",
+    package_manager = "npm",
+    build = "npm run build",
+    output = "dist",
+
+    # How it is served: vite.config.ts sets no base, so the site is served at
+    # the root. Its screens reach the backend through the API Gateway's own
+    # paths, `/cf/<gear>/v1/...`, which nginx.conf.template proxies to it.
+    base = "/",
+    api_prefix = "/cf/",
+
+    # What it reads at start, so one image serves every environment: index.html
+    # loads /env.js, which the container writes (docker/10-runtime-env.sh, from
+    # STUDIO_OIDC_ISSUER, STUDIO_OIDC_CLIENT_ID and STUDIO_DISCORD_URL) and
+    # src-app/app/config/env.ts reads from window.__STUDIO_ENV__. The VITE_*
+    # variables are env.ts's build-time fallbacks, for a build served without it.
+    runtime_env = "public/env.js",
+    env = {
+        "DISCORD_URL": "discord.url",
+        "OIDC_CLIENT_ID": "oidc.client_id",
+        "OIDC_ISSUER": "oidc.issuer",
+    },
+    build_env = ["VITE_DISCORD_URL", "VITE_OIDC_CLIENT_ID", "VITE_OIDC_ISSUER"],
+
+    # It signs users in before it mounts a screen: OIDC through Keycloak
+    # (src-app/app/auth/: AuthGate, keycloakOidcProvider), with the session's
+    # token on every request, event streams included (src/api/plugins/SseAuthPlugin.ts).
+    # The identity provider sends the user back to the portal's root
+    # (keycloakOidcProvider's redirect_uri, `${origin}/`).
+    signs_in = True,
+    sign_in_redirect = "/",
+
+    # The FrontX packages it gives every micro-frontend it mounts, whatever
+    # they pinned: its exact @gears-frontx/* dependencies (it has no packages/*
+    # of its own), and itself.
+    carries = {
+        "@gears-frontx/api": "0.3.0",
+        "@gears-frontx/auth": "0.2.0-alpha.3",
+        "@gears-frontx/framework": "0.2.0-alpha.16",
+        "@gears-frontx/frontx-template-shell": "0.1.0-alpha.2",
+        "@gears-frontx/gts-plugin": "0.4.0",
+        "@gears-frontx/i18n": "0.2.0-alpha.2",
+        "@gears-frontx/mfes": "0.4.0",
+        "@gears-frontx/react": "0.2.0-alpha.15",
+        "@gears-frontx/routing": "0.4.0",
+        "@gears-frontx/state": "0.2.0-alpha.4",
+        "@gears-frontx/studio": "0.2.0-alpha.3",
+        "@gears-frontx/ui-kit": "0.4.10",
+    },
+)

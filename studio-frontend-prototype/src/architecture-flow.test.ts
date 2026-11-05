@@ -36,7 +36,7 @@ describe("the block diagram", () => {
   });
 
   it("numbers the steps through a box in reading order", () => {
-    expect(stepsThrough("keycloak")).toEqual([1]);
+    expect(stepsThrough("keycloak")).toEqual([1, 8]);
     expect(stepsThrough("sessions")).toEqual([3, 4, 7]);
     expect(stepById("deploy")?.state).toBe("partial");
   });

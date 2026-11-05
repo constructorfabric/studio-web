@@ -17,8 +17,17 @@ use async_trait::async_trait;
 use base64::Engine;
 use reqwest::StatusCode;
 
-use super::driver::{ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity};
+use super::driver::{
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverCheck, DriverIdentity,
+};
 use super::url_guard::{HostRule, check_url};
+
+// What a registry holds, and copying between registries by digest (ADR-0062).
+#[path = "registry_oci.rs"]
+mod oci;
+pub use oci::{
+    CatalogVersion, Oci, RegistryCatalog, TokenScopes, catalog_for, token_scopes, too_broad,
+};
 
 /// The username a bare token logs in as.
 const DEFAULT_USERNAME: &str = "studio";
@@ -111,22 +120,57 @@ impl ConnectorDriver for RegistryDriver {
             }
             s => bail!("the registry answered {s} at {v2}"),
         }
+        // What the token may do (ADR-0062 §2): a server build refuses one
+        // that reaches past pushing and pulling. Reported, never failed here.
+        let checks = vec![scope_check(token_scopes(&self.http, &access).await)];
         Ok(DriverIdentity {
+            checks,
             account: access.username.clone(),
             display_name: Some(access.host.clone()),
         })
     }
 }
 
+/// A connection test's line for the token's scopes.
+fn scope_check(scopes: anyhow::Result<TokenScopes>) -> DriverCheck {
+    match scopes {
+        Ok(TokenScopes::Known(list)) => {
+            let broad = too_broad(&list);
+            DriverCheck {
+                name: format!("token scopes: {}", list.join(", ")),
+                ok: broad.is_empty(),
+                detail: if broad.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "the token may also {}: a build Studio runs refuses it                          (REGISTRY_TOKEN_TOO_BROAD). Use a token with write:packages and                          read:packages only, and a read-only one for pulls",
+                        broad.join(", ")
+                    )
+                },
+            }
+        }
+        Ok(TokenScopes::Unknown) => DriverCheck {
+            name: "token scopes: not said by the registry".into(),
+            ok: true,
+            detail: String::new(),
+        },
+        Err(e) => DriverCheck {
+            name: "token scopes".into(),
+            ok: false,
+            detail: format!("the registry did not say ({e:#})"),
+        },
+    }
+}
+
 /// A `Bearer` challenge's `realm` and `service`.
 #[derive(Debug, PartialEq, Eq)]
-struct Challenge {
-    realm: String,
-    service: Option<String>,
+pub(crate) struct Challenge {
+    pub(crate) realm: String,
+    pub(crate) service: Option<String>,
 }
 
 /// `Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="…"`.
-fn bearer_challenge(header: &str) -> Option<Challenge> {
+pub(crate) fn bearer_challenge(header: &str) -> Option<Challenge> {
     let rest = header
         .trim()
         .strip_prefix("Bearer ")
@@ -217,6 +261,16 @@ impl RegistryAccess {
             }
         })
         .to_string()
+    }
+}
+
+impl RegistryAccess {
+    /// A Docker config holding a registry's bearer token, not the login: what
+    /// a build pushes with when Studio minted a token scoped to the images
+    /// it pushes (ADR-0062 §2). BuildKit and helm both send `registrytoken`
+    /// as it is.
+    pub fn docker_config_with_token(&self, token: &str) -> String {
+        serde_json::json!({ "auths": { &self.host: { "registrytoken": token } } }).to_string()
     }
 }
 
@@ -332,6 +386,15 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&a.docker_config_json()).unwrap();
         assert_eq!(v["auths"]["ghcr.io"]["auth"], "dTpw");
         assert_eq!(v["auths"].as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_minted_token_is_written_without_the_login() {
+        let a = RegistryAccess::parse("https://ghcr.io", "u:secret-login").unwrap();
+        let text = a.docker_config_with_token("tok");
+        assert!(!text.contains("secret-login"));
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["auths"]["ghcr.io"]["registrytoken"], "tok");
     }
 
     #[test]

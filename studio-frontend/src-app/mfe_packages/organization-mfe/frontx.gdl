@@ -1,0 +1,33 @@
+# This micro-frontend's passport: everything a tool that assembles a product
+# from FrontX packages (Gearbox, Constructor Studio) needs to know about it, in
+# one file. It restates what package.json and mfe.json say, and those tools
+# check that they agree, so keep them in step when either changes.
+gdl_version = "1.5"
+
+mfe(
+    # Who it is: package.json's name and version (it has no description).
+    name = "@constructor-studio/organization-mfe",
+    version = "0.2.0-alpha.0",
+
+    # The backend gears its screens call, by gear id (the `<gear>` of a
+    # `/cf/<gear>/v1` base URL), its own and those it calls through
+    # @constructor-studio/mfe-shared: AccountsApiService. Its _BlankApiService
+    # (`/api/blank`) is the scaffold's mock, not a gear's.
+    requires = ["account-management"],
+
+    # What it brings, as mfe.json says: the labels of its screens, then the
+    # route of each extension (presentation.route), in mfe.json's order.
+    screens = ["Workspaces", "Settings"],
+    mounts = ["/organization/workspaces", "/organization/settings"],
+
+    # The FrontX it is written against: its @gears-frontx/react pin. A shell
+    # mounting it gives it the shell's own version, whatever this says.
+    frontx = "0.2.0-alpha.15",
+
+    # No `roles`: the permissions account-management checks are not written
+    # down on this side yet.
+
+    # Routes worth a screenshot. No `fixtures`: its src/api/mocks.ts mocks
+    # only the scaffold's `/api/blank`, not the accounts its screens show.
+    preview = ["/organization/workspaces", "/organization/settings"],
+)

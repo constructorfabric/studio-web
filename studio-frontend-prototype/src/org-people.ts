@@ -10,8 +10,8 @@
  * every grant names (ADR-0040 §5), so a grant and a row match by id.
  */
 
-import { api, type Colleague, type OrgMember } from "./api";
-import type { GrantDef } from "./access";
+import { api, type Colleague, type OrgMember, type User } from "./api";
+import { normalizeAccessConfig, type GrantDef } from "./access";
 
 export interface Member {
   /** The canonical person id — the key a grant names. */
@@ -104,4 +104,25 @@ export function withColleagues(members: Member[], colleagues: Colleague[], orgId
       ...(c.last_seen_at_epoch_ms != null ? { lastSeenMs: c.last_seen_at_epoch_ms } : {}),
     };
   });
+}
+
+/** Who is on one project, as the Team section has it: under role access the
+ *  members a grant reaches it (org-wide or scoped to it), under tenant access
+ *  every member. Studio's memberships, not account management's users list:
+ *  that one names each account's single home tenant and needs the identity
+ *  provider, which a stand may not have. */
+export async function projectTeam(token: string, orgId: string, projectId: string): Promise<User[]> {
+  const [members, access] = await Promise.all([orgPeople(token, orgId), api.accessConfig(token, orgId).catch(() => null)]);
+  const cfg = normalizeAccessConfig(access, []);
+  const on =
+    cfg.model === "roles"
+      ? new Set(
+          cfg.grants
+            .filter((g) => g.subjectType === "member" && (g.scopeType === "org" || (g.scopeType === "project" && g.scopeId === projectId)))
+            .map((g) => g.subjectId),
+        )
+      : null;
+  return members
+    .filter((m) => !on || on.has(m.id))
+    .map((m) => ({ id: m.id, username: m.email?.split("@")[0] ?? m.name, email: m.email, display_name: m.name }));
 }

@@ -29,6 +29,7 @@ import {
 } from "./api";
 import { When } from "./data-table";
 import { errText, initials } from "./format";
+import { EmptyState, InfoPopover, StatusChip, type Tone } from "./ui-standard";
 
 /** Image types the backend stores as a photo; SVG is refused there. */
 export const AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -148,10 +149,8 @@ export function EmailList({ emails }: { emails: PersonEmail[] }) {
         <li key={e.address}>
           <span>{e.address}</span>{" "}
           <span className="sub">{emailSource(e)}</span>{" "}
-          {e.primary && <span className="badge info">Primary</span>}{" "}
-          <span className={`badge ${e.verified ? "ok" : "neutral"}`}>
-            {e.verified ? "Verified" : "Unverified"}
-          </span>
+          {e.primary && <StatusChip tone="info">Primary</StatusChip>}{" "}
+          <StatusChip tone={e.verified ? "ok" : "neutral"}>{e.verified ? "Verified" : "Unverified"}</StatusChip>
         </li>
       ))}
     </ul>
@@ -287,14 +286,14 @@ export function MyPersonCard({
             {memberships && memberships.length > 0 && (
               <div className="person-orgs">
                 {memberships.map((m) => (
-                  <span
+                  <StatusChip
                     key={m.org_id}
-                    className={`badge ${m.status === "active" ? "info" : "neutral"}`}
+                    tone={m.status === "active" ? "info" : "warn"}
                     title={m.status === "active" ? undefined : "Suspended: grants nothing while it stands"}
                   >
                     {orgName(m.org_id)} · {ROLE_LABEL[m.role] ?? m.role}
                     {m.status === "active" ? "" : " · suspended"}
-                  </span>
+                  </StatusChip>
                 ))}
               </div>
             )}
@@ -344,7 +343,7 @@ export function aliasKindLabel(kind: string): string {
   return ALIAS_KINDS.find((k) => k.value === kind)?.label ?? kind;
 }
 
-const ALIAS_CONFIDENCE: Record<string, { label: string; badge: string; hint: string }> = {
+const ALIAS_CONFIDENCE: Record<string, { label: string; badge: Tone; hint: string }> = {
   confirmed: {
     label: "Confirmed",
     badge: "ok",
@@ -441,15 +440,17 @@ export function MyIdentitiesCard({ token, sessionSubject }: { token: string; ses
   return (
     <div className="card">
       <div className="card-head">
-        <h2>Identities</h2>
+        <h2>
+          Identities{" "}
+          <InfoPopover label="About your identities">
+            Each of these is attached to you. Several ways to sign in are still one person, and an
+            account counts as yours only once a provider has proved it.
+          </InfoPopover>
+        </h2>
         <button type="button" className="ghost" disabled={busy} onClick={() => void confirm()}>
           Check my sign-ins and connections
         </button>
       </div>
-      <p className="hint">
-        Each of these is attached to you. Several ways to sign in are still one person, and an
-        account counts as yours only once a provider has proved it.
-      </p>
       {error && <div className="error">{error}</div>}
       {note && <p className="hint">{note}</p>}
       {!logins && !error && <p className="sub">Reading your identities…</p>}
@@ -465,7 +466,7 @@ export function MyIdentitiesCard({ token, sessionSubject }: { token: string; ses
                 <div className="grow">
                   <div className="name">
                     {l.provider === "keycloak" ? "Studio sign-in" : l.provider}{" "}
-                    {l.subject === sessionSubject && <span className="badge info">This session</span>}
+                    {l.subject === sessionSubject && <StatusChip tone="info">This session</StatusChip>}
                   </div>
                   <div className="sub">
                     {[l.email, l.email && (l.email_verified ? "verified" : "not verified")]
@@ -490,10 +491,10 @@ export function MyIdentitiesCard({ token, sessionSubject }: { token: string; ses
             Accounts elsewhere <span className="dt-count">{aliases.length}</span>
           </h4>
           {aliases.length === 0 && (
-            <p className="sub">
-              None yet. Signing in through GitHub, or connecting a personal GitHub token, records
-              the account here.
-            </p>
+            <EmptyState
+              title="No accounts elsewhere yet."
+              body="Signing in through GitHub, or connecting a personal GitHub token, records the account here."
+            />
           )}
           <ul className="rows">
             {aliases.map((a) => {
@@ -508,9 +509,9 @@ export function MyIdentitiesCard({ token, sessionSubject }: { token: string; ses
                       added <When iso={new Date(a.added_at_epoch_ms).toISOString()} />
                     </div>
                   </div>
-                  <span className={`badge ${c.badge}`} title={c.hint}>
+                  <StatusChip tone={c.badge} title={c.hint}>
                     {c.label}
-                  </span>
+                  </StatusChip>
                   <button
                     type="button"
                     className="ghost"

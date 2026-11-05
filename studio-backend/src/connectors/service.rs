@@ -309,7 +309,8 @@ pub struct ConnectorService {
 /// a credential before it is stored.
 ///
 /// The driver's own default is checked too. It is ours and it passes, so the
-/// check costs nothing and means the rule has no exception to remember.
+/// check costs nothing and means the rule has no exception to remember. A
+/// driver without one (a gear repository) is refused an empty address.
 fn resolve_base_url(
     driver: &dyn ConnectorDriver,
     supplied: Option<&str>,
@@ -318,6 +319,12 @@ fn resolve_base_url(
         .map(str::trim)
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| driver.default_base_url());
+    if raw.is_empty() {
+        anyhow::bail!(
+            "a {} connection needs its Server URL: there is no default to connect to",
+            driver.display_name().to_lowercase()
+        );
+    }
     let url = check_url(raw, "Server URL", driver.base_url_rule())?;
     // Parsed and re-rendered rather than passed through: `Url` has already
     // normalised the host, and what the driver joins paths onto should be what
@@ -422,7 +429,7 @@ fn address_change_needs_token(
 /// resolve with, and the subject comparison is the honest fallback: it can
 /// refuse an edit the person should have been allowed, never allow one they
 /// should not.
-async fn same_person(
+pub(super) async fn same_person(
     ctx: &SecurityContext,
     recorded_subject: &str,
     people: Option<&dyn PersonResolver>,
@@ -1734,6 +1741,52 @@ pub async fn connection_by_id(
     nearest_in(am, ctx, from, |c| c.id == id).await
 }
 
+/// The caller's own `provider` connection: a personal one they created,
+/// looked for from each of `from` (nearest tenant first, then its ancestors),
+/// the most recent if they have several. For a provider signed in to per
+/// person (Constructor Research, ADR-0049 §1), whose credential nobody else
+/// may read.
+pub async fn own_connection(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    from: &[Uuid],
+    provider: &str,
+) -> Option<(Uuid, Connection)> {
+    let me = ctx.subject_id().to_string();
+    for &start in from {
+        // Tenant by tenant: the newest in the nearest tenant that has one,
+        // so a newer sign-in kept higher up never overrides a nearer one.
+        // Project → workspace → organization, as `reachable_connections`.
+        let mut tenant = Some(start);
+        for _ in 0..3 {
+            let Some(current) = tenant else { break };
+            let newest = load_catalogue(am, ctx, current)
+                .await
+                .ok()
+                .and_then(|catalogue| {
+                    catalogue
+                        .items
+                        .into_iter()
+                        .filter(|c| {
+                            c.provider == provider && c.scope == "personal" && c.created_by == me
+                        })
+                        .max_by_key(|c| c.created_at_epoch_secs)
+                });
+            if let Some(c) = newest {
+                let holder = holder_of_row(&c, current);
+                return Some((holder, c));
+            }
+            tenant = am
+                .get_tenant(ctx, current)
+                .await
+                .ok()
+                .and_then(|t| t.parent_id)
+                .map(|p| p.0);
+        }
+    }
+    None
+}
+
 /// The tenant whose catalogue row holds `c`, found from `located` (the
 /// tenant whose -- possibly inherited -- catalogue listed it): its
 /// `owner_tenant_id`, or `located` for a row without one.
@@ -2357,6 +2410,19 @@ mod base_url_rule_tests {
         }
     }
 
+    /// A gear repository is one repository; none is assumed for it.
+    #[test]
+    fn a_gear_repository_names_its_repository() {
+        let driver = crate::connectors::gear_repository::GearRepositoryDriver::new(http());
+        let err = resolve_base_url(&driver, None).expect_err("no default repository");
+        assert!(err.to_string().contains("needs its Server URL"), "{err}");
+        assert!(resolve_base_url(&driver, Some("  ")).is_err());
+        assert_eq!(
+            resolve_base_url(&driver, Some("https://github.com/acme/our-gears")).unwrap(),
+            "https://github.com/acme/our-gears"
+        );
+    }
+
     /// Source hosts are self-hostable, so a deployment's own installation is
     /// the normal case and must be allowed.
     #[test]
@@ -2831,6 +2897,7 @@ mod publish_tests {
             branch: branch.map(str::to_string),
             dir: "specs".into(),
             share_mode: mode,
+            ..ProjectSource::default()
         }
     }
 

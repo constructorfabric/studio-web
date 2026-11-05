@@ -477,6 +477,70 @@ pub struct BuildRecord {
     pub images: Vec<(String, String)>,
     pub chart_ref: Option<String>,
     pub chart_version: Option<String>,
+    /// Why it failed, and the step it failed in: `start` when it never
+    /// reached the cluster.
+    pub failure: Option<String>,
+    pub failure_step: Option<String>,
+    /// Where it ran and with what, for a build Studio ran.
+    pub place: BuildPlace,
+}
+
+/// Where a build Studio ran, and with what: the environment, the namespace,
+/// the code it cloned and through which connection, the image its steps ran
+/// in and the engine that generated it. Each is absent from a record written
+/// before it was recorded, and from a build Studio did not run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuildPlace {
+    pub environment_id: Option<String>,
+    /// The environment's name.
+    pub environment: Option<String>,
+    pub namespace: Option<String>,
+    /// The branch, tag or commit asked for; the repository's branch when
+    /// absent.
+    pub git_ref: Option<String>,
+    /// The connection the repository was cloned through, and its label.
+    pub source_connection_id: Option<String>,
+    pub source_connection: Option<String>,
+    /// The image `prepare` and `publish` ran in.
+    pub builder_image: Option<String>,
+    /// The engine's commit in that image, as `publish` read it.
+    pub gearbox_version: Option<String>,
+    /// The commit of each source the build fetched, `id=commit` comma
+    /// separated (ADR-0060 §3): what a dev build took from each branch.
+    pub source_commits: Option<String>,
+}
+
+impl BuildPlace {
+    /// The keys a build's node keeps these under, with their values.
+    pub fn fields(&self) -> [(&'static str, Option<&str>); 9] {
+        [
+            ("environment_id", self.environment_id.as_deref()),
+            ("environment", self.environment.as_deref()),
+            ("namespace", self.namespace.as_deref()),
+            ("git_ref", self.git_ref.as_deref()),
+            ("source_connection_id", self.source_connection_id.as_deref()),
+            ("source_connection", self.source_connection.as_deref()),
+            ("builder_image", self.builder_image.as_deref()),
+            ("gearbox_version", self.gearbox_version.as_deref()),
+            ("source_commits", self.source_commits.as_deref()),
+        ]
+    }
+
+    /// The place out of a build node's payload.
+    pub fn of(value: &serde_json::Value) -> Self {
+        let text = |k: &str| value.get(k).and_then(|v| v.as_str()).map(str::to_owned);
+        BuildPlace {
+            environment_id: text("environment_id"),
+            environment: text("environment"),
+            namespace: text("namespace"),
+            git_ref: text("git_ref"),
+            source_connection_id: text("source_connection_id"),
+            source_connection: text("source_connection"),
+            builder_image: text("builder_image"),
+            gearbox_version: text("gearbox_version"),
+            source_commits: text("source_commits"),
+        }
+    }
 }
 
 impl BuildRecord {
@@ -516,6 +580,9 @@ impl BuildRecord {
                 .and_then(|c| c.get("version"))
                 .and_then(|v| v.as_str())
                 .map(str::to_owned),
+            failure: text("failure"),
+            failure_step: text("failure_step"),
+            place: BuildPlace::of(value),
         }
     }
 }
@@ -546,6 +613,9 @@ pub struct BuildOutcome {
     /// The revision of the product description it was built with (ADR-0053
     /// §2); `None` when it read the file in the checkout.
     pub description_revision: Option<i64>,
+    /// Where it ran and with what. A later record that leaves a field out
+    /// keeps what an earlier one said.
+    pub place: BuildPlace,
 }
 
 impl BuildOutcome {
@@ -596,6 +666,26 @@ fn one_line(text: &str) -> String {
 #[cfg(test)]
 mod build_outcome_tests {
     use super::*;
+
+    #[test]
+    fn a_record_reads_its_failure_and_where_it_ran() {
+        let r = BuildRecord::of(&serde_json::json!({
+            "build_id": "studio-1", "status": "failed",
+            "failure": "the cluster said no", "failure_step": "start",
+            "environment_id": "e1", "environment": "dev", "namespace": "shop-dev",
+            "git_ref": "main", "repository": "acme/shop",
+            "source_connection_id": "c1", "source_connection": "GitHub (acme)",
+            "builder_image": "ghcr.io/acme/studio-backend:sha-1", "gearbox_version": "361e703",
+        }));
+        assert_eq!(r.failure_step.as_deref(), Some("start"));
+        assert_eq!(r.failure.as_deref(), Some("the cluster said no"));
+        assert_eq!(r.place.namespace.as_deref(), Some("shop-dev"));
+        assert_eq!(r.place.source_connection.as_deref(), Some("GitHub (acme)"));
+        assert_eq!(r.place.gearbox_version.as_deref(), Some("361e703"));
+        // An older record has none of them.
+        let old = BuildRecord::of(&serde_json::json!({ "build_id": "b", "status": "passed" }));
+        assert_eq!(old.place, BuildPlace::default());
+    }
 
     #[test]
     fn a_failure_of_many_lines_is_recorded_as_one() {

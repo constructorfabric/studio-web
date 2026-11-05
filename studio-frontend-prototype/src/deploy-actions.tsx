@@ -4,17 +4,21 @@
  * the workflow that builds the product for it. The rules are in
  * `project-deploys.ts`; the server checks every one of them again. */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   api,
+  type BuildPlan,
   type ConfigSecret,
+  type Connection,
   type Deployment,
   type DeployEnvironment,
   type EnvironmentBinding,
   type ProjectBuildSetting,
 } from "./api";
-import type { IdeBuild } from "./builds";
+import { planKey, planLines, planRefusalText } from "./build-plan";
+import { InfraPlanView } from "./infra-services-view";
+import { type IdeBuild, buildRefusalText } from "./builds";
 import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { ownBuildSummary } from "./project-build";
 import { errText, relTime } from "./format";
@@ -32,10 +36,13 @@ import {
   runsNow,
   valuesText,
 } from "./project-deploys";
+import type { LadderStep } from "./releases";
+import { EmptyState, InfoPopover, StatusChip } from "./ui-standard";
+import "./infrastructure.css";
 
 /** Ask the server for a deploy, and say what it answered: queued, or
  *  waiting for an administrator. One for every place a deploy is asked. */
-function useDeployRequest(token: string, projectId: string, onChanged: (message: string) => void) {
+export function useDeployRequest(token: string, projectId: string, onChanged: (message: string) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string): Promise<boolean> => {
@@ -56,7 +63,7 @@ function useDeployRequest(token: string, projectId: string, onChanged: (message:
 }
 
 /** Deploy one published build to an environment the project may deploy to:
- *  the Builds tab's action on a build, beside each environment's own. */
+ *  Releases' action on a build, beside each step of its ladder. */
 export function DeployBuildTo({
   token,
   projectId,
@@ -74,7 +81,7 @@ export function DeployBuildTo({
 }) {
   // Only where this build can go: a Research environment runs only what
   // Research built, the others only a published chart -- the same rule the
-  // Deploys tab picks builds by, so the two never offer different things.
+  // ladder picks builds by, so the two never offer different things.
   const takers = environments.filter((e) => deployableBuilds([build], e).length > 0);
   const [envId, setEnvId] = useState(takers[0]?.id ?? "");
   const { busy, error, ask } = useDeployRequest(token, projectId, onChanged);
@@ -97,7 +104,7 @@ export function DeployBuildTo({
         disabled={busy || !env || !!gap}
         title={gap ?? undefined}
         onClick={() =>
-          env && void ask({ environment_id: env.id, build: build.buildId }, `Deploy ${build.chartVersion} to ${env.name} -- it shows under Deploys`)
+          env && void ask({ environment_id: env.id, build: build.buildId }, `Deploy ${build.chartVersion} to ${env.name} -- it shows on the ladder above`)
         }
       >
         Deploy
@@ -117,12 +124,15 @@ export function EnvironmentActions({
   deployments,
   builds,
   envName,
+  organizationId,
   onChanged,
 }: {
   token: string;
   projectId: string;
   env: DeployEnvironment;
   latest: Deployment | undefined;
+  /** The project's organization: an administrator decides its deploys here. */
+  organizationId?: string;
   deployments: Deployment[];
   builds: IdeBuild[];
   envName: (id: string) => string;
@@ -137,6 +147,9 @@ export function EnvironmentActions({
   const candidates = deployableBuilds(builds, env);
   const back = rollbackTarget(deployments, env.id);
   const previews = env.kind !== "research" && !!env.previews;
+  // A deploy that waits for a decision is decided before another is asked:
+  // a second request would only wait beside it.
+  const waiting = deployments.filter((d) => d.environment_id === env.id && d.state === "awaiting_approval");
   const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string) => {
     if (await request.ask(body, what)) {
       setPicking(false);
@@ -145,8 +158,17 @@ export function EnvironmentActions({
   };
   return (
     <div className="deploy-actions" data-environment-actions={env.name}>
+      {waiting.length > 0 && (
+        <PendingDecisions token={token} organizationId={organizationId} waiting={waiting} onChanged={onChanged} />
+      )}
       <div className="row">
-        <button type="button" className="primary" disabled={busy} onClick={() => setPicking((v) => !v)}>
+        <button
+          type="button"
+          className="primary"
+          disabled={busy || waiting.length > 0}
+          title={waiting.length > 0 ? "A deploy here waits for a decision: approve or decline it first" : undefined}
+          onClick={() => setPicking((v) => !v)}
+        >
           Deploy a build…
         </button>
         {back && (
@@ -178,11 +200,14 @@ export function EnvironmentActions({
       {picking && (
         <div className="deploy-pick" data-build-picker>
           {candidates.length === 0 ? (
-            <p className="hint">
-              {isResearch(env)
-                ? "No build made in Constructor Research yet: Build in Research in the Builds tab."
-                : "No build has published a chart yet: build in the Builds tab, or publish from the IDE's Deploy."}
-            </p>
+            isResearch(env) ? (
+              <div className="row" data-research-no-build>
+                <StatusChip tone="warn">no build for Research yet</StatusChip>
+                <BuildForResearch token={token} projectId={projectId} env={env} onChanged={onChanged} />
+              </div>
+            ) : (
+              <p className="hint">No build has published a chart yet: build under Builds below, or publish from the IDE&apos;s Deploy.</p>
+            )
           ) : (
             <ul className="rows">
               {candidates.slice(0, 8).map((b) => {
@@ -236,6 +261,95 @@ export function EnvironmentActions({
           )}
         </div>
       )}
+      {env.kind !== "research" && <InfraPlanView token={token} projectId={projectId} environmentId={env.id} />}
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+
+/** The deploys to one environment that wait for an administrator, decided
+ *  where they were asked. Whoever may not decide sees who does. */
+function PendingDecisions({
+  token,
+  organizationId,
+  waiting,
+  onChanged,
+}: {
+  token: string;
+  organizationId?: string;
+  waiting: Deployment[];
+  onChanged: (message: string) => void;
+}) {
+  const [mayDecide, setMayDecide] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [declining, setDeclining] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  useEffect(() => {
+    if (!organizationId) return;
+    let live = true;
+    api
+      .environments(token, organizationId)
+      .then((r) => live && setMayDecide(r.may_manage))
+      .catch(() => live && setMayDecide(false));
+    return () => {
+      live = false;
+    };
+  }, [token, organizationId]);
+  const decide = async (d: Deployment, action: "approve" | "decline") => {
+    if (!organizationId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.decideDeployment(token, organizationId, d.id, action, action === "decline" ? reason.trim() : undefined);
+      setDeclining(null);
+      setReason("");
+      onChanged(
+        action === "approve"
+          ? `Approved: ${d.chart_version ?? d.build ?? d.product} goes to ${d.environment_name}.`
+          : `Declined the deploy of ${d.chart_version ?? d.build ?? d.product} to ${d.environment_name}.`,
+      );
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="deploy-pick" data-deploys-waiting>
+      <ul className="rows">
+        {waiting.map((d) => (
+          <li key={d.id} style={{ flexWrap: "wrap" }}>
+            <div className="grow">
+              <StatusChip tone="warn">waits for a decision</StatusChip> <b>{d.chart_version ?? d.build ?? d.product}</b>{" "}
+              {d.commit && <code>{shortCommit(d.commit)}</code>}{" "}
+              <span className="sub">
+                asked by {d.requested_by_name || d.requested_by} {relTime(d.requested_at)}
+              </span>
+            </div>
+            {mayDecide ? (
+              <>
+                <button type="button" className="primary" disabled={busy} data-deploy-approve onClick={() => void decide(d, "approve")}>
+                  Approve
+                </button>
+                <button type="button" disabled={busy} onClick={() => setDeclining(declining === d.id ? null : d.id)}>
+                  Decline…
+                </button>
+                {declining === d.id && (
+                  <>
+                    <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="required: why not" aria-label="Reason" />
+                    <button type="button" disabled={busy || !reason.trim()} onClick={() => void decide(d, "decline")}>
+                      Decline
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <span className="hint">An organization administrator decides.</span>
+            )}
+          </li>
+        ))}
+      </ul>
       {error && <div className="error">{error}</div>}
     </div>
   );
@@ -453,7 +567,10 @@ export function EnvironmentConfig({
         ))
       )}
       <div className="field">
-        Secrets <span className="sub">— kept in credstore, given to every application as environment variables</span>
+        <span>
+          Secrets <span className="sub">— kept in credstore, given to every application as environment variables</span>{" "}
+          {isResearch(env) && <SecretsLimit />}
+        </span>
         <ul className="rows">
           {keys.map((k) => (
             <li key={k}>
@@ -492,13 +609,12 @@ export function EnvironmentConfig({
 }
 
 /** What the Product step last wrote: the description's path, its branch and
- *  pull request, the profile picked. What a build builds unless told
- *  otherwise. */
+ *  pull request. What a build builds unless told otherwise; the profile is
+ *  the environment's binding's (ADR-0057). */
 export interface SavedProduct {
   path: string;
   branch: string | null;
   prUrl: string | null;
-  profile: string | null;
   /** The description revision Studio keeps and a build takes (ADR-0053 §2). */
   revision?: number | null;
 }
@@ -517,9 +633,199 @@ export function isResearch(e: Pick<DeployEnvironment, "kind">): boolean {
   return e.kind === "research";
 }
 
-/** Where an environment keeps what a build makes, said in a few words. */
-export function buildTarget(e: DeployEnvironment): string {
-  return isResearch(e) ? `Research project ${e.research_project}` : e.registry;
+/** One place a Studio build can put its images: a registry, or a Research
+ *  project, with the environments that take from it. */
+export interface BuildDestination {
+  key: string;
+  kind: "registry" | "research";
+  /** The registry prefix, or the Research project's id. */
+  name: string;
+  environments: DeployEnvironment[];
+}
+
+/** The environments a Studio build can push from, grouped by where the images
+ *  go: environments that share a registry (or a Research project) take the
+ *  same build. */
+export function buildDestinations(environments: readonly DeployEnvironment[]): BuildDestination[] {
+  const out: BuildDestination[] = [];
+  for (const e of buildableEnvironments(environments)) {
+    const kind = isResearch(e) ? "research" : "registry";
+    const name = (isResearch(e) ? e.research_project : e.registry) ?? "";
+    const key = `${kind}:${name}`;
+    const at = out.find((d) => d.key === key);
+    if (at) at.environments.push(e);
+    else out.push({ key, kind, name, environments: [e] });
+  }
+  return out;
+}
+
+/** "→ registry ghcr.io/acme (envs dev, stage)", "→ Research project p1 (env research-dev)". */
+export function destinationText(d: BuildDestination): string {
+  const names = d.environments.map((e) => e.name);
+  const envs = `${names.length === 1 ? "env" : "envs"} ${names.join(", ")}`;
+  return `→ ${d.kind === "research" ? "Research project" : "registry"} ${d.name} (${envs})`;
+}
+
+/** Opens Organization › Infrastructure, with "Add a place" on the kind asked
+ *  for: the portal's router follows the address. */
+export function openInfrastructure(add?: "registry" | "cluster") {
+  const q = new URLSearchParams(window.location.search);
+  if (add) q.set("add", add);
+  const query = q.toString();
+  window.history.pushState(null, "", `/infrastructure${query ? `?${query}` : ""}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/** Opens Organization › Connections, where a member signs in to Research
+ *  with their own account (ADR-0049 §5). */
+function openConnections() {
+  window.history.pushState(null, "", `/connections${window.location.search}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/** Build for Research in one click: the environment's bound profile, the
+ *  product record's path, the repository's own branch. */
+function BuildForResearch({
+  token,
+  projectId,
+  env,
+  label = "Build for Research",
+  chip,
+  onChanged,
+}: {
+  token: string;
+  projectId: string;
+  env: DeployEnvironment;
+  label?: string;
+  /** Drawn as a chip (a rung's prerequisite) rather than a button. */
+  chip?: boolean;
+  onChanged?: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const targets = await api.projectTargets(token, projectId);
+      const b = await api.startBuild(token, projectId, { environment_id: env.id, profile: profileFor(targets.bindings, env.id) });
+      onChanged?.(`Build ${b.build_id} started for ${env.name} in Research; it shows under Build as it goes.`);
+    } catch (e) {
+      setError(buildRefusalText(e, errText));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      {chip ? (
+        <StatusChip tone="warn" onClick={busy ? undefined : () => void start()} data-research-build>
+          {busy ? "starting a build…" : `no build for Research → ${label}`}
+        </StatusChip>
+      ) : (
+        <button type="button" className="primary" disabled={busy} onClick={() => void start()} data-research-build>
+          {busy ? "Starting…" : label}
+        </button>
+      )}
+      {error && <span className="error">{error}</span>}
+    </>
+  );
+}
+
+/** Secrets in Research are plain variables (ADR-0049 §4): a warn chip, the why behind its "?". */
+function SecretsLimit() {
+  return (
+    <span className="research-needs" data-research-limit="secrets">
+      <StatusChip tone="warn">secrets → plain variables</StatusChip>
+      <InfoPopover label="Why are secrets plain variables in Research?">
+        Research&apos;s public API has no secret variables and returns a service&apos;s variables as they are, so a
+        secret set here reaches the application as a plain environment variable (ADR-0049 §4).
+      </InfoPopover>
+    </span>
+  );
+}
+
+/** Each project's connections, read once a visit: every rung asks. */
+const connectionsRead = new Map<string, Promise<Connection[]>>();
+function projectConnections(token: string, projectId: string): Promise<Connection[]> {
+  let p = connectionsRead.get(projectId);
+  if (!p) {
+    p = api
+      .connections(token, projectId)
+      .then((r) => r.items)
+      .catch(() => {
+        connectionsRead.delete(projectId);
+        return [] as Connection[];
+      });
+    connectionsRead.set(projectId, p);
+  }
+  return p;
+}
+
+/** A rung of the release ladder: its place as a chip; for a Research
+ *  environment also what it still needs, each one click away -- the member's
+ *  own sign-in, a build made in Research -- and its limits as warn chips.
+ *  Research is a place, not another process (ADR-0056 §1). */
+export function RungPlace({
+  token,
+  projectId,
+  step,
+  onChanged,
+}: {
+  token: string;
+  projectId: string;
+  step: Pick<LadderStep, "environment" | "deployable">;
+  onChanged?: (message: string) => void;
+}) {
+  const env = step.environment;
+  const research = isResearch(env);
+  const [connections, setConnections] = useState<Connection[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    void projectConnections(token, projectId).then((c) => live && setConnections(c));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+  const place = connections?.find((c) => c.id === env.connection_id);
+  // The member's own sign-in to Research, not the one the environment was made with.
+  const signedIn = connections?.some((c) => c.provider === "research" && (c.mine || c.scope === "personal"));
+  return (
+    <div className="research-needs" data-rung-place={research ? "research" : "cluster"}>
+      <StatusChip tone={research ? "info" : "neutral"} title={research ? "A Constructor Research project" : "A Kubernetes cluster"}>
+        {research ? `⚗ Research ${env.research_project ?? ""}` : `☁ ${place?.label ?? "cluster"}`}
+      </StatusChip>
+      {research && connections !== null && !signedIn && (
+        <StatusChip tone="warn" onClick={openConnections} data-research-signin>
+          your Research sign-in: none → Connect
+        </StatusChip>
+      )}
+      {research && step.deployable.length === 0 && (
+        <BuildForResearch token={token} projectId={projectId} env={env} label="Build" chip onChanged={onChanged} />
+      )}
+      {research && (
+        <>
+          <SecretsLimit />
+          <span className="research-needs" data-research-limit="previews">
+            <StatusChip tone="warn">no previews</StatusChip>
+            <InfoPopover label="Why no previews in Research?">
+              A preview is a namespace of its own beside the environment (ADR-0055); a Research environment has no
+              namespace, so it takes deploys only.
+            </InfoPopover>
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The profile a build for `environment` takes: the one bound to it, else the
+ *  one every other environment runs, else `prod`. */
+export function profileFor(bindings: readonly EnvironmentBinding[], environment: string): string {
+  const bound = bindings.find((b) => b.environment_id === environment)?.profile;
+  if (bound) return bound;
+  const all = [...new Set(bindings.map((b) => b.profile))];
+  return all.length === 1 ? all[0] : "prod";
 }
 
 /** Build in Studio: a Job in the environment's cluster clones the repository,
@@ -531,7 +837,7 @@ export function BuildInStudio({
   token,
   projectId,
   environments,
-  profiles,
+  bindings,
   saved,
   own,
   onChanged,
@@ -539,7 +845,8 @@ export function BuildInStudio({
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
-  profiles: string[];
+  /** Which profile each environment runs: a build takes its environment's. */
+  bindings: EnvironmentBinding[];
   saved: SavedProduct | null;
   /** The repository's own Dockerfiles and chart (ADR-0054 §7); absent: on gears. */
   own?: ProjectBuildSetting | null;
@@ -554,26 +861,82 @@ export function BuildInStudio({
   const [changing, setChanging] = useState(false);
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What the build would do, asked again whenever what it would build
+  // changes -- after a pause, as the fields change per key.
+  const [plan, setPlan] = useState<BuildPlan | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [started, setStarted] = useState(0);
+  const planEnv = choices.find((e) => e.id === envId) ?? choices[0];
+  const planBody = planEnv
+    ? {
+        environment_id: planEnv.id,
+        profile: profile ?? profileFor(bindings, planEnv.id),
+        ...((productFile ?? saved?.path ?? "").trim() ? { product_file: (productFile ?? saved?.path ?? "").trim() } : {}),
+        ...((gitRef ?? saved?.branch ?? "").trim() ? { ref: (gitRef ?? saved?.branch ?? "").trim() } : {}),
+      }
+    : null;
+  const asked = planBody ? planKey(planBody) : "";
+  useEffect(() => {
+    if (!planBody) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      api
+        .planBuild(token, projectId, planBody)
+        .then((p) => {
+          if (!live) return;
+          setPlan(p);
+          setPlanError(null);
+        })
+        .catch((e: unknown) => {
+          if (!live) return;
+          setPlan(null);
+          setPlanError(errText(e));
+        });
+    }, PLAN_PAUSE_MS);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+    // `asked` is the body's fields; the body itself is a new object every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked, token, projectId, started]);
   if (choices.length === 0) {
     return (
-      <p className="hint" data-build-studio-unavailable>
-        No environment can take a Studio build yet: one needs a registry prefix and a registry connection to push with,
-        or a Constructor Research project (Organization › Environments). Until then, build on your machine or in CI.
-      </p>
+      <div data-build-studio-unavailable>
+        <EmptyState
+          title="No registry to build into"
+          body={
+            <>
+              Or build on your machine or in CI.{" "}
+              <InfoPopover label="What can take a Studio build?">
+                An environment with a registry prefix and a registry connection to push with, or a Constructor Research
+                project (ADR-0048, ADR-0049).
+              </InfoPopover>
+            </>
+          }
+          action={
+            <button type="button" className="primary" onClick={() => openInfrastructure("registry")} data-connect-registry>
+              Connect a registry
+            </button>
+          }
+        />
+      </div>
     );
   }
   // The Product step's answer unless the member changed it.
   const env = choices.find((e) => e.id === envId) ?? choices[0];
-  const file = productFile ?? saved?.path ?? "product.gdl";
+  const destinations = buildDestinations(choices);
+  const here = destinations.find((d) => d.environments.some((e) => e.id === env.id)) ?? destinations[0];
+  const file = productFile ?? saved?.path ?? "";
   const branch = gitRef ?? saved?.branch ?? "";
-  const options = profiles.length ? profiles : ["prod"];
-  const prof = profile ?? (saved?.profile && options.includes(saved.profile) ? saved.profile : options[0]);
+  const bound = profileFor(bindings, env.id);
+  const options = [...new Set([bound, ...bindings.map((b) => b.profile)])];
+  const prof = profile ?? bound;
   return (
     <div data-build-in-studio>
       {own ? (
         <p data-build-summary data-build-own>
-          Builds {ownBuildSummary(own)} from {branch ? <code>{branch}</code> : "the repository's own branch"}, and pushes the
-          images and the chart to <code>{env.registry}</code> of <b>{env.name}</b>.{" "}
+          Builds {ownBuildSummary(own)} from {branch ? <code>{branch}</code> : "the repository's own branch"}.{" "}
           <button type="button" className="linklike" onClick={() => setChanging((v) => !v)} data-build-change>
             {changing ? "Done" : "Change"}
           </button>
@@ -593,38 +956,57 @@ export function BuildInStudio({
             )
           </>
         ) : null}{" "}
-        for profile <code>{prof}</code>
-        {isResearch(env) ? (
-          <>
-            : Studio prepares it, and Constructor Research builds the images in <code>{env.research_project}</code> for{" "}
-            <b>{env.name}</b>.{" "}
-          </>
-        ) : (
-          <>
-            , and pushes its images and chart to <code>{env.registry}</code> of <b>{env.name}</b>.{" "}
-          </>
-        )}
+        for profile <code>{prof}</code>.{" "}
         <button type="button" className="linklike" onClick={() => setChanging((v) => !v)} data-build-change>
           {changing ? "Done" : "Change"}
         </button>
       </p>
       )}
-      {changing && (
-        <div className="row" data-build-fields>
-          <select value={env.id} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
-            {choices.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name} — {buildTarget(e)}
+      {/* Where the images go, as a chip; with more than one place, chosen here. */}
+      <div className="build-dest" data-build-destination={here.kind}>
+        {destinations.length > 1 ? (
+          <select
+            value={here.key}
+            onChange={(e) => setEnvId(destinations.find((d) => d.key === e.target.value)?.environments[0]?.id ?? "")}
+            aria-label="Build into"
+            data-build-destination-pick
+          >
+            {destinations.map((d) => (
+              <option key={d.key} value={d.key}>
+                {destinationText(d)}
               </option>
             ))}
           </select>
+        ) : (
+          <StatusChip tone={here.kind === "research" ? "info" : "neutral"} data-build-destination-chip>
+            {destinationText(here)}
+          </StatusChip>
+        )}
+        {here.kind === "research" && (
+          <InfoPopover label="How a Research build goes">
+            Studio prepares the product, and Constructor Research builds the images in its project with its own builder,
+            under your own sign-in (ADR-0049 §3, §5).
+          </InfoPopover>
+        )}
+      </div>
+      {changing && (
+        <div className="row" data-build-fields>
+          {here.environments.length > 1 && (
+            <select value={env.id} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment" title="The environment whose profile and login the build takes">
+              {here.environments.map((e) => (
+                <option key={e.id} value={e.id}>
+                  for {e.name}
+                </option>
+              ))}
+            </select>
+          )}
           {!own && (
           <input
             value={file}
             onChange={(e) => setProductFile(e.target.value)}
             aria-label="Product description"
             title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
-            placeholder="product.gdl"
+            placeholder="products/<product>/product.gdl"
           />
           )}
           <input
@@ -643,11 +1025,18 @@ export function BuildInStudio({
           )}
         </div>
       )}
+      {plan && <BuildPlanView plan={plan} />}
+      {planError && (
+        <p className="hint" data-build-plan-unknown>
+          Studio could not say what the build will do: {planError}
+        </p>
+      )}
       <div className="row">
         <button
           type="button"
           className="primary"
-          disabled={building}
+          disabled={building || !!plan?.refusal}
+          title={plan?.refusal ? (planRefusalText(plan.refusal) ?? undefined) : undefined}
           onClick={async () => {
             setBuilding(true);
             setError(null);
@@ -655,14 +1044,17 @@ export function BuildInStudio({
               const b = await api.startBuild(token, projectId, {
                 environment_id: env.id,
                 profile: prof,
-                product_file: file.trim() || "product.gdl",
+                // None named: the server takes the product record's path.
+                ...(file.trim() ? { product_file: file.trim() } : {}),
                 ...(branch.trim() ? { ref: branch.trim() } : {}),
               });
               onChanged?.(`Build ${b.build_id} started in ${b.namespace}; it shows below as it goes.`);
             } catch (e) {
-              setError(errText(e));
+              setError(buildRefusalText(e, errText));
             } finally {
               setBuilding(false);
+              // What was true before may not be now: the plan is asked again.
+              setStarted((n) => n + 1);
             }
           }}
           data-build-start-studio
@@ -670,8 +1062,55 @@ export function BuildInStudio({
           {building ? "Starting…" : isResearch(env) ? "Build in Research" : "Build in Studio"}
         </button>
       </div>
+      {plan?.refusal && (
+        <div className="error" data-build-refusal={plan.refusal.code}>
+          {planRefusalText(plan.refusal)}
+        </div>
+      )}
       {error && <div className="error">{error}</div>}
     </div>
+  );
+}
+
+/** How long the fields rest before the plan is asked again. */
+const PLAN_PAUSE_MS = 400;
+
+/** "What this build will do": where its Job runs, the builder, the code and
+ *  whose connection clones it, the repositories it pushes to, and what the
+ *  server warns of. Folded to its first lines; the rest on a click. */
+function BuildPlanView({ plan }: { plan: BuildPlan }) {
+  const lines = planLines(plan);
+  return (
+    <details className="build-plan" data-build-plan open={plan.warnings.length > 0 || lines.some((l) => l.warn)}>
+      <summary>
+        <b>What this build will do</b>{" "}
+        <span className="sub">
+          · {plan.environment}, namespace <code>{plan.build_namespace}</code>
+          {plan.warnings.length > 0 ? ` · ${plan.warnings.length} warning${plan.warnings.length === 1 ? "" : "s"}` : ""}
+        </span>
+      </summary>
+      <dl
+        className="sub"
+        style={{ margin: "6px 0 0", display: "grid", gridTemplateColumns: "max-content 1fr", gap: "2px 8px" }}
+      >
+        {lines.map((l, i) => (
+          <div key={`${l.label}-${i}`} style={{ display: "contents" }} data-build-plan-line={l.label}>
+            <dt>{l.label}</dt>
+            <dd style={{ margin: 0, overflowWrap: "anywhere" }} className={l.warn ? "warn" : undefined}>
+              <code>{l.value}</code>
+              {l.warn ? " ⚠" : ""}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {plan.warnings.length > 0 && (
+        <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }} data-build-plan-warnings>
+          {plan.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </details>
   );
 }
 
@@ -682,13 +1121,13 @@ export function ProposeBuildWorkflow({
   token,
   projectId,
   environments,
-  profiles,
+  bindings,
   saved,
 }: {
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
-  profiles: string[];
+  bindings: EnvironmentBinding[];
   saved: SavedProduct | null;
 }) {
   const choices = environments.filter((e) => e.registry.includes("/"));
@@ -700,14 +1139,13 @@ export function ProposeBuildWorkflow({
     return (
       <p className="hint">
         A CI workflow publishes to an environment&apos;s registry, and no environment of this project names one yet
-        (Organization › Environments).
+        (Organization › Infrastructure).
       </p>
     );
   }
   const env = choices.find((e) => e.id === envId) ?? choices[0];
-  const options = profiles.length ? profiles : ["prod"];
-  const profile = saved?.profile && options.includes(saved.profile) ? saved.profile : options[0];
-  const file = saved?.path ?? "product.gdl";
+  const profile = profileFor(bindings, env.id);
+  const file = saved?.path;
   return (
     <div data-propose-workflow>
       <div className="row">
@@ -721,7 +1159,7 @@ export function ProposeBuildWorkflow({
           </select>
         )}
         <span className="grow hint">
-          A workflow that builds <code>{file}</code> for profile <code>{profile}</code> and publishes to{" "}
+          A workflow that builds {file ? <code>{file}</code> : "the project's product"} for profile <code>{profile}</code> and publishes to{" "}
           <code>{env.registry}</code>, proposed to the repository as a pull request.
         </span>
         <button
@@ -735,7 +1173,7 @@ export function ProposeBuildWorkflow({
                 await api.proposeBuildWorkflow(token, projectId, {
                   environment_id: env.id,
                   profile,
-                  product_file: file,
+                  ...(file ? { product_file: file } : {}),
                 }),
               );
             } catch (e) {

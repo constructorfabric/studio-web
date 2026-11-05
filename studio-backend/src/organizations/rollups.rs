@@ -53,6 +53,9 @@ pub const ORGANIZATION_TENANT_TYPE: &str = super::service::ORGANIZATION_TENANT_T
 pub const PROJECT_TENANT_TYPE: &str = "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~";
 /// What a project is: its kind and its brief.
 const PROJECT_CONFIG_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
+/// A workspace's settings, where its chosen icon is kept.
+const WORKSPACE_SETTINGS_TYPE: &str =
+    "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
 /// The node type a detector writes its verdicts as.
 const FINDING_TYPE_LEAF: &str = "spec_finding";
 /// The window a projects-table row draws its pull requests over.
@@ -108,10 +111,14 @@ pub struct Rollup {
     /// Projects only: the people who may work in it — see [`team_of`] for
     /// what that means under each access model.
     pub team: Option<u32>,
+    /// The icon somebody chose for it, `(glyph, colour)`, from its own
+    /// configuration (a project) or settings (a workspace). `None` when none
+    /// was chosen: a portal draws the one its kind implies.
+    pub icon: Option<(String, String)>,
 }
 
 impl Rollup {
-    fn workspace(id: Uuid, name: String, projects: u32) -> Self {
+    fn workspace(id: Uuid, name: String, projects: u32, icon: Option<(String, String)>) -> Self {
         Self {
             id,
             name,
@@ -126,6 +133,7 @@ impl Rollup {
             specs: None,
             signals: None,
             team: None,
+            icon,
         }
     }
 }
@@ -258,9 +266,21 @@ impl Sources {
         workspace_name: String,
         team: Option<&TeamBasis>,
     ) -> Vec<Rollup> {
-        let projects = self
-            .children_of(ctx, workspace_id, PROJECT_TENANT_TYPE)
-            .await;
+        let settings = async {
+            self.am
+                .get_metadata(
+                    ctx,
+                    workspace_id,
+                    gts::GtsTypeId::new(WORKSPACE_SETTINGS_TYPE),
+                )
+                .await
+                .ok()
+                .map(|e| e.value)
+        };
+        let (projects, settings) = tokio::join!(
+            self.children_of(ctx, workspace_id, PROJECT_TENANT_TYPE),
+            settings
+        );
         // The children were listed in order to walk into them, so this count
         // is what that listing already said — not a second question asked for
         // the number alone.
@@ -268,6 +288,7 @@ impl Sources {
             workspace_id,
             workspace_name,
             u32::try_from(projects.len()).unwrap_or(u32::MAX),
+            icon_in(settings.as_ref()),
         )];
         // A workspace's projects at once: each row is a handful of independent
         // reads, and a table waiting on them one after another is the slowness
@@ -427,6 +448,7 @@ impl Sources {
             specs,
             signals,
             team,
+            icon: icon_in(config.as_ref()),
         }
     }
 
@@ -505,6 +527,21 @@ fn team_of(basis: &TeamBasis, project_id: &str) -> u32 {
 fn repos_in(config: Option<&serde_json::Value>) -> Option<u32> {
     let repos = crate::project_sources::parse(config?).len();
     Some(u32::try_from(repos).unwrap_or(u32::MAX))
+}
+
+/// The icon a configuration records (`{"icon": {"glyph", "color"}}`), or
+/// `None` when it records none or not both halves of one. Which glyphs and
+/// colours exist is the portal's to say; this only carries them.
+fn icon_in(config: Option<&serde_json::Value>) -> Option<(String, String)> {
+    let icon = config?.get("icon")?;
+    let part = |key: &str| {
+        icon.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.len() <= 32)
+            .map(str::to_owned)
+    };
+    Some((part("glyph")?, part("color")?))
 }
 
 /// The children of `parent` of one tenant type, every page of them.
@@ -645,6 +682,22 @@ mod tests {
     #[test]
     fn a_sources_field_of_the_wrong_shape_counts_as_none_listed() {
         assert_eq!(repos_in(Some(&json!({ "sources": "nope" }))), Some(0));
+    }
+
+    #[test]
+    fn an_icon_is_carried_only_when_both_halves_are_there() {
+        let both = json!({ "icon": { "glyph": "rocket", "color": "teal" } });
+        assert_eq!(
+            icon_in(Some(&both)),
+            Some(("rocket".to_owned(), "teal".to_owned()))
+        );
+        assert_eq!(
+            icon_in(Some(&json!({ "icon": { "glyph": "rocket" } }))),
+            None
+        );
+        assert_eq!(icon_in(Some(&json!({ "icon": "rocket" }))), None);
+        assert_eq!(icon_in(Some(&json!({}))), None);
+        assert_eq!(icon_in(None), None);
     }
 
     /* ── team_of ── */

@@ -206,6 +206,39 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-environments/v1/images/{image_id}",
+      "operation_id": "studio_environments.delete_image",
+      "tag": "",
+      "summary": "Delete one of a project's images from its registry",
+      "authenticated": true,
+      "responses": [
+        "ImageRunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-environments/v1/images/{image_id}/pin",
+      "operation_id": "studio_environments.delete_image_pin",
+      "tag": "",
+      "summary": "Let an image go by its retention policy again",
+      "authenticated": true,
+      "responses": [
+        "ImageRecordDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-environments/v1/previews/{deployment_id}",
       "operation_id": "studio_environments.delete_preview",
       "tag": "",
@@ -231,6 +264,24 @@
       "authenticated": true,
       "errors": [
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-environments/v1/registries/{connection_id}/repositories/{repository}/versions/{digest}",
+      "operation_id": "studio_environments.delete_registry_version",
+      "tag": "",
+      "summary": "Delete one digest from an organization's registry",
+      "authenticated": true,
+      "responses": [
+        "ImageDeleteRunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "404",
         "500"
       ]
@@ -609,6 +660,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/components/{name}/docs",
+      "operation_id": "studio_components_catalog.get_component_doc",
+      "tag": "StudioComponentsCatalog",
+      "summary": "One of a component's documents, read from its repository",
+      "authenticated": true,
+      "responses": [
+        "CatalogueComponentDocDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/field-schemas",
       "operation_id": "studio_components_catalog.list_field_schemas",
       "tag": "StudioComponentsCatalog",
@@ -664,6 +732,21 @@
       "errors": [
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/platform/pins",
+      "operation_id": "studio_components_catalog.list_platform_pins",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The organization's platform release: every platform source and its pin",
+      "authenticated": true,
+      "responses": [
+        "CataloguePlatformPinsDto"
+      ],
+      "errors": [
+        "401",
         "500"
       ]
     },
@@ -727,6 +810,23 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/publications",
+      "operation_id": "studio_components_catalog.list_publications",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Projects' requests to publish a component into the organization's catalogue",
+      "authenticated": true,
+      "responses": [
+        "CataloguePublicationsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -838,6 +938,22 @@
         "401",
         "403",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/screen-previews",
+      "operation_id": "studio_components_catalog.list_screen_previews",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The pictures builds took of one micro-frontend's screens",
+      "authenticated": true,
+      "responses": [
+        "ScreenPreviewListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },
@@ -1893,6 +2009,123 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/environments/{environment_id}/infra-plan",
+      "operation_id": "studio_environments.get_infra_plan",
+      "tag": "",
+      "summary": "What a deploy does with a project's infra services",
+      "authenticated": true,
+      "responses": [
+        "InfraPlanDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/environments/{environment_id}/readiness",
+      "operation_id": "studio_environments.get_environment_readiness",
+      "tag": "",
+      "summary": "How far an environment's cluster is bootstrapped for Studio",
+      "authenticated": true,
+      "responses": [
+        "ReadinessDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/image-retention",
+      "operation_id": "studio_environments.get_image_retention",
+      "tag": "",
+      "summary": "How long a project's, or an organization's, images are kept",
+      "authenticated": true,
+      "responses": [
+        "RetentionDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/images",
+      "operation_id": "studio_environments.list_images",
+      "tag": "",
+      "summary": "A project's images and charts, and where each runs",
+      "authenticated": true,
+      "responses": [
+        "ImageListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/images/{image_id}",
+      "operation_id": "studio_environments.get_image",
+      "tag": "",
+      "summary": "One of a project's images, and where it runs",
+      "authenticated": true,
+      "responses": [
+        "ImageRecordDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/infra-services",
+      "operation_id": "studio_environments.list_infra_services",
+      "tag": "",
+      "summary": "A project's infra services",
+      "authenticated": true,
+      "responses": [
+        "InfraServiceListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/namespace-assignments",
+      "operation_id": "studio_environments.list_namespace_assignments",
+      "tag": "",
+      "summary": "The namespace each project was given in each environment",
+      "authenticated": true,
+      "responses": [
+        "AssignmentListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/project-build",
       "operation_id": "studio_environments.get_project_build",
       "tag": "",
@@ -1919,6 +2152,74 @@
       ],
       "errors": [
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/registries",
+      "operation_id": "studio_environments.list_registries",
+      "tag": "",
+      "summary": "The registries an organization's environments push to and pull from",
+      "authenticated": true,
+      "responses": [
+        "RegistryListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/registries/{connection_id}/orphans",
+      "operation_id": "studio_environments.list_registry_orphans",
+      "tag": "",
+      "summary": "What a registry holds that nothing accounts for, and records it lost",
+      "authenticated": true,
+      "responses": [
+        "OrphanListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/registries/{connection_id}/repositories",
+      "operation_id": "studio_environments.list_registry_repositories",
+      "tag": "",
+      "summary": "The repositories a registry holds under the organization's prefixes",
+      "authenticated": true,
+      "responses": [
+        "RepositoryListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/registries/{connection_id}/repositories/{repository}/tags",
+      "operation_id": "studio_environments.list_registry_tags",
+      "tag": "",
+      "summary": "The versions one repository holds, with their records",
+      "authenticated": true,
+      "responses": [
+        "VersionListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
         "404",
         "500"
       ]
@@ -2272,6 +2573,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/metrics",
+      "operation_id": "studio_organizations.get_organization_metrics",
+      "tag": "StudioOrganizations",
+      "summary": "An organization's delivery, quality, money and people, over a range",
+      "authenticated": true,
+      "responses": [
+        "super::metrics::OrgMetricsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/organization-requests",
       "operation_id": "studio_organizations.list_organization_requests",
       "tag": "StudioOrganizations",
@@ -2508,7 +2826,7 @@
       "path": "/studio-product/v1/projects/{project_id}/gear-repo",
       "operation_id": "studio_product.get_project_repo",
       "tag": "StudioProduct",
-      "summary": "The gear repository connected to a project (0 or 1 node)",
+      "summary": "The project source new gears go to (0 or 1 node)",
       "authenticated": true,
       "responses": [
         "ProductRecordListDto"
@@ -3579,6 +3897,60 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/project-catalogue/sync",
+      "operation_id": "studio_components_catalog.sync_project_catalogue",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Read a project's repositories into its own catalogue now",
+      "authenticated": true,
+      "responses": [
+        "CatalogSyncEnqueued"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/publications",
+      "operation_id": "studio_components_catalog.create_publication",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Propose a project's component to the organization at a version",
+      "authenticated": true,
+      "request": "CatalogueRequestPublicationRequest",
+      "responses": [
+        "CataloguePublicationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/publications/{id}/decisions",
+      "operation_id": "studio_components_catalog.decide_publication",
+      "tag": "StudioComponentsCatalog",
+      "summary": "An organization administrator approves or declines a publication",
+      "authenticated": true,
+      "request": "CataloguePublicationDecisionRequest",
+      "responses": [
+        "CataloguePublicationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/registry/gear-repository/create",
       "operation_id": "studio_components_catalog.create_registry_gear_repository",
       "tag": "StudioComponentsCatalog",
@@ -3666,6 +4038,23 @@
         "401",
         "403",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/screen-previews",
+      "operation_id": "studio_components_catalog.upsert_screen_preview",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Keep a picture a build took of one micro-frontend screen",
+      "authenticated": true,
+      "request": "SaveScreenPreviewRequest",
+      "responses": [
+        "ScreenPreviewDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },
@@ -4596,6 +4985,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-environments/v1/builds/plan",
+      "operation_id": "studio_environments.create_build_plan",
+      "tag": "",
+      "summary": "Say what a build would do, without starting it",
+      "authenticated": true,
+      "request": "StudioBuildRequest",
+      "responses": [
+        "BuildPlanDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-environments/v1/deployments",
       "operation_id": "studio_environments.create_deployment",
       "tag": "",
@@ -4678,6 +5086,44 @@
       "authenticated": true,
       "responses": [
         "EnvironmentTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/images/imports",
+      "operation_id": "studio_environments.create_image_import",
+      "tag": "",
+      "summary": "Import an external image or chart into the project's own path",
+      "authenticated": true,
+      "request": "ImportRequest",
+      "responses": [
+        "ImageRunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/images/{image_id}/promotions",
+      "operation_id": "studio_environments.create_image_promotion",
+      "tag": "",
+      "summary": "Copy an image by digest into another environment's registry",
+      "authenticated": true,
+      "request": "PromotionRequest",
+      "responses": [
+        "ImageRunDto"
       ],
       "errors": [
         "400",
@@ -5295,7 +5741,7 @@
       "path": "/studio-product/v1/projects/{project_id}/gear-repo",
       "operation_id": "studio_product.set_project_repo",
       "tag": "StudioProduct",
-      "summary": "Connect (or update) the gear repository for a project",
+      "summary": "Mark the project source new gears go to",
       "authenticated": true,
       "request": "SetProjectRepoRequest",
       "responses": [
@@ -5890,6 +6336,24 @@
     },
     {
       "method": "PUT",
+      "path": "/studio-components-catalog/v1/platform/pins",
+      "operation_id": "studio_components_catalog.update_platform_pins",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Hold platform sources at versions of the organization's own",
+      "authenticated": true,
+      "request": "CatalogueSetPinsRequest",
+      "responses": [
+        "CataloguePlatformPinsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
       "path": "/studio-components-catalog/v1/platform/sources",
       "operation_id": "studio_components_catalog.update_platform_sources",
       "tag": "StudioComponentsCatalog",
@@ -6112,6 +6576,78 @@
       "request": "EnvironmentRequest",
       "responses": [
         "EnvironmentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/image-retention",
+      "operation_id": "studio_environments.upsert_image_retention",
+      "tag": "",
+      "summary": "Set how long a project's, or an organization's, images are kept",
+      "authenticated": true,
+      "request": "RetentionDto",
+      "responses": [
+        "RetentionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/images/{image_id}/pin",
+      "operation_id": "studio_environments.upsert_image_pin",
+      "tag": "",
+      "summary": "Keep an image past its retention policy",
+      "authenticated": true,
+      "responses": [
+        "ImageRecordDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/infra-services",
+      "operation_id": "studio_environments.update_infra_services",
+      "tag": "",
+      "summary": "Set a project's infra services",
+      "authenticated": true,
+      "request": "InfraServicesRequest",
+      "responses": [
+        "InfraServiceListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/namespace-assignments",
+      "operation_id": "studio_environments.upsert_namespace_assignment",
+      "tag": "",
+      "summary": "Give a project a namespace in an environment",
+      "authenticated": true,
+      "request": "AssignmentDto",
+      "responses": [
+        "AssignmentDto"
       ],
       "errors": [
         "400",

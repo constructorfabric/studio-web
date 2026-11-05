@@ -1,5 +1,7 @@
 // A project's Artifacts tab: what the project produced and what it holds.
-// Outputs -- the files its CI builds kept and its releases -- and Documents &
+// Outputs -- the files its CI builds kept, by the version built (passed builds
+// only unless all are asked for; the runs are Tests' and Releases'), and its
+// releases -- and Documents &
 // files -- the repository files Studio knows the type of, and the files
 // people added or Studio generated. The model is outputs.ts.
 //
@@ -10,10 +12,11 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { api, type BuildOutput, type OutputAsset } from "./api";
-import { buildsOf, statusTone, type BuildRun } from "./builds";
+import { buildsOf, type BuildRun } from "./builds";
 import { DataTable, When } from "./data-table";
 import { errText } from "./format";
-import { documentRows, expiryText, formatBytes, groupOutputs, type DocumentRow, type OutputBuild } from "./outputs";
+import { documentRows, expiryText, formatBytes, groupOutputs, outputVersions, type DocumentRow, type OutputVersion } from "./outputs";
+import { EmptyState, StatusChip } from "./ui-standard";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 
 /** The sync keeps the newest few hundred runs per repository. */
@@ -44,10 +47,13 @@ export function ProjectOutputs({
   token,
   projectId,
   onOpenTab,
+  onCounts,
 }: {
   token: string;
   projectId: string;
-  onOpenTab?: (tab: "builds" | "deploys" | "sources") => void;
+  onOpenTab?: (tab: "releases" | "sources") => void;
+  /** What there is, for the page's header line. */
+  onCounts?: (c: { versions: number; releases: number }) => void;
 }) {
   const [outputs, setOutputs] = useState<BuildOutput[] | null>(null);
   const [runs, setRuns] = useState<BuildRun[]>([]);
@@ -73,6 +79,15 @@ export function ProjectOutputs({
   }, [token, projectId, tick]);
 
   const { builds, releases } = useMemo(() => groupOutputs(outputs ?? [], runs), [outputs, runs]);
+  /** Passed builds' files only, unless all are asked for. */
+  const [passedOnly, setPassedOnly] = useState(true);
+  const passed = useMemo(() => outputVersions(builds, true), [builds]);
+  const all = useMemo(() => outputVersions(builds, false), [builds]);
+  const versions = passedOnly ? passed : all;
+  useEffect(() => {
+    if (outputs) onCounts?.({ versions: passed.length, releases: releases.length });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outputs, passed.length, releases.length]);
   const now = new Date();
 
   const rowError = (key: string) =>
@@ -96,88 +111,72 @@ export function ProjectOutputs({
     );
   };
 
-  const buildTitle = (b: OutputBuild) =>
-    b.run ? (
-      <>
-        <code>{b.run.shortSha}</code>{" "}
-        {b.run.url ? (
-          <a href={b.run.url} target="_blank" rel="noreferrer">
-            {b.run.workflow}
-            {b.run.number != null ? ` #${b.run.number}` : ""}
-          </a>
-        ) : (
-          b.run.workflow
-        )}
-      </>
-    ) : (
-      <span className="sub">a run the sync no longer keeps</span>
-    );
-
   return (
     <>
       <section className="card" data-outputs-builds>
-        <DataTable<OutputBuild>
+        <DataTable<OutputVersion>
           list="outputs-builds"
           urlPrefix="builds."
-          title="From CI builds"
-          rows={outputs === null && !error ? null : builds}
+          title="Files by version"
+          rows={outputs === null && !error ? null : versions}
           error={error}
           onRetry={() => setTick((t) => t + 1)}
-          rowKey={(b) => b.runId}
-          rowLabel={(b) => b.run?.workflow ?? b.artifacts[0]?.title ?? b.runId}
-          search={{ placeholder: "Search builds and files…" }}
-          searchText={(b) => [b.run?.workflow, b.run?.branch, b.run?.sha, ...b.artifacts.map((a) => a.title)]}
+          rowKey={(v) => v.version}
+          rowLabel={(v) => v.version}
+          search={{ placeholder: "Search versions and files…" }}
+          searchText={(v) => [v.version, v.branch, ...v.files.map((a) => a.title)]}
           primary={
-            <button className="ghost" onClick={() => setTick((t) => t + 1)}>
-              Refresh
-            </button>
+            <div className="doc-views" role="tablist" aria-label="Which builds" style={{ marginBottom: 0 }} data-outputs-filter>
+              <button role="tab" aria-selected={passedOnly} className={passedOnly ? "doc-view on" : "doc-view"} onClick={() => setPassedOnly(true)}>
+                Passed · {passed.length}
+              </button>
+              <button role="tab" aria-selected={!passedOnly} className={!passedOnly ? "doc-view on" : "doc-view"} onClick={() => setPassedOnly(false)}>
+                All · {all.length}
+              </button>
+            </div>
           }
           empty={{
-            title: "No build has kept a file yet.",
-            body: (
-              <>
-                A CI run that uploads an artifact shows it here after the next sync. The runs themselves are on{" "}
-                {onOpenTab ? (
-                  <button className="linklike" onClick={() => onOpenTab("builds")}>
-                    Builds
-                  </button>
-                ) : (
-                  "Builds"
-                )}
-                .
-              </>
-            ),
+            title: passedOnly && all.length > 0 ? "No passed build kept a file." : "No build has kept a file yet.",
+            body:
+              passedOnly && all.length > 0 ? (
+                <button className="linklike" onClick={() => setPassedOnly(false)}>
+                  Show all {all.length}
+                </button>
+              ) : onOpenTab ? (
+                <button className="linklike" onClick={() => onOpenTab("releases")}>
+                  Open Releases
+                </button>
+              ) : undefined,
           }}
           columns={[
-            { id: "build", header: "Build", className: "acell-lead", cell: buildTitle },
             {
-              id: "result",
-              header: "Result",
-              cell: (b) =>
-                b.run ? <span className={`badge ${statusTone(b.run.status)}`}>{b.run.status}</span> : "—",
+              id: "version",
+              header: "Version",
+              className: "acell-lead",
+              cell: (v) => (
+                <>
+                  <code>{v.version}</code>{" "}
+                  {v.branch && (
+                    <StatusChip tone="neutral" className="chip-trunc" title={v.branch}>
+                      {v.branch}
+                    </StatusChip>
+                  )}{" "}
+                  {v.passed === false && <StatusChip tone="warn">no passed build</StatusChip>}
+                </>
+              ),
             },
-            { id: "branch", header: "Branch", cell: (b) => b.run?.branch ?? b.artifacts[0]?.branch ?? "—" },
-            {
-              id: "files",
-              header: "Files",
-              num: true,
-              cell: (b) => String(b.artifacts.length),
-            },
+            { id: "files", header: "Files", num: true, cell: (v) => String(v.files.length) },
             {
               id: "size",
               header: "Size",
               num: true,
-              cell: (b) => formatBytes(b.artifacts.reduce((n, a) => n + (a.size_in_bytes ?? 0), 0)),
+              cell: (v) => formatBytes(v.files.reduce((n, a) => n + (a.size_in_bytes ?? 0), 0)),
             },
-            {
-              id: "when",
-              header: "When",
-              cell: (b) => <When iso={b.run?.createdAt ?? b.artifacts[0]?.created_at ?? null} />,
-            },
+            { id: "when", header: "Built", cell: (v) => <When iso={v.at || null} /> },
           ]}
-          expand={(b) => (
+          expand={(v) => (
             <ul className="output-files" data-build-files>
-              {b.artifacts.map((a) => (
+              {v.files.map((a) => (
                 <li key={a.id}>
                   <b>{a.title}</b> <span className="sub">{formatBytes(a.size_in_bytes)}</span>{" "}
                   <span className="sub">{expiryText(a, now) ?? ""}</span> {fileButton(a)}
@@ -209,9 +208,9 @@ export function ProjectOutputs({
               cell: (r) => (
                 <>
                   {r.title}
-                  {r.tag && r.tag !== r.title ? <span className="sub"> · {r.tag}</span> : null}
-                  {r.prerelease ? <span className="badge neutral">pre-release</span> : null}
-                  {r.draft ? <span className="badge neutral">draft</span> : null}
+                  {r.tag && r.tag !== r.title ? <span className="sub"> · {r.tag}</span> : null}{" "}
+                  {r.prerelease ? <StatusChip tone="info">pre-release</StatusChip> : null}{" "}
+                  {r.draft ? <StatusChip tone="neutral">draft</StatusChip> : null}
                 </>
               ),
             },
@@ -228,7 +227,7 @@ export function ProjectOutputs({
           }
           expand={(r) =>
             r.assets.length === 0 ? (
-              <p className="sub">No files attached: the release is its tag and notes.</p>
+              <EmptyState title="No files attached." body="The release is its tag and notes." />
             ) : (
               <ul className="output-files" data-release-files>
                 {r.assets.map((a) => (
@@ -244,15 +243,6 @@ export function ProjectOutputs({
         />
       </section>
 
-      {onOpenTab && (
-        <p className="hint" data-outputs-images>
-          Container images the builds published are deployed from{" "}
-          <button className="linklike" onClick={() => onOpenTab("deploys")}>
-            Deploys
-          </button>
-          .
-        </p>
-      )}
     </>
   );
 }
@@ -337,7 +327,7 @@ export function ProjectDocuments({
           {
             id: "typed",
             header: "Typed by",
-            cell: (r) => (r.confirmed ? "a person" : <span className="sub">detected</span>),
+            cell: (r) => (r.confirmed ? "a person" : <StatusChip tone="neutral">detected</StatusChip>),
           },
           {
             id: "conforms",
@@ -346,9 +336,9 @@ export function ProjectDocuments({
               r.conforms === null ? (
                 "—"
               ) : r.conforms ? (
-                <span className="badge ok">yes</span>
+                <StatusChip tone="ok">yes</StatusChip>
               ) : (
-                <span className="badge warn">gaps</span>
+                <StatusChip tone="warn">gaps</StatusChip>
               ),
           },
         ]}

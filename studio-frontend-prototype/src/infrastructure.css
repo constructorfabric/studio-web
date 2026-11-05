@@ -1,0 +1,102 @@
+/* Organization › Infrastructure (environments-screen.tsx) and the Research
+   parts of a project's Releases (deploy-actions.tsx): the ladder of
+   environments, the places as cards, a place's side panel, and the chips that
+   say where a build goes and what a Research environment still needs. */
+
+/* "Add a place ▾" */
+.infra-menu { position: relative; }
+.infra-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 280px; display: flex; flex-direction: column; padding: 4px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg, 12px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14); }
+.infra-menu-list button { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; background: none; border: 0; border-radius: var(--radius-md, 8px); text-align: left; color: var(--foreground); font: inherit; cursor: pointer; }
+.infra-menu-list button:hover, .infra-menu-list button:focus-visible { background: var(--accent); }
+.infra-menu-list button > span { display: flex; flex-direction: column; gap: 2px; }
+.infra-menu-list .sub { font-size: 12px; color: var(--muted-foreground); }
+
+/* The tabs beside the ladder: Environments | What runs where. */
+.infra-tabs { display: flex; gap: 4px; margin: 4px 0 8px; border-bottom: 1px solid var(--border); }
+.infra-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted-foreground); font: inherit; font-weight: 600; cursor: pointer; margin-bottom: -1px; }
+.infra-tabs button.on { color: var(--foreground); border-bottom-color: var(--primary); }
+
+/* The ladder: dev → stage → prod, a card per environment. */
+.infra-ladder { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: stretch; }
+.infra-rung { position: relative; flex: 1 1 200px; max-width: 320px; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); background: var(--card); }
+.infra-rung + .infra-rung::before { content: "→"; position: absolute; left: -20px; top: 50%; transform: translateY(-50%); color: var(--muted-foreground); }
+.infra-rung-head { display: flex; align-items: center; gap: 6px; width: 100%; }
+.infra-rung-head .grow, .envs .env-head .grow { flex: 1; }
+.infra-lock { display: inline-flex; color: var(--warning-foreground, #b45309); }
+.infra-rung .sub { font-size: 12px; color: var(--muted-foreground); }
+
+/* A place as a chip: its kind's mark and its name. */
+.infra-place-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 1px 8px; font: inherit; font-size: 12px; font-weight: 500; color: var(--foreground); background: var(--accent); border: 1px solid transparent; border-radius: var(--radius-full, 999px); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.infra-place-chip:hover { border-color: var(--primary); }
+.infra-place-chip.static { cursor: default; }
+.infra-place-chip.static:hover { border-color: transparent; }
+
+/* Places: one grid of cards, whatever their kind. */
+.infra-places { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 8px 0 16px; }
+.infra-place { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; margin: 0; transition: border-color .15s; }
+.infra-place:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.infra-place.on { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+.infra-place.unseen { border-style: dashed; }
+.infra-place-open { all: unset; display: flex; flex-direction: column; gap: 3px; cursor: pointer; }
+.infra-place-open:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.infra-place-top { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.infra-place .sub { font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+
+/* "Open to projects": a switch, saved as it is switched. */
+.infra-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; margin-top: auto; }
+.infra-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.infra-switch { position: relative; width: 30px; height: 17px; border-radius: 999px; background: var(--muted); border: 1px solid var(--border); transition: background .15s; flex: none; }
+.infra-switch::after { content: ""; position: absolute; top: 1px; left: 1px; width: 13px; height: 13px; border-radius: 50%; background: var(--card); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform .15s; }
+.infra-toggle input:checked + .infra-switch { background: var(--primary); border-color: var(--primary); }
+.infra-toggle input:checked + .infra-switch::after { transform: translateX(13px); }
+.infra-toggle input:focus-visible + .infra-switch { outline: 2px solid var(--primary); outline-offset: 2px; }
+.infra-toggle input:disabled + .infra-switch { opacity: .55; }
+
+/* What runs where: a version chip, and the newest deploy beside it. */
+.infra-cell { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+/* A place's side panel. */
+.infra-sheet-back { position: fixed; inset: 0; z-index: 1000; background: rgba(15, 23, 42, 0.18); display: flex; justify-content: flex-end; }
+.infra-sheet { width: min(560px, 100vw); height: 100%; overflow: auto; background: var(--card); border-left: 1px solid var(--border); box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.14)); padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; outline: none; }
+.infra-sheet { color: var(--foreground); box-sizing: border-box; }
+.infra-sheet *, .infra-sheet *::before, .infra-sheet *::after { box-sizing: border-box; }
+.infra-sheet .env-form { min-width: 0; padding: 14px; box-shadow: none; }
+.infra-sheet .field { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; }
+.infra-sheet input:not([type=checkbox]), .infra-sheet select, .infra-sheet textarea { width: 100%; max-width: 100%; min-width: 0; }
+.infra-sheet-head { display: flex; align-items: center; gap: 10px; }
+.infra-sheet-head h3 { margin: 0; flex: 1; font-size: 18px; }
+.infra-sheet-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.infra-sheet-sub .env-sub { margin: 0; }
+.infra-sheet .env-sub { margin: 16px 0 6px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-foreground); }
+.infra-sheet .env-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+.infra-sheet .env-facts dt { color: var(--muted-foreground); }
+.infra-sheet .env-facts dd { margin: 0; overflow-wrap: anywhere; }
+.infra-sheet .env-list { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 10px; }
+.infra-sheet .env-head, .infra-sheet .env-deployment { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.infra-sheet .sub { color: var(--muted-foreground); font-size: 12px; }
+.infra-sheet .env-cluster-health.ok { color: #15803d; }
+.infra-sheet .env-cluster-health.bad { color: var(--destructive, #dc2626); }
+.infra-sheet .env-form { display: grid; gap: 10px; margin: 6px 0; }
+.infra-sheet .env-check { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.infra-sheet .env-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.infra-sheet .env-field-error { color: var(--destructive, #dc2626); font-size: 12px; }
+.infra-sheet .env-projects { list-style: none; padding: 0 0 0 22px; margin: 0; display: grid; gap: 4px; max-height: 180px; overflow: auto; }
+.infra-sheet .env-chip { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--accent); }
+
+/* Releases: where a build goes, and what a Research rung still needs. */
+.build-dest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 8px; }
+.build-dest select { font-size: 12.5px; }
+.research-needs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.infra-sheet .env-head { flex-wrap: nowrap; }
+.infra-sheet .env-head .sub { flex: 1; min-width: 0; }
+.infra-sheet .env-head .grow { display: none; }
+.infra-tabs button:hover:not(:disabled) { background: none; border-color: transparent; color: var(--foreground); }
+.infra-tabs button.on:hover:not(:disabled) { border-bottom-color: var(--primary); }
+
+/* "What this build will do", above Build in Studio (deploy-actions.tsx). */
+.build-plan { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); background: var(--card); }
+.build-plan summary { cursor: pointer; }
+.build-plan .warn code { color: var(--warning-foreground, #b45309); }
+
+/* A cluster's readiness on its place card, asked on demand. */
+[data-place-readiness] { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }

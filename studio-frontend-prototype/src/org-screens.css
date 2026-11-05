@@ -1,0 +1,26 @@
+/* The organization screens on the UI standard (wave 3): Components, Costs,
+   Reports, Background work. Shared parts live in styles.css's "UI standard"
+   section; this file holds only what these screens add. */
+
+/* The header's "⋯" menu. */
+.org-menu { position: relative; }
+.org-menu summary { list-style: none; cursor: pointer; border: 1px solid var(--border); background: var(--card); color: var(--foreground); border-radius: 6px; user-select: none; font-size: 12.5px; padding: 5px 12px; line-height: 1.3; }
+.org-menu summary::-webkit-details-marker { display: none; }
+.org-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: flex; flex-direction: column; min-width: 220px; padding: 4px; background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+.org-menu-list button { text-align: left; border: none; background: transparent; font-size: 12.5px; padding: 6px 10px; border-radius: 4px; }
+.org-menu-list button:hover:not(:disabled) { background: var(--accent); }
+
+/* A one-row toolbar under the header: tabs on the left, view controls on the right. */
+.org-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.org-toolbar .org-toolbar-end { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.org-tabs { display: inline-flex; gap: 4px; }
+
+/* Components: the release cell is a version chip and, when crates.io does not have it, a mark. */
+.gcat-release { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.gcat-release .gcat-version { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px; }
+.gcat-not-published { color: var(--muted-foreground); font-size: 13px; cursor: help; }
+/* "Needs a decision": a filter chip that wants attention. */
+.reg-decide-chip { font-weight: 600; }
+
+/* Background work: a recurring task folded to one schedule row. */
+.tasks-schedule-row td { color: var(--muted-foreground); }

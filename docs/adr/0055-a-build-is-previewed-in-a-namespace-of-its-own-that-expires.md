@@ -10,6 +10,8 @@ date: 2026-10-30
 
 Status: **proposed** · Date: 2026-10-30 · Amends `cpt-studio-adr-deployment-environments` (ADR-0043) · Uses ADR-0048 (a product ships as images and a chart in the organization's registry) and ADR-0054 (a project keeps environments of its own)
 
+Amended by [ADR-0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) (2026-11-04): a preview's namespace is `<recorded namespace>-pv-<name>`, the recorded namespace being the project's in that environment, not one computed from its name.
+
 ## Table of Contents
 
 <!-- toc -->

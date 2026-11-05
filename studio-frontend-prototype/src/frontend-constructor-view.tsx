@@ -18,15 +18,16 @@
 
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 
-import { api } from "./api";
+import { api, type ScreenPreview } from "./api";
 import { repoPathsOf } from "./builds";
 import {
-  SUGGESTED_FRONTX_SOURCE,
+  FRONTX_SHELL_TEMPLATE,
   assemblySteps,
   chosenShell,
   coverage,
   fitOf,
   frontendPick,
+  frontxDefaultsOf,
   frontxSuggestion,
   librariesFrom,
   mfesFrom,
@@ -39,14 +40,18 @@ import {
   splitTemplates,
   withFrontxSource,
   zonesOf,
+  type FrontxDefaults,
   type Library,
   type Mfe,
   type Placement,
   type Shell,
+  type ShellPassport,
   type Step,
 } from "./frontend-constructor";
-import { FRONTX_SHELL_TEMPLATE } from "./product-sections";
+import { Modal } from "./modal";
 import { errText } from "./problem";
+import { pictureOf, previewBuild, shortCommit, type PreviewBuild } from "./screen-previews";
+import { StatusChip, StepFlow, type FlowStep, type StepState } from "./ui-standard";
 
 type Loaded = {
   /** The micro-frontends a product can add. */
@@ -74,11 +79,104 @@ function Glyph({ icon, label }: { icon: string | null; label: string }) {
   );
 }
 
+/** Each package's pictures, read once per page: a build adds them, and a
+ *  reload is when a reader expects to see a new one. */
+const pictures = new Map<string, Promise<ScreenPreview[]>>();
+
+/** The build whose pictures each of `mfes` shows, by package name, as the
+ *  product map picks it (`previewBuild`): `null` while reading and for a
+ *  package no build pictured at its catalogue version. */
+function usePictureBuilds(token: string, mfes: readonly Mfe[]): Map<string, PreviewBuild | null> {
+  const ask = mfes.map((m) => m.name).join(",");
+  const [items, setItems] = useState<Map<string, ScreenPreview[]>>(() => new Map());
+  useEffect(() => {
+    if (!ask) return;
+    let live = true;
+    for (const name of ask.split(",")) {
+      let read = pictures.get(name);
+      if (!read) {
+        read = api.screenPreviews(token, name).then(
+          (r) => r.items ?? [],
+          (): ScreenPreview[] => [],
+        );
+        pictures.set(name, read);
+      }
+      void read.then((r) => {
+        if (live) setItems((m) => (m.get(name) === r ? m : new Map(m).set(name, r)));
+      });
+    }
+    return () => {
+      live = false;
+    };
+  }, [token, ask]);
+  return useMemo(() => {
+    const out = new Map<string, PreviewBuild | null>();
+    for (const m of mfes) {
+      const got = items.get(m.name);
+      out.set(m.name, got ? previewBuild(got, m.version) : null);
+    }
+    return out;
+  }, [items, mfes]);
+}
+
+/** A screen's picture, larger, over the page. */
+function ShotModal({ shot, build, onClose }: { shot: ScreenPreview; build: PreviewBuild; onClose: () => void }) {
+  return (
+    <Modal label={`${shot.label ?? shot.route}, as a build drew it`} onClose={onClose} cardStyle={{ width: "min(1000px, 100%)" }}>
+      <div className="fc-shot-modal-h">
+        <b>{shot.label ?? shot.route}</b>
+        <code>{shot.route}</code>
+        <span className="muted">
+          {shot.component}
+          {build.version ? `@${build.version}` : ""} · built at {shortCommit(build.commit)}
+        </span>
+        <button type="button" onClick={onClose} style={{ marginLeft: "auto" }}>
+          Close
+        </button>
+      </div>
+      <img className="fc-shot-big" src={shot.image} alt={shot.label ?? shot.route} />
+    </Modal>
+  );
+}
+
+/** The deployment's FrontX starting points, asked once per page load. */
+let frontxAsked: Promise<FrontxDefaults> | null = null;
+let frontxKnown: FrontxDefaults | null = null;
+
+export function loadFrontxDefaults(token: string): Promise<FrontxDefaults> {
+  frontxAsked ??= api.gearboxStatus(token).then(
+    (st) => (frontxKnown = frontxDefaultsOf(st)),
+    () => {
+      // Asked again next time; the built-in templates meanwhile.
+      frontxAsked = null;
+      return frontxDefaultsOf(null);
+    },
+  );
+  return frontxAsked;
+}
+
+/** [`loadFrontxDefaults`] for a view: the built-in templates until it answers. */
+export function useFrontxDefaults(token: string): FrontxDefaults {
+  const [d, setD] = useState<FrontxDefaults>(() => frontxKnown ?? frontxDefaultsOf(null));
+  useEffect(() => {
+    let alive = true;
+    void loadFrontxDefaults(token).then((x) => alive && setD(x));
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+  return d;
+}
+
 export function FrontendConstructor({ token, projectId }: { token: string; projectId: string }) {
   const [data, setData] = useState<Loaded | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
   const [saved, setSaved] = useState<string[]>([]);
+  /** Whether the product record keeps the frontend, which is what its
+   *  product.gdl is written from; a pick from before is only in the
+   *  project configuration. */
+  const [inProduct, setInProduct] = useState(false);
   /** The shell it is assembled on, as `github:owner/repo//dir@ref`. */
   const [shellRef, setShellRef] = useState<string>(FRONTX_SHELL_TEMPLATE);
   const [savedShell, setSavedShell] = useState<string>(FRONTX_SHELL_TEMPLATE);
@@ -95,19 +193,21 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   const [suggesting, setSuggesting] = useState<string | null>(null);
   /** The product's gears no picked screen calls, listed on demand. */
   const [showUnseen, setShowUnseen] = useState(false);
+  const frontx = useFrontxDefaults(token);
 
   useEffect(() => {
     let alive = true;
     Promise.all([
-      api.listComponents(token),
-      api.listComponentProfiles(token).catch(() => ({ nodes: [] })),
+      api.listComponents(token, projectId),
+      api.listComponentProfiles(token, projectId).catch(() => ({ nodes: [] })),
       api.projectProduct(token, projectId).catch(() => null),
       api.projectConfig(token, projectId).catch(() => null),
       api.listArtifactNodes(token, "repo", projectId, undefined, 50).catch(() => ({ nodes: [] })),
       api.catalogSources(token).catch(() => ({ items: [] })),
       api.getProjectGearRepo(token, projectId).catch(() => ({ nodes: [] })),
+      loadFrontxDefaults(token),
     ])
-      .then(([components, profiles, product, cfg, repos, sources, gearRepo]) => {
+      .then(([components, profiles, product, cfg, repos, sources, gearRepo, defaults]) => {
         if (!alive) return;
         const byName: Record<string, Record<string, unknown>> = {};
         for (const n of profiles.nodes ?? []) {
@@ -115,7 +215,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           if (name) byName[name] = n.value as Record<string, unknown>;
         }
         const all = mfesFrom(components.nodes ?? [], byName);
-        const { addable, templates } = splitTemplates(all);
+        const { addable, templates } = splitTemplates(all, defaults.source.repo);
         setData({
           mfes: addable,
           templates,
@@ -135,10 +235,11 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
         // The product's own record first; a project that picked before it
         // kept one has its picks in the project configuration.
         const kept = product?.frontend ? picksOf(product.frontend, all) : null;
+        setInProduct(!!kept);
         const own = kept?.picks ?? cfg?.frontend?.mfes ?? [];
         setPicks(own);
         setSaved(own);
-        const shell = kept?.shellRef ?? cfg?.frontend?.shell ?? FRONTX_SHELL_TEMPLATE;
+        const shell = kept?.shellRef ?? cfg?.frontend?.shell ?? defaults.shellTemplate;
         setShellRef(shell);
         setSavedShell(shell);
       })
@@ -188,6 +289,15 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     () => assemblySteps({ shellRef, shell, picked, productGears: data?.gears ?? [] }),
     [shellRef, shell, picked, data],
   );
+  /** The packages whose pictures the page shows: the picked ones, and the
+   *  one the inspector is about. */
+  const pictured = useMemo(() => {
+    const sel = selected ? data?.mfes.find((m) => m.name === selected) : undefined;
+    return sel && !picked.includes(sel) ? [...picked, sel] : picked;
+  }, [data, picked, selected]);
+  const builds = usePictureBuilds(token, pictured);
+  /** The picture open large; `null` when none is. */
+  const [enlarged, setEnlarged] = useState<{ shot: ScreenPreview; build: PreviewBuild } | null>(null);
 
   if (err) return <div className="error">{err}</div>;
   if (!data) return <p className="muted">Reading the micro-frontends in the catalogue…</p>;
@@ -197,11 +307,16 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     setPicks((p) => p.filter((x) => x !== name));
     if (selected === name) setSelected(null);
   };
-  const dirty = JSON.stringify(picks) !== JSON.stringify(saved) || shellRef !== savedShell;
+  const dirty = !inProduct || JSON.stringify(picks) !== JSON.stringify(saved) || shellRef !== savedShell;
+  // Picks the catalogue does not list (a legacy project's, or one removed
+  // since) are not on the page; saving must not drop them silently.
+  const unknown = picks.filter((n) => !data.mfes.some((m) => m.name === n));
   async function save() {
     setBusy(true);
     setErr(null);
     try {
+      if (unknown.length > 0)
+        throw new Error(`The catalogue does not list ${unknown.join(", ")}; sync the catalogue, then save.`);
       const chosen = picks.map((n) => data?.mfes.find((m) => m.name === n)).filter((m): m is Mfe => !!m);
       const { pick, unplaced } = frontendPick(shellRef, chosen, data?.libraries ?? [], data?.gears ?? []);
       if (!pick) throw new Error(`The shell \`${shellRef}\` is not a repository and directory.`);
@@ -212,6 +327,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
       await api.saveProjectProduct(token, projectId, { frontend: pick });
       setSaved(picks);
       setSavedShell(shellRef);
+      setInProduct(true);
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -235,7 +351,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
       <BuildSteps
         steps={steps}
         open={openStep}
-        onOpen={(id) => setOpenStep((o) => (o === id ? null : id))}
+        onOpen={setOpenStep}
         shells={data.shells}
         shell={shell}
         shellRef={shellRef}
@@ -264,10 +380,33 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
             {cover.unseen.length} gear{cover.unseen.length === 1 ? " has" : "s have"} no screen {showUnseen ? "▾" : "▸"}
           </button>
         )}
-        <button type="button" className="primary" disabled={!dirty || busy} onClick={save}>
-          {busy ? "Saving…" : dirty ? "Save" : "Saved"}
+        <button type="button" className="primary" disabled={!dirty || busy || unknown.length > 0} onClick={save}>
+          {busy ? "Saving…" : !inProduct ? "Save to the product" : dirty ? "Save" : "Saved"}
         </button>
       </div>
+      {unknown.length > 0 && (
+        <p className="muted" style={{ margin: 0, fontSize: 12 }} data-frontend-unknown-picks>
+          The catalogue does not list {unknown.join(", ")}, so {unknown.length === 1 ? "it is" : "they are"} not on the
+          page. Sync the catalogue to bring {unknown.length === 1 ? "it" : "them"} back, or{" "}
+          <button type="button" className="link" onClick={() => unknown.forEach(remove)}>
+            drop {unknown.length === 1 ? "it" : "them"}
+          </button>{" "}
+          before saving.
+        </p>
+      )}
+      <p className="muted" style={{ margin: 0, fontSize: 12 }} data-frontend-gdl-note>
+        {inProduct ? (
+          <>
+            Kept with the product. Its <code>product.gdl</code> says it as <code>frontend = frontx_product(...)</code> from
+            the next revision: step 2 above, Save to product.gdl, shows the block and saves it.
+          </>
+        ) : (
+          <>
+            Picked before the product kept its frontend, so <code>product.gdl</code> does not say it yet. Save to the
+            product, then step 2 above, Save to product.gdl, writes <code>frontend = frontx_product(...)</code>.
+          </>
+        )}
+      </p>
       {showUnseen && cover.unseen.length > 0 && (
         <div className="pm-box" data-unseen-list>
           {cover.unseen.map((g) => {
@@ -392,11 +531,11 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
               <div style={{ fontSize: 12.5 }}>
                 The templates are in{" "}
                 <a
-                  href={`https://github.com/${SUGGESTED_FRONTX_SOURCE.repo}/tree/${SUGGESTED_FRONTX_SOURCE.git_ref}/template-mfe/src-app/mfe_packages`}
+                  href={`https://github.com/${frontx.source.repo}/tree/${frontx.source.git_ref}/template-mfe/src-app/mfe_packages`}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  <code>{SUGGESTED_FRONTX_SOURCE.repo}</code>
+                  <code>{frontx.source.repo}</code>
                 </a>
                 : a blank one, a demo, two widgets.
               </div>
@@ -419,9 +558,14 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
                 {shell.version ? `@${shell.version}` : ""}
                 {shell.signsIn === false && <span className="fc-tag bad">no sign-in</span>}
                 {shell.signsIn === true && <span className="fc-tag ok">signs in</span>}
+                {shell.runtimeEnv === true && <span className="fc-tag ok">reads /env.js at start</span>}
+                {shell.runtimeEnv === false && <span className="fc-tag">addresses fixed at build</span>}
+                {(shell.signsIn !== null || shell.runtimeEnv !== null) && <SourceMark described={shell.described} />}
+                <DriftMark drift={shell.drift} />
               </span>
             )}
           </div>
+          {shell?.passport && <ShellPassportLine passport={shell.passport} />}
           <div className="fc-frame">
             <div className="fc-top">
               <span className="fc-dot" />
@@ -454,7 +598,9 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
                     mfe={shown.mfe}
                     placement={shown.placement}
                     missing={cover.missing.get(shown.mfe.name) ?? []}
+                    build={builds.get(shown.mfe.name) ?? null}
                     onOpen={() => setSelected(shown.mfe.name)}
+                    onEnlarge={setEnlarged}
                   />
                 ) : (
                   <div className="fc-empty big">Drag a micro-frontend here, or press Add.</div>
@@ -482,10 +628,13 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           gears={data.gears}
           missing={selectedMfe ? (cover.missing.get(selectedMfe.name) ?? []) : []}
           picked={selectedMfe ? picks.includes(selectedMfe.name) : false}
+          build={selectedMfe ? (builds.get(selectedMfe.name) ?? null) : null}
           onRemove={remove}
           onAdd={add}
+          onEnlarge={setEnlarged}
         />
       </div>
+      {enlarged && <ShotModal shot={enlarged.shot} build={enlarged.build} onClose={() => setEnlarged(null)} />}
     </div>
   );
 }
@@ -514,30 +663,61 @@ function ZoneItems({
   );
 }
 
+/** The page the selected screen fills: the picture a build took of it when
+ *  the catalogue keeps one for its version (scripts/mfe-screen-previews.mjs),
+ *  otherwise drawn as lines. The card selects its package; the picture opens
+ *  larger. */
 function PageCard({
   mfe,
   placement,
   missing,
+  build,
   onOpen,
+  onEnlarge,
 }: {
   mfe: Mfe;
   placement: Placement;
   missing: string[];
+  build: PreviewBuild | null;
   onOpen: () => void;
+  onEnlarge: (x: { shot: ScreenPreview; build: PreviewBuild }) => void;
 }) {
+  const shot = pictureOf(build, placement);
   return (
-    <button type="button" className="fc-pagecard" onClick={onOpen}>
+    <div className="fc-pagecard" onClick={onOpen} data-screen-shot={shot ? "built" : "none"}>
       <div className="fc-pagecard-h">
         <Glyph icon={placement.icon} label={placementLabel(placement)} />
         <b>{placementLabel(placement)}</b>
         {placement.route && <code>{placement.route}</code>}
+        {shot && build && (
+          <span className="fc-shot-tag" title={`Captured ${shot.captured_at}`}>
+            built at {shortCommit(build.commit)}
+          </span>
+        )}
       </div>
-      <div className="fc-skeleton" aria-hidden="true">
-        <i style={{ width: "60%" }} />
-        <i style={{ width: "90%" }} />
-        <i style={{ width: "75%" }} />
-        <i style={{ width: "40%" }} />
-      </div>
+      {shot && build ? (
+        <button
+          type="button"
+          className="fc-shot"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEnlarge({ shot, build });
+          }}
+          title="Open the picture larger"
+        >
+          <img src={shot.image} alt={`${placementLabel(placement)}, as a build drew it`} />
+        </button>
+      ) : (
+        <>
+          <div className="fc-skeleton" aria-hidden="true">
+            <i style={{ width: "60%" }} />
+            <i style={{ width: "90%" }} />
+            <i style={{ width: "75%" }} />
+            <i style={{ width: "40%" }} />
+          </div>
+          <span className="fc-noshot">No screenshot of this screen yet</span>
+        </>
+      )}
       <small>
         from <code>{mfe.name}</code>
       </small>
@@ -549,7 +729,61 @@ function PageCard({
           </span>
         ))}
       </span>
-    </button>
+    </div>
+  );
+}
+
+/** A passport that disagrees with its package.json or mfe.json: the
+ *  passport still counts, and the tag says which facts drifted. */
+function DriftMark({ drift }: { drift?: string[] }) {
+  if (!drift || drift.length === 0) return null;
+  return (
+    <span className="fc-tag warn" title={drift.join("\n")}>
+      frontx.gdl drifts from its manifests ({drift.length})
+    </span>
+  );
+}
+
+/** The shell's passport, compactly: where its screens call the backend, what
+ *  it reads at start, how it is built. */
+function ShellPassportLine({ passport: p }: { passport: ShellPassport }) {
+  const envKeys = Object.keys(p.env);
+  const parts: { k: string; v: string; title?: string }[] = [];
+  if (p.apiPrefix) parts.push({ k: "API", v: p.apiPrefix, title: "The path its screens call the backend under, proxied to the API Gateway" });
+  if (envKeys.length > 0)
+    parts.push({
+      k: "reads at start",
+      v: envKeys.join(", "),
+      title: Object.entries(p.env)
+        .map(([k, v]) => `${k} ← ${v}`)
+        .join("\n"),
+    });
+  if (p.buildEnv.length > 0) parts.push({ k: "needs at build", v: p.buildEnv.join(", ") });
+  if (p.build) parts.push({ k: "build", v: p.output ? `${p.build} → ${p.output}/` : p.build });
+  if (p.node) parts.push({ k: "node", v: p.node });
+  if (parts.length === 0) return null;
+  return (
+    <div className="fc-passport muted" aria-label="What the shell's frontx.gdl says">
+      {parts.map((x) => (
+        <span key={x.k} title={x.title}>
+          {x.k} <code>{x.v}</code>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Where a package's facts came from: its own `frontx.gdl`, or the scan's
+ *  reading of its files. */
+function SourceMark({ described }: { described?: boolean }) {
+  return described ? (
+    <span className="fc-tag ok" title="The package states this in its frontx.gdl">
+      declared in frontx.gdl
+    </span>
+  ) : (
+    <span className="fc-tag" title="The package has no frontx.gdl that reads; the scan inferred this from its files">
+      guessed from the source
+    </span>
   );
 }
 
@@ -559,16 +793,20 @@ function Inspector({
   gears,
   missing,
   picked,
+  build,
   onRemove,
   onAdd,
+  onEnlarge,
 }: {
   mfe: Mfe | undefined;
   shell: Shell | null;
   gears: string[];
   missing: string[];
   picked: boolean;
+  build: PreviewBuild | null;
   onRemove: (name: string) => void;
   onAdd: (name: string) => void;
+  onEnlarge: (x: { shot: ScreenPreview; build: PreviewBuild }) => void;
 }) {
   if (!mfe) {
     return (
@@ -587,22 +825,45 @@ function Inspector({
       <section>
         <div className="pm-h">Where it shows</div>
         {mfe.placements.length === 0 && <span className="muted">Its mfe.json declares no extension.</span>}
-        {mfe.placements.map((p) => (
-          <div key={p.id} style={{ fontSize: 12.5 }}>
-            <b>{placementLabel(p)}</b> · {p.domain}
-            {p.route && (
-              <>
-                {" "}
-                · <code>{p.route}</code>
-              </>
-            )}
-            {p.level && <span className="muted"> · {p.level} level</span>}
-          </div>
-        ))}
+        {mfe.placements.map((p) => {
+          const shot = pictureOf(build, p);
+          return (
+            <div key={p.id} className="fc-place">
+              {shot && build ? (
+                <button
+                  type="button"
+                  className="fc-thumb"
+                  onClick={() => onEnlarge({ shot, build })}
+                  title={`Open the picture of ${placementLabel(p)}`}
+                >
+                  <img src={shot.image} alt="" />
+                </button>
+              ) : (
+                <span className="fc-thumb none" title="No screenshot yet" />
+              )}
+              <span>
+                <b>{placementLabel(p)}</b> · {p.domain}
+                {p.route && (
+                  <>
+                    {" "}
+                    · <code>{p.route}</code>
+                  </>
+                )}
+                {p.level && <span className="muted"> · {p.level} level</span>}
+              </span>
+            </div>
+          );
+        })}
       </section>
       <section>
-        <div className="pm-h">Gears it calls</div>
-        {mfe.calls.length === 0 && <span className="muted">Its API services name no /cf/&lt;gear&gt;/v route.</span>}
+        <div className="pm-h">
+          Gears it calls <SourceMark described={mfe.described} />
+        </div>
+        {mfe.calls.length === 0 && (
+          <span className="muted">
+            {mfe.described ? "Its frontx.gdl requires no gear." : "Its API services name no /cf/<gear>/v route."}
+          </span>
+        )}
         {mfe.calls.map((c) => (
           <span
             key={c}
@@ -623,7 +884,28 @@ function Inspector({
           {gears.length} gears are in the product.
         </small>
       </section>
+      {mfe.roles && (
+        <section>
+          <div className="pm-h">
+            Roles its screens need <SourceMark described />
+          </div>
+          {mfe.roles.length === 0 ? (
+            <span className="muted">None: its frontx.gdl lists no role.</span>
+          ) : (
+            mfe.roles.map((r) => (
+              <code key={r} style={{ marginRight: 6 }}>
+                {r}
+              </code>
+            ))
+          )}
+        </section>
+      )}
       <FitSection mfe={mfe} shell={shell} />
+      {mfe.drift && mfe.drift.length > 0 && (
+        <p className="pm-why" style={{ margin: 0 }}>
+          <DriftMark drift={mfe.drift} /> {mfe.drift.join("; ")}
+        </p>
+      )}
       {mfe.version && <small className="muted">version {mfe.version}</small>}
       {picked ? (
         <button type="button" onClick={() => onRemove(mfe.name)}>
@@ -638,10 +920,12 @@ function Inspector({
   );
 }
 
-const STEP_MARK: Record<Step["state"], string> = { ok: "✓", warn: "!", bad: "✗", todo: "…", info: "i" };
+/** A constructor step as the StepFlow strip draws it. */
+const STEP_STATE: Record<Step["state"], StepState> = { ok: "done", warn: "warn", bad: "failed", todo: "todo", info: "current" };
 
 /** The steps a build of this frontend takes, in order, each marked with what
- *  the constructor found; one opens to say why. The first step is where the
+ *  the constructor found: folded to how many are ready ("5/8"), unfolded a
+ *  StepFlow strip where one opens to say why. The first step is where the
  *  shell is chosen. */
 function BuildSteps({
   steps,
@@ -654,87 +938,95 @@ function BuildSteps({
 }: {
   steps: Step[];
   open: Step["id"] | null;
-  onOpen: (id: Step["id"]) => void;
+  onOpen: (id: Step["id"] | null) => void;
   shells: Shell[];
   shell: Shell | null;
   shellRef: string;
   onShell: (ref: string) => void;
 }) {
-  const shown = steps.find((s) => s.id === open);
+  const [unfolded, setUnfolded] = useState(false);
   const refs = shells.map((s) => ({ shell: s, ref: shellRefOf(s) })).filter((x): x is { shell: Shell; ref: string } => !!x.ref);
+  const ready = steps.filter((s) => s.state === "ok").length;
+  const worst = steps.some((s) => s.state === "bad") ? "danger" : steps.some((s) => s.state === "warn") ? "warn" : ready === steps.length ? "ok" : "neutral";
+  const flow: FlowStep[] = steps.map((s) => ({
+    id: s.id,
+    title: s.title,
+    state: STEP_STATE[s.state],
+    status: s.detail,
+    body: (
+      <>
+        {s.id === "shell" && (
+          <label className="fc-shell-pick">
+            Assemble on{" "}
+            <select value={shellRef} onChange={(e) => onShell(e.target.value)} aria-label="The shell">
+              {!refs.some((r) => r.ref === shellRef) && <option value={shellRef}>{shellRef}</option>}
+              {refs.map(({ shell: s, ref }) => (
+                <option key={ref} value={ref}>
+                  {s.name}
+                  {s.version ? `@${s.version}` : ""} · {ref.replace(/^github:/, "")}
+                  {s.signsIn === true ? " · signs in" : s.signsIn === false ? " · no sign-in" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {s.id === "shell" && shell && (
+          <div className="fc-carries">
+            {Object.entries(shell.carries)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([pkg, v]) => (
+                <code key={pkg}>
+                  {pkg.replace("@gears-frontx/", "")} {v}
+                </code>
+              ))}
+          </div>
+        )}
+        {s.id === "build" && (
+          <ol className="fc-commands">
+            <li>
+              <code>npm ci</code>
+            </li>
+            <li>
+              <code>npm run build:packages</code> — the FrontX packages the shell carries
+            </li>
+            <li>
+              <code>npm run build:mfes</code> — each micro-frontend, a module-federation remote
+            </li>
+            <li>
+              <code>npm run generate:mfe-manifests</code> — what the shell reads to mount them
+            </li>
+            <li>
+              <code>vite build</code> — the static site
+            </li>
+          </ol>
+        )}
+      </>
+    ),
+  }));
   return (
-    <div className="pm-box fc-steps" aria-label="How this frontend gets built" data-build-steps>
-      <div className="pm-h">How this frontend gets built</div>
-      <ol>
-        {steps.map((s, i) => (
-          <li key={s.id}>
-            <button
-              type="button"
-              className={`fc-step ${s.state}${open === s.id ? " on" : ""}`}
-              aria-expanded={open === s.id}
-              onClick={() => onOpen(s.id)}
-              title={s.detail}
-              data-step={s.id}
-              data-state={s.state}
-            >
-              <span className="fc-step-mark" aria-hidden="true">
-                {STEP_MARK[s.state]}
-              </span>
-              <span className="fc-step-n">{i + 1}</span>
-              {s.title}
-            </button>
-          </li>
-        ))}
-      </ol>
-      {shown && (
-        <div className="fc-step-detail" data-step-detail={shown.id}>
-          <p style={{ margin: 0 }}>{shown.detail}</p>
-          {shown.id === "shell" && (
-            <label className="fc-shell-pick">
-              Assemble on{" "}
-              <select value={shellRef} onChange={(e) => onShell(e.target.value)} aria-label="The shell">
-                {!refs.some((r) => r.ref === shellRef) && <option value={shellRef}>{shellRef}</option>}
-                {refs.map(({ shell: s, ref }) => (
-                  <option key={ref} value={ref}>
-                    {s.name}
-                    {s.version ? `@${s.version}` : ""} · {ref.replace(/^github:/, "")}
-                    {s.signsIn === true ? " · signs in" : s.signsIn === false ? " · no sign-in" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {shown.id === "shell" && shell && (
-            <div className="fc-carries">
-              {Object.entries(shell.carries)
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([pkg, v]) => (
-                  <code key={pkg}>
-                    {pkg.replace("@gears-frontx/", "")} {v}
-                  </code>
-                ))}
-            </div>
-          )}
-          {shown.id === "build" && (
-            <ol className="fc-commands">
-              <li>
-                <code>npm ci</code>
-              </li>
-              <li>
-                <code>npm run build:packages</code> — the FrontX packages the shell carries
-              </li>
-              <li>
-                <code>npm run build:mfes</code> — each micro-frontend, a module-federation remote
-              </li>
-              <li>
-                <code>npm run generate:mfe-manifests</code> — what the shell reads to mount them
-              </li>
-              <li>
-                <code>vite build</code> — the static site
-              </li>
-            </ol>
-          )}
-        </div>
+    <div className="fc-build" aria-label="How this frontend gets built" data-build-steps data-unfolded={unfolded}>
+      <div className="row" style={{ gap: 8, alignItems: "center" }}>
+        <span className="pm-h" style={{ margin: 0 }}>
+          How it gets built
+        </span>
+        <StatusChip
+          tone={worst}
+          onClick={() => setUnfolded((u) => !u)}
+          expanded={unfolded}
+          title={unfolded ? "Fold the steps" : "Show the steps"}
+          data-build-steps-count
+        >
+          {ready}/{steps.length} ready {unfolded ? "▴" : "▾"}
+        </StatusChip>
+      </div>
+      {unfolded && (
+        <StepFlow
+          steps={flow}
+          look="strip"
+          label="How this frontend gets built"
+          open={open}
+          onOpen={(id) => onOpen(id as Step["id"] | null)}
+        />
       )}
     </div>
   );

@@ -35,9 +35,17 @@ pub use super::driver::{
 #[cfg(test)]
 pub use super::driver::{ConnectorCategory, DriverIdentity};
 pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
-pub use super::kubernetes::ClusterAccess;
+/// Whether a name is a gear repository's source id, as the engine takes it.
+pub use super::gear_repository::is_source_id;
+pub use super::kubernetes::{
+    BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterAccess, ClusterRight, NAMESPACE_RIGHTS, Readiness,
+    ReadinessReport, cluster_readiness,
+};
 pub use super::references::{Mention, NumberRef, Relation, find as find_references};
-pub use super::registry::{RegistryAccess, same_registry};
+pub use super::registry::{
+    CatalogVersion, Oci, RegistryAccess, RegistryCatalog, TokenScopes, catalog_for, same_registry,
+    token_scopes, too_broad,
+};
 pub use super::research::PROVIDER as RESEARCH_PROVIDER;
 /// The Research connector's calls to Research's public API (ADR-0049 §6).
 pub mod research {
@@ -46,6 +54,7 @@ pub mod research {
 pub use super::repository::{Repository, create_repository};
 pub use super::service::{
     ConnectorService, GearRepositorySource, check_owned, connection_by_id, holder_of_row,
+    own_connection,
 };
 
 /// Whose connection a tenant may use: an organization, and anything under

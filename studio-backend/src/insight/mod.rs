@@ -18,6 +18,7 @@
 //! question Insight's own dimensions cannot answer: delivery per *component*
 //! (a gear), which lives below the repository its metrics are keyed by.
 
+mod activity;
 mod client;
 mod components;
 mod config;
@@ -99,9 +100,16 @@ impl Gear for StudioInsightGear {
         // of this repository", with no SQL on the calling side. Registered
         // here for the same reason, and unscoped because there is one Insight.
         let delivery: Arc<dyn port::ComponentDelivery> =
-            Arc::new(delivery::InsightDelivery::new(published));
+            Arc::new(delivery::InsightDelivery::new(published.clone()));
         ctx.client_hub()
             .register::<dyn port::ComponentDelivery>(delivery);
+
+        // Repository-level figures for a dashboard: what moved in the
+        // repositories an organization's (or a project's) work lives in.
+        let activity: Arc<dyn port::RepositoryAnalytics> =
+            Arc::new(activity::InsightActivity::new(published));
+        ctx.client_hub()
+            .register::<dyn port::RepositoryAnalytics>(activity);
 
         self.client
             .set(client)

@@ -878,7 +878,7 @@ impl Overview {
 
     /// The organization as the caller reads it, or [`Refusal::NotFound`] when
     /// they do not reach it or it is not an organization.
-    async fn admit(
+    pub(super) async fn admit(
         &self,
         ctx: &SecurityContext,
         org: Uuid,

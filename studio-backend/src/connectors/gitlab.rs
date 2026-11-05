@@ -74,6 +74,7 @@ impl ConnectorDriver for GitLabDriver {
         }
         let user: GitLabUser = res.json().await?;
         Ok(DriverIdentity {
+            checks: Vec::new(),
             account: user.username,
             display_name: user.name,
         })

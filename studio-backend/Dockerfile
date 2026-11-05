@@ -48,11 +48,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # build. The archive is checked against the SHA-256 from the release's
 # SHA256SUMS; the binary is built for glibc 2.35 and runs on the runtime below.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS gearbox
-ARG STUDIO_GEARBOX_REPO=https://github.com/constructorfabric/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-cf63925
-ARG STUDIO_GEARBOX_VERSION=0.1.0-cf63925
-ARG STUDIO_GEARBOX_REF=cf639255c2e63002bfb76764f3e397a5c61877de
-ARG STUDIO_GEARBOX_SHA256=04c21dd6187abc70f401fb34b78717e7c46576b2d847ede6a17dc801df4dd92d
+# Until constructorfabric/gearbox#17 (GDL 1.5, `frontend = frontx_product(...)`)
+# merges, the engine is the snapshot of that PR's branch on its author's fork;
+# move back to a constructorfabric/gearbox release once it does.
+ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
+ARG STUDIO_GEARBOX_RELEASE=snapshot-c6bcfe5
+ARG STUDIO_GEARBOX_VERSION=0.1.0-c6bcfe5
+ARG STUDIO_GEARBOX_REF=c6bcfe58b40b00e94286cc4a3fa2734d5f8eaf3d
+ARG STUDIO_GEARBOX_SHA256=b886e945b83fd423ffca3dde6fa28796500063313ab842d7abae9342d0d5c0b7
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \
@@ -66,18 +69,43 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && rm -rf /tmp/gearbox.tar.gz "/tmp/${name}" \
  && gearbox --version
 
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
-
+# What both the server and the builder below run on.
 # git: the artifact-ingest gear shells out to it to clone repositories into
 # STUDIO_ARTIFACT_WORKDIR and walk their files — the same reason Dockerfile.src
 # installs it. Without it a sync in the cluster falls back to the connector's
 # tree API, so File nodes carry paths and sizes but no content, and everything
-# built on document text (the Specs tab) has nothing to read.
+# built on document text (the Specs tab) has nothing to read. A build's
+# `prepare` step clones with it too.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 1000 studio \
  && useradd --system --uid 1000 --gid 1000 --home /app studio
+
+# `--target builder`: the image a build Job's `prepare` and `publish` steps run
+# in (ADR-0048 §9, STUDIO_BUILDER_IMAGE). The same binary as the server, with
+# what those two steps call -- git, the Gearbox engine, helm -- and nothing the
+# server alone needs (its config, ONNX Runtime). It runs as uid 1000 from its
+# first instruction: the Job's pod is `runAsNonRoot` with every capability
+# dropped, so an image that starts as root and switches user (the stand's
+# Dockerfile.src, through gosu) fails there with "operation not permitted".
+# Checked by scripts/check-builder-image.sh.
+FROM base AS builder
+WORKDIR /app
+COPY .release/studio-backend /app/studio-backend
+COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
+COPY --from=gearbox /usr/local/share/gearbox/REVISION /usr/local/share/gearbox/REVISION
+COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
+ENV STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox \
+    STUDIO_GEARBOX_FRONTX=1
+RUN chmod +x /app/studio-backend && chown -R studio:studio /app
+USER 1000
+ENTRYPOINT ["/app/studio-backend"]
+CMD ["--help"]
+
+# The server: the default target, so it stays the last stage.
+FROM base AS server
 
 WORKDIR /app
 COPY .release/studio-backend /app/studio-backend
@@ -87,6 +115,9 @@ COPY --from=onnxruntime /opt/onnxruntime/lib/libonnxruntime.so* /opt/onnxruntime
 COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
 # Its commit, which `gearbox --version` does not say (studio-product reads it).
 COPY --from=gearbox /usr/local/share/gearbox/REVISION /usr/local/share/gearbox/REVISION
+# The engine above reads GDL 1.5, and pipelines install it from the same repository.
+ENV STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox \
+    STUDIO_GEARBOX_FRONTX=1
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 RUN chmod +x /app/studio-backend && chown -R studio:studio /app

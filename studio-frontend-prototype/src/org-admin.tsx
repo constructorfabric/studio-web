@@ -37,6 +37,7 @@ import {
   otherEmails,
   primaryEmail,
 } from "./people-profile";
+import { EmptyState, InfoPopover, PageHeader, StatusChip, type Tone } from "./ui-standard";
 
 const ROLES: { value: MembershipRole; label: string; hint: string }[] = [
   { value: "owner", label: "Owner", hint: "Administers the organization: people, access, integrations" },
@@ -60,7 +61,7 @@ const SOURCE_LABEL: Record<string, string> = {
   manual: "added",
 };
 
-const CONFIDENCE: Record<string, { label: string; badge: string; hint: string }> = {
+const CONFIDENCE: Record<string, { label: string; badge: Tone; hint: string }> = {
   confirmed: { label: "Confirmed", badge: "ok", hint: "Proved by the provider; activity on it counts as theirs" },
   claimed: { label: "Claimed", badge: "info", hint: "They say it is theirs; not proved yet, so nothing is attributed" },
   suggested: { label: "Suggested", badge: "neutral", hint: "Studio guessed it; nobody has confirmed it" },
@@ -193,7 +194,7 @@ function MemberIdentitiesPanel({
                     <code title={l.subject}>{l.subject}</code>
                   </td>
                   <td>
-                    <span className={`badge ${l.verified ? "ok" : "warn"}`}>{l.verified ? "Verified" : "Unverified"}</span>
+                    <StatusChip tone={l.verified ? "ok" : "warn"}>{l.verified ? "Verified" : "Unverified"}</StatusChip>
                   </td>
                   {directory.size > 0 && (
                     <td>
@@ -246,9 +247,9 @@ function MemberIdentitiesPanel({
                     <code>{a.external_id}</code>
                   </td>
                   <td>
-                    <span className={`badge ${c?.badge ?? "neutral"}`} title={c?.hint}>
+                    <StatusChip tone={c?.badge ?? "neutral"} title={c?.hint}>
                       {c?.label ?? a.confidence}
-                    </span>
+                    </StatusChip>
                   </td>
                   <td>{a.attributes ? "Yes" : <span className="sub">No</span>}</td>
                   <td className="sub">{when(a.added_at_epoch_ms)}</td>
@@ -339,9 +340,9 @@ export function OrganizationsTable({
                 <div className="pname plain">
                   {org.name}{" "}
                   {duplicates.has(org.name.trim().toLowerCase()) && (
-                    <span className="badge warn" title="Another organization has the same name">
+                    <StatusChip tone="warn" title="Another organization has the same name">
                       same name
-                    </span>
+                    </StatusChip>
                   )}
                 </div>
                 <div className="sub" style={{ fontFamily: "var(--font-mono)" }} title={org.id}>
@@ -371,7 +372,7 @@ export function OrganizationsTable({
                   ) : owners.length ? (
                     owners.map(memberName).join(", ")
                   ) : (
-                    <span className="badge warn">no owner</span>
+                    <StatusChip tone="warn">no owner</StatusChip>
                   )}
                 </span>
               );
@@ -500,7 +501,7 @@ export function OrgMembersView({
     setEmail("");
   };
 
-  if (!org) return <p className="empty">Pick an organization to see its members.</p>;
+  if (!org) return <EmptyState title="Pick an organization to see its members." />;
 
   const known = new Set((members ?? []).flatMap((m) => [m.email?.toLowerCase(), m.display_name?.toLowerCase()]).filter(Boolean));
   const addable = identities.filter(
@@ -517,16 +518,29 @@ export function OrgMembersView({
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>Members · {org.name}</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            Who belongs to this organization and in what role. Only an active owner administers it;
-            the last one cannot be demoted, suspended or removed.{" "}
-            <span className="sub" style={{ fontFamily: "var(--font-mono)" }} title={org.id}>{shortId(org.id)}</span>
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title={`Members · ${org.name}`}
+        info={
+          <>
+            Who belongs to this organization and in what role. Only an active owner administers it; the last one cannot
+            be demoted, suspended or removed.
+          </>
+        }
+        status={
+          <>
+            <span className="sub" style={{ fontFamily: "var(--font-mono)" }} title={org.id}>
+              {shortId(org.id)}
+            </span>
+            {members !== null && members.length > 0 && (
+              <StatusChip tone="neutral">
+                {members.length} {members.length === 1 ? "member" : "members"}
+              </StatusChip>
+            )}
+            {members !== null && members.length > 0 && activeOwners === 0 && <StatusChip tone="warn">no owner</StatusChip>}
+            {pending.length > 0 && <StatusChip tone="info">{pending.length} invited</StatusChip>}
+          </>
+        }
+      />
 
       {/* A failed read is the table's to show, with Retry; this is for a failed action on rows that are there. */}
       {error && (members?.length ?? 0) > 0 && <div className="error">{error}</div>}
@@ -630,9 +644,9 @@ export function OrgMembersView({
               id: "standing",
               header: "Standing",
               cell: (m) => (
-                <span className={`badge ${m.status === "suspended" ? "warn" : "ok"}`}>
+                <StatusChip tone={m.status === "suspended" ? "warn" : "ok"}>
                   {m.status === "suspended" ? "Suspended" : "Active"}
-                </span>
+                </StatusChip>
               ),
             },
             {
@@ -688,7 +702,13 @@ export function OrgMembersView({
 
       <div className="card">
         <div className="card-head">
-          <h2>Add people</h2>
+          <h2>
+            Add people{" "}
+            <InfoPopover label="About adding people">
+              {isPlatformAdmin && <p>Platform admin: Add puts someone with an identity in now, whether or not they have signed in yet.</p>}
+              <p>An invitation is seen when they sign in with that address; they accept it themselves.</p>
+            </InfoPopover>
+          </h2>
         </div>
         {isPlatformAdmin && (
           <form className="inline" onSubmit={(e) => void addIdentity(e)} style={{ marginBottom: 12 }}>
@@ -710,7 +730,6 @@ export function OrgMembersView({
             <button className="primary" disabled={!pick || busy !== null}>
               {busy === "add" ? "Adding…" : "Add"}
             </button>
-            <span className="hint">Platform admin: adds them now, whether or not they have signed in yet.</span>
           </form>
         )}
         {isPlatformAdmin && directoryError && (
@@ -734,7 +753,6 @@ export function OrgMembersView({
           <button className="primary" disabled={!email.trim() || busy !== null}>
             {busy === "invite" ? "Inviting…" : "Invite"}
           </button>
-          <span className="hint">They see it when they sign in with this address, and accept it themselves.</span>
         </form>
 
         {pending.length > 0 && (

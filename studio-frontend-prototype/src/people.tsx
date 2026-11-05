@@ -21,12 +21,13 @@
  * which is not membership.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { api, type Colleague } from "./api";
 import { DataTable, When } from "./data-table";
 import { errText, initials } from "./format";
 import { Modal } from "./modal";
+import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
 import {
   normalizeAccessConfig,
   type AccessConfig,
@@ -34,20 +35,35 @@ import {
   type RoleDef,
 } from "./access";
 import type { RootProject } from "./projects";
-import { holderName, orgPeople, projectGrantsOf, withColleagues, type Member, type PersonRow } from "./org-people";
+import { holderName, orgPeople, withColleagues, type Member, type PersonRow } from "./org-people";
 import { PersonPhoto, directoryLine } from "./people-profile";
+import { accessOf, gitHandles, lastSeenOf, onlineNow, personProjects, projectStack, type OrgProject } from "./people-activity";
+import { PeopleMatrix, PersonPanel, ProjectLegend, ProjectStackCell, openTeam, useOrgActivity } from "./people-org";
 
 const ROLE_LABEL: Record<string, string> = { owner: "Owner", admin: "Admin", member: "Member" };
 
 /** When somebody was last seen, as a date the list can sort and show. */
 const seen = (ms: number | undefined) => (ms == null ? null : new Date(ms).toISOString());
 
+/** How many project marks a row shows before "+N". */
+const STACK_MAX = 4;
+
+/** The org list's layout, remembered for the tab. */
+type Layout = "list" | "matrix";
+const LAYOUT_KEY = "people.layout";
+function storedLayout(): Layout {
+  try {
+    return sessionStorage.getItem(LAYOUT_KEY) === "matrix" ? "matrix" : "list";
+  } catch {
+    return "list";
+  }
+}
+
 export function PeopleView({
   token,
   org,
   roots,
   mode,
-  onOpenProject,
 }: {
   token: string;
   /** Organization these people belong to. */
@@ -64,12 +80,24 @@ export function PeopleView({
   const [people, setPeople] = useState<Member[] | null>(null);
   /** Photos, descriptions and last-seen, joined to the members by person id. */
   const [colleagues, setColleagues] = useState<Colleague[]>([]);
-  /** The person whose contact card is open. */
+  /** The person whose side panel is open. */
   const [contact, setContact] = useState<PersonRow | null>(null);
+  const [layout, setLayoutState] = useState<Layout>(storedLayout);
+  const setLayout = (l: Layout) => {
+    setLayoutState(l);
+    try {
+      sessionStorage.setItem(LAYOUT_KEY, l);
+    } catch {
+      /* the choice just is not remembered */
+    }
+  };
   const [cfg, setCfg] = useState<AccessConfig | null>(null);
   const [email, setEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
   const [addPick, setAddPick] = useState("");
   const [addRole, setAddRole] = useState("");
+  /** The Team's add dialog. */
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -110,8 +138,6 @@ export function PeopleView({
     void load();
   }, [load]);
 
-  const rootName = (id: string): string => roots.find((r) => r.id === id)?.name ?? id.slice(0, 8);
-  const roleName = (key: string): string => cfg?.roles.find((r) => r.key === key)?.name ?? key;
 
   /** Member grants that apply to a project: those scoped to it, plus org-wide. */
   function grantsForProject(projectId: string): GrantDef[] {
@@ -121,15 +147,6 @@ export function PeopleView({
         g.subjectType === "member" &&
         (g.scopeType === "org" || (g.scopeType === "project" && g.scopeId === projectId)),
     );
-  }
-
-  /** Projects a member holds a project role on. */
-  function projectsOf(m: Member): { id: string; name: string; role: string }[] {
-    return projectGrantsOf(m.id, cfg?.grants ?? []).map((g) => ({
-      id: g.scopeId,
-      name: g.scopeName || rootName(g.scopeId),
-      role: roleName(g.roleKey),
-    }));
   }
 
   /* ── Organization invite: a Studio invitation, accepted by the person ── */
@@ -143,6 +160,7 @@ export function PeopleView({
       await api.inviteToOrg(token, orgId, { email: email.trim(), role: "member" });
       setNotice(`Invited ${email.trim()}. They join when they sign in with that address and accept.`);
       setEmail("");
+      setInviting(false);
     } catch (err) {
       setError(errText(err));
     } finally {
@@ -182,6 +200,7 @@ export function PeopleView({
       scopeName: teamRoot.name,
     };
     setAddPick("");
+    setAdding(false);
     void saveConfig({ ...cfg, grants: [...cfg.grants, grant] });
   }
 
@@ -202,7 +221,29 @@ export function PeopleView({
 
   const all = people ?? [];
   const personName = (g: GrantDef) => holderName(g, all);
-  const rows = orgId ? withColleagues(all, colleagues, orgId) : all;
+  const rows = useMemo(
+    () => (orgId ? withColleagues(people ?? [], colleagues, orgId) : (people ?? [])),
+    [people, colleagues, orgId],
+  );
+  /* Where each person works: only the org page reads it. */
+  const activity = useOrgActivity(
+    token,
+    mode === "org" ? orgId : null,
+    roots,
+    mode === "org" && people !== null ? rows : null,
+  );
+  const model = cfg?.model ?? "tenant";
+  const orgProjects: OrgProject[] = activity.projects ?? [];
+  const projectRowsOf = (p: PersonRow) =>
+    personProjects(orgProjects, accessOf(p.id, p.role, cfg, orgProjects), activity.index.get(p.id));
+  const online = onlineNow(activity.dir, activity.presence);
+  const lastSeen = (p: PersonRow) => lastSeenOf(p.id, p.lastSeenMs, activity.dir, activity.presence, activity.desktops);
+  /** Last seen is a column only when some source has it for somebody. */
+  const anySeen = rows.some((p) => lastSeen(p) !== undefined);
+  const openProject = (project: OrgProject) => {
+    setContact(null);
+    openTeam(project, orgId);
+  };
   /** How the organization describes a person: title, department, company, manager. */
   const describe = (p: PersonRow) =>
     directoryLine(p.directory, (id) => all.find((m) => m.id === id)?.name);
@@ -211,22 +252,88 @@ export function PeopleView({
   if (mode === "org") {
     return (
       <>
-        <div className="topbar">
-          <div>
-            <h1>People</h1>
-            <p className="subtitle" style={{ margin: 0 }}>
-              Everyone in {org?.name ?? "your organization"}. Invite a person to add them to the
-              organization; put them on specific projects from a project's Team tab.
-            </p>
-          </div>
-        </div>
+        <PageHeader
+          title="People"
+          status={
+            people === null ? undefined : (
+              <>
+                <StatusChip tone="neutral">
+                  {rows.length} {rows.length === 1 ? "person" : "people"}
+                </StatusChip>
+                {activity.projects && (
+                  <StatusChip tone="neutral">
+                    {activity.projects.length} {activity.projects.length === 1 ? "project" : "projects"}
+                  </StatusChip>
+                )}
+                {cfg && (
+                  <StatusChip tone="info" title={model === "roles" ? "Grants say who can access which project" : "Everyone can access every project"}>
+                    {model === "roles" ? "role-based access" : "tenant access"}
+                  </StatusChip>
+                )}
+                {activity.loading && people.length > 0 && <StatusChip tone="running">reading activity</StatusChip>}
+                {!activity.loading && activity.missing.length > 0 && (
+                  <StatusChip tone="warn" title={`Could not read: ${activity.missing.join(", ")}`}>
+                    some sources unread
+                  </StatusChip>
+                )}
+                {org && <span>in {org.name}</span>}
+              </>
+            )
+          }
+          info={
+            <>
+              <p>
+                Everyone in {org?.name ?? "your organization"}, and where they work: the projects each person can access,
+                with their role, and the ones they were seen active in. The matrix shows the same for everyone at once.
+              </p>
+              <p>
+                Invite a person to add them to the organization; put them on specific projects from a project&apos;s
+                Team tab.
+              </p>
+            </>
+          }
+          actions={
+            <button type="button" className="primary" disabled={!org} onClick={() => setInviting(true)} data-invite-open>
+              Invite
+            </button>
+          }
+        />
 
         {error && <div className="error">{error}</div>}
         {notice && <div className="hint">{notice}</div>}
 
+        <div className="pp-bar">
+          <div className="pp-toggle" role="group" aria-label="Layout">
+            <button type="button" className={layout === "list" ? "on" : ""} aria-pressed={layout === "list"} onClick={() => setLayout("list")} data-people-layout="list">
+              List
+            </button>
+            <button type="button" className={layout === "matrix" ? "on" : ""} aria-pressed={layout === "matrix"} onClick={() => setLayout("matrix")} data-people-layout="matrix">
+              Matrix
+            </button>
+          </div>
+          <ProjectLegend model={model} />
+        </div>
+
         <div className="card">
           {!org && people !== null ? (
             <p className="empty">No organization in context.</p>
+          ) : layout === "matrix" ? (
+            people === null || activity.projects === null ? (
+              <p className="hint">Loading…</p>
+            ) : (
+              <PeopleMatrix
+                token={token}
+                people={rows}
+                projects={orgProjects}
+                model={model}
+                rowsOf={(id) => {
+                  const p = rows.find((r) => r.id === id);
+                  return p ? projectRowsOf(p) : [];
+                }}
+                onCell={(project) => openTeam(project, orgId)}
+                onPerson={(p) => setContact(p)}
+              />
+            )
           ) : (
             <DataTable<PersonRow>
               list="people"
@@ -238,7 +345,14 @@ export function PeopleView({
               onOpen={(p) => setContact(p)}
               search={{ placeholder: "Search people" }}
               searchText={(p) => [p.name, p.email, describe(p)]}
-              empty={{ title: "Nobody here yet.", body: "Invite the first person below." }}
+              empty={{
+                title: "Nobody here yet.",
+                action: (
+                  <button type="button" className="primary" disabled={!org} onClick={() => setInviting(true)}>
+                    Invite
+                  </button>
+                ),
+              }}
               columns={[
                 {
                   id: "name",
@@ -256,75 +370,87 @@ export function PeopleView({
                 },
                 {
                   id: "role",
-                  header: "Role",
+                  header: "Membership",
                   cell: (p) => <span className="sub">{ROLE_LABEL[p.role] ?? p.role}</span>,
                 },
                 {
                   id: "projects",
-                  header: "On projects",
-                  cell: (p) => {
-                    const on = projectsOf(p);
-                    return (
-                      <div className="chips">
-                        {on.map((o) => (
-                          <button
-                            key={o.id}
-                            type="button"
-                            className="chip on"
-                            title={`${o.role} · open`}
-                            onClick={() => onOpenProject(o.id)}
-                          >
-                            {o.name} · {o.role}
-                          </button>
-                        ))}
-                        {on.length === 0 && (
-                          <span className="sub">
-                            {cfg?.model === "roles" ? "not on a project" : "every project"}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  },
+                  header: model === "roles" ? "Projects · can access / active in" : "Projects · active in",
+                  cell: (p) => (
+                    <ProjectStackCell
+                      token={token}
+                      stack={projectStack(projectRowsOf(p), model, STACK_MAX)}
+                      model={model}
+                      projectCount={orgProjects.length}
+                      hasHandle={gitHandles(activity.identities.get(p.id)?.aliases ?? []).length > 0}
+                      loading={activity.loading}
+                      onOpen={(r) => openProject(r.project)}
+                      onMore={() => setContact(p)}
+                    />
+                  ),
                 },
-                {
-                  id: "seen",
-                  header: "Last seen",
-                  compare: (a, b) => (b.lastSeenMs ?? 0) - (a.lastSeenMs ?? 0),
-                  cell: (p) => <When iso={seen(p.lastSeenMs)} className="sub" />,
-                },
+                ...(anySeen
+                  ? [
+                      {
+                        id: "seen",
+                        header: "Last seen",
+                        compare: (a: PersonRow, b: PersonRow) => (lastSeen(b) ?? 0) - (lastSeen(a) ?? 0),
+                        cell: (p: PersonRow) =>
+                          online.has(p.id) ? (
+                            <StatusChip tone="ok">online now</StatusChip>
+                          ) : (
+                            <When iso={seen(lastSeen(p))} className="sub" />
+                          ),
+                      },
+                    ]
+                  : []),
               ]}
             />
           )}
           {contact && (
-            <ContactCard
+            <PersonPanel
+              token={token}
               person={contact}
               describe={describe(contact)}
-              projects={projectsOf(contact)}
-              everyProject={cfg?.model !== "roles"}
-              onOpenProject={(id) => {
-                setContact(null);
-                onOpenProject(id);
-              }}
+              membershipLabel={ROLE_LABEL[contact.role] ?? contact.role}
+              model={model}
+              rows={projectRowsOf(contact)}
+              activity={activity}
+              lastSeenMs={lastSeen(contact)}
+              online={online.has(contact.id)}
+              onOpenProject={openProject}
               onClose={() => setContact(null)}
             />
           )}
 
-          <form className="inline" onSubmit={invite} style={{ marginTop: 14 }}>
-            <input
-              type="email"
-              placeholder="address to invite"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <button className="primary" disabled={busy || !email.trim() || !org}>
-              {busy ? "Inviting…" : "Invite to organization"}
-            </button>
-          </form>
-          <p className="hint">
-            The person sees the invitation when they sign in with this address, and becomes a
-            member of {org?.name ?? "the organization"} when they accept it. Put them on projects
-            from each project's Team tab.
-          </p>
+          {inviting && (
+          <Modal label="Invite to the organization" onClose={() => setInviting(false)}>
+            <form onSubmit={(e) => void invite(e)} style={{ display: "flex", flexDirection: "column", gap: 10 }} data-invite-dialog>
+              <h2 style={{ margin: 0 }}>Invite to {org?.name ?? "the organization"}</h2>
+              <input
+                autoFocus
+                type="email"
+                aria-label="Address to invite"
+                placeholder="name@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <p className="hint" style={{ margin: 0 }}>
+                They see the invitation when they sign in with this address, and become a member when they accept it.
+                Put them on projects from each project&apos;s Team tab.
+              </p>
+              {error && <div className="error">{error}</div>}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button type="button" className="ghost" onClick={() => setInviting(false)}>
+                  Cancel
+                </button>
+                <button className="primary" disabled={busy || !email.trim() || !org}>
+                  {busy ? "Inviting…" : "Invite"}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        )}
         </div>
       </>
     );
@@ -338,15 +464,53 @@ export function PeopleView({
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>Team</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            People working on {teamRoot?.name ?? "this project"} — a subset of{" "}
-            {org?.name ?? "the organization"}.
-          </p>
-        </div>
-      </div>
+      {/* One header: who is on the team, in a chip; adding someone is its
+          action, in a dialog, rather than a form and a paragraph open under
+          the table on every visit. */}
+      <PageHeader
+        title="Team"
+        info={
+          <>
+            <p>
+              Choose who works here: the people working on {teamRoot?.name ?? "this project"}, a subset of{" "}
+              {org?.name ?? "the organization"}, each with a role on this project.
+            </p>
+            <p>
+              Adding someone writes a role grant to {org?.name ?? "the organization"}&apos;s access config -- the same
+              store the Studio PDP enforces. New people are invited on the organization&apos;s People page first.
+            </p>
+          </>
+        }
+        status={
+          people !== null &&
+          cfg !== null &&
+          teamRoot &&
+          (roleBased ? (
+            <StatusChip tone={teamGrants.length > 0 ? "neutral" : "warn"} data-team-count>
+              {teamGrants.length} {teamGrants.length === 1 ? "person" : "people"}
+            </StatusChip>
+          ) : (
+            <StatusChip tone="info" title="Switch to role-based access in Admin → Access to grant roles here">
+              tenant access
+            </StatusChip>
+          ))
+        }
+        actions={
+          roleBased &&
+          teamRoot && (
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || candidates.length === 0}
+              title={candidates.length === 0 ? "Everyone in the organization is on the team" : undefined}
+              onClick={() => setAdding(true)}
+              data-team-add-open
+            >
+              Add to team
+            </button>
+          )
+        }
+      />
 
       {error && <div className="error">{error}</div>}
 
@@ -356,11 +520,10 @@ export function PeopleView({
         <p className="empty">No project in context.</p>
       ) : !roleBased ? (
         <div className="card">
-          <p className="hint" style={{ margin: 0 }}>
-            <b>{org?.name ?? "This organization"} uses tenant access.</b> Everyone in the
-            organization can work in this project, so there's no per-project team to manage. Switch
-            to <b>Role-based access</b> in Admin → Access to grant roles to specific people here.
-          </p>
+          <EmptyState
+            title={`${org?.name ?? "This organization"} uses tenant access: there is no per-project team to manage.`}
+            body="Switch to Role-based access in Admin → Access to grant roles to specific people here."
+          />
         </div>
       ) : (
         <div className="card">
@@ -369,7 +532,14 @@ export function PeopleView({
             rows={teamGrants}
             rowKey={(g) => g.id}
             rowLabel={(g) => personName(g)}
-            empty={{ title: "Nobody on the team yet.", body: "Add someone from the organization below, so they can review specs and open the IDE." }}
+            empty={{
+              title: "Nobody on the team yet.",
+              action: (
+                <button type="button" className="primary" disabled={candidates.length === 0} onClick={() => setAdding(true)}>
+                  Add to team
+                </button>
+              ),
+            }}
             columns={[
               {
                 id: "name",
@@ -436,113 +606,47 @@ export function PeopleView({
             }
           />
 
-          <div className="inline" style={{ marginTop: 14, gap: 8 }}>
-            <select value={addPick} onChange={(e) => setAddPick(e.target.value)}>
-              <option value="">
-                {candidates.length ? "Add from organization…" : "Everyone is already on the team"}
-              </option>
+        </div>
+      )}
+
+      {adding && cfg && teamRoot && (
+        <Modal label="Add to the team" onClose={() => setAdding(false)}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              addToTeam();
+            }}
+            style={{ display: "flex", flexDirection: "column", gap: 10 }}
+            data-team-add-dialog
+          >
+            <h2 style={{ margin: 0 }}>Add to {teamRoot.name}</h2>
+            <select aria-label="Person" value={addPick} onChange={(e) => setAddPick(e.target.value)} autoFocus>
+              <option value="">Someone from {org?.name ?? "the organization"}…</option>
               {candidates.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
             </select>
-            <select value={addRole} onChange={(e) => setAddRole(e.target.value)}>
-              <option value="">Role…</option>
+            <select aria-label="Role" value={addRole} onChange={(e) => setAddRole(e.target.value)}>
+              <option value="">Role: {cfg.roles.find((r) => r.key === "editor")?.name ?? cfg.roles[0]?.name ?? "default"}</option>
               {cfg.roles.map((r) => (
                 <option key={r.key} value={r.key}>
                   {r.name}
                 </option>
               ))}
             </select>
-            <button className="primary" disabled={busy || !addPick} onClick={addToTeam}>
-              Add to team
-            </button>
-          </div>
-          <p className="hint">
-            Adding someone writes a role grant to {org?.name ?? "the organization"}'s access config —
-            the same store the Studio PDP enforces. Invite new people on the People page first.
-          </p>
-        </div>
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="ghost" onClick={() => setAdding(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="primary" disabled={busy || !addPick}>
+                Add to team
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </>
-  );
-}
-
-/** One person's contact card: who they are, how to reach them, where they
- *  work here, and when they were last seen. */
-function ContactCard({
-  person,
-  describe,
-  projects,
-  everyProject,
-  onOpenProject,
-  onClose,
-}: {
-  person: PersonRow;
-  describe: string;
-  projects: { id: string; name: string; role: string }[];
-  /** Tenant access: everyone works on every project. */
-  everyProject: boolean;
-  onOpenProject: (id: string) => void;
-  onClose: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const copy = (text: string) => {
-    navigator.clipboard
-      ?.writeText(text)
-      .then(() => setCopied(true))
-      .catch(() => setCopied(false));
-  };
-  return (
-    <Modal label={`Contact: ${person.name}`} onClose={onClose}>
-      <div className="contact-card">
-        <div className="contact-head">
-          <PersonPhoto name={person.name} url={person.avatarUrl} size="large" />
-          <div className="grow">
-            <h2 style={{ margin: 0 }}>{person.name}</h2>
-            <div className="sub">
-              {[ROLE_LABEL[person.role] ?? person.role, describe].filter(Boolean).join(" · ")}
-            </div>
-          </div>
-          <button type="button" className="ghost" onClick={onClose} aria-label="Close">
-            ×
-          </button>
-        </div>
-        <dl className="contact-facts">
-          <dt>Email</dt>
-          <dd>
-            {person.email ? (
-              <>
-                <a href={`mailto:${person.email}`}>{person.email}</a>{" "}
-                <button type="button" className="ghost" onClick={() => copy(person.email!)}>
-                  {copied ? "Copied" : "Copy"}
-                </button>
-              </>
-            ) : (
-              <span className="sub">Only administrators see addresses.</span>
-            )}
-          </dd>
-          <dt>Projects</dt>
-          <dd>
-            {projects.length > 0 ? (
-              <div className="chips">
-                {projects.map((o) => (
-                  <button key={o.id} type="button" className="chip on" onClick={() => onOpenProject(o.id)}>
-                    {o.name} · {o.role}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <span className="sub">{everyProject ? "every project" : "not on a project"}</span>
-            )}
-          </dd>
-          <dt>Last seen</dt>
-          <dd>
-            <When iso={seen(person.lastSeenMs)} />
-          </dd>
-        </dl>
-      </div>
-    </Modal>
   );
 }

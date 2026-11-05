@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checksSummary, orderComponents, type ProjectComponent, type PullRequestCheck } from "./project-checks";
+import { checksChip, checksSummary, orderComponents, type ProjectComponent, type PullRequestCheck } from "./project-checks";
 
 const check = (state: PullRequestCheck["state"], published = true): PullRequestCheck => ({
   repo: "a/b",
@@ -19,6 +19,20 @@ describe("pull request checks", () => {
     );
     expect(checksSummary({ items: [], total: 0, pulls: 3, reached: true })).toMatch(/None of the 3/);
     expect(checksSummary({ items: [], total: 0, pulls: 0, reached: false })).toMatch(/No repository/);
+  });
+});
+
+describe("the pull request checks chip", () => {
+  it("says how many pass or fail, in a tone", () => {
+    expect(checksChip({ items: [check("success"), check("success")], total: 2, pulls: 2, reached: true })).toEqual({
+      text: "PR checks: 2 pass",
+      tone: "ok",
+    });
+    expect(checksChip({ items: [check("success"), check("failure")], total: 2, pulls: 2, reached: true })).toEqual({
+      text: "PR checks: 1 of 2 fail",
+      tone: "danger",
+    });
+    expect(checksChip({ items: [], total: 0, pulls: 0, reached: false }).tone).toBe("neutral");
   });
 });
 

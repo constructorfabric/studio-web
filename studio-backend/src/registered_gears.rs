@@ -11,10 +11,10 @@
 use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;
-use gear_orchestrator as _;
 use grpc_hub as _;
 use nodes_registry as _;
 use resource_group as _;
+use service_discovery as _;
 use tenant_resolver as _;
 use types_registry as _;
 // Usage metering (issue #781): the platform's collector and the storage plugin

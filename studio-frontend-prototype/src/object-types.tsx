@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import type { CatalogType, TypeCount } from "./api";
 import { errText } from "./format";
+import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
 
 /* ============================================================================
  * Objects — every type the graph holds, and which of them are components.
@@ -182,24 +183,36 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
     <div className="objt">
       <style>{OBJT_CSS}</style>
 
-      <div className="objt-head">
-        <h1>Objects</h1>
-        <span className="objt-asof">graph-storage ontology</span>
-      </div>
-
-      <p className="objt-sub">
-        Every type the graph stores for this organization. Tick one and it becomes a{" "}
-        <strong>component</strong>: the Components page lists its nodes, against the field schema
-        the type has, or the gear schema if it has none of its own. Untick it and it leaves. The
-        nodes are untouched either way — a mark is an opinion about a type, not a change to what
-        is stored under it.
-      </p>
-      <p className="objt-sub objt-note">
-        <strong>Objects</strong> counts the nodes of each type in this organization's graph.
-        graph-storage has no count in its contract, so the number is taken by paging and stops at
-        2 000 — past that it reads <code>2 000+</code>, which is also the point where the
-        Components page stops rendering.
-      </p>
+      <PageHeader
+        title="Objects"
+        status={
+          types !== null && (
+            <>
+              <span>
+                {counts.all} type{counts.all === 1 ? "" : "s"} in the graph-storage ontology
+              </span>
+              <StatusChip tone={counts.components > 0 ? "ok" : "neutral"}>
+                {counts.components} component{counts.components === 1 ? "" : "s"}
+              </StatusChip>
+            </>
+          )
+        }
+        info={
+          <>
+            <p>
+              Every type the graph stores for this organization. Tick one and it becomes a <strong>component</strong>:
+              the Components page lists its nodes, against the field schema the type has, or the gear schema if it has
+              none of its own. Untick it and it leaves. The nodes are untouched either way: a mark is an opinion about a
+              type, not a change to what is stored under it.
+            </p>
+            <p>
+              <strong>Objects</strong> counts the nodes of each type in this organization&apos;s graph. graph-storage
+              has no count in its contract, so the number is taken by paging and stops at 2 000; past that it reads{" "}
+              <code>2 000+</code>, which is also where the Components page stops rendering.
+            </p>
+          </>
+        }
+      />
 
       <div className="objt-lenses">
         {(Object.keys(LENS_LABEL) as Lens[]).map((l) => (
@@ -212,13 +225,13 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
       {err && <p className="objt-err">{err}</p>}
 
       {types === null ? (
-        <p className="objt-empty">Reading the ontology…</p>
+        <div className="empty">Reading the ontology…</div>
       ) : visible.length === 0 ? (
-        <p className="objt-empty">
-          {counts.all === 0
-            ? "The graph has no node types yet — run a sync, or ingest an artifact."
-            : "No type matches the current filter."}
-        </p>
+        counts.all === 0 ? (
+          <EmptyState title="The graph has no node types yet." body="Run a sync, or ingest an artifact." />
+        ) : (
+          <EmptyState title="No type matches the current filter." />
+        )
       ) : (
         <table className="objt-table">
           <thead>
@@ -253,11 +266,11 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
                 </td>
                 <td>
                   <span className="objt-name">{nameOf(t)}</span>
-                  {t.is_abstract && <span className="objt-pill objt-abstract">family</span>}
+                  {t.is_abstract && <StatusChip tone="neutral" className="objt-pill">family</StatusChip>}
                   {!t.type_id && (
-                    <span className="objt-pill" title="Marked, but the graph holds no node of it yet">
+                    <StatusChip tone="warn" className="objt-pill" title="Marked, but the graph holds no node of it yet">
                       no nodes yet
-                    </span>
+                    </StatusChip>
                   )}
                 </td>
                 <td className="objt-num">
@@ -265,13 +278,13 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
                 </td>
                 <td className="objt-dim">{familyOf(t.leaf_id)}</td>
                 <td>
-                  <span className={`objt-pill objt-schema-${t.schema}`}>
+                  <StatusChip tone={t.schema === "tenant" ? "info" : "neutral"} className="objt-pill" data-schema={t.schema}>
                     {t.schema === "tenant"
                       ? "yours"
                       : t.schema === "builtin"
                         ? "built-in"
                         : "gear schema"}
-                  </span>
+                  </StatusChip>
                 </td>
                 <td className="objt-id">{t.leaf_id}</td>
               </tr>
@@ -307,12 +320,6 @@ function ObjectCount({ count, known }: { count: TypeCount | undefined; known: bo
 
 const OBJT_CSS = `
 .objt { padding: 22px 26px 40px; }
-.objt-head { display: flex; align-items: baseline; gap: 12px; }
-.objt-head h1 { font-size: 22px; margin: 0; }
-.objt-asof { color: var(--studio-muted); font-size: 12px; }
-.objt-sub { color: var(--studio-muted); font-size: 13px; max-width: 74ch; line-height: 1.55; }
-.objt-note { font-size: 12px; opacity: .85; }
-.objt-note code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
 .objt-lenses { display: flex; gap: 6px; margin: 14px 0 10px; flex-wrap: wrap; }
 .objt-lenses button {
   background: transparent; border: 1px solid var(--studio-line); color: inherit;
@@ -321,7 +328,6 @@ const OBJT_CSS = `
 .objt-lenses button[aria-pressed="true"] { border-color: var(--studio-accent); color: var(--studio-accent); }
 .objt-count { opacity: .6; margin-left: 4px; }
 .objt-err { color: var(--studio-danger); font-size: 13px; }
-.objt-empty { color: var(--studio-muted); font-size: 13px; padding: 18px 0; }
 .objt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .objt-table th {
   text-align: left; font-weight: 500; color: var(--studio-muted); font-size: 11px;
@@ -337,11 +343,5 @@ const OBJT_CSS = `
 .objt-name { font-weight: 500; }
 .objt-dim { color: var(--studio-muted); }
 .objt-id { color: var(--studio-muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
-.objt-pill {
-  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: var(--radius-full);
-  border: 1px solid var(--studio-line); color: var(--studio-muted); font-size: 11px;
-}
-.objt-schema-tenant { border-color: var(--studio-accent); color: var(--studio-accent); }
-.objt-schema-none { opacity: .65; }
-.objt-abstract { opacity: .8; }
+.objt-pill { margin-left: 8px; }
 `;

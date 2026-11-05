@@ -95,10 +95,21 @@ describe("specQueues", () => {
   });
 });
 
+describe("the repositories step", () => {
+  it("says how many a sync has read, when that is known", () => {
+    const status = (synced: number | null) => projectPath({ ...finished, synced })[0].status;
+    expect(status(2)).toBe("2 repositories attached, all synced.");
+    expect(status(1)).toBe("2 repositories attached, 1 synced.");
+    expect(status(null)).toBe("2 repositories attached.");
+  });
+});
+
 describe("TAB_HOWTO", () => {
   it("has a line for the tabs a new member needs", () => {
-    for (const tab of ["overview", "sources", "specs", "components", "kits", "people"] as const) {
-      expect(TAB_HOWTO[tab]?.lead, tab).toBeTruthy();
+    // The tabs on the UI standard say it behind their header's "?", not in a banner.
+    expect(TAB_HOWTO.kits?.lead).toBeTruthy();
+    for (const tab of ["overview", "sources", "artifacts", "people"] as const) {
+      expect(TAB_HOWTO[tab], tab).toBeUndefined();
     }
   });
 });

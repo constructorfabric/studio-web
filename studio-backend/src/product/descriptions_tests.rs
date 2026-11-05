@@ -127,6 +127,34 @@ async fn the_same_text_again_is_no_new_revision() {
     ));
 }
 
+/// A save sent again after its answer was lost (the gateway gave up on it)
+/// is the revision the first attempt made, not a conflict with it and not a
+/// second revision; a different text against the same old base still is a
+/// conflict.
+#[tokio::test]
+async fn a_save_repeated_is_the_revision_it_made() {
+    let store = store().await;
+    let (tenant, project) = (Uuid::new_v4(), Uuid::new_v4());
+    store.save(tenant, project, &save(None, "a")).await.unwrap();
+    assert!(matches!(
+        store.save(tenant, project, &save(Some(1), "b")).await.unwrap(),
+        Saved::Created(r) if r.revision == 2
+    ));
+    assert!(matches!(
+        store.save(tenant, project, &save(Some(1), "b")).await.unwrap(),
+        Saved::Unchanged(r) if r.revision == 2
+    ));
+    assert!(matches!(
+        store.save(tenant, project, &save(Some(1), "c")).await.unwrap(),
+        Saved::Stale(r) if r.revision == 2 && r.text == "b"
+    ));
+    assert_eq!(
+        store.list(tenant, project, 10).await.unwrap().len(),
+        2,
+        "the repeat made no revision"
+    );
+}
+
 #[tokio::test]
 async fn another_tenant_sees_none_of_it() {
     let store = store().await;

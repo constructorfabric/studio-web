@@ -42,13 +42,12 @@ case "$gate" in
     fmt)    cmd='cargo fmt --check' ;;
     clippy) cmd='cargo clippy --locked --all-targets -- -D warnings' ;;
     build)  cmd='cargo build --locked' ;;
-    # The compose stack builds the backend twice more, with feature sets no
-    # other gate compiles: `theia-bridge` for the server, `--no-default-features`
-    # for the bootstrap seeder. A change can pass every gate above and still
+    # The compose stack builds the backend with a feature set no other gate
+    # compiles: `theia-bridge`. A change can pass every gate above and still
     # fail `docker compose up`.
-    features) cmd='cargo check --locked --features theia-bridge && cargo check --locked --no-default-features' ;;
+    features) cmd='cargo check --locked --features theia-bridge' ;;
     test)   cmd='cargo test --locked' ;;
-    all)    cmd='cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo build --locked && cargo check --locked --features theia-bridge && cargo check --locked --no-default-features && cargo test --locked' ;;
+    all)    cmd='cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo build --locked && cargo check --locked --features theia-bridge && cargo test --locked' ;;
     *)
         echo "usage: $(basename "$0") [fmt|clippy|build|features|test|all] [extra cargo args]" >&2
         exit 2

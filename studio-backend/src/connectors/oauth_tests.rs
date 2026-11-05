@@ -85,6 +85,31 @@ fn a_sign_in_comes_back_to_the_portal_it_started_from_if_that_is_configured() {
     );
 }
 
+#[tokio::test]
+async fn an_identity_provider_that_cannot_be_reached_is_named_as_the_network() {
+    // Port 1 on loopback: refused at once, as a connection with no route is
+    // after the connect timeout.
+    let unreachable = OAuthClient {
+        token_url: "http://127.0.0.1:1/idp/connect/token".into(),
+        ..client()
+    };
+    let e = unreachable
+        .exchange_code(
+            &reqwest::Client::new(),
+            "c",
+            "v",
+            "https://studio.example.com/cb",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("cannot be reached from this Studio deployment"),
+        "{e}"
+    );
+    assert!(e.contains("127.0.0.1"), "{e}");
+}
+
 #[test]
 fn neither_the_secret_nor_a_token_is_printed() {
     let printed = format!("{:?}", client());

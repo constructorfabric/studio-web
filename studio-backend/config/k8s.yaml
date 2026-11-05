@@ -155,6 +155,12 @@ gears:
 
   api-gateway:
     config:
+      # Request timeout: 30 s, fixed in cf-gears-api-gateway 0.5.2 (a tower
+      # TimeoutLayer; "Request exceeded 30s timeout"). It is not configurable
+      # there, and this block denies unknown keys, so a `request_timeout` here
+      # would stop the boot. Studio works inside it: a product save answers
+      # within 20 s and its engine check carries on in the background
+      # (product/rest.rs SAVE_ANSWERS_WITHIN, ADR-0053, amendment 2026-11-04).
       # Throttling zones the mini-chat create-chat route names (its ThrottlingSpec);
       # api-gateway refuses to start when a route references an undefined zone.
       # Values follow gears-rust config/mini-chat.yaml. `ip` keys everyone behind
@@ -189,7 +195,7 @@ gears:
         version: "0.1.0"
         description: "Studio backend assembly — account-management demo"
 
-  gear-orchestrator:
+  service-discovery:
     config: {}
 
   grpc-hub:
@@ -539,6 +545,10 @@ gears:
       # Stable Ed25519 seed; Helm loads it from the environment-specific
       # file-storage signing Secret. The value is base64url without padding.
       signing_key_seed: "${STUDIO_FS_SIGNING_SEED}"
+      # The token the sidecar sends on its finalize callbacks (its
+      # FS_SIDECAR_INTERNAL_TOKEN, the same Secret key); file-storage >= 0.4
+      # refuses to start without it.
+      finalize_internal_secret: "${STUDIO_FS_FINALIZE_SECRET}"
       # JSON is valid YAML. Helm supplies one S3 entry in Kubernetes; an empty
       # list preserves local-fs for non-S3/manual deployments.
       sidecar_base_url: "${STUDIO_FS_SIDECAR_BASE_URL:-http://127.0.0.1:8087}"
@@ -546,9 +556,21 @@ gears:
       s3_backends: ${STUDIO_FS_S3_BACKENDS:-[]}
 
   # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
+  # A database keeps upstreams and routes across restarts and moves the
+  # registry reconcile (which needs the root tenant) out of post_init into
+  # a background task in `start` (oagw >= 0.6, ADR-0018), so a fresh
+  # database no longer stops the boot before account-management seeds it.
   oagw:
+    database:
+      server: "pg_main"
+      dbname: "studio_oagw"
     config:
       proxy_timeout_secs: 120
+      # The deployment's generation (Helm .Release.Revision): a pod of an
+      # older release does not revert what a newer one reconciled. Unset
+      # (null) turns the guard off, with a startup warning.
+      registry_provisioning:
+        generation: ${STUDIO_OAGW_GENERATION:-null}
 
   credstore:
     database:
@@ -697,6 +719,19 @@ gears:
         acquire_timeout: "10s"
         idle_timeout: "5m"
         max_lifetime: "30m"
+
+  # ── studio-environments (slugs, namespace assignments, image records, ADR-0062) ──
+  # A few rows per build and deploy. One connection: each one here is one
+  # more per replica on pg_main's budget.
+  studio-environments:
+    database:
+      server: "pg_main"
+      dbname: "studio_environments"
+      pool:
+        max_conns: 1
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
 
   # ── usage-collector (the platform's metering store, issue #781) ──
   # What model calls and IDE sessions use is recorded here by studio-llm-proxy

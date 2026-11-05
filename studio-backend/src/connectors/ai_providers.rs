@@ -48,6 +48,7 @@ fn identity_from_models(list: Vec<ModelInfo>, provider: &str) -> DriverIdentity 
         .next()
         .map(|m| m.display_name.unwrap_or(m.id));
     DriverIdentity {
+        checks: Vec::new(),
         account: format!("{provider} key accepted"),
         display_name: match first {
             Some(name) => Some(format!("{n} models · e.g. {name}")),

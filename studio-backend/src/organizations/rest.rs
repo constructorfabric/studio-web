@@ -170,22 +170,28 @@ fn logo_dto(logo: super::logo::Logo) -> OrganizationLogoDto {
     }
 }
 
-/// Which organization's logo: `?organization_id=` (convention C2: a scope is
-/// a query parameter, never a path segment).
+/// Whose logo: `?organization_id=` for an organization, `?tenant_id=` for
+/// any tenant — a workspace or a project, whose picture is its icon
+/// (convention C2: a scope is a query parameter, never a path segment). The
+/// same row on each, not inherited: a project without one is not shown its
+/// organization's.
 #[derive(Debug, serde::Deserialize)]
 pub struct LogoQuery {
     #[serde(default)]
     pub organization_id: Option<String>,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 fn org_id(query: &LogoQuery) -> ApiResult<Uuid> {
     query
-        .organization_id
+        .tenant_id
         .as_deref()
-        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .or(query.organization_id.as_deref())
+        .and_then(|raw| Uuid::parse_str(raw.trim()).ok())
         .ok_or_else(|| {
             OrganizationError::invalid_argument()
-                .with_constraint("organization_id must be the organization's uuid")
+                .with_constraint("tenant_id (or organization_id) must be the tenant's uuid")
                 .create()
         })
 }
@@ -199,7 +205,7 @@ async fn get_organization_logo(
     let org = org_id(&query)?;
     match service.logo(&ctx, org).await {
         Ok(Some(logo)) => Ok(Json(logo_dto(logo))),
-        Ok(None) => Err(OrganizationError::not_found("the organization has no logo")
+        Ok(None) => Err(OrganizationError::not_found("no logo is set there")
             .with_resource(org.to_string())
             .create()),
         Err(error) => Err(CanonicalError::internal(format!("{error:#}")).create()),
@@ -718,6 +724,13 @@ pub struct RollupDto {
     pub last_subject: Option<String>,
     /// When, RFC 3339.
     pub last_at: Option<String>,
+    /// The icon somebody chose for the workspace or project: a glyph and a
+    /// colour, both names the portal defines. Null when none was chosen, and
+    /// the portal draws the one the project's kind implies. An uploaded image
+    /// is not here (`GET /studio-organizations/v1/logo?tenant_id=`): a list
+    /// should not carry pictures.
+    pub icon_glyph: Option<String>,
+    pub icon_color: Option<String>,
 }
 
 /// A page of rollups.
@@ -763,6 +776,8 @@ fn rollup_dto(r: super::rollups::Rollup) -> RollupDto {
         last_event: last.map(|e| e.event.clone()),
         last_subject: last.map(|e| e.subject.clone()),
         last_at: last.and_then(|e| e.recorded.clone()),
+        icon_glyph: r.icon.as_ref().map(|(glyph, _)| glyph.clone()),
+        icon_color: r.icon.map(|(_, color)| color),
         id: r.id.to_string(),
         name: r.name,
         kind: r.kind.as_str().to_string(),
@@ -1056,6 +1071,66 @@ async fn get_organization_overview(
     Ok(Json(answer))
 }
 
+/// `?range=` and the narrower scope, if any.
+#[derive(Debug, serde::Deserialize)]
+pub struct MetricsQuery {
+    #[serde(default)]
+    pub range: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
+async fn get_organization_metrics(
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
+    Extension(metrics): Extension<Option<Arc<super::metrics::Metrics>>>,
+    axum::extract::Query(query): axum::extract::Query<MetricsQuery>,
+) -> ApiResult<JsonBody<super::metrics::OrgMetricsDto>> {
+    use super::metrics::{Range, Scope};
+    let metrics = metrics.ok_or_else(|| {
+        CanonicalError::service_unavailable()
+            .with_detail("account-management is not available, so nothing can be measured")
+            .create()
+    })?;
+    let range = Range::parse(query.range.as_deref()).ok_or_else(|| {
+        OrganizationError::invalid_argument()
+            .with_constraint("range must be 7d, 30d or 90d")
+            .create()
+    })?;
+    let uuid = |raw: &str, field: &str| {
+        Uuid::parse_str(raw.trim()).map_err(|_| {
+            OrganizationError::invalid_argument()
+                .with_constraint(format!("{field} must be a uuid"))
+                .create()
+        })
+    };
+    let scope = match (query.project_id.as_deref(), query.workspace_id.as_deref()) {
+        (Some(p), _) if !p.trim().is_empty() => Scope::Project(uuid(p, "project_id")?),
+        (_, Some(w)) if !w.trim().is_empty() => Scope::Workspace(uuid(w, "workspace_id")?),
+        _ => Scope::Organization,
+    };
+    let org = ctx.subject_tenant_id();
+    let now = time::OffsetDateTime::now_utc();
+    let answer = metrics
+        .answer(&ctx, org, scope, range, now)
+        .await
+        .map_err(|_| {
+            OrganizationError::not_found(format!(
+                "there is no {} {} in organization {org} for this caller",
+                scope.kind(),
+                match scope {
+                    Scope::Organization => org,
+                    Scope::Workspace(id) | Scope::Project(id) => id,
+                }
+            ))
+            .with_resource(org.to_string())
+            .create()
+        })?;
+    Ok(Json(answer))
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -1063,6 +1138,7 @@ pub fn register_routes(
     creation: CreationPolicy,
     sources: Option<Arc<super::rollups::Sources>>,
     overview: Option<Arc<super::overview::Overview>>,
+    metrics: Option<Arc<super::metrics::Metrics>>,
     access: Option<crate::org_scope::OrgAccess>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-organizations/v1/capabilities")
@@ -1094,12 +1170,19 @@ pub fn register_routes(
         .description(
             "The picture the portal shows beside the organization's name, so one organization \
              is told from another at a glance. Read as the caller: anyone who reaches the \
-             organization sees it. 404 when it has none.",
+             organization sees it. With `tenant_id`, a workspace's or a project's icon, read \
+             the same way. 404 when it has none.",
         )
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<License>([])
-        .query_param_typed("organization_id", true, "The organization", "string")
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .query_param_typed(
+            "tenant_id",
+            false,
+            "Any tenant instead: an organization, a workspace or a project",
+            "string",
+        )
         .handler(get_organization_logo)
         .json_response_with_schema::<OrganizationLogoDto>(openapi, StatusCode::OK, "The logo")
         .error_400(openapi)
@@ -1113,14 +1196,22 @@ pub fn register_routes(
         .summary("Set an organization's logo")
         .description(
             "Keeps a PNG, JPEG, WebP or GIF of at most 256 KiB as the organization's logo, \
-             replacing the one before. Whoever administers the organization's access may \
-             (`access.manage`), and a platform administrator; anybody else is refused. An image \
+             replacing the one before; with `tenant_id`, a workspace's or a project's icon. \
+             Whoever administers access at that tenant may (`access.manage`, as the access \
+             config resolved there grants it), and a platform administrator; anybody else is \
+             refused. An image \
              whose bytes are not the type it declares is refused.",
         )
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<License>([])
-        .query_param_typed("organization_id", true, "The organization", "string")
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .query_param_typed(
+            "tenant_id",
+            false,
+            "Any tenant instead: an organization, a workspace or a project",
+            "string",
+        )
         .json_request::<UpsertOrganizationLogoRequest>(openapi, "The logo, base64-encoded")
         .handler(upsert_organization_logo)
         .json_response_with_schema::<OrganizationLogoDto>(openapi, StatusCode::OK, "The logo kept")
@@ -1141,7 +1232,13 @@ pub fn register_routes(
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<License>([])
-        .query_param_typed("organization_id", true, "The organization", "string")
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .query_param_typed(
+            "tenant_id",
+            false,
+            "Any tenant instead: an organization, a workspace or a project",
+            "string",
+        )
         .handler(delete_organization_logo)
         .no_content_response(StatusCode::NO_CONTENT, "Removed")
         .error_400(openapi)
@@ -1415,8 +1512,41 @@ Labels are deliberately              absent: what a privilege is called belongs 
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/studio-organizations/v1/metrics")
+        .operation_id("studio_organizations.get_organization_metrics")
+        .summary("An organization's delivery, quality, money and people, over a range")
+        .description(
+            "The leaders' metrics board for an organization -- or, with `workspace_id` or              `project_id`, for one workspace or project in it -- over `range` (`7d`, `30d`              or `90d`, default `30d`) against the same number of days before it, bucketed              by day (7d) or Monday week.
+
+             Studio's part is the spend (null unless the caller holds `cost.view`; people's              own keys never count), per bucket and per workspace. Insight's part is git, CI              and task figures for the repositories the scope's projects are made of, built              and aggregated on the server; `insight.state` says when there is none and why              (`unconfigured`, `unreachable`, `failed`, `absent`, `no_repositories`), and              the Studio part answers regardless. 404 when the organization is not the              caller's, or the workspace or project is not in it.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .query_param("range", false, "7d, 30d (default) or 90d")
+        .query_param("workspace_id", false, "Narrow the board to this workspace")
+        .query_param("project_id", false, "Narrow the board to this project")
+        .handler(get_organization_metrics)
+        .json_response_with_schema::<super::metrics::OrgMetricsDto>(
+            openapi,
+            StatusCode::OK,
+            "The metrics board",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     let router = router
         .layer(Extension(service))
+        .layer(Extension(metrics))
         .layer(Extension(creation))
         .layer(Extension(sources))
         .layer(Extension(overview));

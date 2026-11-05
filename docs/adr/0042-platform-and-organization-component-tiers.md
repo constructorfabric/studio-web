@@ -10,6 +10,8 @@ date: 2026-10-09
 
 Status: **proposed** · Date: 2026-10-09 · Refines `cpt-studio-adr-component-registry` (what `published` means) · Extends `cpt-studio-component-components-catalog`
 
+Amended by ADR-0061 (2026-11-04): an organization sees every platform source, cannot hide one, and may pin each to a tag or commit (its platform release).
+
 ## Table of Contents
 
 <!-- toc -->

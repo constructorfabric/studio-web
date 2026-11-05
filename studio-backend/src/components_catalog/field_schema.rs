@@ -43,7 +43,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::gts::{FRONTX_TYPE, GEAR_PROFILE_TYPE, GEAR_TYPE, KIT_TYPE, ROADMAP_ITEM_TYPE};
+use super::gts::{
+    FRONTX_TYPE, GEAR_PROFILE_TYPE, GEAR_TYPE, KIT_TYPE, ROADMAP_ITEM_TYPE, SERVICE_TYPE,
+};
 /// A document type is a component, but studio-documents owns it and keeps its
 /// identity: the catalogue lists it, it does not annex it (see ADR-0014).
 use crate::documents::sdk::DOCUMENT_TYPE;
@@ -306,6 +308,54 @@ pub fn builtin_schemas() -> Vec<TypeFieldSchema> {
         ],
     );
 
+    // An own service is an image and how it runs, read from its service.gdl;
+    // like a kit it keeps them on the node.
+    let service = schema_from(
+        SERVICE_TYPE,
+        &gear,
+        vec![
+            group("summary", "Summary", "S", {
+                let mut f = pick(&index, &["description"]);
+                f.push(own("version", "Version", "label", "service.gdl"));
+                f.push(own("image", "Image", "text", "service.gdl"));
+                f
+            }),
+            group(
+                "runtime",
+                "Runtime",
+                "O",
+                vec![
+                    own("ports", "Ports", "text", "service.gdl"),
+                    own("health", "Health route", "label", "service.gdl"),
+                    own("env", "Environment", "text", "service.gdl"),
+                    // `own` or `infra` (ADR-0064): an infra service is
+                    // deployed with the product, its facts under `infra`.
+                    own("service_kind", "Service kind", "label", "service.gdl"),
+                    own("infra", "Infra service", "text", "service.gdl"),
+                ],
+            ),
+            group(
+                "contracts",
+                "Contracts and dependencies",
+                "C",
+                vec![
+                    own("requires", "Requires", "text", "service.gdl"),
+                    own("provides", "Provides", "text", "service.gdl"),
+                ],
+            ),
+            group(
+                "source",
+                "Source",
+                "C",
+                vec![
+                    own("repository", "Repository", "text", "catalogue source"),
+                    own("git_ref", "Git ref", "label", "catalogue source"),
+                    own("dockerfile", "Dockerfile", "text", "service.gdl"),
+                ],
+            ),
+        ],
+    );
+
     // A document type is a template, a checklist and a questionnaire. It has
     // no repository and no version, and saying so by omission is the point.
     let document = schema_from(
@@ -354,7 +404,7 @@ pub fn builtin_schemas() -> Vec<TypeFieldSchema> {
         ],
     );
 
-    vec![gear, frontx, kit, document, planned]
+    vec![gear, frontx, kit, service, document, planned]
 }
 
 /// The built-ins with this tenant's own records laid over them.
@@ -488,7 +538,7 @@ mod tests {
     fn a_gear_profile_may_not_be_a_component_and_the_component_types_may() {
         assert!(!may_be_component(GEAR_PROFILE_TYPE));
         assert!(!may_be_component(&format!(" {GEAR_PROFILE_TYPE} ")));
-        for t in [GEAR_TYPE, KIT_TYPE, FRONTX_TYPE] {
+        for t in [GEAR_TYPE, KIT_TYPE, FRONTX_TYPE, SERVICE_TYPE] {
             assert!(may_be_component(t), "{t}");
         }
     }
@@ -509,7 +559,13 @@ mod tests {
     #[test]
     fn there_is_a_schema_for_every_named_component_type() {
         let described: Vec<String> = builtin_schemas().into_iter().map(|s| s.describes).collect();
-        for expected in [GEAR_TYPE, FRONTX_TYPE, KIT_TYPE, DOCUMENT_TYPE] {
+        for expected in [
+            GEAR_TYPE,
+            FRONTX_TYPE,
+            KIT_TYPE,
+            SERVICE_TYPE,
+            DOCUMENT_TYPE,
+        ] {
             assert!(
                 described.iter().any(|d| d == expected),
                 "no field schema describes {expected}"
@@ -527,6 +583,7 @@ mod tests {
             .collect();
         assert_eq!(by_type[FRONTX_TYPE].fields().count(), 11);
         assert_eq!(by_type[KIT_TYPE].fields().count(), 5);
+        assert_eq!(by_type[SERVICE_TYPE].fields().count(), 13);
         assert_eq!(by_type[DOCUMENT_TYPE].fields().count(), 3);
     }
 

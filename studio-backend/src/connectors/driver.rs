@@ -96,6 +96,21 @@ impl ConnectorCategory {
 pub struct DriverIdentity {
     pub account: String,
     pub display_name: Option<String>,
+    /// What else the test looked at, beside the credential working: a
+    /// cluster's rights the bootstrap manifest gives (ADR-0043). Reported,
+    /// never a failed test. Empty for most providers.
+    pub checks: Vec<DriverCheck>,
+}
+
+/// One thing a connection test looked at, and what it found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverCheck {
+    /// What was asked, in a sentence's words: `create namespaces`.
+    pub name: String,
+    /// Whether it holds.
+    pub ok: bool,
+    /// Why it does not, or what to do; empty when it holds.
+    pub detail: String,
 }
 
 /// The credential one call is made with ([`ConnectorDriver::access_token`]).
@@ -570,7 +585,8 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     /// Human label for the provider picker.
     fn display_name(&self) -> &'static str;
 
-    /// Default installation root, offered as a placeholder in the UI.
+    /// Default installation root, offered as a placeholder in the UI. Empty
+    /// when there is none: a connection then has to name its address.
     fn default_base_url(&self) -> &'static str;
 
     /// What a configured address for this provider may point at.

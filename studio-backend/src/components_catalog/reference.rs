@@ -861,6 +861,7 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
             npm_bin: yes_no(&values, "npm_bin"),
             npm_mfe: yes_no(&values, "npm_mfe"),
             npm_private: yes_no(&values, "npm_private"),
+            frontx_kind: brief(&values, "frontx_kind"),
         });
 
         // ── category ─────────────────────────────────────────────────────

@@ -27,9 +27,9 @@
 #   # back to building from source
 #   scripts/dev-up.sh
 #
-# On an EMPTY database, run scripts/dev-up.sh once first, whichever mode you
-# then use: the root tenant is seeded by backend-bootstrap, which has no
-# published image and is not overridden here (see the bottom of this file).
+# An EMPTY database needs nothing extra: backend-bootstrap (the published
+# backend image, `bootstrap --apply`) creates and migrates the gear databases,
+# and the backend seeds the root tenant itself.
 #
 # Every service here also carries `pull_policy: always`, because the default
 # tag is a MOVING one: `edge` from three days ago is still called `edge` on
@@ -93,8 +93,11 @@ services:
     image: ghcr.io/constructorfabric/studio-web/cf-studio-theia:${STUDIO_IMAGE_TAG:-edge}
     pull_policy: always
 
-  # backend-bootstrap is deliberately NOT overridden. It is a --no-default-features
-  # build whose whole purpose is to have no LLM chain, so it seeds the root tenant
-  # on an empty database (see scripts/dev-up.sh); the pipeline publishes no such
-  # image. On a fresh volume it still builds from this checkout — which is fine,
-  # since you have the checkout, and it runs once.
+  # The database bootstrap is the backend image running `bootstrap --apply`
+  # (the Helm database-bootstrap hook runs the same), straight from the binary:
+  # it needs neither the Docker socket nor the volume fixes entrypoint.sh makes.
+  backend-bootstrap:
+    image: ghcr.io/constructorfabric/studio-web/studio-backend:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
+    entrypoint: ["/app/studio-backend"]
+    command: ["--config", "/app/config/docker.yaml", "bootstrap", "--apply"]

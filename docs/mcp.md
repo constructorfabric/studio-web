@@ -199,6 +199,40 @@ Things to ask:
 | the agent's sign-in page says the client is unknown | the agent was not given `--client-id studio-mcp`, or the realm has no such client; see *Sign in* |
 | the agent says the authorization server's metadata is not JSON | something in front answers `/.well-known/…` with a page; the portal's nginx returns 404 there |
 
+## 5. Next to Constructor Research's MCP
+
+Constructor Research has an MCP of its own,
+[constructor-research-mcp](https://github.com/NRGGIT/constructor-research-mcp):
+a local server that uploads a folder to a Research desk, builds its images
+and runs them as an application. Both servers can sit in the same agent:
+
+```sh
+claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@latest
+```
+
+It needs Node.js 22 or later. On first use the agent calls its `sign_in` tool,
+which opens a browser window at Research's sign-in; that session belongs to
+the agent, apart from Studio's.
+
+Which one deploys:
+
+| | Studio | Research's MCP |
+| --- | --- | --- |
+| What | a product of a Studio project, through its environments | any folder with Dockerfiles |
+| Where | the organization's clusters or Research, one release ladder (ADR-0056) | a Research desk and project the person names |
+| Sign-in to Research | each member's own, made in Studio's *Connections* (ADR-0049) | the agent's own browser session |
+| Studio knows of it | yes: environments, releases, logs | no |
+
+So a product goes to Research through Studio. Research's MCP is for
+something Studio does not hold, or for a quick run from a laptop when
+Studio's deployment cannot reach Research.
+
+Studio's Research path builds and deploys the way Research's MCP found
+Research to behave on live runs: names of Dockerfiles, a pause after the
+upload, a build error counted when seen twice, a running service changed
+stopped, a minute of readiness and restart watching after the start. The
+list is in ADR-0049 §6.
+
 ## Setting it up on a deployment
 
 | Setting (`gears.studio-mcp.config`) | Variable | Default |

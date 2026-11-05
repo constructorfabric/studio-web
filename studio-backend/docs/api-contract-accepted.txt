@@ -222,6 +222,16 @@ request	POST /studio-components-catalog/v1/platform/publication-requests/{}/deci
 request	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions	replaced_by	String	optional
 request	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions	target	String	optional
 request	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions	version	String	optional
+request	POST /studio-components-catalog/v1/publications	artifact	{}	optional
+request	POST /studio-components-catalog/v1/publications	artifact.kind	String	optional
+request	POST /studio-components-catalog/v1/publications	artifact.reference	String	optional
+request	POST /studio-components-catalog/v1/publications	commit	String	optional
+request	POST /studio-components-catalog/v1/publications	git_ref	String	optional
+request	POST /studio-components-catalog/v1/publications	name	String	required
+request	POST /studio-components-catalog/v1/publications	reason	String	optional
+request	POST /studio-components-catalog/v1/publications	type_id	String	optional
+request	POST /studio-components-catalog/v1/publications/{}/decisions	action	String	required
+request	POST /studio-components-catalog/v1/publications/{}/decisions	reason	String	optional
 request	POST /studio-components-catalog/v1/registry/gear-repository/create	connection_id	Uuid	required
 request	POST /studio-components-catalog/v1/registry/gear-repository/create	is_org	bool	optional
 request	POST /studio-components-catalog/v1/registry/gear-repository/create	name	String	required
@@ -258,6 +268,15 @@ request	POST /studio-components-catalog/v1/registry/{}/declare	category	String	o
 request	POST /studio-components-catalog/v1/registry/{}/declare	description	String	optional
 request	POST /studio-components-catalog/v1/registry/{}/declare	dry_run	bool	optional
 request	POST /studio-components-catalog/v1/registry/{}/declare	project_id	Uuid	optional
+request	POST /studio-components-catalog/v1/screen-previews	commit	String	required
+request	POST /studio-components-catalog/v1/screen-previews	component	String	required
+request	POST /studio-components-catalog/v1/screen-previews	height	u32	optional
+request	POST /studio-components-catalog/v1/screen-previews	image	String	required
+request	POST /studio-components-catalog/v1/screen-previews	label	String	optional
+request	POST /studio-components-catalog/v1/screen-previews	order	u32	optional
+request	POST /studio-components-catalog/v1/screen-previews	route	String	required
+request	POST /studio-components-catalog/v1/screen-previews	version	String	optional
+request	POST /studio-components-catalog/v1/screen-previews	width	u32	optional
 request	POST /studio-components-catalog/v1/sync	crates_io	String	optional
 request	POST /studio-components-catalog/v1/sync	repositories	Vec<{}>	optional
 request	POST /studio-components-catalog/v1/sync	repositories.connection_id	Uuid	optional
@@ -565,6 +584,10 @@ request	POST /studio-environments/v1/builds	environment_id	Uuid	required
 request	POST /studio-environments/v1/builds	product_file	String	optional
 request	POST /studio-environments/v1/builds	profile	String	optional
 request	POST /studio-environments/v1/builds	ref	String	optional
+request	POST /studio-environments/v1/builds/plan	environment_id	Uuid	required
+request	POST /studio-environments/v1/builds/plan	product_file	String	optional
+request	POST /studio-environments/v1/builds/plan	profile	String	optional
+request	POST /studio-environments/v1/builds/plan	ref	String	optional
 request	POST /studio-environments/v1/deployments	action	String	optional
 request	POST /studio-environments/v1/deployments	build	String	optional
 request	POST /studio-environments/v1/deployments	chart	String	optional
@@ -584,13 +607,24 @@ request	POST /studio-environments/v1/deployments	profile	String	required
 request	POST /studio-environments/v1/deployments	redeploy_of	Uuid	optional
 request	POST /studio-environments/v1/deployments/{}/decisions	action	String	required
 request	POST /studio-environments/v1/deployments/{}/decisions	reason	String	optional
+request	POST /studio-environments/v1/environments	allow_broad_registry_token	bool	optional
+request	POST /studio-environments/v1/environments	build_namespace	String	optional
+request	POST /studio-environments/v1/environments	builder_image	String	optional
+request	POST /studio-environments/v1/environments	builder_registry_connection_id	Uuid	optional
 request	POST /studio-environments/v1/environments	connection_id	Uuid	required
 request	POST /studio-environments/v1/environments	database	String	optional
 request	POST /studio-environments/v1/environments	database_image	String	optional
 request	POST /studio-environments/v1/environments	description	String	optional
+request	POST /studio-environments/v1/environments	infra	{}	optional
+request	POST /studio-environments/v1/environments	infra.placement	String	optional
+request	POST /studio-environments/v1/environments	infra.shared	Vec<{}>	optional
+request	POST /studio-environments/v1/environments	infra.shared.namespace	String	optional
+request	POST /studio-environments/v1/environments	infra.shared.provides	BTreeMap<String,String>	optional
+request	POST /studio-environments/v1/environments	infra.shared.service	String	optional
 request	POST /studio-environments/v1/environments	kind	String	optional
 request	POST /studio-environments/v1/environments	name	String	required
 request	POST /studio-environments/v1/environments	namespace_pattern	String	optional
+request	POST /studio-environments/v1/environments	namespaces	Vec<String>	optional
 request	POST /studio-environments/v1/environments	previews	{}	optional
 request	POST /studio-environments/v1/environments	previews.domain	String	optional
 request	POST /studio-environments/v1/environments	previews.ingress_class	String	optional
@@ -601,16 +635,34 @@ request	POST /studio-environments/v1/environments	promote_from	Uuid	optional
 request	POST /studio-environments/v1/environments	protected	bool	optional
 request	POST /studio-environments/v1/environments	registry	String	optional
 request	POST /studio-environments/v1/environments	registry_connection_id	Uuid	optional
+request	POST /studio-environments/v1/environments	registry_pull_connection_id	Uuid	optional
 request	POST /studio-environments/v1/environments	research_hardware	String	optional
 request	POST /studio-environments/v1/environments	research_project	String	optional
+request	POST /studio-environments/v1/environments	strictness	String	optional
 request	POST /studio-environments/v1/environments/{}/push-tokens	repositories	Vec<String>	required
+request	POST /studio-environments/v1/images/imports	environment_id	Uuid	required
+request	POST /studio-environments/v1/images/imports	kind	String	optional
+request	POST /studio-environments/v1/images/imports	name	String	optional
+request	POST /studio-environments/v1/images/imports	source	String	required
+request	POST /studio-environments/v1/images/{}/promotions	environment_id	Uuid	required
+request	POST /studio-environments/v1/project-environments	allow_broad_registry_token	bool	optional
+request	POST /studio-environments/v1/project-environments	build_namespace	String	optional
+request	POST /studio-environments/v1/project-environments	builder_image	String	optional
+request	POST /studio-environments/v1/project-environments	builder_registry_connection_id	Uuid	optional
 request	POST /studio-environments/v1/project-environments	connection_id	Uuid	required
 request	POST /studio-environments/v1/project-environments	database	String	optional
 request	POST /studio-environments/v1/project-environments	database_image	String	optional
 request	POST /studio-environments/v1/project-environments	description	String	optional
+request	POST /studio-environments/v1/project-environments	infra	{}	optional
+request	POST /studio-environments/v1/project-environments	infra.placement	String	optional
+request	POST /studio-environments/v1/project-environments	infra.shared	Vec<{}>	optional
+request	POST /studio-environments/v1/project-environments	infra.shared.namespace	String	optional
+request	POST /studio-environments/v1/project-environments	infra.shared.provides	BTreeMap<String,String>	optional
+request	POST /studio-environments/v1/project-environments	infra.shared.service	String	optional
 request	POST /studio-environments/v1/project-environments	kind	String	optional
 request	POST /studio-environments/v1/project-environments	name	String	required
 request	POST /studio-environments/v1/project-environments	namespace_pattern	String	optional
+request	POST /studio-environments/v1/project-environments	namespaces	Vec<String>	optional
 request	POST /studio-environments/v1/project-environments	previews	{}	optional
 request	POST /studio-environments/v1/project-environments	previews.domain	String	optional
 request	POST /studio-environments/v1/project-environments	previews.ingress_class	String	optional
@@ -621,8 +673,10 @@ request	POST /studio-environments/v1/project-environments	promote_from	Uuid	opti
 request	POST /studio-environments/v1/project-environments	protected	bool	optional
 request	POST /studio-environments/v1/project-environments	registry	String	optional
 request	POST /studio-environments/v1/project-environments	registry_connection_id	Uuid	optional
+request	POST /studio-environments/v1/project-environments	registry_pull_connection_id	Uuid	optional
 request	POST /studio-environments/v1/project-environments	research_hardware	String	optional
 request	POST /studio-environments/v1/project-environments	research_project	String	optional
+request	POST /studio-environments/v1/project-environments	strictness	String	optional
 request	POST /studio-identity/v1/users/{}/assignment	role	String	required
 request	POST /studio-identity/v1/users/{}/assignment	tenant_id	Uuid	required
 request	POST /studio-insight/v1/components/metrics	bucket	String	optional
@@ -712,6 +766,7 @@ request	POST /studio-product/v1/projects/{}/product/preview	open_pr	bool	optiona
 request	POST /studio-product/v1/projects/{}/product/preview	product_id	String	required
 request	POST /studio-product/v1/projects/{}/product/preview	profile	String	optional
 request	POST /studio-product/v1/projects/{}/product/preview	publish	bool	optional
+request	POST /studio-product/v1/projects/{}/product/preview	strictness	String	optional
 request	POST /studio-product/v1/projects/{}/product/preview	write	bool	optional
 request	POST /studio-product/v1/projects/{}/scaffold	app_title	String	optional
 request	POST /studio-product/v1/projects/{}/scaffold	capabilities	Vec<String>	optional
@@ -813,6 +868,13 @@ request	PUT /studio-components-catalog/v1/field-schemas/{}	schema	Value	required
 request	PUT /studio-components-catalog/v1/platform/curators	items	Vec<{}>	required
 request	PUT /studio-components-catalog/v1/platform/curators	items.id	String	required
 request	PUT /studio-components-catalog/v1/platform/curators	items.name	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items	Vec<{}>	required
+request	PUT /studio-components-catalog/v1/platform/pins	items.at	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items.git_ref	String	required
+request	PUT /studio-components-catalog/v1/platform/pins	items.note	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items.pinned_by	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items.pinned_by_name	String	optional
+request	PUT /studio-components-catalog/v1/platform/pins	items.repo	String	required
 request	PUT /studio-components-catalog/v1/platform/sources	crates_io	String	optional
 request	PUT /studio-components-catalog/v1/platform/sources	items	Vec<{}>	required
 request	PUT /studio-components-catalog/v1/platform/sources	items.connection_id	Uuid	optional
@@ -861,13 +923,24 @@ request	PUT /studio-environments/v1/bindings	items.environment_id	Uuid	required
 request	PUT /studio-environments/v1/bindings	items.profile	String	required
 request	PUT /studio-environments/v1/bindings	items.values	Value	optional
 request	PUT /studio-environments/v1/config-secrets/{}	value	String	required
+request	PUT /studio-environments/v1/environments/{}	allow_broad_registry_token	bool	optional
+request	PUT /studio-environments/v1/environments/{}	build_namespace	String	optional
+request	PUT /studio-environments/v1/environments/{}	builder_image	String	optional
+request	PUT /studio-environments/v1/environments/{}	builder_registry_connection_id	Uuid	optional
 request	PUT /studio-environments/v1/environments/{}	connection_id	Uuid	required
 request	PUT /studio-environments/v1/environments/{}	database	String	optional
 request	PUT /studio-environments/v1/environments/{}	database_image	String	optional
 request	PUT /studio-environments/v1/environments/{}	description	String	optional
+request	PUT /studio-environments/v1/environments/{}	infra	{}	optional
+request	PUT /studio-environments/v1/environments/{}	infra.placement	String	optional
+request	PUT /studio-environments/v1/environments/{}	infra.shared	Vec<{}>	optional
+request	PUT /studio-environments/v1/environments/{}	infra.shared.namespace	String	optional
+request	PUT /studio-environments/v1/environments/{}	infra.shared.provides	BTreeMap<String,String>	optional
+request	PUT /studio-environments/v1/environments/{}	infra.shared.service	String	optional
 request	PUT /studio-environments/v1/environments/{}	kind	String	optional
 request	PUT /studio-environments/v1/environments/{}	name	String	required
 request	PUT /studio-environments/v1/environments/{}	namespace_pattern	String	optional
+request	PUT /studio-environments/v1/environments/{}	namespaces	Vec<String>	optional
 request	PUT /studio-environments/v1/environments/{}	previews	{}	optional
 request	PUT /studio-environments/v1/environments/{}	previews.domain	String	optional
 request	PUT /studio-environments/v1/environments/{}	previews.ingress_class	String	optional
@@ -878,8 +951,42 @@ request	PUT /studio-environments/v1/environments/{}	promote_from	Uuid	optional
 request	PUT /studio-environments/v1/environments/{}	protected	bool	optional
 request	PUT /studio-environments/v1/environments/{}	registry	String	optional
 request	PUT /studio-environments/v1/environments/{}	registry_connection_id	Uuid	optional
+request	PUT /studio-environments/v1/environments/{}	registry_pull_connection_id	Uuid	optional
 request	PUT /studio-environments/v1/environments/{}	research_hardware	String	optional
 request	PUT /studio-environments/v1/environments/{}	research_project	String	optional
+request	PUT /studio-environments/v1/environments/{}	strictness	String	optional
+request	PUT /studio-environments/v1/image-retention	inherited	bool	optional
+request	PUT /studio-environments/v1/image-retention	keep_days	u32	optional
+request	PUT /studio-environments/v1/image-retention	keep_last	u32	optional
+request	PUT /studio-environments/v1/image-retention	scope	String	optional
+request	PUT /studio-environments/v1/infra-services	items	Vec<{}>	required
+request	PUT /studio-environments/v1/infra-services	items.chart_ref	String	optional
+request	PUT /studio-environments/v1/infra-services	items.chart_values	Value	optional
+request	PUT /studio-environments/v1/infra-services	items.chart_version	String	optional
+request	PUT /studio-environments/v1/infra-services	items.image	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport	{}	required
+request	PUT /studio-environments/v1/infra-services	items.passport.args	Vec<String>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.chart	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.chart_version	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.config	BTreeMap<String,String>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.data_path	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.description	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.health	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.image	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.name	String	required
+request	PUT /studio-environments/v1/infra-services	items.passport.ports	BTreeMap<String,u16>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.provides	BTreeMap<String,String>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.secrets	Vec<String>	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.stateful	bool	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.storage	String	optional
+request	PUT /studio-environments/v1/infra-services	items.passport.version	String	optional
+request	PUT /studio-environments/v1/infra-services	items.public_url	String	optional
+request	PUT /studio-environments/v1/namespace-assignments	assigned_at	String	optional
+request	PUT /studio-environments/v1/namespace-assignments	assigned_by	String	optional
+request	PUT /studio-environments/v1/namespace-assignments	build_namespace	String	optional
+request	PUT /studio-environments/v1/namespace-assignments	environment_id	Uuid	required
+request	PUT /studio-environments/v1/namespace-assignments	namespace	String	required
+request	PUT /studio-environments/v1/namespace-assignments	project_id	Uuid	required
 request	PUT /studio-environments/v1/open-clusters	connection_ids	Vec<Uuid>	required
 request	PUT /studio-environments/v1/project-build	chart	String	optional
 request	PUT /studio-environments/v1/project-build	images	Vec<{}>	optional
@@ -888,13 +995,24 @@ request	PUT /studio-environments/v1/project-build	images.context	String	optional
 request	PUT /studio-environments/v1/project-build	images.dockerfile	String	optional
 request	PUT /studio-environments/v1/project-build	images.name	String	optional
 request	PUT /studio-environments/v1/project-build	kind	String	required
+request	PUT /studio-environments/v1/project-environments/{}	allow_broad_registry_token	bool	optional
+request	PUT /studio-environments/v1/project-environments/{}	build_namespace	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	builder_image	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	builder_registry_connection_id	Uuid	optional
 request	PUT /studio-environments/v1/project-environments/{}	connection_id	Uuid	required
 request	PUT /studio-environments/v1/project-environments/{}	database	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	database_image	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	description	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra	{}	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.placement	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.shared	Vec<{}>	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.shared.namespace	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.shared.provides	BTreeMap<String,String>	optional
+request	PUT /studio-environments/v1/project-environments/{}	infra.shared.service	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	kind	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	name	String	required
 request	PUT /studio-environments/v1/project-environments/{}	namespace_pattern	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	namespaces	Vec<String>	optional
 request	PUT /studio-environments/v1/project-environments/{}	previews	{}	optional
 request	PUT /studio-environments/v1/project-environments/{}	previews.domain	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	previews.ingress_class	String	optional
@@ -905,8 +1023,10 @@ request	PUT /studio-environments/v1/project-environments/{}	promote_from	Uuid	op
 request	PUT /studio-environments/v1/project-environments/{}	protected	bool	optional
 request	PUT /studio-environments/v1/project-environments/{}	registry	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	registry_connection_id	Uuid	optional
+request	PUT /studio-environments/v1/project-environments/{}	registry_pull_connection_id	Uuid	optional
 request	PUT /studio-environments/v1/project-environments/{}	research_hardware	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	research_project	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	strictness	String	optional
 request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
@@ -1013,7 +1133,39 @@ response	DELETE /studio-components-catalog/v1/registry/gear-repository	gear_repo
 response	DELETE /studio-components-catalog/v1/registry/gear-repository	gear_repository.set_by	String	optional
 response	DELETE /studio-components-catalog/v1/registry/gear-repository	gear_repository.tenant	Uuid	optional
 response	DELETE /studio-components-catalog/v1/registry/gear-repository	may_manage	bool	always
+response	DELETE /studio-environments/v1/images/{}	image_id	Uuid	always
+response	DELETE /studio-environments/v1/images/{}	run_id	Uuid	always
+response	DELETE /studio-environments/v1/images/{}/pin	app	String	optional
+response	DELETE /studio-environments/v1/images/{}/pin	build_id	String	optional
+response	DELETE /studio-environments/v1/images/{}/pin	commit	String	optional
+response	DELETE /studio-environments/v1/images/{}/pin	description_revision	i64	optional
+response	DELETE /studio-environments/v1/images/{}/pin	digest	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	id	Uuid	always
+response	DELETE /studio-environments/v1/images/{}/pin	kind	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	lock_hash	String	optional
+response	DELETE /studio-environments/v1/images/{}/pin	media_type	String	optional
+response	DELETE /studio-environments/v1/images/{}/pin	pinned	bool	always
+response	DELETE /studio-environments/v1/images/{}/pin	platforms	Vec<String>	always
+response	DELETE /studio-environments/v1/images/{}/pin	project_id	Uuid	always
+response	DELETE /studio-environments/v1/images/{}/pin	promoted_from	Uuid	optional
+response	DELETE /studio-environments/v1/images/{}/pin	pushed_at	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	pushed_by	String	optional
+response	DELETE /studio-environments/v1/images/{}/pin	reference	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	registry_connection_id	Uuid	optional
+response	DELETE /studio-environments/v1/images/{}/pin	registry_host	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	repository	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	running_in	Vec<{}>	always
+response	DELETE /studio-environments/v1/images/{}/pin	running_in.deployed_at	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	running_in.deployment_id	Uuid	always
+response	DELETE /studio-environments/v1/images/{}/pin	running_in.environment_id	Uuid	always
+response	DELETE /studio-environments/v1/images/{}/pin	running_in.environment_name	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	running_in.namespace	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	size_bytes	i64	optional
+response	DELETE /studio-environments/v1/images/{}/pin	source_ref	String	optional
+response	DELETE /studio-environments/v1/images/{}/pin	state	String	always
+response	DELETE /studio-environments/v1/images/{}/pin	tags	Vec<String>	always
 response	DELETE /studio-environments/v1/previews/{}	run_id	Uuid	always
+response	DELETE /studio-environments/v1/registries/{}/repositories/{}/versions/{}	run_id	Uuid	always
 response	DELETE /studio-user/v1/me/avatar	avatar_url	String	optional
 response	DELETE /studio-user/v1/me/avatar	created_at_epoch_ms	i64	always
 response	DELETE /studio-user/v1/me/avatar	display_name	String	optional
@@ -1227,6 +1379,13 @@ response	GET /studio-components-catalog/v1/components	nodes.type_id	String	alway
 response	GET /studio-components-catalog/v1/components	nodes.value	Value	always
 response	GET /studio-components-catalog/v1/components	shadowed	Vec<String>	always
 response	GET /studio-components-catalog/v1/components	truncated	bool	always
+response	GET /studio-components-catalog/v1/components/{}/docs	git_ref	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	name	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	path	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	repo	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	text	String	always
+response	GET /studio-components-catalog/v1/components/{}/docs	truncated	bool	always
+response	GET /studio-components-catalog/v1/components/{}/docs	url	String	always
 response	GET /studio-components-catalog/v1/field-schemas	schemas	Vec<Value>	always
 response	GET /studio-components-catalog/v1/gearbox/catalogue	catalogue	Value	always
 response	GET /studio-components-catalog/v1/gearbox/catalogue	corpus	String	always
@@ -1252,6 +1411,17 @@ response	GET /studio-components-catalog/v1/platform/curators	items.id	String	alw
 response	GET /studio-components-catalog/v1/platform/curators	items.name	String	optional
 response	GET /studio-components-catalog/v1/platform/curators	may_manage	bool	always
 response	GET /studio-components-catalog/v1/platform/curators	total	u32	always
+response	GET /studio-components-catalog/v1/platform/pins	items	Vec<{}>	always
+response	GET /studio-components-catalog/v1/platform/pins	items.git_ref	String	always
+response	GET /studio-components-catalog/v1/platform/pins	items.mode	String	always
+response	GET /studio-components-catalog/v1/platform/pins	items.note	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.pinned_at	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.pinned_by	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.pinned_by_name	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.pinned_ref	String	optional
+response	GET /studio-components-catalog/v1/platform/pins	items.repo	String	always
+response	GET /studio-components-catalog/v1/platform/pins	may_manage	bool	always
+response	GET /studio-components-catalog/v1/platform/pins	total	u32	always
 response	GET /studio-components-catalog/v1/platform/publication-requests	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/platform/publication-requests	items.at	String	always
 response	GET /studio-components-catalog/v1/platform/publication-requests	items.name	String	always
@@ -1294,6 +1464,33 @@ response	GET /studio-components-catalog/v1/project-components	items.reasons	Vec<
 response	GET /studio-components-catalog/v1/project-components	items.repo	String	always
 response	GET /studio-components-catalog/v1/project-components	repos	u32	always
 response	GET /studio-components-catalog/v1/project-components	total	u32	always
+response	GET /studio-components-catalog/v1/publications	items	Vec<{}>	always
+response	GET /studio-components-catalog/v1/publications	items.artifact	{}	optional
+response	GET /studio-components-catalog/v1/publications	items.artifact.kind	String	optional
+response	GET /studio-components-catalog/v1/publications	items.artifact.reference	String	optional
+response	GET /studio-components-catalog/v1/publications	items.at	String	always
+response	GET /studio-components-catalog/v1/publications	items.commit	String	optional
+response	GET /studio-components-catalog/v1/publications	items.decided_at	String	optional
+response	GET /studio-components-catalog/v1/publications	items.decided_by	String	optional
+response	GET /studio-components-catalog/v1/publications	items.decided_by_name	String	optional
+response	GET /studio-components-catalog/v1/publications	items.decline_reason	String	optional
+response	GET /studio-components-catalog/v1/publications	items.git_ref	String	always
+response	GET /studio-components-catalog/v1/publications	items.id	Uuid	always
+response	GET /studio-components-catalog/v1/publications	items.kind	String	optional
+response	GET /studio-components-catalog/v1/publications	items.name	String	always
+response	GET /studio-components-catalog/v1/publications	items.organization_id	Uuid	always
+response	GET /studio-components-catalog/v1/publications	items.path	String	optional
+response	GET /studio-components-catalog/v1/publications	items.project_id	Uuid	always
+response	GET /studio-components-catalog/v1/publications	items.project_name	String	optional
+response	GET /studio-components-catalog/v1/publications	items.reason	String	optional
+response	GET /studio-components-catalog/v1/publications	items.repo	String	optional
+response	GET /studio-components-catalog/v1/publications	items.requested_by	String	always
+response	GET /studio-components-catalog/v1/publications	items.requested_by_name	String	optional
+response	GET /studio-components-catalog/v1/publications	items.state	String	always
+response	GET /studio-components-catalog/v1/publications	items.type_id	String	always
+response	GET /studio-components-catalog/v1/publications	items.version	String	optional
+response	GET /studio-components-catalog/v1/publications	may_decide	bool	always
+response	GET /studio-components-catalog/v1/publications	total	u32	always
 response	GET /studio-components-catalog/v1/reference	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/reference	items.activity	{}	optional
 response	GET /studio-components-catalog/v1/reference	items.activity.authors	u64	optional
@@ -1642,6 +1839,18 @@ response	GET /studio-components-catalog/v1/registry/{}/readiness	path	String	alw
 response	GET /studio-components-catalog/v1/registry/{}/readiness	project_name	String	optional
 response	GET /studio-components-catalog/v1/registry/{}/readiness	ready	bool	always
 response	GET /studio-components-catalog/v1/registry/{}/readiness	repo	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items	Vec<{}>	always
+response	GET /studio-components-catalog/v1/screen-previews	items.captured_at	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.commit	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.component	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.height	u32	optional
+response	GET /studio-components-catalog/v1/screen-previews	items.image	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.label	String	optional
+response	GET /studio-components-catalog/v1/screen-previews	items.order	u32	always
+response	GET /studio-components-catalog/v1/screen-previews	items.route	String	always
+response	GET /studio-components-catalog/v1/screen-previews	items.version	String	optional
+response	GET /studio-components-catalog/v1/screen-previews	items.width	u32	optional
+response	GET /studio-components-catalog/v1/screen-previews	total	u32	always
 response	GET /studio-components-catalog/v1/sources	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/sources	items.connection_id	Uuid	optional
 response	GET /studio-components-catalog/v1/sources	items.git_ref	String	optional
@@ -1672,6 +1881,7 @@ response	GET /studio-connector/v1/connections	items.base_url	String	always
 response	GET /studio-connector/v1/connections	items.created_at_epoch_secs	u64	always
 response	GET /studio-connector/v1/connections	items.id	Uuid	always
 response	GET /studio-connector/v1/connections	items.label	String	always
+response	GET /studio-connector/v1/connections	items.mine	bool	always
 response	GET /studio-connector/v1/connections	items.options	BTreeMap<String,String>	always
 response	GET /studio-connector/v1/connections	items.owner_tenant_id	Uuid	always
 response	GET /studio-connector/v1/connections	items.provider	String	always
@@ -2596,14 +2806,25 @@ response	GET /studio-environments/v1/deployments/{}/status	workloads.images	Vec<
 response	GET /studio-environments/v1/deployments/{}/status	workloads.name	String	always
 response	GET /studio-environments/v1/deployments/{}/status	workloads.ready	i32	always
 response	GET /studio-environments/v1/environments	items	Vec<{}>	always
+response	GET /studio-environments/v1/environments	items.allow_broad_registry_token	bool	always
+response	GET /studio-environments/v1/environments	items.build_namespace	String	optional
+response	GET /studio-environments/v1/environments	items.builder_image	String	optional
+response	GET /studio-environments/v1/environments	items.builder_registry_connection_id	Uuid	optional
 response	GET /studio-environments/v1/environments	items.connection_id	Uuid	always
 response	GET /studio-environments/v1/environments	items.database	String	always
 response	GET /studio-environments/v1/environments	items.database_image	String	optional
 response	GET /studio-environments/v1/environments	items.description	String	always
 response	GET /studio-environments/v1/environments	items.id	Uuid	always
+response	GET /studio-environments/v1/environments	items.infra	{}	optional
+response	GET /studio-environments/v1/environments	items.infra.placement	String	optional
+response	GET /studio-environments/v1/environments	items.infra.shared	Vec<{}>	optional
+response	GET /studio-environments/v1/environments	items.infra.shared.namespace	String	optional
+response	GET /studio-environments/v1/environments	items.infra.shared.provides	BTreeMap<String,String>	optional
+response	GET /studio-environments/v1/environments	items.infra.shared.service	String	optional
 response	GET /studio-environments/v1/environments	items.kind	String	always
 response	GET /studio-environments/v1/environments	items.name	String	always
 response	GET /studio-environments/v1/environments	items.namespace_pattern	String	always
+response	GET /studio-environments/v1/environments	items.namespaces	Vec<String>	optional
 response	GET /studio-environments/v1/environments	items.previews	{}	optional
 response	GET /studio-environments/v1/environments	items.previews.domain	String	optional
 response	GET /studio-environments/v1/environments	items.previews.ingress_class	String	optional
@@ -2615,14 +2836,132 @@ response	GET /studio-environments/v1/environments	items.promote_from	Uuid	option
 response	GET /studio-environments/v1/environments	items.protected	bool	always
 response	GET /studio-environments/v1/environments	items.registry	String	always
 response	GET /studio-environments/v1/environments	items.registry_connection_id	Uuid	optional
+response	GET /studio-environments/v1/environments	items.registry_pull_connection_id	Uuid	optional
 response	GET /studio-environments/v1/environments	items.research_hardware	String	optional
 response	GET /studio-environments/v1/environments	items.research_project	String	optional
+response	GET /studio-environments/v1/environments	items.strictness	String	always
 response	GET /studio-environments/v1/environments	items.updated_at	String	always
 response	GET /studio-environments/v1/environments	items.updated_by	String	always
+response	GET /studio-environments/v1/environments	items.warnings	Vec<String>	always
 response	GET /studio-environments/v1/environments	may_manage	bool	always
 response	GET /studio-environments/v1/environments	open_clusters	{}	always
 response	GET /studio-environments/v1/environments	open_clusters.connection_ids	Vec<Uuid>	always
 response	GET /studio-environments/v1/environments	total	u32	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	environment_id	Uuid	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	environment_name	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items	Vec<{}>	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.chart	String	optional
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.image	String	optional
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.install	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.placement	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.provides	Vec<{}>	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.provides.capability	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.provides.variable	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.refusal	String	optional
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.refusal_code	String	optional
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.service	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	namespace	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	placement	String	always
+response	GET /studio-environments/v1/environments/{}/readiness	bootstrap_version	String	optional
+response	GET /studio-environments/v1/environments/{}/readiness	level	String	always
+response	GET /studio-environments/v1/environments/{}/readiness	missing	Vec<String>	always
+response	GET /studio-environments/v1/environments/{}/readiness	namespaces	Vec<String>	always
+response	GET /studio-environments/v1/environments/{}/readiness	policy_enforced	bool	always
+response	GET /studio-environments/v1/image-retention	inherited	bool	optional
+response	GET /studio-environments/v1/image-retention	keep_days	u32	optional
+response	GET /studio-environments/v1/image-retention	keep_last	u32	optional
+response	GET /studio-environments/v1/image-retention	scope	String	optional
+response	GET /studio-environments/v1/images	items	Vec<{}>	always
+response	GET /studio-environments/v1/images	items.app	String	optional
+response	GET /studio-environments/v1/images	items.build_id	String	optional
+response	GET /studio-environments/v1/images	items.commit	String	optional
+response	GET /studio-environments/v1/images	items.description_revision	i64	optional
+response	GET /studio-environments/v1/images	items.digest	String	always
+response	GET /studio-environments/v1/images	items.id	Uuid	always
+response	GET /studio-environments/v1/images	items.kind	String	always
+response	GET /studio-environments/v1/images	items.lock_hash	String	optional
+response	GET /studio-environments/v1/images	items.media_type	String	optional
+response	GET /studio-environments/v1/images	items.pinned	bool	always
+response	GET /studio-environments/v1/images	items.platforms	Vec<String>	always
+response	GET /studio-environments/v1/images	items.project_id	Uuid	always
+response	GET /studio-environments/v1/images	items.promoted_from	Uuid	optional
+response	GET /studio-environments/v1/images	items.pushed_at	String	always
+response	GET /studio-environments/v1/images	items.pushed_by	String	optional
+response	GET /studio-environments/v1/images	items.reference	String	always
+response	GET /studio-environments/v1/images	items.registry_connection_id	Uuid	optional
+response	GET /studio-environments/v1/images	items.registry_host	String	always
+response	GET /studio-environments/v1/images	items.repository	String	always
+response	GET /studio-environments/v1/images	items.running_in	Vec<{}>	always
+response	GET /studio-environments/v1/images	items.running_in.deployed_at	String	always
+response	GET /studio-environments/v1/images	items.running_in.deployment_id	Uuid	always
+response	GET /studio-environments/v1/images	items.running_in.environment_id	Uuid	always
+response	GET /studio-environments/v1/images	items.running_in.environment_name	String	always
+response	GET /studio-environments/v1/images	items.running_in.namespace	String	always
+response	GET /studio-environments/v1/images	items.size_bytes	i64	optional
+response	GET /studio-environments/v1/images	items.source_ref	String	optional
+response	GET /studio-environments/v1/images	items.state	String	always
+response	GET /studio-environments/v1/images	items.tags	Vec<String>	always
+response	GET /studio-environments/v1/images	total	u32	always
+response	GET /studio-environments/v1/images/{}	app	String	optional
+response	GET /studio-environments/v1/images/{}	build_id	String	optional
+response	GET /studio-environments/v1/images/{}	commit	String	optional
+response	GET /studio-environments/v1/images/{}	description_revision	i64	optional
+response	GET /studio-environments/v1/images/{}	digest	String	always
+response	GET /studio-environments/v1/images/{}	id	Uuid	always
+response	GET /studio-environments/v1/images/{}	kind	String	always
+response	GET /studio-environments/v1/images/{}	lock_hash	String	optional
+response	GET /studio-environments/v1/images/{}	media_type	String	optional
+response	GET /studio-environments/v1/images/{}	pinned	bool	always
+response	GET /studio-environments/v1/images/{}	platforms	Vec<String>	always
+response	GET /studio-environments/v1/images/{}	project_id	Uuid	always
+response	GET /studio-environments/v1/images/{}	promoted_from	Uuid	optional
+response	GET /studio-environments/v1/images/{}	pushed_at	String	always
+response	GET /studio-environments/v1/images/{}	pushed_by	String	optional
+response	GET /studio-environments/v1/images/{}	reference	String	always
+response	GET /studio-environments/v1/images/{}	registry_connection_id	Uuid	optional
+response	GET /studio-environments/v1/images/{}	registry_host	String	always
+response	GET /studio-environments/v1/images/{}	repository	String	always
+response	GET /studio-environments/v1/images/{}	running_in	Vec<{}>	always
+response	GET /studio-environments/v1/images/{}	running_in.deployed_at	String	always
+response	GET /studio-environments/v1/images/{}	running_in.deployment_id	Uuid	always
+response	GET /studio-environments/v1/images/{}	running_in.environment_id	Uuid	always
+response	GET /studio-environments/v1/images/{}	running_in.environment_name	String	always
+response	GET /studio-environments/v1/images/{}	running_in.namespace	String	always
+response	GET /studio-environments/v1/images/{}	size_bytes	i64	optional
+response	GET /studio-environments/v1/images/{}	source_ref	String	optional
+response	GET /studio-environments/v1/images/{}	state	String	always
+response	GET /studio-environments/v1/images/{}	tags	Vec<String>	always
+response	GET /studio-environments/v1/infra-services	items	Vec<{}>	always
+response	GET /studio-environments/v1/infra-services	items.chart_ref	String	optional
+response	GET /studio-environments/v1/infra-services	items.chart_values	Value	optional
+response	GET /studio-environments/v1/infra-services	items.chart_version	String	optional
+response	GET /studio-environments/v1/infra-services	items.image	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport	{}	always
+response	GET /studio-environments/v1/infra-services	items.passport.args	Vec<String>	always
+response	GET /studio-environments/v1/infra-services	items.passport.chart	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.chart_version	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.config	BTreeMap<String,String>	always
+response	GET /studio-environments/v1/infra-services	items.passport.data_path	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.description	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.health	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.image	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.name	String	always
+response	GET /studio-environments/v1/infra-services	items.passport.ports	BTreeMap<String,u16>	always
+response	GET /studio-environments/v1/infra-services	items.passport.provides	BTreeMap<String,String>	always
+response	GET /studio-environments/v1/infra-services	items.passport.secrets	Vec<String>	always
+response	GET /studio-environments/v1/infra-services	items.passport.stateful	bool	always
+response	GET /studio-environments/v1/infra-services	items.passport.storage	String	optional
+response	GET /studio-environments/v1/infra-services	items.passport.version	String	optional
+response	GET /studio-environments/v1/infra-services	items.public_url	String	optional
+response	GET /studio-environments/v1/infra-services	total	u32	always
+response	GET /studio-environments/v1/namespace-assignments	items	Vec<{}>	always
+response	GET /studio-environments/v1/namespace-assignments	items.assigned_at	String	optional
+response	GET /studio-environments/v1/namespace-assignments	items.assigned_by	String	optional
+response	GET /studio-environments/v1/namespace-assignments	items.build_namespace	String	optional
+response	GET /studio-environments/v1/namespace-assignments	items.environment_id	Uuid	always
+response	GET /studio-environments/v1/namespace-assignments	items.namespace	String	always
+response	GET /studio-environments/v1/namespace-assignments	items.project_id	Uuid	always
+response	GET /studio-environments/v1/namespace-assignments	total	u32	always
 response	GET /studio-environments/v1/project-build	chart	String	optional
 response	GET /studio-environments/v1/project-build	images	Vec<{}>	always
 response	GET /studio-environments/v1/project-build	images.app	String	always
@@ -2631,14 +2970,25 @@ response	GET /studio-environments/v1/project-build	images.dockerfile	String	alwa
 response	GET /studio-environments/v1/project-build	images.name	String	always
 response	GET /studio-environments/v1/project-build	kind	String	always
 response	GET /studio-environments/v1/project-environments	items	Vec<{}>	always
+response	GET /studio-environments/v1/project-environments	items.allow_broad_registry_token	bool	always
+response	GET /studio-environments/v1/project-environments	items.build_namespace	String	optional
+response	GET /studio-environments/v1/project-environments	items.builder_image	String	optional
+response	GET /studio-environments/v1/project-environments	items.builder_registry_connection_id	Uuid	optional
 response	GET /studio-environments/v1/project-environments	items.connection_id	Uuid	always
 response	GET /studio-environments/v1/project-environments	items.database	String	always
 response	GET /studio-environments/v1/project-environments	items.database_image	String	optional
 response	GET /studio-environments/v1/project-environments	items.description	String	always
 response	GET /studio-environments/v1/project-environments	items.id	Uuid	always
+response	GET /studio-environments/v1/project-environments	items.infra	{}	optional
+response	GET /studio-environments/v1/project-environments	items.infra.placement	String	optional
+response	GET /studio-environments/v1/project-environments	items.infra.shared	Vec<{}>	optional
+response	GET /studio-environments/v1/project-environments	items.infra.shared.namespace	String	optional
+response	GET /studio-environments/v1/project-environments	items.infra.shared.provides	BTreeMap<String,String>	optional
+response	GET /studio-environments/v1/project-environments	items.infra.shared.service	String	optional
 response	GET /studio-environments/v1/project-environments	items.kind	String	always
 response	GET /studio-environments/v1/project-environments	items.name	String	always
 response	GET /studio-environments/v1/project-environments	items.namespace_pattern	String	always
+response	GET /studio-environments/v1/project-environments	items.namespaces	Vec<String>	optional
 response	GET /studio-environments/v1/project-environments	items.previews	{}	optional
 response	GET /studio-environments/v1/project-environments	items.previews.domain	String	optional
 response	GET /studio-environments/v1/project-environments	items.previews.ingress_class	String	optional
@@ -2650,13 +3000,55 @@ response	GET /studio-environments/v1/project-environments	items.promote_from	Uui
 response	GET /studio-environments/v1/project-environments	items.protected	bool	always
 response	GET /studio-environments/v1/project-environments	items.registry	String	always
 response	GET /studio-environments/v1/project-environments	items.registry_connection_id	Uuid	optional
+response	GET /studio-environments/v1/project-environments	items.registry_pull_connection_id	Uuid	optional
 response	GET /studio-environments/v1/project-environments	items.research_hardware	String	optional
 response	GET /studio-environments/v1/project-environments	items.research_project	String	optional
+response	GET /studio-environments/v1/project-environments	items.strictness	String	always
 response	GET /studio-environments/v1/project-environments	items.updated_at	String	always
 response	GET /studio-environments/v1/project-environments	items.updated_by	String	always
+response	GET /studio-environments/v1/project-environments	items.warnings	Vec<String>	always
 response	GET /studio-environments/v1/project-environments	open_clusters	{}	always
 response	GET /studio-environments/v1/project-environments	open_clusters.connection_ids	Vec<Uuid>	always
 response	GET /studio-environments/v1/project-environments	total	u32	always
+response	GET /studio-environments/v1/registries	items	Vec<{}>	always
+response	GET /studio-environments/v1/registries	items.connection_id	Uuid	always
+response	GET /studio-environments/v1/registries	items.environments	Vec<{}>	always
+response	GET /studio-environments/v1/registries	items.environments.id	Uuid	always
+response	GET /studio-environments/v1/registries	items.environments.name	String	always
+response	GET /studio-environments/v1/registries	items.host	String	always
+response	GET /studio-environments/v1/registries	items.kind	String	always
+response	GET /studio-environments/v1/registries	items.label	String	always
+response	GET /studio-environments/v1/registries	items.prefixes	Vec<String>	always
+response	GET /studio-environments/v1/registries	items.role	String	always
+response	GET /studio-environments/v1/registries	total	u32	always
+response	GET /studio-environments/v1/registries/{}/orphans	items	Vec<{}>	always
+response	GET /studio-environments/v1/registries/{}/orphans	items.digest	String	optional
+response	GET /studio-environments/v1/registries/{}/orphans	items.image_id	Uuid	optional
+response	GET /studio-environments/v1/registries/{}/orphans	items.project_id	Uuid	optional
+response	GET /studio-environments/v1/registries/{}/orphans	items.reason	String	always
+response	GET /studio-environments/v1/registries/{}/orphans	items.repository	String	always
+response	GET /studio-environments/v1/registries/{}/orphans	items.tags	Vec<String>	always
+response	GET /studio-environments/v1/registries/{}/orphans	total	u32	always
+response	GET /studio-environments/v1/registries/{}/repositories	items	Vec<{}>	always
+response	GET /studio-environments/v1/registries/{}/repositories	items.name	String	always
+response	GET /studio-environments/v1/registries/{}/repositories	items.project_id	Uuid	optional
+response	GET /studio-environments/v1/registries/{}/repositories	items.project_name	String	optional
+response	GET /studio-environments/v1/registries/{}/repositories	items.recorded	u32	always
+response	GET /studio-environments/v1/registries/{}/repositories	total	u32	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items	Vec<{}>	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.digest	String	optional
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.image_id	Uuid	optional
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.project_id	Uuid	optional
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.pushed_at	String	optional
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.running_in	Vec<{}>	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.running_in.deployed_at	String	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.running_in.deployment_id	Uuid	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.running_in.environment_id	Uuid	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.running_in.environment_name	String	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.running_in.namespace	String	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.size_bytes	i64	optional
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.tags	Vec<String>	always
+response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	total	u32	always
 response	GET /studio-environments/v1/research/projects	items	Vec<{}>	always
 response	GET /studio-environments/v1/research/projects	items.id	String	always
 response	GET /studio-environments/v1/research/projects	items.name	String	always
@@ -2672,14 +3064,25 @@ response	GET /studio-environments/v1/targets	bindings.profile	String	always
 response	GET /studio-environments/v1/targets	bindings.values	Value	optional
 response	GET /studio-environments/v1/targets	environments	Vec<{}>	always
 response	GET /studio-environments/v1/targets	environments.environment	{}	always
+response	GET /studio-environments/v1/targets	environments.environment.allow_broad_registry_token	bool	always
+response	GET /studio-environments/v1/targets	environments.environment.build_namespace	String	optional
+response	GET /studio-environments/v1/targets	environments.environment.builder_image	String	optional
+response	GET /studio-environments/v1/targets	environments.environment.builder_registry_connection_id	Uuid	optional
 response	GET /studio-environments/v1/targets	environments.environment.connection_id	Uuid	always
 response	GET /studio-environments/v1/targets	environments.environment.database	String	always
 response	GET /studio-environments/v1/targets	environments.environment.database_image	String	optional
 response	GET /studio-environments/v1/targets	environments.environment.description	String	always
 response	GET /studio-environments/v1/targets	environments.environment.id	Uuid	always
+response	GET /studio-environments/v1/targets	environments.environment.infra	{}	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.placement	String	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.shared	Vec<{}>	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.shared.namespace	String	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.shared.provides	BTreeMap<String,String>	optional
+response	GET /studio-environments/v1/targets	environments.environment.infra.shared.service	String	optional
 response	GET /studio-environments/v1/targets	environments.environment.kind	String	always
 response	GET /studio-environments/v1/targets	environments.environment.name	String	always
 response	GET /studio-environments/v1/targets	environments.environment.namespace_pattern	String	always
+response	GET /studio-environments/v1/targets	environments.environment.namespaces	Vec<String>	optional
 response	GET /studio-environments/v1/targets	environments.environment.previews	{}	optional
 response	GET /studio-environments/v1/targets	environments.environment.previews.domain	String	optional
 response	GET /studio-environments/v1/targets	environments.environment.previews.ingress_class	String	optional
@@ -2691,10 +3094,13 @@ response	GET /studio-environments/v1/targets	environments.environment.promote_fr
 response	GET /studio-environments/v1/targets	environments.environment.protected	bool	always
 response	GET /studio-environments/v1/targets	environments.environment.registry	String	always
 response	GET /studio-environments/v1/targets	environments.environment.registry_connection_id	Uuid	optional
+response	GET /studio-environments/v1/targets	environments.environment.registry_pull_connection_id	Uuid	optional
 response	GET /studio-environments/v1/targets	environments.environment.research_hardware	String	optional
 response	GET /studio-environments/v1/targets	environments.environment.research_project	String	optional
+response	GET /studio-environments/v1/targets	environments.environment.strictness	String	always
 response	GET /studio-environments/v1/targets	environments.environment.updated_at	String	always
 response	GET /studio-environments/v1/targets	environments.environment.updated_by	String	always
+response	GET /studio-environments/v1/targets	environments.environment.warnings	Vec<String>	always
 response	GET /studio-environments/v1/targets	environments.namespace	String	always
 response	GET /studio-environments/v1/targets	organization_id	Uuid	always
 response	GET /studio-environments/v1/targets	project_name	String	always
@@ -2924,6 +3330,8 @@ response	GET /studio-organizations/v1/rollups	items.activity_days	u32	optional
 response	GET /studio-organizations/v1/rollups	items.brief	String	optional
 response	GET /studio-organizations/v1/rollups	items.documents	u32	optional
 response	GET /studio-organizations/v1/rollups	items.findings	u32	optional
+response	GET /studio-organizations/v1/rollups	items.icon_color	String	optional
+response	GET /studio-organizations/v1/rollups	items.icon_glyph	String	optional
 response	GET /studio-organizations/v1/rollups	items.id	String	always
 response	GET /studio-organizations/v1/rollups	items.kind	String	always
 response	GET /studio-organizations/v1/rollups	items.last_at	String	optional
@@ -2968,6 +3376,10 @@ response	GET /studio-product/v1/gearbox	corpus_ref	String	optional
 response	GET /studio-product/v1/gearbox	corpus_url	String	optional
 response	GET /studio-product/v1/gearbox	enabled	bool	always
 response	GET /studio-product/v1/gearbox	engine_version	String	optional
+response	GET /studio-product/v1/gearbox	frontx	{}	always
+response	GET /studio-product/v1/gearbox	frontx.shell_template	String	always
+response	GET /studio-product/v1/gearbox	frontx.source_ref	String	always
+response	GET /studio-product/v1/gearbox	frontx.source_repo	String	always
 response	GET /studio-product/v1/gearbox	problem	String	optional
 response	GET /studio-product/v1/gearbox	profiles	Vec<String>	always
 response	GET /studio-product/v1/gearbox	shadowed	Vec<String>	always
@@ -3013,6 +3425,13 @@ response	GET /studio-product/v1/product-description	latest.created_at	String	opt
 response	GET /studio-product/v1/product-description	latest.revision	i64	optional
 response	GET /studio-product/v1/product-description	latest.sha256	String	optional
 response	GET /studio-product/v1/product-description	latest.source	String	optional
+response	GET /studio-product/v1/product-description	latest.sources_lock	Vec<{}>	optional
+response	GET /studio-product/v1/product-description	latest.sources_lock.branch	String	optional
+response	GET /studio-product/v1/product-description	latest.sources_lock.commit	String	optional
+response	GET /studio-product/v1/product-description	latest.sources_lock.id	String	optional
+response	GET /studio-product/v1/product-description	latest.sources_lock.kind	String	optional
+response	GET /studio-product/v1/product-description	latest.sources_lock.repository	String	optional
+response	GET /studio-product/v1/product-description	latest.sources_lock.url	String	optional
 response	GET /studio-product/v1/product-description	latest.text	String	optional
 response	GET /studio-product/v1/product-description	path	String	optional
 response	GET /studio-product/v1/product-description	published	{}	optional
@@ -3045,6 +3464,13 @@ response	GET /studio-product/v1/product-description-revisions/{}	created_at	Stri
 response	GET /studio-product/v1/product-description-revisions/{}	revision	i64	always
 response	GET /studio-product/v1/product-description-revisions/{}	sha256	String	always
 response	GET /studio-product/v1/product-description-revisions/{}	source	String	always
+response	GET /studio-product/v1/product-description-revisions/{}	sources_lock	Vec<{}>	always
+response	GET /studio-product/v1/product-description-revisions/{}	sources_lock.branch	String	optional
+response	GET /studio-product/v1/product-description-revisions/{}	sources_lock.commit	String	optional
+response	GET /studio-product/v1/product-description-revisions/{}	sources_lock.id	String	always
+response	GET /studio-product/v1/product-description-revisions/{}	sources_lock.kind	String	always
+response	GET /studio-product/v1/product-description-revisions/{}	sources_lock.repository	String	optional
+response	GET /studio-product/v1/product-description-revisions/{}	sources_lock.url	String	always
 response	GET /studio-product/v1/product-description-revisions/{}	text	String	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes	Vec<{}>	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes.instance_id	String	always
@@ -3705,12 +4131,17 @@ response	GET /studio-user/v1/users/{}/memberships	items.status	String	always
 response	GET /studio-user/v1/users/{}/memberships	items.updated_at_epoch_ms	i64	always
 response	GET /studio-user/v1/users/{}/memberships	items.user_id	String	always
 response	PATCH /studio-connector/v1/connections/{}	account	String	always
+response	PATCH /studio-connector/v1/connections/{}	checks	Vec<{}>	always
+response	PATCH /studio-connector/v1/connections/{}	checks.detail	String	always
+response	PATCH /studio-connector/v1/connections/{}	checks.name	String	always
+response	PATCH /studio-connector/v1/connections/{}	checks.ok	bool	always
 response	PATCH /studio-connector/v1/connections/{}	connection	{}	always
 response	PATCH /studio-connector/v1/connections/{}	connection.account	String	always
 response	PATCH /studio-connector/v1/connections/{}	connection.base_url	String	always
 response	PATCH /studio-connector/v1/connections/{}	connection.created_at_epoch_secs	u64	always
 response	PATCH /studio-connector/v1/connections/{}	connection.id	Uuid	always
 response	PATCH /studio-connector/v1/connections/{}	connection.label	String	always
+response	PATCH /studio-connector/v1/connections/{}	connection.mine	bool	always
 response	PATCH /studio-connector/v1/connections/{}	connection.options	BTreeMap<String,String>	always
 response	PATCH /studio-connector/v1/connections/{}	connection.owner_tenant_id	Uuid	always
 response	PATCH /studio-connector/v1/connections/{}	connection.provider	String	always
@@ -3904,6 +4335,56 @@ response	POST /studio-components-catalog/v1/platform/publication-requests/{}/dec
 response	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions	version	String	optional
 response	POST /studio-components-catalog/v1/platform/sync	run_id	String	always
 response	POST /studio-components-catalog/v1/platform/sync	status	String	always
+response	POST /studio-components-catalog/v1/project-catalogue/sync	run_id	String	always
+response	POST /studio-components-catalog/v1/project-catalogue/sync	status	String	always
+response	POST /studio-components-catalog/v1/publications	artifact	{}	optional
+response	POST /studio-components-catalog/v1/publications	artifact.kind	String	optional
+response	POST /studio-components-catalog/v1/publications	artifact.reference	String	optional
+response	POST /studio-components-catalog/v1/publications	at	String	always
+response	POST /studio-components-catalog/v1/publications	commit	String	optional
+response	POST /studio-components-catalog/v1/publications	decided_at	String	optional
+response	POST /studio-components-catalog/v1/publications	decided_by	String	optional
+response	POST /studio-components-catalog/v1/publications	decided_by_name	String	optional
+response	POST /studio-components-catalog/v1/publications	decline_reason	String	optional
+response	POST /studio-components-catalog/v1/publications	git_ref	String	always
+response	POST /studio-components-catalog/v1/publications	id	Uuid	always
+response	POST /studio-components-catalog/v1/publications	kind	String	optional
+response	POST /studio-components-catalog/v1/publications	name	String	always
+response	POST /studio-components-catalog/v1/publications	organization_id	Uuid	always
+response	POST /studio-components-catalog/v1/publications	path	String	optional
+response	POST /studio-components-catalog/v1/publications	project_id	Uuid	always
+response	POST /studio-components-catalog/v1/publications	project_name	String	optional
+response	POST /studio-components-catalog/v1/publications	reason	String	optional
+response	POST /studio-components-catalog/v1/publications	repo	String	optional
+response	POST /studio-components-catalog/v1/publications	requested_by	String	always
+response	POST /studio-components-catalog/v1/publications	requested_by_name	String	optional
+response	POST /studio-components-catalog/v1/publications	state	String	always
+response	POST /studio-components-catalog/v1/publications	type_id	String	always
+response	POST /studio-components-catalog/v1/publications	version	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	artifact	{}	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	artifact.kind	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	artifact.reference	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	at	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	commit	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	decided_at	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	decided_by	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	decided_by_name	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	decline_reason	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	git_ref	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	id	Uuid	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	kind	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	name	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	organization_id	Uuid	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	path	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	project_id	Uuid	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	project_name	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	reason	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	repo	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	requested_by	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	requested_by_name	String	optional
+response	POST /studio-components-catalog/v1/publications/{}/decisions	state	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	type_id	String	always
+response	POST /studio-components-catalog/v1/publications/{}/decisions	version	String	optional
 response	POST /studio-components-catalog/v1/registry/gear-repository/create	gear_repository	{}	optional
 response	POST /studio-components-catalog/v1/registry/gear-repository/create	gear_repository.branch	String	optional
 response	POST /studio-components-catalog/v1/registry/gear-repository/create	gear_repository.connection_id	Uuid	optional
@@ -4040,15 +4521,30 @@ response	POST /studio-components-catalog/v1/registry/{}/suggest	capabilities	Vec
 response	POST /studio-components-catalog/v1/registry/{}/suggest	category	String	optional
 response	POST /studio-components-catalog/v1/registry/{}/suggest	description	String	optional
 response	POST /studio-components-catalog/v1/registry/{}/suggest	model	String	always
+response	POST /studio-components-catalog/v1/screen-previews	captured_at	String	always
+response	POST /studio-components-catalog/v1/screen-previews	commit	String	always
+response	POST /studio-components-catalog/v1/screen-previews	component	String	always
+response	POST /studio-components-catalog/v1/screen-previews	height	u32	optional
+response	POST /studio-components-catalog/v1/screen-previews	image	String	always
+response	POST /studio-components-catalog/v1/screen-previews	label	String	optional
+response	POST /studio-components-catalog/v1/screen-previews	order	u32	always
+response	POST /studio-components-catalog/v1/screen-previews	route	String	always
+response	POST /studio-components-catalog/v1/screen-previews	version	String	optional
+response	POST /studio-components-catalog/v1/screen-previews	width	u32	optional
 response	POST /studio-components-catalog/v1/sync	run_id	String	always
 response	POST /studio-components-catalog/v1/sync	status	String	always
 response	POST /studio-connector/v1/connections	account	String	always
+response	POST /studio-connector/v1/connections	checks	Vec<{}>	always
+response	POST /studio-connector/v1/connections	checks.detail	String	always
+response	POST /studio-connector/v1/connections	checks.name	String	always
+response	POST /studio-connector/v1/connections	checks.ok	bool	always
 response	POST /studio-connector/v1/connections	connection	{}	always
 response	POST /studio-connector/v1/connections	connection.account	String	always
 response	POST /studio-connector/v1/connections	connection.base_url	String	always
 response	POST /studio-connector/v1/connections	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/connections	connection.id	Uuid	always
 response	POST /studio-connector/v1/connections	connection.label	String	always
+response	POST /studio-connector/v1/connections	connection.mine	bool	always
 response	POST /studio-connector/v1/connections	connection.options	BTreeMap<String,String>	always
 response	POST /studio-connector/v1/connections	connection.owner_tenant_id	Uuid	always
 response	POST /studio-connector/v1/connections	connection.provider	String	always
@@ -4084,12 +4580,17 @@ response	POST /studio-connector/v1/connections/{}/messages	message_id	String	opt
 response	POST /studio-connector/v1/connections/{}/messages	provider	String	always
 response	POST /studio-connector/v1/connections/{}/messages	target	String	always
 response	POST /studio-connector/v1/connections/{}/test	account	String	always
+response	POST /studio-connector/v1/connections/{}/test	checks	Vec<{}>	always
+response	POST /studio-connector/v1/connections/{}/test	checks.detail	String	always
+response	POST /studio-connector/v1/connections/{}/test	checks.name	String	always
+response	POST /studio-connector/v1/connections/{}/test	checks.ok	bool	always
 response	POST /studio-connector/v1/connections/{}/test	connection	{}	always
 response	POST /studio-connector/v1/connections/{}/test	connection.account	String	always
 response	POST /studio-connector/v1/connections/{}/test	connection.base_url	String	always
 response	POST /studio-connector/v1/connections/{}/test	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/connections/{}/test	connection.id	Uuid	always
 response	POST /studio-connector/v1/connections/{}/test	connection.label	String	always
+response	POST /studio-connector/v1/connections/{}/test	connection.mine	bool	always
 response	POST /studio-connector/v1/connections/{}/test	connection.options	BTreeMap<String,String>	always
 response	POST /studio-connector/v1/connections/{}/test	connection.owner_tenant_id	Uuid	always
 response	POST /studio-connector/v1/connections/{}/test	connection.provider	String	always
@@ -4097,12 +4598,17 @@ response	POST /studio-connector/v1/connections/{}/test	connection.scope	String	a
 response	POST /studio-connector/v1/connections/{}/test	connection.secret_ref	String	always
 response	POST /studio-connector/v1/connections/{}/test	display_name	String	optional
 response	POST /studio-connector/v1/oauth/complete	account	String	always
+response	POST /studio-connector/v1/oauth/complete	checks	Vec<{}>	always
+response	POST /studio-connector/v1/oauth/complete	checks.detail	String	always
+response	POST /studio-connector/v1/oauth/complete	checks.name	String	always
+response	POST /studio-connector/v1/oauth/complete	checks.ok	bool	always
 response	POST /studio-connector/v1/oauth/complete	connection	{}	always
 response	POST /studio-connector/v1/oauth/complete	connection.account	String	always
 response	POST /studio-connector/v1/oauth/complete	connection.base_url	String	always
 response	POST /studio-connector/v1/oauth/complete	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/oauth/complete	connection.id	Uuid	always
 response	POST /studio-connector/v1/oauth/complete	connection.label	String	always
+response	POST /studio-connector/v1/oauth/complete	connection.mine	bool	always
 response	POST /studio-connector/v1/oauth/complete	connection.options	BTreeMap<String,String>	always
 response	POST /studio-connector/v1/oauth/complete	connection.owner_tenant_id	Uuid	always
 response	POST /studio-connector/v1/oauth/complete	connection.provider	String	always
@@ -4111,6 +4617,10 @@ response	POST /studio-connector/v1/oauth/complete	connection.secret_ref	String	a
 response	POST /studio-connector/v1/oauth/complete	display_name	String	optional
 response	POST /studio-connector/v1/oauth/start	authorize_url	String	always
 response	POST /studio-connector/v1/probe	account	String	always
+response	POST /studio-connector/v1/probe	checks	Vec<{}>	always
+response	POST /studio-connector/v1/probe	checks.detail	String	always
+response	POST /studio-connector/v1/probe	checks.name	String	always
+response	POST /studio-connector/v1/probe	checks.ok	bool	always
 response	POST /studio-connector/v1/probe	display_name	String	optional
 response	POST /studio-connector/v1/sources/{}/pull-requests	created	bool	always
 response	POST /studio-connector/v1/sources/{}/pull-requests	number	i64	always
@@ -4607,6 +5117,33 @@ response	POST /studio-environments/v1/build-workflows	pr_url	String	optional
 response	POST /studio-environments/v1/builds	build_id	String	always
 response	POST /studio-environments/v1/builds	namespace	String	always
 response	POST /studio-environments/v1/builds	run_id	Uuid	always
+response	POST /studio-environments/v1/builds/plan	build_namespace	String	always
+response	POST /studio-environments/v1/builds/plan	builder_image	String	always
+response	POST /studio-environments/v1/builds/plan	builder_pinned	bool	always
+response	POST /studio-environments/v1/builds/plan	chart_repository	String	always
+response	POST /studio-environments/v1/builds/plan	description_revision	i64	optional
+response	POST /studio-environments/v1/builds/plan	environment	String	always
+response	POST /studio-environments/v1/builds/plan	environment_id	Uuid	always
+response	POST /studio-environments/v1/builds/plan	gearbox_version	String	optional
+response	POST /studio-environments/v1/builds/plan	image_repositories	Vec<String>	always
+response	POST /studio-environments/v1/builds/plan	namespace	String	always
+response	POST /studio-environments/v1/builds/plan	product_file	String	always
+response	POST /studio-environments/v1/builds/plan	profile	String	always
+response	POST /studio-environments/v1/builds/plan	refusal	{}	optional
+response	POST /studio-environments/v1/builds/plan	refusal.code	String	optional
+response	POST /studio-environments/v1/builds/plan	refusal.message	String	optional
+response	POST /studio-environments/v1/builds/plan	registry_prefix	String	always
+response	POST /studio-environments/v1/builds/plan	sources	Vec<{}>	always
+response	POST /studio-environments/v1/builds/plan	sources.commit	String	optional
+response	POST /studio-environments/v1/builds/plan	sources.connection_holder	Uuid	optional
+response	POST /studio-environments/v1/builds/plan	sources.connection_id	Uuid	optional
+response	POST /studio-environments/v1/builds/plan	sources.connection_label	String	optional
+response	POST /studio-environments/v1/builds/plan	sources.connection_scope	String	optional
+response	POST /studio-environments/v1/builds/plan	sources.id	String	always
+response	POST /studio-environments/v1/builds/plan	sources.ref	String	always
+response	POST /studio-environments/v1/builds/plan	sources.repository	String	always
+response	POST /studio-environments/v1/builds/plan	strictness	String	always
+response	POST /studio-environments/v1/builds/plan	warnings	Vec<String>	always
 response	POST /studio-environments/v1/deployments	action	String	always
 response	POST /studio-environments/v1/deployments	build	String	optional
 response	POST /studio-environments/v1/deployments	chart_ref	String	optional
@@ -4677,14 +5214,25 @@ response	POST /studio-environments/v1/deployments/{}/decisions	requested_by	Stri
 response	POST /studio-environments/v1/deployments/{}/decisions	requested_by_name	String	always
 response	POST /studio-environments/v1/deployments/{}/decisions	run_id	Uuid	optional
 response	POST /studio-environments/v1/deployments/{}/decisions	state	String	always
+response	POST /studio-environments/v1/environments	allow_broad_registry_token	bool	always
+response	POST /studio-environments/v1/environments	build_namespace	String	optional
+response	POST /studio-environments/v1/environments	builder_image	String	optional
+response	POST /studio-environments/v1/environments	builder_registry_connection_id	Uuid	optional
 response	POST /studio-environments/v1/environments	connection_id	Uuid	always
 response	POST /studio-environments/v1/environments	database	String	always
 response	POST /studio-environments/v1/environments	database_image	String	optional
 response	POST /studio-environments/v1/environments	description	String	always
 response	POST /studio-environments/v1/environments	id	Uuid	always
+response	POST /studio-environments/v1/environments	infra	{}	optional
+response	POST /studio-environments/v1/environments	infra.placement	String	optional
+response	POST /studio-environments/v1/environments	infra.shared	Vec<{}>	optional
+response	POST /studio-environments/v1/environments	infra.shared.namespace	String	optional
+response	POST /studio-environments/v1/environments	infra.shared.provides	BTreeMap<String,String>	optional
+response	POST /studio-environments/v1/environments	infra.shared.service	String	optional
 response	POST /studio-environments/v1/environments	kind	String	always
 response	POST /studio-environments/v1/environments	name	String	always
 response	POST /studio-environments/v1/environments	namespace_pattern	String	always
+response	POST /studio-environments/v1/environments	namespaces	Vec<String>	optional
 response	POST /studio-environments/v1/environments	previews	{}	optional
 response	POST /studio-environments/v1/environments	previews.domain	String	optional
 response	POST /studio-environments/v1/environments	previews.ingress_class	String	optional
@@ -4696,23 +5244,41 @@ response	POST /studio-environments/v1/environments	promote_from	Uuid	optional
 response	POST /studio-environments/v1/environments	protected	bool	always
 response	POST /studio-environments/v1/environments	registry	String	always
 response	POST /studio-environments/v1/environments	registry_connection_id	Uuid	optional
+response	POST /studio-environments/v1/environments	registry_pull_connection_id	Uuid	optional
 response	POST /studio-environments/v1/environments	research_hardware	String	optional
 response	POST /studio-environments/v1/environments	research_project	String	optional
+response	POST /studio-environments/v1/environments	strictness	String	always
 response	POST /studio-environments/v1/environments	updated_at	String	always
 response	POST /studio-environments/v1/environments	updated_by	String	always
+response	POST /studio-environments/v1/environments	warnings	Vec<String>	always
 response	POST /studio-environments/v1/environments/{}/push-tokens	expires_in	u64	optional
 response	POST /studio-environments/v1/environments/{}/push-tokens	prefix	String	always
 response	POST /studio-environments/v1/environments/{}/push-tokens	registry	String	always
 response	POST /studio-environments/v1/environments/{}/push-tokens	token	String	always
 response	POST /studio-environments/v1/environments/{}/test	message	String	always
+response	POST /studio-environments/v1/images/imports	image_id	Uuid	always
+response	POST /studio-environments/v1/images/imports	run_id	Uuid	always
+response	POST /studio-environments/v1/images/{}/promotions	image_id	Uuid	always
+response	POST /studio-environments/v1/images/{}/promotions	run_id	Uuid	always
+response	POST /studio-environments/v1/project-environments	allow_broad_registry_token	bool	always
+response	POST /studio-environments/v1/project-environments	build_namespace	String	optional
+response	POST /studio-environments/v1/project-environments	builder_image	String	optional
+response	POST /studio-environments/v1/project-environments	builder_registry_connection_id	Uuid	optional
 response	POST /studio-environments/v1/project-environments	connection_id	Uuid	always
 response	POST /studio-environments/v1/project-environments	database	String	always
 response	POST /studio-environments/v1/project-environments	database_image	String	optional
 response	POST /studio-environments/v1/project-environments	description	String	always
 response	POST /studio-environments/v1/project-environments	id	Uuid	always
+response	POST /studio-environments/v1/project-environments	infra	{}	optional
+response	POST /studio-environments/v1/project-environments	infra.placement	String	optional
+response	POST /studio-environments/v1/project-environments	infra.shared	Vec<{}>	optional
+response	POST /studio-environments/v1/project-environments	infra.shared.namespace	String	optional
+response	POST /studio-environments/v1/project-environments	infra.shared.provides	BTreeMap<String,String>	optional
+response	POST /studio-environments/v1/project-environments	infra.shared.service	String	optional
 response	POST /studio-environments/v1/project-environments	kind	String	always
 response	POST /studio-environments/v1/project-environments	name	String	always
 response	POST /studio-environments/v1/project-environments	namespace_pattern	String	always
+response	POST /studio-environments/v1/project-environments	namespaces	Vec<String>	optional
 response	POST /studio-environments/v1/project-environments	previews	{}	optional
 response	POST /studio-environments/v1/project-environments	previews.domain	String	optional
 response	POST /studio-environments/v1/project-environments	previews.ingress_class	String	optional
@@ -4724,10 +5290,13 @@ response	POST /studio-environments/v1/project-environments	promote_from	Uuid	opt
 response	POST /studio-environments/v1/project-environments	protected	bool	always
 response	POST /studio-environments/v1/project-environments	registry	String	always
 response	POST /studio-environments/v1/project-environments	registry_connection_id	Uuid	optional
+response	POST /studio-environments/v1/project-environments	registry_pull_connection_id	Uuid	optional
 response	POST /studio-environments/v1/project-environments	research_hardware	String	optional
 response	POST /studio-environments/v1/project-environments	research_project	String	optional
+response	POST /studio-environments/v1/project-environments	strictness	String	always
 response	POST /studio-environments/v1/project-environments	updated_at	String	always
 response	POST /studio-environments/v1/project-environments	updated_by	String	always
+response	POST /studio-environments/v1/project-environments	warnings	Vec<String>	always
 response	POST /studio-environments/v1/project-environments/{}/test	message	String	always
 response	POST /studio-identity/v1/memberships/backfill	failed	i64	always
 response	POST /studio-identity/v1/memberships/backfill	recorded	i64	always
@@ -4950,6 +5519,13 @@ response	POST /studio-product/v1/product-description-revisions	revision.created_
 response	POST /studio-product/v1/product-description-revisions	revision.revision	i64	always
 response	POST /studio-product/v1/product-description-revisions	revision.sha256	String	always
 response	POST /studio-product/v1/product-description-revisions	revision.source	String	always
+response	POST /studio-product/v1/product-description-revisions	revision.sources_lock	Vec<{}>	always
+response	POST /studio-product/v1/product-description-revisions	revision.sources_lock.branch	String	optional
+response	POST /studio-product/v1/product-description-revisions	revision.sources_lock.commit	String	optional
+response	POST /studio-product/v1/product-description-revisions	revision.sources_lock.id	String	always
+response	POST /studio-product/v1/product-description-revisions	revision.sources_lock.kind	String	always
+response	POST /studio-product/v1/product-description-revisions	revision.sources_lock.repository	String	optional
+response	POST /studio-product/v1/product-description-revisions	revision.sources_lock.url	String	always
 response	POST /studio-product/v1/product-description-revisions	revision.text	String	always
 response	POST /studio-product/v1/projects/{}/create-repo	default_branch	String	always
 response	POST /studio-product/v1/projects/{}/create-repo	full_name	String	always
@@ -4970,6 +5546,7 @@ response	POST /studio-product/v1/projects/{}/product/preview	applications.listen
 response	POST /studio-product/v1/projects/{}/product/preview	applications.listens.name	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	applications.name	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	applications.replicas	u32	always
+response	POST /studio-product/v1/projects/{}/product/preview	checking	bool	always
 response	POST /studio-product/v1/projects/{}/product/preview	corpus_commit	String	optional
 response	POST /studio-product/v1/projects/{}/product/preview	description_revision	{}	optional
 response	POST /studio-product/v1/projects/{}/product/preview	description_revision.created	bool	optional
@@ -4982,6 +5559,7 @@ response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.help	St
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.line	u32	optional
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.message	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.severity	String	always
+response	POST /studio-product/v1/projects/{}/product/preview	gdl_sha256	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	gears	Vec<{}>	always
 response	POST /studio-product/v1/projects/{}/product/preview	gears.crate_name	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	gears.id	String	always
@@ -5241,6 +5819,17 @@ response	PUT /studio-components-catalog/v1/platform/curators	items.id	String	alw
 response	PUT /studio-components-catalog/v1/platform/curators	items.name	String	optional
 response	PUT /studio-components-catalog/v1/platform/curators	may_manage	bool	always
 response	PUT /studio-components-catalog/v1/platform/curators	total	u32	always
+response	PUT /studio-components-catalog/v1/platform/pins	items	Vec<{}>	always
+response	PUT /studio-components-catalog/v1/platform/pins	items.git_ref	String	always
+response	PUT /studio-components-catalog/v1/platform/pins	items.mode	String	always
+response	PUT /studio-components-catalog/v1/platform/pins	items.note	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.pinned_at	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.pinned_by	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.pinned_by_name	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.pinned_ref	String	optional
+response	PUT /studio-components-catalog/v1/platform/pins	items.repo	String	always
+response	PUT /studio-components-catalog/v1/platform/pins	may_manage	bool	always
+response	PUT /studio-components-catalog/v1/platform/pins	total	u32	always
 response	PUT /studio-components-catalog/v1/platform/sources	crates_io	String	optional
 response	PUT /studio-components-catalog/v1/platform/sources	items	Vec<{}>	always
 response	PUT /studio-components-catalog/v1/platform/sources	items.connection_id	Uuid	optional
@@ -5351,14 +5940,25 @@ response	PUT /studio-environments/v1/bindings	items.values	Value	optional
 response	PUT /studio-environments/v1/bindings	total	u32	always
 response	PUT /studio-environments/v1/config-secrets/{}	environment_id	Uuid	always
 response	PUT /studio-environments/v1/config-secrets/{}	key	String	always
+response	PUT /studio-environments/v1/environments/{}	allow_broad_registry_token	bool	always
+response	PUT /studio-environments/v1/environments/{}	build_namespace	String	optional
+response	PUT /studio-environments/v1/environments/{}	builder_image	String	optional
+response	PUT /studio-environments/v1/environments/{}	builder_registry_connection_id	Uuid	optional
 response	PUT /studio-environments/v1/environments/{}	connection_id	Uuid	always
 response	PUT /studio-environments/v1/environments/{}	database	String	always
 response	PUT /studio-environments/v1/environments/{}	database_image	String	optional
 response	PUT /studio-environments/v1/environments/{}	description	String	always
 response	PUT /studio-environments/v1/environments/{}	id	Uuid	always
+response	PUT /studio-environments/v1/environments/{}	infra	{}	optional
+response	PUT /studio-environments/v1/environments/{}	infra.placement	String	optional
+response	PUT /studio-environments/v1/environments/{}	infra.shared	Vec<{}>	optional
+response	PUT /studio-environments/v1/environments/{}	infra.shared.namespace	String	optional
+response	PUT /studio-environments/v1/environments/{}	infra.shared.provides	BTreeMap<String,String>	optional
+response	PUT /studio-environments/v1/environments/{}	infra.shared.service	String	optional
 response	PUT /studio-environments/v1/environments/{}	kind	String	always
 response	PUT /studio-environments/v1/environments/{}	name	String	always
 response	PUT /studio-environments/v1/environments/{}	namespace_pattern	String	always
+response	PUT /studio-environments/v1/environments/{}	namespaces	Vec<String>	optional
 response	PUT /studio-environments/v1/environments/{}	previews	{}	optional
 response	PUT /studio-environments/v1/environments/{}	previews.domain	String	optional
 response	PUT /studio-environments/v1/environments/{}	previews.ingress_class	String	optional
@@ -5370,10 +5970,75 @@ response	PUT /studio-environments/v1/environments/{}	promote_from	Uuid	optional
 response	PUT /studio-environments/v1/environments/{}	protected	bool	always
 response	PUT /studio-environments/v1/environments/{}	registry	String	always
 response	PUT /studio-environments/v1/environments/{}	registry_connection_id	Uuid	optional
+response	PUT /studio-environments/v1/environments/{}	registry_pull_connection_id	Uuid	optional
 response	PUT /studio-environments/v1/environments/{}	research_hardware	String	optional
 response	PUT /studio-environments/v1/environments/{}	research_project	String	optional
+response	PUT /studio-environments/v1/environments/{}	strictness	String	always
 response	PUT /studio-environments/v1/environments/{}	updated_at	String	always
 response	PUT /studio-environments/v1/environments/{}	updated_by	String	always
+response	PUT /studio-environments/v1/environments/{}	warnings	Vec<String>	always
+response	PUT /studio-environments/v1/image-retention	inherited	bool	optional
+response	PUT /studio-environments/v1/image-retention	keep_days	u32	optional
+response	PUT /studio-environments/v1/image-retention	keep_last	u32	optional
+response	PUT /studio-environments/v1/image-retention	scope	String	optional
+response	PUT /studio-environments/v1/images/{}/pin	app	String	optional
+response	PUT /studio-environments/v1/images/{}/pin	build_id	String	optional
+response	PUT /studio-environments/v1/images/{}/pin	commit	String	optional
+response	PUT /studio-environments/v1/images/{}/pin	description_revision	i64	optional
+response	PUT /studio-environments/v1/images/{}/pin	digest	String	always
+response	PUT /studio-environments/v1/images/{}/pin	id	Uuid	always
+response	PUT /studio-environments/v1/images/{}/pin	kind	String	always
+response	PUT /studio-environments/v1/images/{}/pin	lock_hash	String	optional
+response	PUT /studio-environments/v1/images/{}/pin	media_type	String	optional
+response	PUT /studio-environments/v1/images/{}/pin	pinned	bool	always
+response	PUT /studio-environments/v1/images/{}/pin	platforms	Vec<String>	always
+response	PUT /studio-environments/v1/images/{}/pin	project_id	Uuid	always
+response	PUT /studio-environments/v1/images/{}/pin	promoted_from	Uuid	optional
+response	PUT /studio-environments/v1/images/{}/pin	pushed_at	String	always
+response	PUT /studio-environments/v1/images/{}/pin	pushed_by	String	optional
+response	PUT /studio-environments/v1/images/{}/pin	reference	String	always
+response	PUT /studio-environments/v1/images/{}/pin	registry_connection_id	Uuid	optional
+response	PUT /studio-environments/v1/images/{}/pin	registry_host	String	always
+response	PUT /studio-environments/v1/images/{}/pin	repository	String	always
+response	PUT /studio-environments/v1/images/{}/pin	running_in	Vec<{}>	always
+response	PUT /studio-environments/v1/images/{}/pin	running_in.deployed_at	String	always
+response	PUT /studio-environments/v1/images/{}/pin	running_in.deployment_id	Uuid	always
+response	PUT /studio-environments/v1/images/{}/pin	running_in.environment_id	Uuid	always
+response	PUT /studio-environments/v1/images/{}/pin	running_in.environment_name	String	always
+response	PUT /studio-environments/v1/images/{}/pin	running_in.namespace	String	always
+response	PUT /studio-environments/v1/images/{}/pin	size_bytes	i64	optional
+response	PUT /studio-environments/v1/images/{}/pin	source_ref	String	optional
+response	PUT /studio-environments/v1/images/{}/pin	state	String	always
+response	PUT /studio-environments/v1/images/{}/pin	tags	Vec<String>	always
+response	PUT /studio-environments/v1/infra-services	items	Vec<{}>	always
+response	PUT /studio-environments/v1/infra-services	items.chart_ref	String	optional
+response	PUT /studio-environments/v1/infra-services	items.chart_values	Value	optional
+response	PUT /studio-environments/v1/infra-services	items.chart_version	String	optional
+response	PUT /studio-environments/v1/infra-services	items.image	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport	{}	always
+response	PUT /studio-environments/v1/infra-services	items.passport.args	Vec<String>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.chart	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.chart_version	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.config	BTreeMap<String,String>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.data_path	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.description	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.health	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.image	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.name	String	always
+response	PUT /studio-environments/v1/infra-services	items.passport.ports	BTreeMap<String,u16>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.provides	BTreeMap<String,String>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.secrets	Vec<String>	always
+response	PUT /studio-environments/v1/infra-services	items.passport.stateful	bool	always
+response	PUT /studio-environments/v1/infra-services	items.passport.storage	String	optional
+response	PUT /studio-environments/v1/infra-services	items.passport.version	String	optional
+response	PUT /studio-environments/v1/infra-services	items.public_url	String	optional
+response	PUT /studio-environments/v1/infra-services	total	u32	always
+response	PUT /studio-environments/v1/namespace-assignments	assigned_at	String	optional
+response	PUT /studio-environments/v1/namespace-assignments	assigned_by	String	optional
+response	PUT /studio-environments/v1/namespace-assignments	build_namespace	String	optional
+response	PUT /studio-environments/v1/namespace-assignments	environment_id	Uuid	always
+response	PUT /studio-environments/v1/namespace-assignments	namespace	String	always
+response	PUT /studio-environments/v1/namespace-assignments	project_id	Uuid	always
 response	PUT /studio-environments/v1/open-clusters	connection_ids	Vec<Uuid>	always
 response	PUT /studio-environments/v1/project-build	chart	String	optional
 response	PUT /studio-environments/v1/project-build	images	Vec<{}>	always
@@ -5382,14 +6047,25 @@ response	PUT /studio-environments/v1/project-build	images.context	String	optiona
 response	PUT /studio-environments/v1/project-build	images.dockerfile	String	always
 response	PUT /studio-environments/v1/project-build	images.name	String	always
 response	PUT /studio-environments/v1/project-build	kind	String	always
+response	PUT /studio-environments/v1/project-environments/{}	allow_broad_registry_token	bool	always
+response	PUT /studio-environments/v1/project-environments/{}	build_namespace	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	builder_image	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	builder_registry_connection_id	Uuid	optional
 response	PUT /studio-environments/v1/project-environments/{}	connection_id	Uuid	always
 response	PUT /studio-environments/v1/project-environments/{}	database	String	always
 response	PUT /studio-environments/v1/project-environments/{}	database_image	String	optional
 response	PUT /studio-environments/v1/project-environments/{}	description	String	always
 response	PUT /studio-environments/v1/project-environments/{}	id	Uuid	always
+response	PUT /studio-environments/v1/project-environments/{}	infra	{}	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.placement	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.shared	Vec<{}>	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.shared.namespace	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.shared.provides	BTreeMap<String,String>	optional
+response	PUT /studio-environments/v1/project-environments/{}	infra.shared.service	String	optional
 response	PUT /studio-environments/v1/project-environments/{}	kind	String	always
 response	PUT /studio-environments/v1/project-environments/{}	name	String	always
 response	PUT /studio-environments/v1/project-environments/{}	namespace_pattern	String	always
+response	PUT /studio-environments/v1/project-environments/{}	namespaces	Vec<String>	optional
 response	PUT /studio-environments/v1/project-environments/{}	previews	{}	optional
 response	PUT /studio-environments/v1/project-environments/{}	previews.domain	String	optional
 response	PUT /studio-environments/v1/project-environments/{}	previews.ingress_class	String	optional
@@ -5401,10 +6077,13 @@ response	PUT /studio-environments/v1/project-environments/{}	promote_from	Uuid	o
 response	PUT /studio-environments/v1/project-environments/{}	protected	bool	always
 response	PUT /studio-environments/v1/project-environments/{}	registry	String	always
 response	PUT /studio-environments/v1/project-environments/{}	registry_connection_id	Uuid	optional
+response	PUT /studio-environments/v1/project-environments/{}	registry_pull_connection_id	Uuid	optional
 response	PUT /studio-environments/v1/project-environments/{}	research_hardware	String	optional
 response	PUT /studio-environments/v1/project-environments/{}	research_project	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	strictness	String	always
 response	PUT /studio-environments/v1/project-environments/{}	updated_at	String	always
 response	PUT /studio-environments/v1/project-environments/{}	updated_by	String	always
+response	PUT /studio-environments/v1/project-environments/{}	warnings	Vec<String>	always
 response	PUT /studio-organizations/v1/logo	content_type	String	always
 response	PUT /studio-organizations/v1/logo	data	String	always
 response	PUT /studio-organizations/v1/logo	digest	String	always
@@ -5708,8 +6387,11 @@ route	DELETE /studio-documents/v1/workspaces/{}/types/{}
 route	DELETE /studio-domain-model/v1/types/{}/fields/{}
 route	DELETE /studio-environments/v1/config-secrets/{}
 route	DELETE /studio-environments/v1/environments/{}
+route	DELETE /studio-environments/v1/images/{}
+route	DELETE /studio-environments/v1/images/{}/pin
 route	DELETE /studio-environments/v1/previews/{}
 route	DELETE /studio-environments/v1/project-environments/{}
+route	DELETE /studio-environments/v1/registries/{}/repositories/{}/versions/{}
 route	DELETE /studio-kits/v1/projects/{}/installations/{}
 route	DELETE /studio-organizations/v1/logo
 route	DELETE /studio-organizations/v1/organizations/{}
@@ -5735,14 +6417,17 @@ route	GET /studio-components-catalog/v1/activity
 route	GET /studio-components-catalog/v1/component-history
 route	GET /studio-components-catalog/v1/component-values
 route	GET /studio-components-catalog/v1/components
+route	GET /studio-components-catalog/v1/components/{}/docs
 route	GET /studio-components-catalog/v1/field-schemas
 route	GET /studio-components-catalog/v1/gearbox/catalogue
 route	GET /studio-components-catalog/v1/gearbox/corpus/info/refs
 route	GET /studio-components-catalog/v1/platform/curators
+route	GET /studio-components-catalog/v1/platform/pins
 route	GET /studio-components-catalog/v1/platform/publication-requests
 route	GET /studio-components-catalog/v1/platform/sources
 route	GET /studio-components-catalog/v1/profiles
 route	GET /studio-components-catalog/v1/project-components
+route	GET /studio-components-catalog/v1/publications
 route	GET /studio-components-catalog/v1/reference
 route	GET /studio-components-catalog/v1/registry
 route	GET /studio-components-catalog/v1/registry/excluded-projects
@@ -5750,6 +6435,7 @@ route	GET /studio-components-catalog/v1/registry/gear-repository
 route	GET /studio-components-catalog/v1/registry/projects
 route	GET /studio-components-catalog/v1/registry/{}
 route	GET /studio-components-catalog/v1/registry/{}/readiness
+route	GET /studio-components-catalog/v1/screen-previews
 route	GET /studio-components-catalog/v1/sources
 route	GET /studio-components-catalog/v1/types
 route	GET /studio-components-catalog/v1/types/counts
@@ -5814,8 +6500,19 @@ route	GET /studio-environments/v1/deployments
 route	GET /studio-environments/v1/deployments/{}/logs
 route	GET /studio-environments/v1/deployments/{}/status
 route	GET /studio-environments/v1/environments
+route	GET /studio-environments/v1/environments/{}/infra-plan
+route	GET /studio-environments/v1/environments/{}/readiness
+route	GET /studio-environments/v1/image-retention
+route	GET /studio-environments/v1/images
+route	GET /studio-environments/v1/images/{}
+route	GET /studio-environments/v1/infra-services
+route	GET /studio-environments/v1/namespace-assignments
 route	GET /studio-environments/v1/project-build
 route	GET /studio-environments/v1/project-environments
+route	GET /studio-environments/v1/registries
+route	GET /studio-environments/v1/registries/{}/orphans
+route	GET /studio-environments/v1/registries/{}/repositories
+route	GET /studio-environments/v1/registries/{}/repositories/{}/tags
 route	GET /studio-environments/v1/research/projects
 route	GET /studio-environments/v1/research/projects/{}/hardware
 route	GET /studio-environments/v1/targets
@@ -5839,6 +6536,7 @@ route	GET /studio-mcp/v1/oauth-protected-resource
 route	GET /studio-organizations/v1/access-catalogue
 route	GET /studio-organizations/v1/capabilities
 route	GET /studio-organizations/v1/logo
+route	GET /studio-organizations/v1/metrics
 route	GET /studio-organizations/v1/organization-requests
 route	GET /studio-organizations/v1/overview
 route	GET /studio-organizations/v1/rollups
@@ -5922,11 +6620,15 @@ route	POST /studio-components-catalog/v1/components/{}/profile
 route	POST /studio-components-catalog/v1/gearbox/corpus/git-upload-pack
 route	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions
 route	POST /studio-components-catalog/v1/platform/sync
+route	POST /studio-components-catalog/v1/project-catalogue/sync
+route	POST /studio-components-catalog/v1/publications
+route	POST /studio-components-catalog/v1/publications/{}/decisions
 route	POST /studio-components-catalog/v1/registry/gear-repository/create
 route	POST /studio-components-catalog/v1/registry/scaffold
 route	POST /studio-components-catalog/v1/registry/{}/decisions
 route	POST /studio-components-catalog/v1/registry/{}/declare
 route	POST /studio-components-catalog/v1/registry/{}/suggest
+route	POST /studio-components-catalog/v1/screen-previews
 route	POST /studio-components-catalog/v1/sync
 route	POST /studio-connector/v1/connections
 route	POST /studio-connector/v1/connections/{}/files
@@ -5979,11 +6681,14 @@ route	POST /studio-domain-model/v1/relations
 route	POST /studio-domain-model/v1/types/{}/fields
 route	POST /studio-environments/v1/build-workflows
 route	POST /studio-environments/v1/builds
+route	POST /studio-environments/v1/builds/plan
 route	POST /studio-environments/v1/deployments
 route	POST /studio-environments/v1/deployments/{}/decisions
 route	POST /studio-environments/v1/environments
 route	POST /studio-environments/v1/environments/{}/push-tokens
 route	POST /studio-environments/v1/environments/{}/test
+route	POST /studio-environments/v1/images/imports
+route	POST /studio-environments/v1/images/{}/promotions
 route	POST /studio-environments/v1/project-environments
 route	POST /studio-environments/v1/project-environments/{}/test
 route	POST /studio-git/v1/workspaces/{}/sources/{}/git-receive-pack
@@ -6059,6 +6764,7 @@ route	POST <dynamic@src/studio_session/rest.rs>
 route	POST <dynamic@src/studio_theia/rest.rs>
 route	PUT /studio-components-catalog/v1/field-schemas/{}
 route	PUT /studio-components-catalog/v1/platform/curators
+route	PUT /studio-components-catalog/v1/platform/pins
 route	PUT /studio-components-catalog/v1/platform/sources
 route	PUT /studio-components-catalog/v1/registry/excluded-projects
 route	PUT /studio-components-catalog/v1/registry/gear-repository
@@ -6072,6 +6778,10 @@ route	PUT /studio-documents/v1/workspaces/{}/documents/{}/analyses/{}
 route	PUT /studio-environments/v1/bindings
 route	PUT /studio-environments/v1/config-secrets/{}
 route	PUT /studio-environments/v1/environments/{}
+route	PUT /studio-environments/v1/image-retention
+route	PUT /studio-environments/v1/images/{}/pin
+route	PUT /studio-environments/v1/infra-services
+route	PUT /studio-environments/v1/namespace-assignments
 route	PUT /studio-environments/v1/open-clusters
 route	PUT /studio-environments/v1/project-build
 route	PUT /studio-environments/v1/project-environments/{}

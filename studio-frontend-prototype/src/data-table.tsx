@@ -22,6 +22,7 @@ import type { ClientFilter, ListState } from "./list-state";
 import { Modal } from "./modal";
 import { PAGE_SIZE, PAGE_SIZES, Pager } from "./pager";
 import type { Paged } from "./pager";
+import { EmptyState } from "./ui-standard";
 import { TileGrid, ViewToggle, usePageSize, useViewMode } from "./view-mode";
 import type { ViewMode } from "./view-mode";
 
@@ -229,6 +230,9 @@ export interface Column<T> {
 export interface FilterOption {
   value: string;
   label: string;
+  /** A list paged by the backend cannot count its own options: the screen
+   *  may say how many there are. Unknown, the chip shows no count at all. */
+  count?: number;
 }
 
 export interface Filter<T> {
@@ -242,6 +246,7 @@ export interface Filter<T> {
   match?: (row: T, value: string) => boolean;
 }
 
+/** What EmptyState (ui-standard.tsx) shows when the list holds nothing. */
 export interface EmptySpec {
   /** "No projects yet." */
   title: string;
@@ -281,6 +286,10 @@ interface CommonProps<T> {
   inline?: (row: T) => ReactNode;
   /** Details a ▸ toggle expands under the row. */
   expand?: (row: T) => ReactNode;
+  /** The row itself is the toggle too: a click, Enter or Space anywhere on it
+   *  expands it. For a list whose rows exist to be looked into; with `onOpen`
+   *  the row opens instead. */
+  expandOnClick?: boolean;
   /** A panel the SCREEN opens under a row — an editor, a browser — from one
    *  of the row's actions. Shown whenever it returns something. */
   detail?: (row: T) => ReactNode;
@@ -422,16 +431,19 @@ export function DataTable<T>(props: DataTableProps<T>) {
   };
 
   const opens = (row: T) => !!props.onOpen && (props.canOpen?.(row) ?? true);
+  const toggles = !props.onOpen && !!props.expand && !!props.expandOnClick;
+  const clickable = (row: T) => opens(row) || toggles;
+  const activate = (row: T) => (opens(row) ? props.onOpen!(row) : toggle(props.rowKey(row)));
   const openFrom = (row: T) => (e: ReactMouseEvent) => {
-    if (!opens(row)) return;
+    if (!clickable(row)) return;
     if (e.target instanceof Element && e.target.closest(INTERACTIVE)) return;
-    props.onOpen!(row);
+    activate(row);
   };
   const keyOpen = (row: T) => (e: ReactKeyboardEvent) => {
-    if (!opens(row) || e.target !== e.currentTarget) return;
+    if (!clickable(row) || e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      props.onOpen!(row);
+      activate(row);
     }
   };
   const toggle = (key: string) =>
@@ -491,7 +503,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     onClick={() => list.setFilter(f.id, state.filters[f.id] === o.value ? null : o.value)}
                   >
                     {o.label}
-                    <span className="dt-chip-n">{client && !error ? client.counts[f.id]?.[o.value] ?? 0 : "—"}</span>
+                    {client && !error ? (
+                      <span className="dt-chip-n">{client.counts[f.id]?.[o.value] ?? 0}</span>
+                    ) : (
+                      o.count !== undefined && <span className="dt-chip-n">{o.count.toLocaleString()}</span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -537,18 +553,16 @@ export function DataTable<T>(props: DataTableProps<T>) {
           )}
         </div>
       ) : total === 0 && !filtered ? (
-        <div className="dt-state dt-empty">
-          <div className="dt-empty-title">{props.empty.title}</div>
-          {props.empty.body && <div className="dt-empty-body">{props.empty.body}</div>}
-          {props.empty.action}
-        </div>
+        <EmptyState {...props.empty} />
       ) : total === 0 ? (
-        <div className="dt-state dt-empty">
-          <div className="dt-empty-title">Nothing matches.</div>
-          <button className="ghost" onClick={list.clearFilters}>
-            Clear filters
-          </button>
-        </div>
+        <EmptyState
+          title="Nothing matches."
+          action={
+            <button className="ghost" onClick={list.clearFilters}>
+              Clear filters
+            </button>
+          }
+        />
       ) : mode === "tiles" && props.tile ? (
         <TileGrid>
           {visible.map((row) => (
@@ -595,8 +609,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
               return [
                 <tr
                   key={key}
-                  className={opens(row) ? "dt-row dt-open" : "dt-row"}
-                  tabIndex={opens(row) ? 0 : undefined}
+                  className={clickable(row) ? "dt-row dt-open" : "dt-row"}
+                  tabIndex={clickable(row) ? 0 : undefined}
+                  aria-expanded={toggles ? open : undefined}
                   onClick={openFrom(row)}
                   onKeyDown={keyOpen(row)}
                 >

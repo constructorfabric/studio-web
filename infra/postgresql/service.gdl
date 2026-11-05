@@ -1,0 +1,24 @@
+# A product's own PostgreSQL, an infra service (ADR-0064): a third-party
+# image Studio imports into the project's path and runs beside the product.
+# A service that provides `postgres` is installed by the database step
+# (ADR-0048 §7), which makes one database per gear that keeps data; the
+# image is the one imported from here.
+gdl_version = "1.6"
+
+service(
+    name = "postgresql",
+    kind = "infra",
+    version = "18",
+    description = "PostgreSQL with pgvector: the database a product's gears keep their data in",
+    image = "pgvector/pgvector:pg18",
+    ports = {"postgres": 5432},
+    config = {"POSTGRES_USER": "postgres", "PGDATA": "/var/lib/postgresql/data/pgdata"},
+    secrets = ["POSTGRES_PASSWORD"],
+    stateful = True,
+    storage = "10Gi",
+    data_path = "/var/lib/postgresql/data",
+    provides = {
+        "postgres": "{host}:{port.postgres}",
+        "database.url": "postgres://{config.POSTGRES_USER}:{secret.POSTGRES_PASSWORD}@{host}:{port.postgres}/postgres",
+    },
+)

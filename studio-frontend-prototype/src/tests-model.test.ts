@@ -10,6 +10,7 @@ import {
   passRate,
   pullRun,
   pullsCi,
+  readProblem,
   runSeconds,
   specCode,
 } from "./tests-model";
@@ -186,5 +187,16 @@ describe("spec ↔ code", () => {
       nonfunctional: 1,
       functional: 3,
     });
+  });
+});
+
+describe("readProblem", () => {
+  it("says a repository the connection cannot read in a few words, and that the connection fixes it", () => {
+    expect(
+      readProblem(
+        "HTTP 400 · Failed Precondition — Operation precondition not met — the project's gear repository constructorfabric/studio-web could not be read: the token for connection '222' is not readable",
+      ),
+    ).toEqual({ short: "the repository can't be read", connection: true });
+    expect(readProblem("HTTP 500 · Internal — boom")).toEqual({ short: "couldn't be checked", connection: false });
   });
 });

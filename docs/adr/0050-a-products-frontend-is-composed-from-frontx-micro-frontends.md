@@ -10,6 +10,8 @@ date: 2026-10-23
 
 Status: **proposed** · Date: 2026-10-23 · Issue #874 · Extends ADR-0041 (an organization's registry of its components), ADR-0046 (gears come from connected gear repositories) and ADR-0048 (a product ships as images and a chart) · Answers PRD §13 "how a product's FrontX micro-frontends are composed with its gears"
 
+Amended by ADR-0061 (2026-11-04): every component passport may name its documents (`docs = [...]`); `service.gdl` and `kit.gdl` join `gear.gdl` and `frontx.gdl`.
+
 ## Table of Contents
 
 <!-- toc -->
@@ -85,6 +87,28 @@ a browser. Until `mfe.json` has a field for it (a proposal to FrontX), the
 scan reads it from the package's API services — every `/cf/<gear>/v<N>` they
 spell (`mfe_calls`). That is evidence, the way spec mapping's word matches
 are; the declared field replaces it.
+
+The declaration now exists outside `mfe.json`: a package may describe itself
+in a `frontx.gdl` beside its `package.json` (GDL 1.5, `mfe(requires = [...])`,
+`shell(signs_in = …, runtime_env = …)` or `library()`). When it has one that
+reads, the scan takes `mfe_calls`, `shell_signin` and `shell_runtime_env` from
+it instead of the source, files a `library()` as a library rather than a
+screen, and records `frontx_described`; when it has none, or it does not read
+(`frontx_gdl_error`), the guesses here and in "Take the shell" stand. Studio's
+own `studio-frontend` and each of its `mfe_packages` carry one.
+
+`frontx.gdl` is now the package's **passport**: one file with everything a
+tool needs about the package, including what `package.json` and `mfe.json`
+already say (name, version, description; a micro-frontend's screens, mounts
+and `@gears-frontx/react` pin as `frontx`; a shell's `carries`), plus what they
+cannot (a shell's `api_prefix`, `base`, `build`, `output`, `node`,
+`package_manager`, runtime `env` keys, `build_env`, `sign_in_redirect`; a
+micro-frontend's `roles`, `preview`, `fixtures`). Every field but `signs_in` is
+optional and falls back to the manifests. A restated fact that disagrees is
+Gearbox's GBX0722 (identity, pins, screens) or GBX0723 (softer facts) at
+generation, and a `frontx_passport_drift` warning in the catalogue here; the
+passport still reads. The Frontend section shows a shell's API prefix, runtime
+env keys, build and node, and a micro-frontend's roles.
 
 ### 3. The UI sits beside the gears, not inside a gear
 

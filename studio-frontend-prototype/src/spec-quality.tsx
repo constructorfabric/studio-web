@@ -22,6 +22,7 @@ import { weightedMixture } from "./analysis";
 import type { DocDuplication } from "./api";
 import type { ArtifactNode } from "./api";
 import { currentCursor, followRun } from "./studio-events";
+import { EmptyState, InfoPopover, KpiTile, StatusChip } from "./ui-standard";
 
 /* ── Types ── */
 
@@ -980,20 +981,20 @@ export function SpecQuality({
       <SqStyles />
       <div className="card">
         <div className="card-head">
-          <div>
-            <h2>Spec Quality</h2>
-            <p className="subtitle" style={{ margin: 0 }}>
-              Run the spec-quality detectors over this project's repository — use{" "}
+          <h2>
+            Spec Quality{" "}
+            <InfoPopover label="About Spec Quality">
+              Runs the spec-quality detectors over this project&apos;s documents.
               {workspaceId ? (
                 <>
-                  <b>+ From repository</b> to load the cloned repo's files,{" "}
+                  {" "}
+                  <b>+ From repository</b> loads the cloned repository&apos;s files;
                 </>
-              ) : null}
-              <b>+ From artifacts</b> for ingested issues and PRs, or add files by hand. Calls go
-              through the backend wrapper (<code>/cf/spec-quality</code>).
-              {workspaceId ? ` · project ${workspaceId.slice(0, 8)}…` : ""}
-            </p>
-          </div>
+              ) : null}{" "}
+              <b>+ From artifacts</b> loads the ingested issues and pull requests; files can also be added by hand.
+              Calls go through the backend wrapper (<code>/cf/spec-quality</code>).
+            </InfoPopover>
+          </h2>
           <SqStatusChip token={token} />
         </div>
 
@@ -1071,6 +1072,12 @@ export function SpecQuality({
               {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
               onChange={(e) => addFiles(e.target.files)}
             />
+            {docs.length === 0 && (
+              <EmptyState
+                title="No documents loaded."
+                body="Add files or a folder, or load them from the repository or its artifacts, then pick a detector."
+              />
+            )}
             {docs.length > 0 && (
               <ul className="sq-files">
                 {docs.map((d) => {
@@ -1304,11 +1311,10 @@ function SqStatusChip({ token }: { token: string }) {
       live = false;
     };
   }, [token]);
-  const tone = state === "on" ? "ok" : state === "?" ? "muted" : "err";
   return (
-    <span className={`sq-badge ${tone}`} title={msg}>
-      {state === "on" ? "● service ready" : state === "off" ? "○ not configured" : state === "err" ? "○ unreachable" : "…"}
-    </span>
+    <StatusChip tone={state === "on" ? "ok" : state === "?" ? "neutral" : "danger"} title={msg} data-sq-status={state}>
+      {state === "on" ? "service ready" : state === "off" ? "not configured" : state === "err" ? "unreachable" : "…"}
+    </StatusChip>
   );
 }
 
@@ -1340,12 +1346,19 @@ function MixtureBar({ mixture }: { mixture: Record<string, number> }) {
   );
 }
 
+/** A headline number of a result, as the standard KpiTile. */
 function Tile({ label, value, tone }: { label: string; value: ReactNode; tone?: string }) {
+  const t = tone === "err" ? "danger" : tone === "ok" || tone === "warn" ? tone : undefined;
+  return <KpiTile label={label} value={value} tone={t} />;
+}
+
+/** A section role (requirement, design, decision, other): a neutral StatusChip
+ *  in the role's own colour, the colour the mixture bar draws it in. */
+function RoleChip({ role, title, children }: { role: string; title?: string; children: ReactNode }) {
   return (
-    <div className={`sq-tile ${tone ?? ""}`}>
-      <div className="sq-tile-v">{value}</div>
-      <div className="sq-tile-l">{label}</div>
-    </div>
+    <StatusChip tone="neutral" title={title} style={{ color: ROLE_COLORS[role] }} data-role={role}>
+      {children}
+    </StatusChip>
   );
 }
 
@@ -1353,10 +1366,10 @@ function GateBadge({ gate }: { gate: any }) {
   if (!gate) return null;
   const ok = gate.passed;
   return (
-    <span className={`sq-badge ${ok ? "ok" : "err"}`} title={`threshold ${gate.threshold}`}>
+    <StatusChip tone={ok ? "ok" : "danger"} title={`threshold ${gate.threshold}`}>
       {ok ? "gate ✓ passed" : "gate ✗ failed"} · leak {pct(gate.leak_share ?? 0)} / thr{" "}
       {pct(gate.threshold ?? 0)}
-    </span>
+    </StatusChip>
   );
 }
 
@@ -1381,9 +1394,7 @@ function PurposeSections({ sections }: { sections: any[] }) {
               <tr className="sq-row" onClick={() => setOpen(open === i ? null : i)}>
                 <td title={s.path}>{s.leaf || s.path}</td>
                 <td>
-                  <span className="sq-chip" style={{ borderColor: ROLE_COLORS[s.role], color: ROLE_COLORS[s.role] }}>
-                    {s.role}
-                  </span>
+                  <RoleChip role={s.role}>{s.role}</RoleChip>
                 </td>
                 <td>{s.confidence != null ? s.confidence.toFixed(2) : "—"}</td>
                 <td>{s.n_tokens ?? "—"}</td>
@@ -1531,8 +1542,8 @@ function BloatView({ view }: { view: TaskView }) {
         {shown.map((c, i) => (
           <div key={i} className="sq-cluster">
             <div className="sq-cluster-head">
-              <span className="sq-badge muted">{c.source}</span>
-              {c.cross_section && <span className="sq-badge warn">cross-section</span>}
+              <StatusChip tone="neutral">{c.source}</StatusChip>
+              {c.cross_section && <StatusChip tone="warn">cross-section</StatusChip>}
               <span className="sq-muted">conf {c.confidence?.toFixed?.(2) ?? c.confidence}</span>
               <span className="sq-muted">· {c.occurrences?.length ?? 0} occurrences</span>
             </div>
@@ -1619,9 +1630,9 @@ function TraceView({ view }: { view: TaskView }) {
         <div className="sq-roles">
           <span className="sq-muted">Unreferenced:</span>
           {orphans.map((path) => (
-            <span key={path} className="sq-chip" title={path}>
+            <StatusChip key={path} tone="warn" title={path}>
               {basename(path)}
-            </span>
+            </StatusChip>
           ))}
         </div>
       )}
@@ -1688,9 +1699,7 @@ function PurposeBatchView({ rows }: { rows: BatchRow[] }) {
     <div className="card">
       <div className="card-head">
         <h2>Purpose · {rows.length} files</h2>
-        <span className="sq-muted">
-          {done} ok · {failed} errored · {gatesFailed} gate-fail
-        </span>
+        {failed > 0 && <StatusChip tone="danger">{failed} errored</StatusChip>}
       </div>
       {/* What the set is made of, before what each file is made of. The
           per-file rows below answer "which document"; this answers "what have
@@ -1735,11 +1744,9 @@ function PurposeBatchView({ rows }: { rows: BatchRow[] }) {
                   <td>{r?.doc_type ?? (row.error ? "—" : "…")}</td>
                   <td>
                     {row.error ? (
-                      <span className="sq-badge err">error</span>
+                      <StatusChip tone="danger">error</StatusChip>
                     ) : r?.gate ? (
-                      <span className={`sq-badge ${r.gate.passed ? "ok" : "err"}`}>
-                        {r.gate.passed ? "✓" : "✗"}
-                      </span>
+                      <StatusChip tone={r.gate.passed ? "ok" : "danger"}>{r.gate.passed ? "✓ passed" : "✗ failed"}</StatusChip>
                     ) : (
                       "…"
                     )}
@@ -1809,9 +1816,7 @@ function LeakBatchView({ rows }: { rows: BatchRow[] }) {
     <div className="card">
       <div className="card-head">
         <h2>Leak · {rows.length} files</h2>
-        <span className="sq-muted">
-          {done} read · {failed} errored · {leaking} leaking
-        </span>
+        {failed > 0 && <StatusChip tone="danger">{failed} errored</StatusChip>}
       </div>
       {done > 0 && (
         <>
@@ -1829,14 +1834,7 @@ function LeakBatchView({ rows }: { rows: BatchRow[] }) {
             <div className="sq-roles">
               <span className="sq-muted">Foreign kinds found:</span>
               {foreign.map(([role, count]) => (
-                <span
-                  key={role}
-                  className="sq-chip"
-                  style={{ borderColor: ROLE_COLORS[role], color: ROLE_COLORS[role] }}
-                  title={`${role} content in ${count} document${count === 1 ? "" : "s"}`}
-                >
-                  {role} · {count}
-                </span>
+                <RoleChip key={role} role={role} title={`${role} content in ${count} document${count === 1 ? "" : "s"}`}>{role} · {count}</RoleChip>
               ))}
             </div>
           ) : (
@@ -1870,11 +1868,11 @@ function LeakBatchView({ rows }: { rows: BatchRow[] }) {
                   <td>{r?.doc_type ?? (row.error ? "—" : "…")}</td>
                   <td>
                     {row.error ? (
-                      <span className="sq-badge err">error</span>
+                      <StatusChip tone="danger">error</StatusChip>
                     ) : r?.passed === true ? (
-                      <span className="sq-badge ok">clean</span>
+                      <StatusChip tone="ok">clean</StatusChip>
                     ) : r?.passed === false ? (
-                      <span className="sq-badge err">leaking</span>
+                      <StatusChip tone="danger">leaking</StatusChip>
                     ) : (
                       "…"
                     )}
@@ -1893,13 +1891,7 @@ function LeakBatchView({ rows }: { rows: BatchRow[] }) {
                     {roles.length === 0
                       ? "—"
                       : roles.map((role) => (
-                          <span
-                            key={role}
-                            className="sq-chip"
-                            style={{ borderColor: ROLE_COLORS[role], color: ROLE_COLORS[role] }}
-                          >
-                            {role}
-                          </span>
+                          <RoleChip key={role} role={role}>{role}</RoleChip>
                         ))}
                   </td>
                   <td>{r?.n_sections ?? "—"}</td>
@@ -1941,13 +1933,7 @@ function LeakInline({ view }: { view: TaskView }) {
         <div className="sq-roles">
           <span className="sq-muted">This document type may contain:</span>
           {native.map((role) => (
-            <span
-              key={role}
-              className="sq-chip"
-              style={{ borderColor: ROLE_COLORS[role], color: ROLE_COLORS[role] }}
-            >
-              {role}
-            </span>
+            <RoleChip key={role} role={role}>{role}</RoleChip>
           ))}
         </div>
       )}
@@ -2122,6 +2108,8 @@ function SqStyles() {
 .sq .sq-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); margin-bottom: 8px; }
 .sq .sq-muted { color: var(--muted-foreground); font-size: 12.5px; }
 .sq .sq-err { color: var(--destructive); font-size: 13px; }
+.sq .sq-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 6px 0 14px; }
+.sq .sq-tiles .stat-n { font-size: 1.3rem; }
 .sq code { background: var(--accent); color: var(--primary); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
 
 .sq .sq-drop { border: 1px dashed var(--border); border-radius: 12px; padding: 12px; }
@@ -2148,13 +2136,6 @@ function SqStyles() {
 
 .sq .sq-run { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
 
-.sq .sq-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin: 6px 0 14px; }
-.sq .sq-tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card); }
-.sq .sq-tile-v { font-size: 20px; font-weight: 650; }
-.sq .sq-tile-l { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground); margin-top: 2px; }
-.sq .sq-tile.warn .sq-tile-v { color: var(--warning); }
-.sq .sq-tile.ok .sq-tile-v { color: var(--success); }
-.sq .sq-tile.err .sq-tile-v { color: var(--destructive); }
 
 .sq .sq-mix { margin: 6px 0 16px; }
 .sq .sq-mix-bar { display: flex; height: 16px; border-radius: var(--radius-md); overflow: hidden; background: var(--border); }
@@ -2170,13 +2151,7 @@ function SqStyles() {
 .sq .sq-row { cursor: pointer; }
 .sq .sq-row:hover td { background: var(--accent); }
 .sq .sq-ev { background: var(--accent); font-size: 12px; color: var(--foreground); }
-.sq .sq-chip { border: 1px solid var(--border); border-radius: 20px; padding: 1px 9px; font-size: 11.5px; }
 
-.sq .sq-badge { border-radius: 20px; padding: 2px 10px; font-size: 12px; border: 1px solid var(--border); white-space: nowrap; }
-.sq .sq-badge.ok { background: var(--success-soft); color: var(--success); border-color: color-mix(in oklab, var(--success) 35%, var(--card)); }
-.sq .sq-badge.err { background: var(--destructive-soft); color: var(--destructive); border-color: color-mix(in oklab, var(--destructive) 35%, var(--card)); }
-.sq .sq-badge.warn { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in oklab, var(--warning) 35%, var(--card)); }
-.sq .sq-badge.muted { color: var(--muted-foreground); }
 
 .sq .sq-clusters { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .sq .sq-cluster { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }

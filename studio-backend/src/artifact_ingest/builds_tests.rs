@@ -263,3 +263,45 @@ fn a_build_records_its_description_revision_beside_its_commit() {
     let none = record(&start(), "p2", None, "alice", now, None).expect("running");
     assert!(none.get("description_revision").is_none());
 }
+
+/// A build Studio runs records where it ran and with what at its start; the
+/// end keeps it and adds the engine.
+#[test]
+fn a_studio_build_records_where_it_ran_and_the_end_keeps_it() {
+    let now = at("2026-10-15T10:00:00Z");
+    let running = BuildReport {
+        r#where: "studio".into(),
+        place: crate::artifact_ingest::port::BuildPlace {
+            environment_id: Some("e1".into()),
+            environment: Some("dev".into()),
+            namespace: Some("shop-dev".into()),
+            git_ref: Some("main".into()),
+            source_connection_id: Some("c1".into()),
+            source_connection: Some("GitHub (acme)".into()),
+            builder_image: Some("ghcr.io/acme/studio-backend:sha-1".into()),
+            gearbox_version: None,
+            source_commits: None,
+        },
+        ..start()
+    };
+    let v = record(&running, "p1", None, "studio", now, None).expect("running");
+    assert_eq!(v["namespace"], "shop-dev");
+    assert_eq!(v["source_connection"], "GitHub (acme)");
+    assert!(v.get("gearbox_version").is_none());
+    let end = BuildReport {
+        r#where: "studio".into(),
+        status: "passed".into(),
+        place: crate::artifact_ingest::port::BuildPlace {
+            gearbox_version: Some("361e703".into()),
+            source_commits: Some("shop=abc,gears-rust=def".into()),
+            ..Default::default()
+        },
+        ..start()
+    };
+    let v = record(&end, "p1", None, "studio", now, Some(&v)).expect("passed");
+    assert_eq!(v["namespace"], "shop-dev");
+    assert_eq!(v["environment"], "dev");
+    assert_eq!(v["builder_image"], "ghcr.io/acme/studio-backend:sha-1");
+    assert_eq!(v["gearbox_version"], "361e703");
+    assert_eq!(v["source_commits"], "shop=abc,gears-rust=def");
+}

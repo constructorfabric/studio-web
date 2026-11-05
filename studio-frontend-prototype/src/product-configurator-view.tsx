@@ -333,7 +333,9 @@ export function ProductConfigurator({
 
         <div className="pm-box">
           <div className="pm-h">
-            Product map
+            {/* The backend's gears by group; the whole product -- frontend,
+                backend and infrastructure -- is the Map section. */}
+            Gears by group
             <span className="pm-legend" aria-label="Whose each part is">
               <span className="pm-origin-key pm-origin-project">This project</span>
               <span className="pm-origin-key pm-origin-organization">This organization</span>

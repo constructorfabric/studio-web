@@ -1,0 +1,15 @@
+# The PostgreSQL graph-storage runs on: the CloudNativePG image with pgvector
+# built in (Dockerfile). docker-compose builds it as `graph-postgres`. See
+# ADR-0061 for the vocabulary.
+gdl_version = "1.6"
+
+service(
+    name = "studio-graph-postgres",
+    description = "PostgreSQL 16+ with pgvector, the database graph-storage and the gears run on",
+    dockerfile = "Dockerfile",
+    context = ".",
+    # Dockerfile: EXPOSE 5432.
+    ports = {"postgres": 5432},
+    env = {"POSTGRES_USER": "database.owner", "POSTGRES_PASSWORD": "secret.database_password"},
+    provides = ["postgres", "pgvector"],
+)

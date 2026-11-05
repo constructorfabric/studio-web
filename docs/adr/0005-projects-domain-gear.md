@@ -1,14 +1,19 @@
 ---
 type: adr
-status: accepted
+status: superseded
 date: 2026-08-07
+superseded_by: cpt-studiofrontend-adr-projects-as-am-tenants
 ---
 
 # ADR-0005: Projects — a domain gear (supersedes the v0.1 decision in ADR-0002)
 
 **ID**: `cpt-studio-adr-projects-domain-gear`
 
-Status: **accepted** · Date: 2026-08-07 · Supersedes: ADR-0002 (Decision, v0.1)
+Status: **superseded** by [ADR-0010](0010-projects-are-am-tenants.md) · Date: 2026-08-07 · Supersedes: ADR-0002 (Decision, v0.1)
+
+**Superseded on 2026-08-23.** The `studio-project` gear this record decides was
+retired: a project is an AM tenant, and the portal mirrors the gear's rules
+(ADR-0010).
 
 ## Table of Contents
 

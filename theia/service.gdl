@@ -1,0 +1,16 @@
+# The IDE a project's session runs: Theia with Studio's extensions, cfs and
+# the Gearbox CLI, built from the Dockerfile beside this file. Not a gear:
+# studio-session starts one per project session (docker-compose builds it as
+# cf-studio-theia:local). See ADR-0061 for the vocabulary.
+gdl_version = "1.6"
+
+service(
+    name = "studio-theia",
+    description = "The IDE a project's session runs: Theia with Studio's extensions, cfs and Gearbox",
+    dockerfile = "Dockerfile",
+    context = ".",
+    # Dockerfile: EXPOSE 3003.
+    ports = {"http": 3003},
+    provides = ["ide"],
+    docs = ["README.md", "AGENTS.md"],
+)

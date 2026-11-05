@@ -62,9 +62,6 @@ export const GtsEntitiesTable = lazy(() =>
 export const ObjectTypes = lazy(() =>
   import("./object-types").then((m) => ({ default: m.ObjectTypes })),
 );
-export const ProcessCatalogTab = lazy(() =>
-  import("./process-catalog").then((m) => ({ default: m.ProcessCatalogTab })),
-);
 export const IdentityDirectory = lazy(() =>
   import("./identity-directory").then((m) => ({ default: m.IdentityDirectory })),
 );

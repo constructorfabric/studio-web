@@ -34,6 +34,10 @@ export interface ProjectSource {
   branch?: string;
   /** How shared edits reach this repository; `branch` when absent. */
   share_mode?: ShareMode;
+  /** "Create a gear" puts new gears here (ADR-0060; source-roles.ts). */
+  gears_here?: boolean;
+  /** A published product.gdl goes here; none: Studio keeps revisions only. */
+  publish_here?: boolean;
 }
 
 /** Whether shares through `connection` can open a pull request — GitHub only
@@ -168,4 +172,18 @@ export async function projectRepoRows(token: string, tenantId: string): Promise<
       .catch((): Connection[] => []),
   ]);
   return asRows(config?.sources, connections);
+}
+
+const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", gitlab: "GitLab", git: "Git" };
+
+/** The repositories by the connector they were picked from, for Sources'
+ *  header: "from connector GitHub · 2". In the order first seen. */
+export function sourcesByConnector(rows: readonly Pick<RepoEntry, "source">[]): { source: string; label: string; count: number }[] {
+  const out: { source: string; label: string; count: number }[] = [];
+  for (const r of rows) {
+    const at = out.find((o) => o.source === r.source);
+    if (at) at.count += 1;
+    else out.push({ source: r.source, label: PROVIDER_NAMES[r.source] ?? r.source, count: 1 });
+  }
+  return out;
 }

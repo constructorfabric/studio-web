@@ -14,14 +14,16 @@
 //! no longer the latest, nothing is written and the caller gets the latest
 //! back ([`Saved::Stale`]): the REST layer answers 409 with both texts. Two
 //! saves racing for the same number collide on the primary key; the loser is
-//! told the same way.
+//! told the same way. A save whose text is the latest revision's already is
+//! that revision ([`Saved::Unchanged`]) whatever its base, so a save repeated
+//! after a lost answer is idempotent ([`settled`]).
 //!
 //! PostgreSQL only, like every gear table here (studio-backend/AGENTS.md).
 
 use sea_orm::{ColumnTrait, Condition, EntityTrait, Order};
 use sha2::{Digest, Sha256};
 use toolkit_db::Db;
-use toolkit_db::secure::{SecureEntityExt, SecureInsertExt};
+use toolkit_db::secure::{SecureEntityExt, SecureInsertExt, SecureUpdateExt};
 use toolkit_security::AccessScope;
 use uuid::Uuid;
 
@@ -63,6 +65,11 @@ pub mod entity {
         pub sha256: String,
         /// `studio` | `repository` | `migrated`.
         pub source: String,
+        /// The commit of each source the text uses, taken when it was saved
+        /// (ADR-0060 §3): a `super::super::sources_lock::SourcesLock` as
+        /// JSON. `None` for a revision saved before locks were kept.
+        #[sea_orm(column_type = "Text", nullable)]
+        pub sources_lock: Option<String>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter)]
@@ -86,6 +93,8 @@ pub struct Revision {
     pub created_at_ms: i64,
     pub sha256: String,
     pub source: String,
+    /// See [`entity::Model::sources_lock`].
+    pub sources_lock: Option<super::sources_lock::SourcesLock>,
 }
 
 impl From<entity::Model> for Revision {
@@ -97,6 +106,10 @@ impl From<entity::Model> for Revision {
             created_at_ms: m.created_at_ms,
             sha256: m.sha256,
             source: m.source,
+            sources_lock: m
+                .sources_lock
+                .as_deref()
+                .and_then(|t| serde_json::from_str(t).ok()),
         }
     }
 }
@@ -132,6 +145,25 @@ pub fn digest(text: &str) -> String {
 /// against the latest, or the project has none and it says so.
 pub fn is_current(base: Option<i64>, latest: Option<&Revision>) -> bool {
     base.unwrap_or(0) == latest.map_or(0, |l| l.revision)
+}
+
+/// What a save of text hashing to `sha256`, made against `base`, comes to
+/// without writing anything: `None` when it is a new revision.
+///
+/// The latest revision's text again is that revision, whatever the base
+/// (`Unchanged`, `created: false`): nothing anybody saved is lost by it. So a
+/// save repeated -- a retry after the gateway gave up on a request that had
+/// saved -- answers the revision the first attempt made, rather than a
+/// conflict with it. Any other text made against a revision that is no
+/// longer the latest is refused with the latest (`Stale`), as before.
+pub fn settled(base: Option<i64>, latest: Option<&Revision>, sha256: &str) -> Option<Saved> {
+    let l = latest?;
+    if l.sha256 == sha256 {
+        return Some(Saved::Unchanged(l.clone()));
+    }
+    // A base past a project with no revision at all is a first save: there
+    // is nothing it could have missed.
+    (!is_current(base, Some(l))).then(|| Saved::Stale(l.clone()))
 }
 
 /// A refusal of a text before anything is stored: empty, too large, or not a
@@ -225,18 +257,9 @@ impl DescriptionStore {
         new: &NewRevision<'_>,
     ) -> anyhow::Result<Saved> {
         let latest = self.latest(tenant, project).await?;
-        // A base past a project with no revision at all is a first save: there
-        // is nothing it could have missed.
-        if let Some(l) = &latest
-            && !is_current(new.base_revision, Some(l))
-        {
-            return Ok(Saved::Stale(l.clone()));
-        }
         let sha256 = digest(new.text);
-        if let Some(l) = &latest
-            && l.sha256 == sha256
-        {
-            return Ok(Saved::Unchanged(l.clone()));
+        if let Some(settled) = settled(new.base_revision, latest.as_ref(), &sha256) {
+            return Ok(settled);
         }
         let made = Revision {
             revision: latest.as_ref().map_or(1, |l| l.revision + 1),
@@ -245,6 +268,7 @@ impl DescriptionStore {
             created_at_ms: now_ms(),
             sha256,
             source: new.source.to_owned(),
+            sources_lock: None,
         };
         let row = entity::ActiveModel {
             tenant_id: sea_orm::ActiveValue::Set(tenant),
@@ -255,6 +279,7 @@ impl DescriptionStore {
             created_at_ms: sea_orm::ActiveValue::Set(made.created_at_ms),
             sha256: sea_orm::ActiveValue::Set(made.sha256.clone()),
             source: sea_orm::ActiveValue::Set(made.source.clone()),
+            sources_lock: sea_orm::ActiveValue::Set(None),
         };
         let conn = self.db.conn()?;
         let inserted = entity::Entity::insert(row)
@@ -267,12 +292,43 @@ impl DescriptionStore {
         match inserted {
             Ok(_) => Ok(Saved::Created(made)),
             // Another save took this number first: it is the latest now, and
-            // this one was made against the one before it.
+            // this one was made against the one before it -- unless it saved
+            // this very text (the same save, sent twice at once).
             Err(e) => match self.latest(tenant, project).await? {
+                Some(l) if l.sha256 == made.sha256 => Ok(Saved::Unchanged(l)),
                 Some(l) if l.revision >= made.revision => Ok(Saved::Stale(l)),
                 _ => Err(e.into()),
             },
         }
+    }
+}
+
+impl DescriptionStore {
+    /// Keep `lock` beside revision `revision` (ADR-0060 §3).
+    pub async fn set_lock(
+        &self,
+        tenant: Uuid,
+        project: Uuid,
+        revision: i64,
+        lock: &super::sources_lock::SourcesLock,
+    ) -> anyhow::Result<()> {
+        use sea_orm::sea_query::Expr;
+        let conn = self.db.conn()?;
+        entity::Entity::update_many()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(tenant))
+            .filter(
+                Condition::all()
+                    .add(entity::Column::ProjectId.eq(project))
+                    .add(entity::Column::Revision.eq(revision)),
+            )
+            .col_expr(
+                entity::Column::SourcesLock,
+                Expr::value(serde_json::to_string(lock)?),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(())
     }
 }
 
@@ -304,6 +360,7 @@ mod tests {
             created_at_ms: 0,
             sha256: digest("product shop {}"),
             source: SOURCE_STUDIO.into(),
+            sources_lock: None,
         }
     }
 
@@ -315,6 +372,39 @@ mod tests {
         assert!(is_current(Some(3), Some(&rev(3))));
         assert!(!is_current(Some(2), Some(&rev(3))));
         assert!(!is_current(None, Some(&rev(1))));
+    }
+
+    #[test]
+    fn a_save_repeated_is_the_revision_it_made() {
+        let sha = digest("product shop {}");
+        // The first attempt made revision 3 from base 2; the retry, still
+        // made against 2, is revision 3 again rather than a conflict.
+        assert_eq!(
+            settled(Some(2), Some(&rev(3)), &sha),
+            Some(Saved::Unchanged(rev(3)))
+        );
+        // The same against the latest is unchanged, as it always was.
+        assert_eq!(
+            settled(Some(3), Some(&rev(3)), &sha),
+            Some(Saved::Unchanged(rev(3)))
+        );
+    }
+
+    #[test]
+    fn another_text_against_an_old_revision_is_still_a_conflict() {
+        let other = digest("product shop { gears {} }");
+        assert_eq!(
+            settled(Some(2), Some(&rev(3)), &other),
+            Some(Saved::Stale(rev(3)))
+        );
+        assert_eq!(
+            settled(None, Some(&rev(1)), &other),
+            Some(Saved::Stale(rev(1)))
+        );
+        // Against the latest, or a project's first: a new revision.
+        assert_eq!(settled(Some(3), Some(&rev(3)), &other), None);
+        assert_eq!(settled(None, None, &other), None);
+        assert_eq!(settled(Some(5), None, &other), None);
     }
 
     #[test]

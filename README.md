@@ -190,7 +190,8 @@ spec-quality checks are also MCP tools, for the agent a developer already works
 in: Claude Code, Codex, Cursor. It is another way into Studio, not a
 replacement for the portal: every call acts as you, with your token, and can
 do only what you can do in the portal. The full guide is
-[`docs/mcp.md`](docs/mcp.md).
+[`docs/mcp.md`](docs/mcp.md); its section 5 says how it sits next to
+Constructor Research's own MCP.
 
 | | |
 |---|---|
@@ -309,9 +310,10 @@ How to branch, sign off, test and get a change reviewed is in
 ### The backend never becomes healthy
 
 `docker compose ps` shows which dependency it waits for, and
-`docker compose logs -f backend` why. On an empty database the backend waits
-for `backend-bootstrap` to seed the root tenant, and that waits for Keycloak to
-finish importing its realm.
+`docker compose logs -f backend` why. The backend first waits for
+`backend-bootstrap` to create and migrate the gear databases
+(`docker compose logs backend-bootstrap`); on an empty database it then seeds
+the root tenant itself, retrying while Keycloak finishes importing its realm.
 
 ### Browser sign-in fails
 

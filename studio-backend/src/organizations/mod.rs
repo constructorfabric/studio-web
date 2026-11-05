@@ -13,6 +13,7 @@
 
 mod creation;
 pub mod logo;
+mod metrics;
 mod overview;
 /// The logo document only this gear writes, for the PDP's gear-held list.
 pub use logo::LOGO_METADATA_TYPE;
@@ -196,6 +197,11 @@ impl RestApiCapability for StudioOrganizationsGear {
                 answers: overview::Answers::default(),
             })
         });
+        // The metrics board reads through the overview's sources, and admits
+        // a caller the same way.
+        let metrics = overview
+            .as_ref()
+            .map(|overview| Arc::new(metrics::Metrics::new(Arc::clone(overview))));
         // `?organization_id=` resolves through it.
         let access = sources.as_ref().map(|sources| {
             crate::org_scope::OrgAccess(Arc::new(
@@ -203,7 +209,7 @@ impl RestApiCapability for StudioOrganizationsGear {
             ))
         });
         Ok(rest::register_routes(
-            router, openapi, service, creation, sources, overview, access,
+            router, openapi, service, creation, sources, overview, metrics, access,
         ))
     }
 }

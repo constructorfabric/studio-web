@@ -66,6 +66,14 @@ spec:
               {{- else }}
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_signing_seed } }
               {{- end }}
+            # file-storage >= 0.4: the token the sidecar sends on its finalize
+            # callbacks. The sidecar gets the same key as FS_SIDECAR_INTERNAL_TOKEN.
+            - name: STUDIO_FS_FINALIZE_SECRET
+              {{- if .Values.backend.fileStorage.enabled }}
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: finalize_internal_secret } }
+              {{- else }}
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_finalize_secret } }
+              {{- end }}
             # Optional dedicated CREATEDB-capable provisioner. The code falls
             # back to STUDIO_PG_* when this secret is the app secret.
             - name: STUDIO_PG_BOOTSTRAP_HOST

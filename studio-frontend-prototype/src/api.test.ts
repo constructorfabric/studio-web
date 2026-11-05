@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   api,
@@ -40,6 +40,24 @@ describe("background work client", () => {
     await api.syncComponents("token", { crates_io: null, repositories: [] });
     const sent = fetchMock.mock.calls[1][1]?.headers as Record<string, string>;
     expect(sent["Content-Type"]).toBe("application/json");
+  });
+
+  it("polls a catalogue sync in the organization it was queued in", async () => {
+    // The sync is queued in the organization on screen; polled from the
+    // caller's home tenant it answered 404 "Run not found" though it ran.
+    const run = { id: "r-1", state: "running", task_type: "catalog.sync" };
+    let fetchMock = jsonMock(run);
+    setCurrentOrganization("org-1");
+    try {
+      await api.componentsCatalogTask("token", "r-1");
+      expect(fetchMock.mock.calls[0][0]).toBe("/cf/studio-tasks/v1/runs/r-1?tenant=org-1");
+      // The platform's own sync is queued in the home tenant.
+      fetchMock = jsonMock(run);
+      await api.componentsCatalogTask("token", "r-2", null);
+      expect(fetchMock.mock.calls[0][0]).toBe("/cf/studio-tasks/v1/runs/r-2");
+    } finally {
+      setCurrentOrganization(undefined);
+    }
   });
 
   it("asks for every run when nothing is filtered", async () => {
@@ -790,5 +808,106 @@ describe("uploadProjectArtifact", () => {
       value: "manual",
     });
     expect(fetchMock.mock.calls[1]?.[0]).toBe("https://storage.example/upload/signed");
+  });
+});
+
+describe("product save", () => {
+  beforeEach(() => {
+    // A save tells the page the product changed.
+    vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const json = (body: unknown, status: number) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  const saved = { product_gdl: "product shop {}", profile: "dev", ok: true, description_revision: { revision: 3, created: false, sha256: "s" } };
+  const timedOut = () => json({ title: "Gateway Timeout", detail: "Request exceeded 30s timeout" }, 504);
+  const ask = { product_id: "shop", gears: ["a"], write: true, base_revision: 2 };
+
+  it("is sent again when the gateway lost its answer: the same save is the revision it made", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(timedOut())
+      .mockResolvedValueOnce(json({}, 502))
+      .mockResolvedValueOnce(json(saved, 200));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await api.previewProduct("token", "p-1", ask);
+    expect(result.description_revision).toEqual({ revision: 3, created: false, sha256: "s" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // Each attempt is the same save, against the same base.
+    for (const call of fetchMock.mock.calls) expect(JSON.parse(String(call[1]?.body))).toEqual(ask);
+  });
+
+  it("gives up after a bounded number of attempts", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => timedOut());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.previewProduct("token", "p-1", ask)).rejects.toMatchObject({ status: 504 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("is not sent again on a conflict, nor when it publishes", async () => {
+    let fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json({ title: "Conflict" }, 409));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.previewProduct("token", "p-1", ask)).rejects.toMatchObject({ status: 409 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => timedOut());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.previewProduct("token", "p-1", { ...ask, publish: true })).rejects.toMatchObject({ status: 504 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("images and registries client", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function jsonMock(body: unknown) {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      async () => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("sends only the image filters that are set", async () => {
+    const fetchMock = jsonMock({ items: [], total: 0 });
+    await api.projectImages("token", "p-1", { build_id: "b-1", app: "", kind: undefined, limit: 50 });
+    expect(fetchMock.mock.calls[0][0]).toBe("/cf/studio-environments/v1/images?project_id=p-1&build_id=b-1&limit=50");
+  });
+
+  it("encodes a repository whole: its slashes are part of its name", async () => {
+    // Left as path separators, `acme/web/api` would address another route.
+    const fetchMock = jsonMock({ items: [] });
+    await api.registryTags("token", "org-1", "c-1", "acme/web/api");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/cf/studio-environments/v1/registries/c-1/repositories/acme%2Fweb%2Fapi/tags?organization_id=org-1",
+    );
+    await api.deleteRegistryVersion("token", "org-1", "c-1", "acme/web/api", "sha256:abc");
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/cf/studio-environments/v1/registries/c-1/repositories/acme%2Fweb%2Fapi/versions/sha256%3Aabc?organization_id=org-1",
+    );
+    expect((fetchMock.mock.calls[1][1]?.headers as Record<string, string>)["Idempotency-Key"]).toBeTruthy();
+  });
+
+  it("asks a project's own environment's readiness as the project", async () => {
+    const fetchMock = jsonMock({ level: "bootstrapped", missing: [], namespaces: [], policy_enforced: true });
+    await api.environmentReadiness("token", "e-1", { org: "org-1" });
+    expect(fetchMock.mock.calls[0][0]).toBe("/cf/studio-environments/v1/environments/e-1/readiness?organization_id=org-1");
+    await api.environmentReadiness("token", "e-1", { org: "org-1", project: "p-1" });
+    expect(fetchMock.mock.calls[1][0]).toBe("/cf/studio-environments/v1/environments/e-1/readiness?project_id=p-1");
+  });
+
+  it("pins with PUT and unpins with DELETE", async () => {
+    const fetchMock = jsonMock({});
+    await api.pinImage("token", "p-1", "i-1", true);
+    await api.pinImage("token", "p-1", "i-1", false);
+    expect(fetchMock.mock.calls.map((c) => [c[0], c[1]?.method])).toEqual([
+      ["/cf/studio-environments/v1/images/i-1/pin?project_id=p-1", "PUT"],
+      ["/cf/studio-environments/v1/images/i-1/pin?project_id=p-1", "DELETE"],
+    ]);
   });
 });

@@ -152,6 +152,7 @@ impl ConnectorDriver for ResearchDriver {
             .me()
             .await?;
         Ok(DriverIdentity {
+            checks: Vec::new(),
             display_name: me.display_name(),
             account: me.id,
         })

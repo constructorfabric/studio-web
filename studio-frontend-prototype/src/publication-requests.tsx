@@ -19,6 +19,7 @@ import {
 } from "./api";
 import { errText, relTime } from "./format";
 import { publishPreviewLines } from "./registry";
+import { EmptyState, InfoPopover, PageHeader, StatusChip } from "./ui-standard";
 
 /** One request's key in the page's state. */
 const keyOf = (r: PublicationRequest) => `${r.organization_id}/${r.name}`;
@@ -99,16 +100,34 @@ export function PublicationRequests({
   return (
     <div className="pubreq" data-publication-requests>
       <style>{PUBREQ_CSS}</style>
-      <h1>Publication requests</h1>
-      <p className="subtitle">
-        Gears organizations ask the platform to take. A platform curator publishes one -- a pull request into the
-        platform&apos;s gear repository -- or declines it with a reason. Once the platform&apos;s catalogue has it, it is
-        in every organization&apos;s common set.
-      </p>
+      <PageHeader
+        title="Publication requests"
+        info={
+          <>
+            Gears organizations ask the platform to take. A platform curator publishes one -- a pull request into the
+            platform&apos;s gear repository -- or declines it with a reason. Once the platform&apos;s catalogue has it, it
+            is in every organization&apos;s common set.
+          </>
+        }
+        status={
+          refused ? (
+            <StatusChip tone="warn">no access</StatusChip>
+          ) : (
+            items !== null && (
+              <StatusChip tone={items.length > 0 ? "warn" : "ok"} data-publication-count>
+                {items.length > 0 ? `${items.length} open` : "none open"}
+              </StatusChip>
+            )
+          )
+        }
+      />
       {refused ? (
-        <p className="hint" data-publication-refused>
-          Only a platform administrator or a platform gear curator answers publication requests.
-        </p>
+        <div className="card" data-publication-refused>
+          <EmptyState
+            title="You cannot answer publication requests."
+            body="Only a platform administrator or a platform gear curator answers them."
+          />
+        </div>
       ) : (
         <>
           {error && <div className="error">{error}</div>}
@@ -116,7 +135,9 @@ export function PublicationRequests({
           {items === null ? (
             <p className="hint">Loading…</p>
           ) : items.length === 0 ? (
-            <p className="hint">No open requests.</p>
+            <div className="card">
+              <EmptyState title="No open requests." body="An organization asks from its gear's page; the request lands here." />
+            </div>
           ) : (
             <ul className="pubreq-list">
               {items.map((r) => {
@@ -126,7 +147,7 @@ export function PublicationRequests({
                   <li key={key} className="card" data-publication-request>
                     <div className="pubreq-head">
                       <b>{r.name}</b>
-                      {r.version && <span className="badge">v{r.version.replace(/^v/, "")}</span>}
+                      {r.version && <StatusChip tone="neutral">v{r.version.replace(/^v/, "")}</StatusChip>}
                       <span className="sub">
                         {r.organization_name ?? r.organization_id} · asked by {r.requested_by_name ?? r.requested_by} ·{" "}
                         {relTime(r.at)}
@@ -246,16 +267,18 @@ function Curators({ token, orgId }: { token: string; orgId?: string }) {
   const candidates = members.filter((m) => !(items ?? []).some((c) => c.id === m.user_id));
   return (
     <section className="card" data-gear-curators>
-      <h3>Gear curators</h3>
-      <p className="hint">
-        People who answer publication requests beside the platform&apos;s administrators (the
-        <code> platform-gear-curator</code> role). Only a platform administrator changes this list.
-      </p>
+      <h3>
+        Gear curators{" "}
+        <InfoPopover label="About gear curators">
+          People who answer publication requests beside the platform&apos;s administrators (the
+          <code> platform-gear-curator</code> role). Only a platform administrator changes this list.
+        </InfoPopover>
+      </h3>
       {error && <div className="error">{error}</div>}
       {items === null ? (
         <p className="hint">Loading…</p>
       ) : items.length === 0 ? (
-        <p className="hint">Nobody yet: the platform&apos;s administrators answer every request.</p>
+        <EmptyState title="No curators yet." body="The platform's administrators answer every request." />
       ) : (
         <ul className="pubreq-curators">
           {items.map((c) => (

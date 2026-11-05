@@ -242,6 +242,122 @@ export interface IdeBuild {
   step: string | null;
   /** A pipeline's build: its run's page in CI. */
   url: string | null;
+  /** Where a build Studio ran and with what; absent from other builds and
+   *  from a record written before Studio kept it. */
+  place?: BuildPlace;
+}
+
+/** Where a build Studio ran, and with what, as its record keeps it. */
+export interface BuildPlace {
+  environmentId: string | null;
+  environment: string | null;
+  namespace: string | null;
+  /** The branch, tag or commit it built; the repository's branch when none was asked for. */
+  gitRef: string | null;
+  repository: string | null;
+  /** The connection the repository was cloned through. */
+  sourceConnectionId: string | null;
+  sourceConnection: string | null;
+  /** The image its prepare and publish steps ran in. */
+  builderImage: string | null;
+  /** The Gearbox engine's commit in that image. */
+  gearboxVersion: string | null;
+}
+
+/** A build node's place, or undefined when it records none. */
+export function placeOf(v: Record<string, unknown>): BuildPlace | undefined {
+  const place: BuildPlace = {
+    environmentId: str(v.environment_id),
+    environment: str(v.environment),
+    namespace: str(v.namespace),
+    gitRef: str(v.git_ref),
+    repository: str(v.repository),
+    sourceConnectionId: str(v.source_connection_id),
+    sourceConnection: str(v.source_connection),
+    builderImage: str(v.builder_image),
+    gearboxVersion: str(v.gearbox_version),
+  };
+  const { repository: _repository, ...recorded } = place;
+  return Object.values(recorded).some((x) => x !== null) ? place : undefined;
+}
+
+/** The place as short labelled lines for a build's detail: what to look at
+ *  when a build failed somewhere it should not have. */
+export function placeLines(p: BuildPlace): { label: string; value: string }[] {
+  const lines: { label: string; value: string }[] = [];
+  if (p.environment || p.namespace)
+    lines.push({ label: "where", value: [p.environment, p.namespace && `namespace ${p.namespace}`].filter(Boolean).join(" · ") });
+  if (p.repository || p.gitRef) lines.push({ label: "code", value: [p.repository, p.gitRef && `at ${p.gitRef}`].filter(Boolean).join(" ") });
+  if (p.sourceConnection || p.sourceConnectionId)
+    lines.push({ label: "cloned through", value: p.sourceConnection ?? p.sourceConnectionId ?? "" });
+  if (p.builderImage) lines.push({ label: "builder", value: p.builderImage });
+  if (p.gearboxVersion) lines.push({ label: "Gearbox", value: p.gearboxVersion });
+  return lines;
+}
+
+/** What Studio refuses a build or deploy with before it queues it, because
+ *  the run could only fail (environments/README.md "Before a build or a
+ *  deploy is queued"): what it means, and what to do. */
+export const BUILD_REFUSALS: Record<string, { title: string; next: string }> = {
+  REPOSITORY_CONNECTION_PERSONAL: {
+    title: "The repository is reached through a personal connection",
+    next: "A build runs as the server, which cannot read a person's token: connect the repository through a workspace or organization connection (Project › Sources), then build again.",
+  },
+  REPOSITORY_CONNECTION_UNREADABLE: {
+    title: "The repository's connection cannot be read by the server",
+    next: "Reconnect it, or connect the repository through another shared connection, then build again.",
+  },
+  REGISTRY_CONNECTION_UNREADABLE: {
+    title: "The environment's registry connection cannot be read",
+    next: "Fix the registry connection in Organization › Infrastructure, then try again.",
+  },
+  CLUSTER_CONNECTION_UNREADABLE: {
+    title: "The environment's cluster connection cannot be read",
+    next: "Fix the cluster connection in Organization › Infrastructure, then try again.",
+  },
+  CLUSTER_CANNOT_CREATE_NAMESPACE: {
+    title: "The project's namespace does not exist, and Studio may not create it",
+    next: "A cluster administrator applies deploy/k8s/studio-environments/bootstrap.yaml, or creates the namespace and gives the connection admin in it.",
+  },
+  CLUSTER_CANNOT_READ_NAMESPACE: {
+    title: "Studio may not read the project's namespace",
+    next: "A cluster administrator applies deploy/k8s/studio-environments/bootstrap.yaml, or gives the connection admin in the namespace.",
+  },
+  CLUSTER_NAMESPACE_RIGHTS_MISSING: {
+    title: "Studio may not create what a build or deploy needs in the namespace",
+    next: "A cluster administrator gives the connection's account admin in the namespace.",
+  },
+  ENVIRONMENT_CLUSTER_UNREACHABLE: {
+    title: "The environment's cluster did not answer",
+    next: "Check the cluster's address and that it is up, then try again.",
+  },
+};
+
+/** The refusal code a failed request carries, when it is one of
+ *  [`BUILD_REFUSALS`]: a failed precondition names it in a violation. */
+export function buildRefusalCode(e: unknown): string | null {
+  const carrier = e as { problem?: { context?: { violations?: unknown[] } }; body?: { context?: { violations?: unknown[] } } } | null;
+  const violations = carrier?.problem?.context?.violations ?? carrier?.body?.context?.violations ?? [];
+  for (const v of violations) {
+    const r = v as Record<string, unknown> | null;
+    for (const k of ["type", "type_", "subject"]) {
+      const code = r?.[k];
+      if (typeof code === "string" && code in BUILD_REFUSALS) return code;
+    }
+  }
+  return null;
+}
+
+/** A failed build or deploy request as a person reads it: the refusal's
+ *  title, the server's sentence, and what to do; any other failure as
+ *  `fallback` says it. */
+export function buildRefusalText(e: unknown, fallback: (e: unknown) => string): string {
+  const code = buildRefusalCode(e);
+  if (!code) return fallback(e);
+  const carrier = e as { problem?: { context?: { violations?: { description?: string }[] } } } | null;
+  const said = carrier?.problem?.context?.violations?.find((v) => v?.description)?.description?.trim();
+  const { title, next } = BUILD_REFUSALS[code];
+  return [`${title}.`, said, next].filter(Boolean).join(" ");
 }
 
 /** The `build` nodes as builds, newest first. */
@@ -282,6 +398,7 @@ export function ideBuildsOf(nodes: readonly ArtifactNode[]): IdeBuild[] {
           : [],
         step: str(v.step),
         url: null,
+        place: placeOf(v),
       };
     })
     .sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
@@ -404,10 +521,13 @@ export function failureCause(b: IdeBuild, now = Date.now()): FailureCause {
     };
   }
   if (b.failureStep === "start") {
+    const personal = /not readable|personal/i.test(b.failure ?? "");
     return {
       kind: "cluster",
       gear: null,
-      next: "It never reached the cluster: check the environment's cluster and registry connections (Organization › Environments), then build again.",
+      next: personal
+        ? "It never started: the server could not read a connection's token -- most often a personal connection to the repository. Connect it through a workspace or organization connection, then build again."
+        : "It never reached the cluster: check the environment's cluster and registry connections (Organization › Infrastructure), then build again.",
     };
   }
   if (b.where === "ci" && !b.failure) {

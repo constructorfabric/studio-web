@@ -3,7 +3,7 @@ import { pathToPlace, placeToPath, type UrlPlace } from "./place-url";
 
 const KNOWN = {
   projectTabs: ["overview", "specs", "components", "kits"],
-  workspaceTabs: ["projects", "types", "process"],
+  workspaceTabs: ["projects", "ptypes", "types"],
   adminViews: ["people", "access", "secrets"],
 };
 
@@ -35,7 +35,7 @@ describe("the portal's address", () => {
   it("reads back every path it writes", () => {
     const places: UrlPlace[] = [
       { ...base, view: "gears" },
-      { ...base, crumb: { projectId: "ws1" }, workspaceTab: "process" },
+      { ...base, crumb: { projectId: "ws1" }, workspaceTab: "ptypes" },
       { ...base, crumb: { projectId: "ws1", nestedId: "p1" }, projectTab: "specs", activeOrgId: "org-9" },
       { ...base, adminOpen: true, adminView: "access" },
     ];
@@ -51,11 +51,31 @@ describe("the portal's address", () => {
     expect(pathToPlace("/workspaces/ws1", "", KNOWN)).toMatchObject({ workspaceTab: "projects" });
   });
 
+  it("opens the retired Process section's old address on the workspace's default tab", () => {
+    expect(pathToPlace("/workspaces/ws1/process", "", KNOWN)).toMatchObject({
+      crumb: { projectId: "ws1" },
+      workspaceTab: "projects",
+    });
+  });
+
   it("opens the Frontend tab's old address on Product, which now holds it", () => {
     expect(pathToPlace("/workspaces/ws1/projects/p1/frontend", "", KNOWN)).toMatchObject({
       crumb: { projectId: "ws1", nestedId: "p1" },
       projectTab: "components",
     });
+  });
+
+  it("opens Environments' old address on Infrastructure, and writes the new one", () => {
+    expect(pathToPlace("/environments", "", KNOWN)).toMatchObject({ view: "environments", adminOpen: false });
+    expect(pathToPlace("/infrastructure", "", KNOWN)).toMatchObject({ view: "environments" });
+    expect(placeToPath({ ...base, view: "environments" })).toBe("/infrastructure");
+  });
+
+  it("opens the Builds and Deploys tabs' old addresses on Releases", () => {
+    const known = { ...KNOWN, projectTabs: [...KNOWN.projectTabs, "releases"] };
+    for (const tab of ["builds", "deploys"]) {
+      expect(pathToPlace(`/workspaces/ws1/projects/p1/${tab}`, "", known), tab).toMatchObject({ projectTab: "releases" });
+    }
   });
 
   it("answers nothing for an address that is not a place of ours", () => {

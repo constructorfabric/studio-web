@@ -169,6 +169,8 @@ anything else comes back undetermined with its candidates. Only prose paths
 documents; any other path is recorded as `not_a_document`. Asking the
 `purpose` detector about the leftover set is the caller's step, recorded with
 source `spec_quality`.
+The margin is there because two types that score alike are ambiguous, and
+guessing between them is worse than asking a person (`classify.rs`).
 
 ## 3. Technical Architecture
 

@@ -18,7 +18,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0002](0002-projects-as-resource-groups.md) | Projects — Resource Group-backed in v0.1, domain gear later | accepted | 2026-07-28 |
 | [0003](0003-theia-sessions.md) | Per-workspace Theia IDE sessions in containers | accepted | 2026-07-30 |
 | [0004](0004-users-onboarding-roles.md) | User onboarding, provisioning, and roles | accepted | 2026-08-03 |
-| [0005](0005-projects-domain-gear.md) | Projects — a domain gear (supersedes the v0.1 decision in ADR-0002) | accepted | 2026-08-07 |
+| [0005](0005-projects-domain-gear.md) | Projects — a domain gear (supersedes the v0.1 decision in ADR-0002) | superseded by [0010](0010-projects-are-am-tenants.md) | 2026-08-07 |
 | [0006](0006-frontend-rebuild-on-frontx.md) | Rebuild the portal frontend on FrontX | accepted | 2026-08-11 |
 | [0007](0007-shell-tokens-as-whole-colours.md) | Shell theme tokens hold whole colours | accepted | 2026-08-18 |
 | [0008](0008-simplified-navigation-shell.md) | Simplified navigation shell — overlay drawer, top bar, context slot | accepted | 2026-08-18 |
@@ -67,6 +67,15 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0053](0053-a-products-description-is-kept-by-studio-and-built-with-the-code-of-a-chosen-branch.md) | A product's description is kept by Studio, versioned, and built with the code of a branch the build chooses; publishing it to the repository is optional | proposed | 2026-10-29 |
 | [0054](0054-a-project-keeps-environments-of-its-own-on-places-the-organization-opens.md) | A project keeps environments of its own, on places the organization opens to it | proposed | 2026-10-29 |
 | [0055](0055-a-build-is-previewed-in-a-namespace-of-its-own-that-expires.md) | A build is previewed in a namespace of its own that expires | proposed | 2026-10-30 |
+| [0056](0056-places-environments-and-releases-are-laid-out-the-way-an-organization-runs-them.md) | Places, environments and releases are laid out the way an organization runs them | proposed | 2026-11-03 |
+| [0057](0057-a-profile-is-chosen-per-environment-and-checked-per-profile.md) | A profile is chosen per environment and checked per profile | proposed | 2026-11-03 |
+| [0058](0058-the-process-comes-from-the-specs-and-the-domain-model.md) | The process comes from the specs and the domain model, not a hand-edited catalogue | proposed | 2026-11-04 |
+| [0059](0059-a-build-or-deploy-names-its-cause-before-it-starts.md) | A build or a deploy names its cause before it starts | proposed | 2026-11-04 |
+| [0060](0060-a-project-is-one-list-of-sources-and-a-revision-pins-each.md) | A project is one list of source repositories, and each description revision pins the commit of every source it uses | proposed | 2026-11-04 |
+| [0061](0061-components-are-found-by-their-passports-in-a-two-level-catalogue.md) | Components are found by their passports, in a catalogue with an organization level and a project level | proposed | 2026-11-04 |
+| [0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) | A project's build, its images and its namespaces are its own, not the platform's | proposed | 2026-11-04 |
+| [0063](0063-what-a-product-is-comes-from-its-specs-and-a-project-starts-from-an-optional-template.md) | What a product is comes from its specs, and a project starts from an optional template | proposed | 2026-11-04 |
+| [0064](0064-a-products-infra-services-are-catalogue-components-deployed-with-it.md) | A product's infra services are catalogue components, deployed with it | proposed | 2026-11-04 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

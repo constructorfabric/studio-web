@@ -155,6 +155,9 @@ pub struct Evidence<'a> {
     pub npm_bin: Option<bool>,
     pub npm_mfe: Option<bool>,
     pub npm_private: Option<bool>,
+    /// What the package's own `frontx.gdl` declares it is (`shell`, `mfe`,
+    /// `library`), when it has one that reads.
+    pub frontx_kind: Option<&'a str>,
 }
 
 /// A kind and the evidence that decided it.
@@ -265,6 +268,17 @@ pub fn classify(e: &Evidence<'_>) -> Classified {
         }
         if short == "cli" || short.ends_with("-cli") {
             return classified(Kind::Tool, format!("a command-line package (`{short}`)"));
+        }
+        // A package that describes itself is what it says: Studio's `shared`
+        // sits in `mfe_packages` and is a library, not a screen.
+        match e.frontx_kind {
+            Some("library") => {
+                return classified(Kind::FrontendLibrary, "its frontx.gdl declares `library()`");
+            }
+            Some("mfe") => {
+                return classified(Kind::MicroFrontend, "its frontx.gdl declares `mfe(...)`");
+            }
+            _ => {}
         }
         if e.npm_mfe == Some(true) {
             return classified(
@@ -436,6 +450,31 @@ mod tests {
             kind(&npm("@acme/billing-mfe", "apps/billing-mfe")),
             "micro-frontend"
         );
+    }
+
+    #[test]
+    fn a_package_that_describes_itself_is_what_its_frontx_gdl_says() {
+        // Studio's `shared` sits in `mfe_packages`, which alone reads as a
+        // micro-frontend.
+        let path = "studio-frontend/src-app/mfe_packages/shared";
+        assert_eq!(
+            kind(&npm("@constructor-studio/mfe-shared", path)),
+            "micro-frontend"
+        );
+        let mut e = npm("@constructor-studio/mfe-shared", path);
+        e.frontx_kind = Some("library");
+        assert_eq!(kind(&e), "frontend-library");
+        assert_eq!(classify(&e).reason, "its frontx.gdl declares `library()`");
+
+        let mut e = npm("@acme/orders", "packages/orders");
+        e.frontx_kind = Some("mfe");
+        assert_eq!(kind(&e), "micro-frontend");
+
+        // A scaffold stays one whatever it declares: it is copied, not mounted.
+        let mut e = npm("@acme/blank", "src-app/mfe_packages/_blank-mfe");
+        e.name = "@acme/_blank-mfe";
+        e.frontx_kind = Some("mfe");
+        assert_eq!(kind(&e), "template");
     }
 
     #[test]

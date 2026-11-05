@@ -19,12 +19,12 @@ publish = false
 name = "postgres_usage_collector_plugin"
 
 [dependencies]
-usage-collector-sdk = { package = "cf-gears-usage-collector-sdk", version = "0.3.14" }
-types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.9" }
-types-registry = { package = "cf-gears-types-registry", version = "0.4.0" }
-toolkit = { package = "cf-gears-toolkit", version = "0.10.0" }
-toolkit-macros = { package = "cf-gears-toolkit-macros", version = "0.6.6" }
-toolkit-odata = { package = "cf-gears-toolkit-odata", version = "0.9.7" }
+usage-collector-sdk = { package = "cf-gears-usage-collector-sdk", version = "=0.3.17" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "=0.4.2" }
+types-registry = { package = "cf-gears-types-registry", version = "=0.5.2" }
+toolkit = { package = "cf-gears-toolkit", version = "=0.12.0" }
+toolkit-macros = { package = "cf-gears-toolkit-macros", version = "=0.7.0" }
+toolkit-odata = { package = "cf-gears-toolkit-odata", version = "=0.10.1" }
 tokio-util = { version = "0.7", features = ["rt"] }
 async-trait = "0.1"
 sqlx = { version = "0.9", default-features = false, features = [

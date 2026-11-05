@@ -2555,7 +2555,21 @@ impl IngestService {
                 .await
             {
                 warn!(error = ?e, run, "studio-artifact-ingest: a pipeline's build could not be recorded");
+                continue;
             }
+            // Its images become the project's image records too (ADR-0062 §4).
+            crate::environments::port::record(crate::environments::port::Published {
+                project_id,
+                build_id: &report.build_id,
+                commit: report.commit.as_deref(),
+                description_revision: report.description_revision,
+                lock_hash: report.lock_hash.as_deref(),
+                images: &report.images,
+                chart_ref: report.chart_ref.as_deref(),
+                chart_version: report.chart_version.as_deref(),
+                pushed_by: "ci",
+            })
+            .await;
         }
     }
 
@@ -2993,6 +3007,7 @@ impl super::port::BuildRecords for IngestService {
             chart_ref: o.chart_ref.clone(),
             chart_version: o.chart_version.clone(),
             description_revision: o.description_revision,
+            place: o.place.clone(),
         };
         self.record_build(ctx, project_id, None, &report)
             .await

@@ -18,6 +18,7 @@ use crate::connectors::sdk::{FileToWrite, Repository};
 use crate::product::descriptions::{
     self, DescriptionStore, NewRevision, Revision, SOURCE_MIGRATED, Saved,
 };
+use crate::product::sources_lock;
 
 /// Who a revision Studio took itself is by.
 pub const STUDIO_AUTHOR: &str = "studio";
@@ -236,10 +237,29 @@ impl ProductService {
         path: Option<&str>,
     ) -> anyhow::Result<Saved> {
         let author = ctx.subject_id().to_string();
-        let saved = self
+        let record = self
+            .get_project_product(ctx, &project.to_string())
+            .await?
+            .map(|n| n.value);
+        let product_path = path
+            .map(str::to_owned)
+            .or_else(|| description_path(record.as_ref()))
+            .unwrap_or_else(|| "product.gdl".to_owned());
+        // One repository is one source (ADR-0060 §2): refused before
+        // anything is kept.
+        let sources = self.project_sources(ctx, &project.to_string()).await;
+        let home = crate::project_sources::description_home(&sources);
+        let declared = sources_lock::sources(text);
+        let twice =
+            sources_lock::duplicates(&declared, &product_path, home.map(|h| h.clone_url.as_str()));
+        if !twice.is_empty() {
+            return Err(sources_lock::OneRepositoryTwice(twice).into());
+        }
+        let tenant = self.description_tenant(ctx, project).await?;
+        let mut saved = self
             .store()?
             .save(
-                self.description_tenant(ctx, project).await?,
+                tenant,
                 project,
                 &NewRevision {
                     base_revision: base,
@@ -249,18 +269,43 @@ impl ProductService {
                 },
             )
             .await?;
-        if let Saved::Created(r) = &saved {
-            let record = self
-                .get_project_product(ctx, &project.to_string())
-                .await?
-                .map(|n| n.value);
+        let to_pin = match &mut saved {
+            Saved::Created(r) => Some(r),
+            // A revision whose sources are not all pinned (kept before
+            // pinning, or a source's head was unreadable then) is pinned by
+            // saving it again: the text is the same, so no revision is
+            // written, and `REVISION_NOT_PINNED` says to do exactly this.
+            Saved::Unchanged(r) if !r.sources_lock.as_ref().is_some_and(|l| l.complete()) => {
+                Some(r)
+            }
+            _ => None,
+        };
+        if let Some(r) = to_pin {
+            // The commit of each source the text uses, beside the revision
+            // (ADR-0060 §3). A lock that could not be kept leaves the
+            // revision unpinned: a dev build still builds it, a protected
+            // one says so.
+            let lock = self
+                .lock_sources(ctx, project, &declared, &product_path, &sources)
+                .await;
+            match self
+                .store()?
+                .set_lock(tenant, project, r.revision, &lock)
+                .await
+            {
+                Ok(()) => r.sources_lock = Some(lock),
+                Err(e) => {
+                    tracing::warn!(%project, revision = r.revision, error = %format!("{e:#}"), "studio-product: the revision's sources could not be pinned");
+                }
+            }
             let path = path
                 .map(str::to_owned)
                 .or_else(|| description_path(record.as_ref()));
             let mut patch = serde_json::Map::new();
             patch.insert(
                 "description".into(),
-                json!({ "revision": r.revision, "sha256": r.sha256, "path": path }),
+                json!({ "revision": r.revision, "sha256": r.sha256, "path": path,
+                        "sources_lock": r.sources_lock }),
             );
             if let Err(e) = self
                 .update_project_product(ctx, &project.to_string(), patch)
@@ -292,7 +337,7 @@ impl ProductService {
         let published = record.get("published")?;
         let path = description_path(Some(&record))?;
         let published_sha = published.get("sha256").and_then(Value::as_str);
-        let target = self.write_target(ctx, &project.to_string()).await.ok()?;
+        let target = self.publish_target(ctx, &project.to_string()).await.ok()?;
         let text = self
             .read_project_file_at(ctx, &project.to_string(), &path, None)
             .await
@@ -332,7 +377,7 @@ impl ProductService {
             .ok_or_else(|| anyhow!("the project's product has no id yet"))?;
         let path = description_path(record.as_ref())
             .unwrap_or_else(|| crate::product::gearbox::product_gdl_path(&product_id));
-        let target = self.write_target(ctx, &key).await?;
+        let target = self.publish_target(ctx, &key).await?;
         self.ensure_owned(ctx, super::scope_of(ctx, &key), &target)
             .await?;
         let repo = self.open_target(ctx, &target, None).await?;
@@ -435,7 +480,7 @@ impl ProductService {
             .and_then(Value::as_str)
             .map(publish_branch);
         let path = description_path(record.as_ref());
-        let target = self.write_target(ctx, &key).await?;
+        let target = self.publish_target(ctx, &key).await?;
         self.ensure_owned(ctx, super::scope_of(ctx, &key), &target)
             .await?;
         let repo = self.open_target(ctx, &target, None).await?;
@@ -506,12 +551,83 @@ impl ProductService {
         path: &str,
         git_ref: Option<&str>,
     ) -> anyhow::Result<Option<String>> {
-        let target = self.write_target(ctx, project_id).await?;
+        // Where it was published, else the home source it travels with.
+        let target = match self.publish_target(ctx, project_id).await {
+            Ok(t) => t,
+            Err(_) => self.home_target(ctx, project_id).await?,
+        };
         self.ensure_owned(ctx, super::scope_of(ctx, project_id), &target)
             .await?;
         let at = git_ref.unwrap_or(&target.base_branch).to_owned();
         let repo = self.open_target(ctx, &target, Some(&at)).await?;
         Ok(repo.read_file(path).await?.map(|f| f.text))
+    }
+}
+
+impl ProductService {
+    /// The lock of a description's `declared` sources: each project source
+    /// at the head of its branch now, read through its connection; another
+    /// `git(...)` at the commit its `rev` names, when it names one. A head
+    /// that cannot be read in time is left unpinned.
+    pub(crate) async fn lock_sources(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        declared: &[sources_lock::GdlSource],
+        product_path: &str,
+        sources: &[crate::project_sources::ProjectSource],
+    ) -> sources_lock::SourcesLock {
+        let home = crate::project_sources::description_home(sources);
+        let planned = sources_lock::plan(declared, product_path, sources, home);
+        let mut heads: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        let mut out = Vec::with_capacity(planned.len());
+        for (mut locked, source) in planned {
+            if let Some(source) = source {
+                let key = format!(
+                    "{}@{}",
+                    source.clone_url,
+                    source.branch.as_deref().unwrap_or("")
+                );
+                if !heads.contains_key(&key) {
+                    let head = self.head_of_source(ctx, project, source).await;
+                    heads.insert(key.clone(), head);
+                }
+                locked.commit = heads.get(&key).cloned().flatten();
+            }
+            out.push(locked);
+        }
+        sources_lock::SourcesLock { sources: out }
+    }
+
+    /// The commit at the head of `source`'s branch, through its connection.
+    async fn head_of_source(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        source: crate::project_sources::ProjectSource,
+    ) -> Option<String> {
+        let repo_name = source.full_path.clone();
+        let connection = source.connection_id;
+        let Some(target) = self.source_as_target(ctx, project, source).await else {
+            tracing::warn!(%project, repo = %repo_name, ?connection, "studio-product: a source's connection is not one the project can use, so its head is not pinned");
+            return None;
+        };
+        let read = async {
+            let repo = self.open_target(ctx, &target, None).await?;
+            repo.head_of(&target.base_branch).await
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(8), read).await {
+            Ok(Ok(head)) => head,
+            Ok(Err(e)) => {
+                tracing::warn!(%project, repo = %repo_name, error = %format!("{e:#}"), "studio-product: a source's head could not be read to pin it");
+                None
+            }
+            Err(_) => {
+                tracing::warn!(%project, repo = %repo_name, "studio-product: a source's head was not read in time to pin it");
+                None
+            }
+        }
     }
 }
 
@@ -532,6 +648,7 @@ mod tests {
             created_at_ms: 0,
             sha256: sha.into(),
             source: descriptions::SOURCE_STUDIO.into(),
+            sources_lock: None,
         }
     }
 

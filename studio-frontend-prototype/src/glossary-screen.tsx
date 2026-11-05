@@ -26,6 +26,7 @@ import {
   type SimilarPair,
 } from "./glossary-view";
 import type { Entity, GlossaryEntry } from "./spec-model";
+import { EmptyState, InfoPopover, StatusChip, type Tone } from "./ui-standard";
 
 type Decide = (key: string, decision: { name: string | null; alias_of: string | null }) => Promise<void>;
 type Rename = { from: string; to: string };
@@ -113,7 +114,7 @@ export function GlossaryScreen({
   const undefinedCount = useMemo(() => rows.filter((r) => !r.definition && r.layer !== null).length, [rows]);
   const named = useMemo(() => rows.filter((r) => r.entry.chosen || r.entry.aliases.length > 0).length, [rows]);
 
-  if (entries.length === 0) return <div className="empty">Nothing read yet. Build the model to read the documents.</div>;
+  if (entries.length === 0) return <EmptyState title="Nothing read yet." body="Build the model to read the documents." />;
 
   const chip = (id: GlossaryFilter, label: string, n: number) => (
     <button
@@ -128,8 +129,8 @@ export function GlossaryScreen({
   return (
     <div className="gl">
       <p className="dm-howto">
-        <b>Settle the project&apos;s words.</b> Give each thing one name, merge two names of one thing, and define what
-        nobody has. The model, its checks and every document&apos;s review then read the same word the same way.
+        <b>Settle the project&apos;s words.</b>{" "}
+        <InfoPopover label="How to read this">Give each thing one name, merge two names of one thing, and define what nobody has. The model, its checks and every document&apos;s review then read the same word the same way.</InfoPopover>
       </p>
       {onLoadDocument && onProposeDocument && (
         <GlossaryDocument rows={rows} defOf={chosenDef} settled={settled} load={onLoadDocument} propose={onProposeDocument} />
@@ -234,7 +235,7 @@ export function GlossaryScreen({
                   const v = verdictOf(p);
                   return (
                     <span>
-                      <span className={`dm-pill gl-act-${v.action}`}>{ACTION_LABEL[v.action]}</span>
+                      <StatusChip tone={ACTION_TONE[v.action]} data-action={v.action}>{ACTION_LABEL[v.action]}</StatusChip>
                       <div className="sub">{v.why}</div>
                     </span>
                   );
@@ -425,7 +426,7 @@ function GlossaryItem({ row, entries, onDecide, onOffer }: { row: GlossaryRow; e
           <>
             <b className="gl-term">{e.name}</b>
             {row.layer && <span className={`dm-layer-pill dm-layer-${row.layer}`}>{LAYER_TITLE[row.layer]}</span>}
-            {e.chosen && <span className="dm-pill dm-ok">named by you</span>}
+            {e.chosen && <StatusChip tone="ok">named by you</StatusChip>}
             <span className="hint">
               {e.facts} fact{e.facts === 1 ? "" : "s"} · {e.documents} doc{e.documents === 1 ? "" : "s"}
             </span>
@@ -557,3 +558,4 @@ const ACTION_LABEL: Record<PairAction, string> = {
   clarify: "Clarify in the docs",
   different: "Different things",
 };
+const ACTION_TONE: Record<PairAction, Tone> = { same: "ok", clarify: "info", different: "neutral" };

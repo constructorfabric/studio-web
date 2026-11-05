@@ -10,6 +10,13 @@ date: 2026-10-15
 
 Status: **proposed** · Date: 2026-10-15 · Refines `cpt-studio-adr-component-tiers` (ADR-0042: where each tier's gears come from, and its phase 4) · Uses `cpt-studio-adr-gear-extraction` (ADR-0044: an organization's gear repository)
 
+
+Amended by ADR-0060 (2026-11-04): a project has no gear repository of its own
+any more. The old `project_gear_repo` record is folded into the project's
+`sources[]` as the source marked `gears_here`, and it no longer decides where
+`product.gdl` is written or what a build clones — see
+[ADR-0060](0060-a-project-is-one-list-of-sources-and-a-revision-pins-each.md).
+
 ## Table of Contents
 
 <!-- toc -->

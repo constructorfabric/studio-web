@@ -150,6 +150,9 @@ and the people waiting may be among those missing. The identity provider of each
 listed user needs one more request per user (Keycloak ships no federated
 identities on a user representation); those run eight at a time, and a failure
 leaves that label empty rather than failing the list.
+Ten pages is the point where reading the realm on every load is already a
+heavy screen; a deployment that hits it needs the directory paginated to its
+caller instead (`service.rs`, `MAX_PAGES`).
 
 #### No Keycloak admin, no directory
 

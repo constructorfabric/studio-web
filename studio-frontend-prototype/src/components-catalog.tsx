@@ -1,5 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ComponentRegistry } from "./component-registry";
+import { ComponentRegistry, type RegistrySummary } from "./component-registry";
+import { HeaderMenu } from "./header-menu";
+import "./org-screens.css";
+import { PageHeader, StatusChip } from "./ui-standard";
 import { ApiError, api, PLATFORM_ROOT_TENANT_ID } from "./api";
 import type {
   CatalogRepoSource,
@@ -50,7 +53,9 @@ import {
   syncedSources,
 } from "./component-kinds";
 import type { KindChip } from "./component-kinds";
+import { useFrontxDefaults } from "./frontend-constructor-view";
 import { OrgSources } from "./platform-sources";
+import { CatalogueLevelsPanel } from "./catalogue-levels-view";
 
 /* ============================================================================
  * Platform Gears — a schema-driven component page per Gear, in Constructor
@@ -442,7 +447,7 @@ function kitAsNode(kit: StudioKit): CatalogNode {
 }
 
 /** The panes of the organization's Components page. */
-export type ComponentsPane = "registry" | "catalogue" | "repositories";
+export type ComponentsPane = "registry" | "catalogue" | "repositories" | "levels";
 
 export function ComponentsCatalog({
   token,
@@ -452,7 +457,6 @@ export function ComponentsCatalog({
   projects = [],
   isPlatformAdmin = false,
   tier = "organization",
-  orgName,
   initialPane = "registry",
   onOpenRepositories,
 }: {
@@ -462,7 +466,7 @@ export function ComponentsCatalog({
    *  by every organization, or the organization's own. Two places in the
    *  navigation -- the platform above the organizations -- never a toggle. */
   tier?: "platform" | "organization";
-  /** The organization's name, for the organization level's heading. */
+  /** The organization's name. The top bar says which level this is; kept for callers. */
   orgName?: string;
   /** Whether the caller is a platform administrator: the one who names the
    *  platform's catalogue sources (ADR-0042). */
@@ -526,6 +530,10 @@ export function ComponentsCatalog({
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState("");
+  /** What the registry says to the header, and the header's hold on it. */
+  const [registry, setRegistry] = useState<RegistrySummary | null>(null);
+  const [decide, setDecide] = useState(false);
+  const [readSignal, setReadSignal] = useState(0);
   const [sources, setSources] = useState<Sources>(() => loadSources());
   // The organization's sources as the server keeps them are read while the
   // Repositories pane is open.
@@ -982,35 +990,126 @@ export function ComponentsCatalog({
         />
       ) : (
         <>
-          <div className="gcat-topbar">
-            <div className="crumb">
-              <span
-                className={`gcat-level gcat-level-${tier}`}
-                data-level={tier}
-                title={
-                  platformLevel
-                    ? "The platform: above every organization, shared by all of them"
-                    : "This organization: what its projects build"
-                }
-              >
-                {platformLevel ? "Platform" : orgName ? `Organization · ${orgName}` : "Organization"}
-              </span>
-              <h1>{platformLevel ? "Platform components" : "Components"}</h1>
-              <span className="asof">
-                {tiers[tier]} · {filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}
-              </span>
-              {!platformLevel && (
-                <span className="chips" role="tablist" aria-label="Components" style={{ margin: "0 0 0 12px" }}>
-                  <button type="button" role="tab" aria-selected={pane !== "repositories"} className={`chip ${pane !== "repositories" ? "on" : ""}`} onClick={() => setPane("registry")}>
-                    Components
+          {/* One header: the name, a status line read from data, the
+              explanation behind "?", Sync as the one action and the rest in
+              "⋯". The level is the top bar's to say, not a crumb here. */}
+          <PageHeader
+            title={platformLevel ? "Platform components" : "Components"}
+            status={
+              <>
+                {!platformLevel && pane !== "repositories" && registry ? (
+                  <span data-components-count>
+                    {registry.total === null ? "Reading…" : registry.total}
+                    {registry.decide > 0 && (
+                      <>
+                        {" · "}
+                        <StatusChip tone="warn" onClick={() => setDecide((d) => !d)} expanded={decide} data-components-decide>
+                          {registry.decide} need{registry.decide === 1 ? "s" : ""} a decision
+                        </StatusChip>
+                      </>
+                    )}
+                  </span>
+                ) : (
+                  <span data-components-count>
+                    {gears === null ? "Reading…" : tiers[tier]} · {filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}
+                  </span>
+                )}
+                {sync && <SyncChip sync={sync} syncing={syncing} />}
+                {registry?.reading && (
+                  <StatusChip tone={registry.failed ? "danger" : "running"} data-registry-reading>
+                    {registry.failed ? `read: ${registry.reading}` : registry.reading}
+                  </StatusChip>
+                )}
+              </>
+            }
+            info={
+              platformLevel ? (
+                <p>
+                  The common set every organization builds on: gears, tools and SDKs from the platform&apos;s Gears
+                  repository, micro-frontends from FrontX and kits, synced once for all organizations, with crates.io
+                  adding published versions. A field you edit is kept as your organization&apos;s annotation, over the
+                  platform&apos;s facts. A gear an organization publishes joins this set once the platform merges it.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    What the organization builds, one row each: what its projects declare (a <code>gear.toml</code> or{" "}
+                    <code>gear.gdl</code>, a <code>#[toolkit::gear]</code> attribute, a FrontX package or a kit
+                    manifest), the code that could become a gear, and what it has published. Read from every project on
+                    a schedule, after a push, or now.
+                  </p>
+                  <p>
+                    Seen only by the organization&apos;s members; publishing one gives it to the platform, whose common
+                    set is one level up, under Platform.
+                  </p>
+                  {shadowedNote(shadowed) && <p data-shadowed>{shadowedNote(shadowed)}</p>}
+                  {filledFrom && <p>Filled from {filledFrom}.</p>}
+                  {activity.status === "ready" && (
+                    <p>
+                      Activity {activity.from} → {activity.to}, from Constructor Insight: commits, files and lines per
+                      gear directory.
+                    </p>
+                  )}
+                </>
+              )
+            }
+            actions={
+              !platformLevel ? (
+                <button className="primary" disabled={busy} onClick={() => void runSync()} data-components-sync-btn>
+                  {syncing ? "Syncing…" : "Sync"}
+                </button>
+              ) : (
+                isPlatformAdmin && (
+                  <button
+                    className="primary"
+                    onClick={() => onOpenRepositories?.()}
+                    title="What the platform's components come from: what the catalogue lists and what products are built from"
+                  >
+                    Repositories &amp; sync
                   </button>
-                  <button type="button" role="tab" aria-selected={pane === "repositories"} className={`chip ${pane === "repositories" ? "on" : ""}`} onClick={() => setPane("repositories")} data-pane-repositories>
-                    Repositories
+                )
+              )
+            }
+            menu={
+              !platformLevel && (
+                <HeaderMenu title="More: Roadmap report, sources">
+                  <button role="menuitem" onClick={() => setShowReport(true)}>
+                    Roadmap report
                   </button>
-                </span>
-              )}
-            </div>
-            <div className="tools" hidden={!platformLevel && pane === "repositories"}>
+                  <button role="menuitem" onClick={() => setPane("repositories")}>
+                    Sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
+                  </button>
+                  <button
+                    role="menuitem"
+                    disabled={!!registry?.reading && !registry.failed}
+                    onClick={() => {
+                      setPane("registry");
+                      setReadSignal((n) => n + 1);
+                    }}
+                  >
+                    Read the projects now
+                  </button>
+                </HeaderMenu>
+              )
+            }
+          />
+
+          {/* One row: which list, then how it is drawn. */}
+          <div className="org-toolbar" data-components-toolbar>
+            {!platformLevel && (
+              <span className="chips org-tabs" role="tablist" aria-label="Components">
+                <button type="button" role="tab" aria-selected={pane !== "repositories" && pane !== "levels"} className={`chip ${pane !== "repositories" && pane !== "levels" ? "on" : ""}`} onClick={() => setPane("registry")}>
+                  Components
+                </button>
+                <button type="button" role="tab" aria-selected={pane === "levels"} className={`chip ${pane === "levels" ? "on" : ""}`} onClick={() => setPane("levels")} data-pane-levels>
+                  Organization and projects
+                </button>
+                <button type="button" role="tab" aria-selected={pane === "repositories"} className={`chip ${pane === "repositories" ? "on" : ""}`} onClick={() => setPane("repositories")} data-pane-repositories>
+                  Repositories
+                </button>
+              </span>
+            )}
+            <div className="org-toolbar-end" hidden={!platformLevel && pane === "repositories"}>
               <div className="seg" role="tablist" aria-label="View mode">
                 {(["list", "graph"] as const).map((v) => (
                   <button key={v} aria-pressed={viewMode === v} onClick={() => setViewMode(v)}>
@@ -1020,46 +1119,15 @@ export function ComponentsCatalog({
               </div>
               <div className="seg" role="tablist" aria-label="Activity window">
                 {ACTIVITY_WINDOWS.map((w) => (
-                  <button
-                    key={w.days}
-                    aria-pressed={activityDays === w.days}
-                    onClick={() => setActivityDays(w.days)}
-                  >
+                  <button key={w.days} aria-pressed={activityDays === w.days} onClick={() => setActivityDays(w.days)}>
                     {w.label}
                   </button>
                 ))}
               </div>
-              {!platformLevel && (
-                <>
-                  <button
-                    className={`iconbtn${pane === "repositories" ? " active" : ""}`}
-                    onClick={() => setPane("repositories")}
-                    title="Where this organization's components come from: what the catalogue lists and what products are built from"
-                  >
-                    Repositories{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
-                  </button>
-                  <button className="iconbtn" onClick={() => setShowReport(true)}>
-                    Roadmap report
-                  </button>
-                  <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
-                    {syncing ? "Syncing…" : "Sync"}
-                  </button>
-                </>
-              )}
-              {platformLevel && isPlatformAdmin && (
-                <button
-                  className="iconbtn primary"
-                  onClick={() => onOpenRepositories?.()}
-                  title="What the platform's components come from: what the catalogue lists and what products are built from"
-                >
-                  Repositories &amp; sync
-                </button>
-              )}
             </div>
           </div>
 
           {showReport && <RoadmapReportDialog token={token} org={tenantId} onClose={() => setShowReport(false)} />}
-
 
           {!platformLevel && serverSources && shadowedSources(serverSources).length > 0 && (
             <div className="gcat-hint" data-shadowed-sources>
@@ -1074,44 +1142,19 @@ export function ComponentsCatalog({
             </div>
           )}
 
-          {platformLevel ? (
-            <p className="gcat-sub" data-level-note>
-              <strong>The common set every organization builds on.</strong> Gears, tools and SDKs from the
-              platform's Gears repository, micro-frontends from FrontX and kits, synced once for all
-              organizations, with crates.io adding published versions. Every organization sees the same list;
-              a field you edit is kept as your organization's annotation, over the platform's facts. A gear an
-              organization publishes joins this set once the platform merges it.
-            </p>
-          ) : (
-            <>
-              {/* The Repositories pane is about where components come from,
-                  and its list creates and picks the repository new gears go
-                  to: the note on whose they are and the shadowed hint belong
-                  to the list of components. */}
-              {pane !== "repositories" && (
-                <>
-                  <p className="gcat-sub" data-level-note>
-                    <strong>Built by this organization</strong> and seen only by its members; publishing one gives it to
-                    the platform, whose common set is one level up, under <em>Platform</em>.
-                  </p>
-                  {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
-                </>
-              )}
-            </>
-          )}
-
           {truncated && (
             <p className="gcat-hint">
               Showing the first {gears?.length ?? 0} components. A marked type has more nodes than
               this page will render — narrow it on Objects, or filter above.
             </p>
           )}
-          {sync && <p className="gcat-hint">Sync: {sync}</p>}
-          <ActivityStatus activity={activity} />
+          {activity.status === "error" && <ActivityStatus activity={activity} />}
           {/* A catalogue that never loaded says so in the list, with Retry. */}
           {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
-          {!platformLevel && pane === "repositories" ? (
+          {!platformLevel && pane === "levels" ? (
+            <CatalogueLevelsPanel token={token} projects={projects} />
+          ) : !platformLevel && pane === "repositories" ? (
             <OrgSources
               token={token}
               orgId={tenantId}
@@ -1119,6 +1162,7 @@ export function ComponentsCatalog({
               catalogueSettings={
                 <>
                   <SourcesPanel
+                    token={token}
                     sources={sources}
                     setSrc={setSrc}
                     setRepo={setRepo}
@@ -1129,13 +1173,17 @@ export function ComponentsCatalog({
                     <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
                       {syncing ? "Syncing…" : "Sync the catalogue"}
                     </button>
-                    {sync && <span className="gcat-hint">{sync}</span>}
                   </div>
                 </>
               }
             />
           ) : !platformLevel && viewMode !== "graph" ? (
             <ComponentRegistry
+              bare
+              readSignal={readSignal}
+              onSummary={setRegistry}
+              candidates={decide}
+              onCandidates={setDecide}
               token={token}
               projects={projects}
               isPlatformAdmin={isPlatformAdmin}
@@ -1396,7 +1444,7 @@ export function PlatformSourcesPanel({ token, onSynced }: { token: string; onSyn
       const deadline = Date.now() + 10 * 60 * 1000;
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500));
-        const t = await api.componentsCatalogTask(token, run_id);
+        const t = await api.componentsCatalogTask(token, run_id, null);
         if (t.status === "succeeded") {
           setStatus(`Platform synced: ${t.gears} gears · ${t.versions} versions`);
           onSynced();
@@ -1501,18 +1549,21 @@ export function PlatformSourcesPanel({ token, onSynced }: { token: string; onSyn
 }
 
 function SourcesPanel({
+  token,
   sources,
   setSrc,
   setRepo,
   connections,
   tenantId,
 }: {
+  token: string;
   sources: Sources;
   setSrc: (patch: Partial<Sources>) => void;
   setRepo: (which: "gears" | "frontx" | "kits" | "kitsPm", patch: Partial<RepoSel>) => void;
   connections: Connection[];
   tenantId: string | undefined;
 }) {
+  const frontx = useFrontxDefaults(token);
   return (
     <div className="sources">
       <RepoSourceEditor
@@ -1525,7 +1576,7 @@ function SourcesPanel({
       />
       <RepoSourceEditor
         title="FrontX (micro-frontends)"
-        note="Every package in a FrontX repository, wherever it sits, and every micro-frontend under src-app/mfe_packages/ with its mfe.json screens. gears-frontx holds the libraries; the micro-frontends the frontend constructor offers come from constructorfabric/gears-frontx-templates (main) or your own FrontX app."
+        note={`Every package in a FrontX repository, wherever it sits, and every micro-frontend under src-app/mfe_packages/ with its mfe.json screens. gears-frontx holds the libraries; the micro-frontends the frontend constructor offers come from ${frontx.source.repo} (${frontx.source.git_ref}) or your own FrontX app.`}
         sel={sources.frontx}
         onChange={(p) => setRepo("frontx", p)}
         connections={connections}
@@ -1577,6 +1628,23 @@ function SourcesPanel({
 
 /** Where the activity numbers came from, and what they cost — stated once,
  *  above the cards, so no card has to carry a provenance footnote. */
+/** How the last catalogue sync stands, as one chip: running with its phase,
+ *  done with its counts, or failed with the server's words. */
+function SyncChip({ sync, syncing }: { sync: string; syncing: boolean }) {
+  const done = /^\d+ gears/.test(sync);
+  if (syncing)
+    return (
+      <StatusChip tone="running" data-components-sync="running" title={sync}>
+        syncing · {sync.replace(/…$/, "")}
+      </StatusChip>
+    );
+  return (
+    <StatusChip tone={done ? "ok" : "danger"} data-components-sync={done ? "done" : "failed"} title={sync}>
+      {done ? `synced · ${sync}` : `sync failed: ${sync}`}
+    </StatusChip>
+  );
+}
+
 function ActivityStatus({ activity }: { activity: ActivityIndex }) {
   if (activity.status === "off") return null;
   if (activity.status === "loading") {
@@ -1741,13 +1809,22 @@ function gearColumns(
       // No version at all is not "0" and not a blank: crates.io has no record
       // of this component, which is a thing to go and look at.
       cell: cell((gear, { version, declared }) =>
+        // A version chip; a declared one that crates.io does not have carries
+        // a mark, and the versions count rides in the chip's title.
         version ? (
-          <>
-            <code className="gcat-version">{String(version)}</code>
-            <div className="gcat-sub">
-              {declared ? "declared, not on crates.io" : `${numText(gear.value.num_versions)} versions`}
-            </div>
-          </>
+          <span className="gcat-release" data-release={declared ? "declared" : "published"}>
+            <code
+              className="gcat-version ui-chip badge neutral"
+              title={declared ? "Declared in the repository" : `${numText(gear.value.num_versions)} versions on crates.io`}
+            >
+              {String(version)}
+            </code>
+            {!!declared && (
+              <span className="gcat-not-published" role="img" aria-label="not on crates.io" title="Not on crates.io">
+                ⊘
+              </span>
+            )}
+          </span>
         ) : null,
       ),
     },

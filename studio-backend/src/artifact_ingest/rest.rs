@@ -792,6 +792,7 @@ async fn upsert_build(
         chart_ref: req.chart_ref,
         chart_version: req.chart_version,
         description_revision: req.description_revision,
+        place: Default::default(),
     };
     let workspace = workspace.map(|w| w.to_string());
     let node = svc

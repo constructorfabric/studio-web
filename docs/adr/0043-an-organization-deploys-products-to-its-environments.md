@@ -10,6 +10,8 @@ date: 2026-10-13
 
 Status: **proposed** · Date: 2026-10-13 · Extends `cpt-studio-component-product` (from a generated product to a running one) · Applies `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` to clusters
 
+Amended by [ADR-0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) (2026-11-04): a project's namespace is named from its immutable slug and recorded at the first build or deploy, and every later one reads the record; a found namespace another project's label claims is refused, and a cluster that gives namespaces instead of letting Studio make them is described by the environment's `namespaces`, each project assigned one by an administrator. The bootstrap manifest is versioned (`studio.constructor.tech/bootstrap-version`, now 2), and a build or deploy on a partially bootstrapped cluster is refused (`CLUSTER_NOT_BOOTSTRAPPED`).
+
 ## Table of Contents
 
 <!-- toc -->
@@ -90,6 +92,8 @@ connections it, its workspaces or its projects hold.
 
 ### 2. A project binds a product's profiles to environments
 
+> Amended by ADR-0057 ([a profile is chosen per environment and checked per profile](0057-a-profile-is-chosen-per-environment-and-checked-per-profile.md)): a binding is environment → profile, each environment bound once and a profile to any number of them, and the engine's verdict is kept per profile.
+
 A project maps each `kubernetes` profile of its product to an environment of
 its organization, for example `prod` → *Org prod*. Generate takes the
 profile's `namespace` and `image_registry` from that environment instead of
@@ -100,6 +104,8 @@ without edits.
 machine, built and run by the desktop.
 
 ### 3. A deploy runs on the server, as the organization
+
+> Amended by ADR-0059 ([a build or a deploy names its cause before it starts](0059-a-build-or-deploy-names-its-cause-before-it-starts.md)): the cluster's bootstrap (`deploy/k8s/studio-environments/bootstrap.yaml`) is checked, not trusted to have been applied once. Before a build or an install is queued, the connections are read as the run reads them, and the cluster is asked whether the project's namespace exists and what the connection may do there; a connection test reports the bootstrap's rights.
 
 **Deploy** is a request to the backend: this product, at this commit, built
 into these images, to this environment. The backend runs it as a background

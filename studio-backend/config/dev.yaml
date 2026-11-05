@@ -109,7 +109,7 @@ gears:
         version: "0.1.0"
         description: "Studio backend assembly — account-management demo"
 
-  gear-orchestrator:
+  service-discovery:
     config: {}
 
   grpc-hub:
@@ -451,9 +451,20 @@ gears:
       # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
       # own for any shared environment).
       signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
+      # Dev-only: the token a sidecar would send on its finalize callbacks
+      # (FS_SIDECAR_INTERNAL_TOKEN); file-storage >= 0.4 refuses to start
+      # without one.
+      finalize_internal_secret: "dev-file-storage-internal-secret"
 
   # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
+  # A database keeps upstreams and routes across restarts and moves the
+  # registry reconcile (which needs the root tenant) out of post_init into
+  # a background task in `start` (oagw >= 0.6, ADR-0018), so a fresh
+  # database no longer stops the boot before account-management seeds it.
   oagw:
+    database:
+      server: "sqlite_main"
+      file: "oagw.db"
     config:
       proxy_timeout_secs: 120
 
@@ -653,6 +664,21 @@ gears:
       # boot.
       platform_admins:
         - "00000000-0000-0000-0000-00000000a001"
+
+  # ── studio-environments (slugs, namespace assignments, image records, ADR-0062) ──
+  # PostgreSQL like every other profile; without a database the gear stands
+  # down and serves nothing. The database is `studio_environments` on the
+  # compose server, created by `backend-bootstrap` from docker.yaml, as for
+  # studio-user above. One connection: a few rows per build and deploy.
+  studio-environments:
+    database:
+      server: "pg_main"
+      dbname: "studio_environments"
+      pool:
+        max_conns: 1
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
 
   graph-storage:
     database:

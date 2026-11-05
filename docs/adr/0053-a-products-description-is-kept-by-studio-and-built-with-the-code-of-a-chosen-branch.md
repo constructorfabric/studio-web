@@ -10,6 +10,13 @@ date: 2026-10-29
 
 Status: **proposed** · Date: 2026-10-29 · Changes where the product description ADR-0045 builds from lives (`cpt-studio-adr-project-builds`) · Keeps the image and chart contract of ADR-0048 (`cpt-studio-adr-product-images`) · Uses the gear repositories of ADR-0046 (`cpt-studio-adr-gear-repositories`)
 
+Amended by ADR-0060 (2026-11-04): a revision is saved with a lock, the commit
+of every source it uses, and a protected environment builds only that. A
+description is published only to the source marked `publish_here`; with none
+marked, Studio keeps the revisions only. A save never drops a section the
+previous revision had — see
+[ADR-0060](0060-a-project-is-one-list-of-sources-and-a-revision-pins-each.md).
+
 ## Table of Contents
 
 <!-- toc -->
@@ -171,6 +178,43 @@ does not delete anything itself.
 3. Builds (Studio, desktop) take the description from Studio (§2).
 4. The desktop reads and saves the description through Studio.
 5. Publish (§3) and read-back of a merged change; migration (§5).
+
+### Amendment 2026-11-04 — a save is idempotent and does not wait for its check
+
+A save of a product of some sixty gears was lost to the api-gateway's 30 s
+request timeout: the save ran the engine's check in the same request, the
+gateway answered "Request exceeded 30s timeout", the portal (rightly, then)
+did not send the save again, and the revision was never kept. Two things
+change in §1; the rest of this record stands.
+
+- **The latest text again is the latest revision.** A save whose text has the
+  sha256 of the latest revision answers that revision (`created: false`),
+  whatever revision it was made against. Before, a save against an older
+  revision was refused with the latest first, so a save sent again after a
+  lost answer -- the first attempt had made revision N+1 from N -- came back
+  as a conflict with itself. Nothing anybody saved is lost by the change:
+  the text is already the latest. A different text against a revision that
+  is no longer the latest is still refused with both texts (409), and of two
+  saves racing for one number one still loses, told the same way -- unless
+  it saved the same text. With that a client may send a save again when the
+  gateway loses its answer (502/504), and the portal does, a bounded number
+  of times; a save that also publishes is not repeated.
+- **A save answers before a long check.** The text a save keeps is composed
+  from the corpus's catalogue without the engine (`Gearbox::describe`); the
+  engine's check (`Gearbox::check`) only says whether it resolves. The
+  revision is kept and the product record updated first; the check then runs
+  on a task of its own, and the save answers with it when it is done within
+  20 s of the request's start, else without it (`checking: true`). Either
+  way the check's verdict is kept under the product record's
+  `checks.<profile>` (ADR-0057), with the description's hash, when it
+  finishes; the portal reads it there. The task is in-process, not a
+  `studio-tasks` run: the engine, its one-at-a-time queue and its cache of
+  answers are per process already, and a check lost to a restart is made
+  again by the next check, the kept one's hash saying it is stale meanwhile.
+
+The gateway's 30 s is not configurable in cf-gears-api-gateway 0.5.2 (its
+configuration refuses unknown keys), so the configurations say what it is
+rather than set it; making it a setting is an upstream change.
 
 ## Traceability
 

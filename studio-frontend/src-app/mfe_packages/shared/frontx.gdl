@@ -1,0 +1,13 @@
+# This package's passport, for the tools that assemble a product (Gearbox,
+# Constructor Studio): a library the micro-frontends share, not one itself.
+# It holds the API services several screens call (accounts, connectors, tasks,
+# events); each micro-frontend's own frontx.gdl names the gears it reaches
+# through them. It restates what package.json says, and those tools check
+# that the two agree, so keep them in step when either changes.
+gdl_version = "1.5"
+
+library(
+    # Who it is: package.json's name and version (it has no description).
+    name = "@constructor-studio/mfe-shared",
+    version = "0.1.0",
+)
