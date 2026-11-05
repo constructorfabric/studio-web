@@ -794,9 +794,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-account-management"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7781ea3043bdf726c6dce5ad653b6702fc81b7057ce5b2c17c4bdd50e05aad8e"
+checksum = "f7f7b68ece9f39146813862101431e4a742c83860dd7c8be52b12b43fc860c92"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -847,9 +847,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-account-management-sdk"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f6c9a217b98ea942a3343a860772275e8289c92cd2a848de30988148fd6dca3"
+checksum = "c43bc55b764ba8082b8c0bb81eb65fbdd89bd494dde5f13e91a37d50459633a1"
 dependencies = [
  "async-trait",
  "cf-gears-tenant-resolver-sdk",
@@ -871,9 +871,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-api-gateway"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc8937a0006c6df243a6e56372e8ac713e35e2597f8ccd26d03da3a9725c1785"
+checksum = "622cb1e843f39cfc15b74cacb9321aa16fa969ba02d59747c22a74842d607111"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -919,9 +919,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-authn-resolver"
-version = "0.2.39"
+version = "0.2.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96163192d726d0c705720631088aaa825280ed67d3ff54b10f40bc58d2dc5aa5"
+checksum = "47c26a4b423897023edb483a9ba1dfca9638a7d1f5972ff5e3591112accf695c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -941,9 +941,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-authn-resolver-sdk"
-version = "0.3.39"
+version = "0.3.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c5e0cddf4779acbe32a8ffb3cd42729c6f22d01f03db814c2f25b41ce5e039e"
+checksum = "509c084e65d34a870eda6b0cd1393440766678247943132465d7064bf866de9c"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit",
@@ -959,9 +959,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-authz-resolver"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb64b4628aef7efe3abb04d64dff2af8740ce4f69f99cbf8278f188a69621266"
+checksum = "423fd75e23c7889ced73e5fda574647105a89b4fd9a1c5e6f3dcb19755f6aab6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -983,9 +983,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-authz-resolver-sdk"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1833587989f51661605f42759c35cdded127bbfefca85b90d76921aa11ad56b9"
+checksum = "1cbdf3355867887eda37eef8ed1707c304ea053536f0f7048d8d3e9cb8b9ecbe"
 dependencies = [
  "async-trait",
  "axum",
@@ -1010,9 +1010,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-credstore"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96796631f864f0e82591f11466eb58761369cd0b259eb34dadcebda34e447db7"
+checksum = "ce87aa489d8edb7c2f3bdff3ee606209060f8104a2b76a9085656d4c51ec6dc0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1048,9 +1048,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-credstore-sdk"
-version = "0.2.19"
+version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413b68b81045d4173c9cc36a9787eacd4282a08454df7de6ac0002d99bc0f27e"
+checksum = "e013a682dd2c94dca9bcaa8b1a40a0686f448af572ce9029a108e6f4010ab19b"
 dependencies = [
  "async-trait",
  "cf-gears-tenant-resolver-sdk",
@@ -1070,9 +1070,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-event-broker-sdk"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d43f2044744645d6478671a0fdf0854d5c292b93526a12aa054e343925a3123f"
+checksum = "303ede827c9b70c76cd099534d2f2c289e40cc9b17bf2d61ecbb80af006b4195"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit-canonical-errors",
@@ -1097,9 +1097,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-file-storage"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d91fc876cfe7a8c26e3b6c8fbc3e860b89592fbf791d6e57b6ebbce4e2eee33"
+checksum = "ac8c4f778c0198070fafb6109c4bc15a0a3b7cf2aa4a796684a11fe0ecc9dbfd"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1158,9 +1158,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-grpc-hub"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f077dc6ec577973b6508ba291a9e8f517aae5eea7116ea54e50896bea6fd636"
+checksum = "d2f73f712d51831b0a2d7b464b1f0b19d7b353a6e9d42f92c318d4189cb0776a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1184,9 +1184,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-keycloak-idp-plugin"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2f6c90526abb16a371f3cfe55eb738b6350a48243a673723cdb8e29fcc8b3dd"
+checksum = "84b373f0326b508bb2ad7178fbef4f22cabc52d2a1e189026e70de64cbb8ae29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1222,9 +1222,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-mini-chat"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c9f132b5008a3a795baded546d1b6a1696fdf55eb4ed9fadfe7d2c603f9802e"
+checksum = "dcd48c0aa3383151cbe8a01c112f0545aa10b65e885a134a52540c6349e9d88c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1275,9 +1275,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-mini-chat-sdk"
-version = "0.10.28"
+version = "0.10.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4721a63bafa722847df20ddeeb366f2c825a6f9693291936c9d345d7eaec4490"
+checksum = "76cb1336a772c00fe8ec98dc2033c7e4dcb489b167fc8065065d442ff2808d70"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit",
@@ -1294,9 +1294,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-nodes-registry"
-version = "0.1.45"
+version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bc49f4f8f9e2388c9ebcff5772f13ddff3f5397aa6d038577df62892cd29883"
+checksum = "7fbbdbf4b746ac40a5080ad7f22f16c0fd94a989d74325482d17b864d3cd7e67"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1331,9 +1331,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-oagw"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64a9077052a181ba44069777d560bbf53a50f41ccd1b96a2c1217f4a08f4719b"
+checksum = "04983d9cd3210c89a3966b564ca09afa0fb00b795bfe8149c0f33515d32da345"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1413,9 +1413,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-oidc-authn-plugin"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10ce2e131c5ee36ecb690342903fbca8a34fc9dc9c5a8a76bd2c23a6ac33d6d6"
+checksum = "3121f381042c11f229e819885c434ac2db1a538f8ab593f623f78ed036dca449"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1450,9 +1450,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-resource-group"
-version = "0.4.7"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46366fe7a847659d201cb1813b636e72ca32b77059b28b72a1cf176027f1815c"
+checksum = "e9e47fa521832e9f39a352e27d7e96ab01b90cdbf6e434c33d790bb1b5f9e520"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1487,9 +1487,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-resource-group-sdk"
-version = "0.3.6"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "902a72d62fc58a9e90512e91028a2c4b11f28c2e291081dfa76ee092d021d3db"
+checksum = "b5f7700a3b5d96ae37cdb0fbde1ba2eedef866fd9cae19687b2249da685be47b"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit-canonical-errors",
@@ -1507,9 +1507,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-service-discovery"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73b65942de650de9e38f551e3a9f70f5b6a1a493273f9f3eafefd720657f5bb0"
+checksum = "299cded2921995dfed7d5c45db820b4010967346fa49730c4c4bcc15c7e0f357"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1530,9 +1530,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-simple-user-settings"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f41f08898df3509728cc96714650376352071579825cbab1144e6b5a400aa0ce"
+checksum = "ed5c3dc78b9a71ae8baeea3b4b137fc4ef150a9ca991fea17fcc48ea7c6610e4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1560,9 +1560,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-simple-user-settings-sdk"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75eeb7d906bb91234e2134d23c5dac024dcf5ef87a3685478455298184b01994"
+checksum = "21cf507106a2d68e46e6c703b824733a4cf3f84349b13a247071e45c09200c89"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit",
@@ -1575,9 +1575,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-static-authn-plugin"
-version = "0.3.20"
+version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02bf8b8a7ef0e17eb8d1cf3d29c49dbd9cef40f72458ed601fddbc32907de55a"
+checksum = "8114211d365f27a30890d5441bc0b750663d7febebddd4ac059925249964f5a2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1596,9 +1596,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-static-authz-plugin"
-version = "0.1.40"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77d317eec224374c753f002c9b4944441893e8d3abafd8ca0ddcf43c2908ecd0"
+checksum = "c59879f3507b49c991a3f6a313d0d7943f8b41337990c16dd9ab7350264eced5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1618,9 +1618,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-static-credstore-plugin"
-version = "0.2.17"
+version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa8187a173eb83dc04547db98a752e74bf488b7cc339c408b1966d678db2065b"
+checksum = "127802b0594d21d55dc529260e7191024d439b166bcd154d34707afa28f918a3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1638,9 +1638,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-static-idp-plugin"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b9bbda71e16e5a35e5c741e1008982876f845b522ae9ea5eb02942a36a3ef59"
+checksum = "23481e3f1427c11f44bbf09105aabd360a6d5469cb75c62f415c743d96ddcabe"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1688,9 +1688,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-tenant-resolver"
-version = "0.1.43"
+version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98bbaf6e771df2539c5a067fa4e3b43d771af312c362e7561119dff904944d38"
+checksum = "89a1b653ad262be85c69ef9ff86e48073a2dc8e84148c3697c64ee8d03909a34"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1711,9 +1711,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-tenant-resolver-sdk"
-version = "0.4.7"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66f5713704c6f40edcc0a0b7ce38e48c527a38bd533707ef2f86e1d2310c0757"
+checksum = "156e4dba9919f6ccbd155e6578b7b67657e88a72458d4295ad963393e3a24782"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit",
@@ -1730,9 +1730,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "169a4229d5100a6d9e9e8b6f4d04bad97d6838fdb15b01def385bc3b4401ef0c"
+checksum = "db12812b7cb7a6e35b7786cb92e8075cbb0775fee07d5d9357c6d88d5e22715a"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1793,9 +1793,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-auth"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d271c62b9473504e44d1c48bb18356b3bcd2418252238c3278cb6bfee2d8d48"
+checksum = "3c962cf859c8362ee0f98f65b480303348f1ea781dda81ccd686dbc6e5ae68ce"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -1852,9 +1852,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-contract"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "983a6e47be6232b4f0158441512db0c6e2673646935731a00b6b92ca469b4eb7"
+checksum = "5194de86093c8e8bc5e5ed57d2f84058724c9140c127ffaa9deef0d4e53734fb"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1896,9 +1896,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-db"
-version = "0.17.1"
+version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f7f1ecd4b61cbcc4f1c193de22bf85745feb471b2bff7a32452dc9f2a69a615"
+checksum = "0a5f4af49f256d2515cf95b18b573939eb8e3cefd679fdee53cf8ae3a99b65e7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1945,9 +1945,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-gateway"
-version = "0.2.10"
+version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba0c0748599e9bdcb59d4a204edef44a2f021ece5ff7fe4ce69faaeb1ad80f19"
+checksum = "673f086ca6a974d5de99a5082f1f83c8ec3d87f940eaccf6586cba8767a03de0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1997,9 +1997,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-http"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae173e33fa7f28e667ef5dd674335195bcfc7089bbff0e0f8226653e6f0eb60d"
+checksum = "0d9e79fdd9a4da464242e00317013f84b8b280a8ae873efcb5e91c98be174b2a"
 dependencies = [
  "bytes",
  "cf-gears-toolkit-security",
@@ -2030,9 +2030,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-http-middleware"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4946887305b4e93cc36fb7f29d3c7f81f2d7b3c2a8696a2a488156a42b5ee70"
+checksum = "04de9b4d4a5a3d5391a2106ed025bb738ee6a643b6ae3e9c33b8742ab8302dfe"
 dependencies = [
  "axum",
  "cf-gears-toolkit-canonical-errors",
@@ -2045,9 +2045,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-http-proxy"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "549d9479b58dc6f7cca1df6b15d6311ed91bd6b00685eb3439328239e4da549e"
+checksum = "d935bd0e949cb892083a81bca4144c10d5d60e71e77894c487d883783ab0b33c"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2109,9 +2109,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-odata"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d46eec8de82d9294d507b9d9cd4d493eb3fd9c1196d215718db2957a7752d341"
+checksum = "2c1de3d52576e0bc6c5eccfca48fed5633ca78a8ddc8fbe3da8c46960dd197e8"
 dependencies = [
  "base64 0.22.1",
  "bigdecimal",
@@ -2153,9 +2153,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-sdk"
-version = "0.7.14"
+version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab883093c98691f9dddc643e04e18a1756bcf66d6ba08116fc3434e5e754ff5e"
+checksum = "b46f36e0fee904547f8ac33bdac22acda62c14534e3fa33de21cd88cf272396d"
 dependencies = [
  "cf-gears-toolkit-odata",
  "cf-gears-toolkit-security",
@@ -2203,12 +2203,13 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-trace-context"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3072379f6119d07b1a0589f618baf8b83d6e29f99fc2735bd28ed1ae8b3a364a"
+checksum = "893f03db1cac1e249418dd2a2c9f3b33584c3f413c5389b5c3776855e1d659a4"
 dependencies = [
  "http",
  "opentelemetry",
+ "tokio",
  "tracing",
  "tracing-opentelemetry",
 ]
@@ -2253,9 +2254,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-types-registry"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40fe2ccb5b6850f0db265b62c1bffc25a224a07b103fb80386add87656546fd9"
+checksum = "7c7bb9911370e418a3afbf27e7b0edd375cc3f9a011804725bd8b4653cb270ed"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2294,9 +2295,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-types-registry-sdk"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec182075c2bebf49023127d5e093e4178f5cfbbaf3403b55ef7f74344ca0ace1"
+checksum = "a2a880afe291b959889e45767ffab095358259c7f07097033686cef95b79fa5b"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2321,9 +2322,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-usage-collector"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38e00195efbf2cb118cbb6c5faea13b31d4deead139d1c5946c0fec3695cdb4f"
+checksum = "23d8e356f041743e27ba5ff2489637f8a9b523375cf9291fd54433158fb64b6e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2358,9 +2359,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-usage-collector-sdk"
-version = "0.3.16"
+version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6b97609daf94452d9a52821f5a7011f476640fec8a4d2962d2418eea466d78b"
+checksum = "6471c49babe148e2b2b1cb57039ab6dbdd4f8ea41b1908a69e377d09048d728b"
 dependencies = [
  "async-trait",
  "bigdecimal",
@@ -3258,7 +3259,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3729,7 +3730,7 @@ checksum = "289c22c51cf505ecca932eb353f1520433601880f3280ce703d3e9a1a6d860e2"
 dependencies = [
  "gts-id",
  "jsonschema 0.58.6",
- "jsonschema-regex",
+ "jsonschema-regex 0.58.6",
  "num-cmp",
  "referencing 0.58.6",
  "regex",
@@ -4558,12 +4559,40 @@ dependencies = [
  "fraction 0.17.0",
  "getrandom 0.3.4",
  "itoa",
- "jsonschema-regex",
- "jsonschema-value",
+ "jsonschema-regex 0.58.6",
+ "jsonschema-value 0.58.6",
  "num-cmp",
  "num-traits",
  "percent-encoding",
  "referencing 0.58.6",
+ "regex",
+ "serde",
+ "serde_json",
+ "strum",
+ "unicode-general-category",
+ "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a42a11b47492e6a2cc76e9c7bcc8077776cb31dac444e0795d7f61bcc6441c08"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "data-encoding",
+ "email_address",
+ "fancy-regex 0.19.2",
+ "fraction 0.17.0",
+ "getrandom 0.3.4",
+ "itoa",
+ "jsonschema-regex 0.60.2",
+ "jsonschema-value 0.60.2",
+ "num-cmp",
+ "num-traits",
+ "percent-encoding",
+ "referencing 0.60.2",
  "regex",
  "serde",
  "serde_json",
@@ -4582,6 +4611,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonschema-regex"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "107aeb6ff14b8deb5610096a8ce5c554ec89806b521147eaeb3cae05b07edb7a"
+dependencies = [
+ "regex-syntax",
+]
+
+[[package]]
 name = "jsonschema-value"
 version = "0.58.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4591,6 +4629,23 @@ dependencies = [
  "bytecount",
  "fraction 0.17.0",
  "getrandom 0.3.4",
+ "num-cmp",
+ "num-traits",
+ "serde_json",
+ "zmij",
+]
+
+[[package]]
+name = "jsonschema-value"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e281d6b177bb4834f2ffd6f92aa0443cffe29c996b251c8d94eb6f456186feba"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "fraction 0.17.0",
+ "getrandom 0.3.4",
+ "memchr",
  "num-cmp",
  "num-traits",
  "serde_json",
@@ -6201,7 +6256,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6437,6 +6492,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "referencing"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f42818036d3b37cda6bd4c494543158a36e431cb717015ef7c93acc6ba214d3b"
+dependencies = [
+ "ahash",
+ "fluent-uri",
+ "getrandom 0.3.4",
+ "hashbrown 0.17.1",
+ "itoa",
+ "micromap",
+ "parking_lot",
+ "percent-encoding",
+ "serde_json",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6643,7 +6715,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6724,7 +6796,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7100,7 +7172,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8050abb251097357e24aff63ba2c52a6309ecb7d23a5474023df960a02694d8"
 dependencies = [
  "annotate-snippets",
- "base64 0.22.1",
+ "base64 0.23.1",
  "encoding_rs_io",
  "granit-parser 1.3.0",
  "nohash-hasher",
@@ -7865,7 +7937,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8908,9 +8980,9 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "weftgraph"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66c2685aa1200baadfbfa4195db5b7cab3399cdb1826b76724292fa4845acb55"
+checksum = "7ce2018fddaa46fc9967883c3195ca0622f73a214777797955f0dfdfdef8bd63"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8930,7 +9002,7 @@ dependencies = [
  "gts",
  "hex",
  "http",
- "jsonschema 0.40.2",
+ "jsonschema 0.60.2",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -8949,9 +9021,9 @@ dependencies = [
 
 [[package]]
 name = "weftgraph-onnx-embedding-plugin"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e569f9b65c221c41b511c70da25315ecbe4be68b85dae19d0fc89dc516a768c3"
+checksum = "ecdfa486b248fd4b9c35bdc54a8ceca0c7658e814da35066a18659f07ccb0f24"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -8967,9 +9039,9 @@ dependencies = [
 
 [[package]]
 name = "weftgraph-remote-embedding-plugin"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2627bc08d447778ef41cf93d8ec9c5b8cd91494aa4fd0c6a5ed2b903eeb1d0bd"
+checksum = "6728a8f928b8e2eb0302e5d577d11f9b8cb1f3d166c06d14f5470a52419857bd"
 dependencies = [
  "async-trait",
  "reqwest 0.13.5",
@@ -8985,9 +9057,9 @@ dependencies = [
 
 [[package]]
 name = "weftgraph-sdk"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6086375090415386e4380ec4d3bfba3fb395902f283cfd96b15fefac732e0cb0"
+checksum = "810a5b0a146308e0b583c698c17467ad1e5d8ffce504fefb28c99f79fb9ef45c"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -9039,7 +9111,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
