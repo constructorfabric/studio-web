@@ -3,16 +3,18 @@
  *
  *   - The header (ui-standard.tsx) says where the product stands, read from
  *     the ladder (releaseStatus); the explanation is behind its "?".
- *   - Then the steps, as a StepFlow of cards: 1 Build (builds-tab.tsx),
- *     2 Deploy, 3 Images (project-images.tsx) and 4 History, the last two
- *     folded until opened.
+ *   - Then the steps, as tabs: Build (builds-tab.tsx), Deploy, Images
+ *     (project-images.tsx) and History. It opens on the step that is next --
+ *     Build until something is published, then Deploy -- unless the member
+ *     picked another for the project before.
  *   - In Deploy, the ladder: the environments the project may deploy to in
- *     `promote_from` order (releases.ts), each with what runs there, how its
- *     newest deploy went, whether one waits for approval, and the action that
- *     applies -- Promote what the environment before it runs, or Deploy a
- *     published build. A step opened below the ladder has the rest of what
- *     the Deploys tab had on an environment's row: roll back, uninstall,
- *     previews, the release's values and secrets.
+ *     `promote_from` order (releases.ts), a row each with what runs there,
+ *     how its newest deploy went, whether one waits for approval, and the
+ *     action that applies -- Promote what the environment before it runs, or
+ *     Deploy a published build. A row opens on its newest deploy's outcome;
+ *     Deploy… opens under it the rest of what the Deploys tab had on an
+ *     environment's row: roll back, uninstall, previews, the release's
+ *     values and secrets.
  *   - Folded under it, Environments of this project: the bindings of
  *     the product's profiles and the project's own environments (ADR-0054).
  *     It is the only place a project adds one.
@@ -20,7 +22,7 @@
  * A build is published in Studio, the IDE or CI; a deploy names it and the
  * server installs it with the environment's connection (ADR-0048). */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import {
   ApiError,
@@ -34,6 +36,7 @@ import {
 } from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
 import { ProjectBuilds } from "./builds-tab";
+import { DataTable, When } from "./data-table";
 import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews, RungPlace, useDeployRequest } from "./deploy-actions";
 import { EnvironmentForm, ProjectEnvironments } from "./environments-screen";
 import { clusterConnections, registryConnections, researchConnections } from "./environments";
@@ -43,9 +46,32 @@ import { deployableBuilds, productUrls, profilesBoundTo } from "./project-deploy
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 import { ladderSteps, newestRelease, releaseStatus, stepStatus, versionOf, type LadderStep } from "./releases";
-import { ProjectImages } from "./project-images";
+import { ProjectImages, SHOW_IMAGE_EVENT } from "./project-images";
 import { ProductSources } from "./source-roles-view";
-import { PageHeader, StatusChip, StepFlow, type Tone } from "./ui-standard";
+import { PageHeader, StatusChip, type Tone } from "./ui-standard";
+
+/** The steps of a release, as Releases' tabs. */
+type ReleaseTab = "build" | "deploy" | "images" | "history";
+const TAB_LABEL: Record<ReleaseTab, string> = { build: "Build", deploy: "Deploy", images: "Images", history: "History" };
+
+/** The tab this member last picked for the project; storage may be missing
+ *  or refuse, which is only a convenience lost. */
+const tabKey = (projectId: string) => `studio.releases.tab.${projectId}`;
+function storedTab(projectId: string): ReleaseTab | null {
+  try {
+    const t = window.localStorage.getItem(tabKey(projectId));
+    return t && t in TAB_LABEL ? (t as ReleaseTab) : null;
+  } catch {
+    return null;
+  }
+}
+function storeTab(projectId: string, t: ReleaseTab) {
+  try {
+    window.localStorage.setItem(tabKey(projectId), t);
+  } catch {
+    // Not remembered; the tabs still work.
+  }
+}
 
 export function ProjectReleases({
   token,
@@ -75,6 +101,21 @@ export function ProjectReleases({
   // An environment of the project's own being added or changed (ADR-0054).
   const [own, setOwn] = useState<DeployEnvironment | "new" | null>(null);
   const [places, setPlaces] = useState<{ connections: Connection[]; open: string[] } | null>(null);
+  // The tab the member picked; none until they pick one, and the step that
+  // is next shows.
+  const [picked, setPicked] = useState<ReleaseTab | null>(() => storedTab(projectId));
+  useEffect(() => setPicked(storedTab(projectId)), [projectId]);
+  const pick = (t: ReleaseTab) => {
+    setPicked(t);
+    storeTab(projectId, t);
+  };
+  // An image asked for from elsewhere on Releases (a build's row) opens the
+  // Images tab; the list there finds it.
+  useEffect(() => {
+    const show = () => setPicked("images");
+    window.addEventListener(SHOW_IMAGE_EVENT, show);
+    return () => window.removeEventListener(SHOW_IMAGE_EVENT, show);
+  }, []);
   useEffect(() => {
     if (own === null || places !== null) return;
     let live = true;
@@ -131,12 +172,16 @@ export function ProjectReleases({
   const envName = (id: string) => targets?.environments.find((t) => t.environment.id === id)?.environment.name ?? id;
 
   const steps = targets ? ladderSteps(targets.environments, deployments, builds) : [];
-  const step = steps.find((s) => s.environment.id === open) ?? null;
   const ownEnvironments = targets?.environments.filter((t) => !!t.environment.project_id).map((t) => t.environment) ?? [];
   const noEnvironment = !!targets && targets.environments.length === 0;
 
   const published = deployableBuilds(builds).length;
   const status = targets ? releaseStatus(steps, published) : null;
+
+  const tabs: ReleaseTab[] = unavailable ? ["build", "deploy"] : ["build", "deploy", "images", "history"];
+  // What is next: build until something is published, then deploy it.
+  const next: ReleaseTab | null = targets || unavailable || error ? (published === 0 ? "build" : "deploy") : null;
+  const tab = picked && tabs.includes(picked) ? picked : next;
 
   return (
     <div className="project-deploys" data-project-releases>
@@ -187,91 +232,87 @@ export function ProjectReleases({
           {notice}
         </div>
       )}
-      <StepFlow
-        label="How the product goes out"
-        steps={[
-          {
-            id: "build",
-            title: "Build",
-            state: published > 0 ? "done" : "current",
-            status:
-              published > 0
-                ? `${published} published build${published === 1 ? "" : "s"}; the newest is ready to deploy.`
-                : "Nothing published yet: build the product first.",
-            body: (
-              <>
-                <ProductSources key={shared} token={token} projectId={projectId} />
-                <ProjectBuilds
-                  token={token}
-                  projectId={projectId}
-                  projectName={projectName}
-                  onOpenTab={onOpenTab}
-                  round={shared}
-                  onChanged={buildsChanged}
-                  embedded
-                />
-              </>
-            ),
-          },
-          {
-            id: "deploy",
-            title: "Deploy",
-            state: steps.some((s) => !!s.runs) ? "done" : published === 0 ? "later" : "current",
-            keepOpen: true,
-            status: noEnvironment
-              ? "No environment to deploy to yet."
-              : steps.some((s) => !!s.runs)
-                ? "Running; a release climbs the environments in order."
-                : published === 0
-                  ? "Once a build is published, deploy it to the first environment."
-                  : "Deploy the newest build to the first environment.",
-            body: deployBody(),
-          },
-          ...(unavailable
-            ? []
-            : [
-                {
-                  id: "images",
-                  title: "Images",
-                  state: "todo" as const,
-                  quiet: true,
-                  status: "What the builds pushed, where each runs, and how long they are kept.",
-                  body: (
-                    <ProjectImages
-                      token={token}
-                      projectId={projectId}
-                      projectName={targets?.project_name ?? projectName ?? "project"}
-                      environments={targets?.environments.map((t) => t.environment) ?? []}
-                      round={round}
-                    />
-                  ),
-                },
-                {
-                  id: "history",
-                  title: "History",
-                  state: "todo" as const,
-                  quiet: true,
-                  status: deployments.length
-                    ? `${deployments.length} deploy${deployments.length === 1 ? "" : "s"} so far.`
-                    : "Nothing deployed yet.",
-                  body: (
-                    <div data-deploy-history>
-                      <ProjectEnvironments
-                        key={round}
-                        token={token}
-                        projectId={projectId}
-                        profiles={KUBERNETES_PROFILES}
-                        title="Deploy history"
-                        show="history"
-                      />
-                    </div>
-                  ),
-                },
-              ]),
-        ]}
-      />
+      <div className="doc-views" role="tablist" aria-label="How the product goes out" data-release-tabs>
+        {tabs.map((t) => (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            id={`release-tab-${t}`}
+            aria-selected={tab === t}
+            aria-controls="release-tab-panel"
+            className={`doc-view${tab === t ? " on" : ""}`}
+            onClick={() => pick(t)}
+            data-release-tab={t}
+            data-release-tab-next={t === next || undefined}
+          >
+            {TAB_LABEL[t]}
+          </button>
+        ))}
+      </div>
+      {tab && (
+        <div role="tabpanel" id="release-tab-panel" aria-labelledby={`release-tab-${tab}`} data-step={tab}>
+          <p className="hint" data-release-tab-status>
+            {tabStatus(tab)}
+          </p>
+          {tab === "build" && (
+            <>
+              <ProductSources key={shared} token={token} projectId={projectId} />
+              <ProjectBuilds
+                token={token}
+                projectId={projectId}
+                projectName={projectName}
+                onOpenTab={onOpenTab}
+                round={shared}
+                onChanged={buildsChanged}
+                embedded
+              />
+            </>
+          )}
+          {tab === "deploy" && deployBody()}
+          {tab === "images" && (
+            <ProjectImages
+              token={token}
+              projectId={projectId}
+              projectName={targets?.project_name ?? projectName ?? "project"}
+              environments={targets?.environments.map((t) => t.environment) ?? []}
+              round={round}
+            />
+          )}
+          {tab === "history" && (
+            <div data-deploy-history>
+              <ProjectEnvironments
+                key={round}
+                token={token}
+                projectId={projectId}
+                profiles={KUBERNETES_PROFILES}
+                title="Deploy history"
+                show="history"
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
+
+  /** Where a step stands, in a line under the tabs. */
+  function tabStatus(t: ReleaseTab): string {
+    if (t === "build")
+      return published > 0
+        ? `${published} published build${published === 1 ? "" : "s"}; the newest is ready to deploy.`
+        : "Nothing published yet: build the product first.";
+    if (t === "deploy")
+      return noEnvironment
+        ? "No environment to deploy to yet."
+        : steps.some((s) => !!s.runs)
+          ? "Running; a release climbs the environments in order."
+          : published === 0
+            ? "Once a build is published, deploy it to the first environment."
+            : "Deploy the newest build to the first environment.";
+    if (t === "images") return "What the builds pushed, where each runs, and how long they are kept.";
+    return deployments.length ? `${deployments.length} deploy${deployments.length === 1 ? "" : "s"} so far.` : "Nothing deployed yet.";
+  }
 
   /** Step 2: the ladder, the environment opened under it, and the
    *  environments of this project, folded. */
@@ -299,44 +340,44 @@ export function ProjectReleases({
           open={open}
           onOpen={(id) => setOpen(open === id ? null : id)}
           onChanged={changed}
+          panel={(s) => (
+            <section className="deploy-env" data-release-step={s.environment.name}>
+              <div className="card-head">
+                <h3>{s.environment.name}</h3>
+                <button type="button" className="ghost" onClick={() => setOpen(null)}>
+                  Close
+                </button>
+              </div>
+              <EnvironmentActions
+                token={token}
+                projectId={projectId}
+                env={s.environment}
+                latest={s.latest ?? undefined}
+                deployments={deployments}
+                builds={builds}
+                envName={envName}
+                organizationId={targets.organization_id}
+                onChanged={changed}
+              />
+              <EnvironmentPreviews
+                token={token}
+                projectId={projectId}
+                env={s.environment}
+                deployments={deployments}
+                onChanged={changed}
+              />
+              <EnvironmentConfig
+                key={`${s.environment.id}-${round}`}
+                token={token}
+                projectId={projectId}
+                env={s.environment}
+                bindings={targets.bindings}
+                secrets={targets.secrets ?? []}
+                onChanged={changed}
+              />
+            </section>
+          )}
         />
-      )}
-      {targets && step && (
-        <section className="card deploy-env" data-release-step={step.environment.name}>
-          <div className="card-head">
-            <h3>{step.environment.name}</h3>
-            <button type="button" className="ghost" onClick={() => setOpen(null)}>
-              Close
-            </button>
-          </div>
-          <EnvironmentActions
-            token={token}
-            projectId={projectId}
-            env={step.environment}
-            latest={step.latest ?? undefined}
-            deployments={deployments}
-            builds={builds}
-            envName={envName}
-            organizationId={targets.organization_id}
-            onChanged={changed}
-          />
-          <EnvironmentPreviews
-            token={token}
-            projectId={projectId}
-            env={step.environment}
-            deployments={deployments}
-            onChanged={changed}
-          />
-          <EnvironmentConfig
-            key={`${step.environment.id}-${round}`}
-            token={token}
-            projectId={projectId}
-            env={step.environment}
-            bindings={targets.bindings}
-            secrets={targets.secrets ?? []}
-            onChanged={changed}
-          />
-        </section>
       )}
 
       {targets && !unavailable && (
@@ -424,8 +465,6 @@ export function ProjectReleases({
   }
 }
 
-/** The ladder: the newest published build, then each environment in the
- *  order a release climbs them. */
 /** Where a deploy that is under way is: waiting for a runner, the phase its
  *  run reported, and how many of the release's pods are ready. Read again
  *  every few seconds; the tab reads again once the deploy ends. */
@@ -499,6 +538,9 @@ function DeployProgress({
   );
 }
 
+/** The ladder: the newest published build, then a row per environment in
+ *  the order a release climbs them. A row opens on its newest deploy -- how
+ *  it went, in the deploy's own words -- and Deploy… opens `panel` under it. */
 function ReleaseLadder({
   token,
   projectId,
@@ -508,6 +550,7 @@ function ReleaseLadder({
   open,
   onOpen,
   onChanged,
+  panel,
 }: {
   token: string;
   projectId: string;
@@ -517,97 +560,156 @@ function ReleaseLadder({
   open: string | null;
   onOpen: (environment: string) => void;
   onChanged: (message: string) => void;
+  /** What Deploy… opens under an environment's row. */
+  panel: (step: LadderStep) => ReactNode;
 }) {
   const newest = newestRelease(steps);
   return (
     <section className="card" data-release-ladder>
-      <ol className="ladder">
-        <li className="ladder-build" data-ladder-build>
-          <div className="sub">newest build</div>
-          {newest ? (
-            <>
-              <b>{newest.chartVersion ?? newest.buildId}</b>
-              <div className="sub">
-                {newest.where} · {relTime(newest.finishedAt ?? newest.startedAt ?? "")}
-              </div>
-            </>
-          ) : (
-            <span className="sub">nothing published yet</span>
-          )}
-        </li>
-        {steps.map((s) => {
-          const e = s.environment;
-          const status = stepStatus(s);
-          const profiles = profilesBoundTo(bindings, e.id);
-          return (
-            <li
-              key={e.id}
-              className={`ladder-step${open === e.id ? " on" : ""}`}
-              data-ladder-step={e.name}
-              data-ladder-state={s.state}
-            >
-              <div className="deploy-env-head">
-                <b>{e.name}</b>
-                {e.protected && <StatusChip tone="info">needs approval</StatusChip>}
-                {e.project_id && (
+      <div className="sub" data-ladder-build>
+        newest build:{" "}
+        {newest ? (
+          <>
+            <b>{newest.chartVersion ?? newest.buildId}</b> · {newest.where} ·{" "}
+            {relTime(newest.finishedAt ?? newest.startedAt ?? "")}
+          </>
+        ) : (
+          "nothing published yet"
+        )}
+      </div>
+      <DataTable<LadderStep>
+        list="release-ladder"
+        urlPrefix="ladder."
+        rows={steps}
+        rowKey={(s) => s.environment.id}
+        rowLabel={(s) => s.environment.name}
+        expand={(s) => <StepDetail step={s} token={token} projectId={projectId} bindings={bindings} onChanged={onChanged} />}
+        expandOnClick
+        detail={(s) => (s.environment.id === open ? panel(s) : null)}
+        empty={{ title: "No environment to deploy to yet." }}
+        columns={[
+          {
+            id: "environment",
+            header: "Environment",
+            cell: (s) => (
+              <span className="deploy-env-head" data-ladder-step={s.environment.name} data-ladder-state={s.state}>
+                <b>{s.environment.name}</b>
+                {s.environment.protected && <StatusChip tone="info">needs approval</StatusChip>}
+                {s.environment.project_id && (
                   <StatusChip tone="neutral" data-own-environment>
                     the project&apos;s own
                   </StatusChip>
                 )}
-              </div>
-              <div>
-                <StatusChip tone={s.state === "deploying" ? "running" : LADDER_TONE[status.tone]} data-ladder-status>
-                  {status.text}
-                </StatusChip>
-              </div>
-              {s.state === "deploying" && s.latest && (
-                <DeployProgress token={token} organizationId={organizationId} deployment={s.latest} onEnded={onChanged} />
-              )}
-              <RungPlace token={token} projectId={projectId} step={s} onChanged={onChanged} />
-              <div className="sub">
-                {e.kind === "research" ? (
-                  <>
-                    application <code>{s.namespace}</code> in Research project <code>{e.research_project}</code>
-                  </>
-                ) : (
-                  <>
-                    namespace <code>{s.namespace}</code>
-                  </>
-                )}
-                {s.from && <> · takes from {s.from}</>}
-              </div>
-              <div className="sub">
-                {profiles.length ? `profile ${profiles.join(", ")}` : "no profile bound yet"}
-                {s.latest && <> · {relTime(s.latest.requested_at)}</>}
-              </div>
-              {s.runs &&
-                productUrls(s.runs.outcome).map((u) => (
-                  <div key={u}>
-                    <a href={u} target="_blank" rel="noreferrer" data-product-url>
-                      Open the product ↗
-                    </a>
-                  </div>
-                ))}
-              <div className="row ladder-actions">
-                {s.promote && (
-                  <PromoteBuild token={token} projectId={projectId} step={s} build={s.promote} onChanged={onChanged} />
-                )}
-                <button
-                  type="button"
-                  className={s.promote ? "ghost" : "primary"}
-                  aria-expanded={open === e.id}
-                  title="Deploy a published build, roll back, uninstall, preview; the release's values and secrets"
-                  onClick={() => onOpen(e.id)}
-                  data-ladder-deploy
-                >
-                  Deploy…
-                </button>
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+              </span>
+            ),
+          },
+          {
+            id: "status",
+            header: "Status",
+            cell: (s) => {
+              const status = stepStatus(s);
+              return (
+                <>
+                  <StatusChip tone={s.state === "deploying" ? "running" : LADDER_TONE[status.tone]} data-ladder-status>
+                    {status.text}
+                  </StatusChip>
+                  {s.state === "deploying" && s.latest && (
+                    <DeployProgress token={token} organizationId={organizationId} deployment={s.latest} onEnded={onChanged} />
+                  )}
+                </>
+              );
+            },
+          },
+          {
+            id: "runs",
+            header: "Runs",
+            cell: (s) =>
+              s.runs ? (
+                <>
+                  <code>{versionOf(s.runs) ?? s.runs.product}</code>
+                  {productUrls(s.runs.outcome).map((u) => (
+                    <div key={u}>
+                      <a href={u} target="_blank" rel="noreferrer" data-product-url>
+                        Open the product ↗
+                      </a>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <span className="sub">nothing</span>
+              ),
+          },
+          { id: "from", header: "Takes from", cell: (s) => s.from ?? <span className="sub">a build</span> },
+          { id: "when", header: "Last deploy", cell: (s) => <When iso={s.latest?.requested_at} /> },
+        ]}
+        inline={(s) => (
+          <span className="row ladder-actions">
+            {s.promote && <PromoteBuild token={token} projectId={projectId} step={s} build={s.promote} onChanged={onChanged} />}
+            <button
+              type="button"
+              className={s.promote ? "ghost" : "primary"}
+              aria-expanded={open === s.environment.id}
+              title="Deploy a published build, roll back, uninstall, preview; the release's values and secrets"
+              onClick={() => onOpen(s.environment.id)}
+              data-ladder-deploy
+            >
+              Deploy…
+            </button>
+          </span>
+        )}
+      />
     </section>
+  );
+}
+
+/** An environment's row, opened: where it is, which profile it runs, and its
+ *  newest deploy as that deploy tells it -- the reason it was asked for and
+ *  its outcome, a crashed container's error first. */
+function StepDetail({
+  step: s,
+  token,
+  projectId,
+  bindings,
+  onChanged,
+}: {
+  step: LadderStep;
+  token: string;
+  projectId: string;
+  bindings: ProjectTargets["bindings"];
+  onChanged: (message: string) => void;
+}) {
+  const e = s.environment;
+  const profiles = profilesBoundTo(bindings, e.id);
+  return (
+    <div className="ladder-detail" data-ladder-detail={e.name}>
+      <RungPlace token={token} projectId={projectId} step={s} onChanged={onChanged} />
+      <div className="sub">
+        {e.kind === "research" ? (
+          <>
+            application <code>{s.namespace}</code> in Research project <code>{e.research_project}</code>
+          </>
+        ) : (
+          <>
+            namespace <code>{s.namespace}</code>
+          </>
+        )}
+        {s.from && <> · takes from {s.from}</>}
+        {" · "}
+        {profiles.length ? `profile ${profiles.join(", ")}` : "no profile bound yet"}
+      </div>
+      {s.latest ? (
+        <div data-ladder-latest={s.latest.state}>
+          <div className="sub">
+            newest deploy: <b>{versionOf(s.latest) ?? s.latest.product}</b> · {s.latest.state} ·{" "}
+            {s.latest.requested_by_name || s.latest.requested_by} · {relTime(s.latest.requested_at)}
+          </div>
+          {s.latest.reason && <div className="sub">“{s.latest.reason}”</div>}
+          {s.latest.outcome && <pre className="ladder-outcome">{s.latest.outcome}</pre>}
+        </div>
+      ) : (
+        <div className="sub">Nothing deployed here yet.</div>
+      )}
+    </div>
   );
 }
 
@@ -667,13 +769,10 @@ const RELEASES_CSS = `
 .project-deploys .deploy-ok { background:color-mix(in srgb, #16a34a 18%, transparent); }
 .project-deploys .deploy-warn { background:color-mix(in srgb, #d97706 18%, transparent); }
 .project-deploys .deploy-bad { background:color-mix(in srgb, #dc2626 18%, transparent); }
-.project-deploys .ladder { list-style:none; padding:0; margin:0; display:flex; flex-wrap:wrap; gap:10px 28px; align-items:stretch; }
-.project-deploys .ladder > li { position:relative; flex:1 1 200px; min-width:0; display:flex; flex-direction:column; gap:4px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-md, 8px); }
-.project-deploys .ladder > li + li::before { content:"→"; position:absolute; left:-20px; top:50%; transform:translateY(-50%); color:var(--muted-foreground); }
-.project-deploys .ladder > li.on { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary) inset; }
-.project-deploys .ladder-build { flex:0 1 140px; background:var(--accent); }
-.project-deploys .ladder-actions { gap:6px; flex-wrap:wrap; margin-top:auto; padding-top:6px; }
-.project-deploys .ladder > li.ladder-build { flex:0 1 160px; }
+.project-deploys .ladder-actions { gap:6px; flex-wrap:nowrap; justify-content:flex-end; }
+.project-deploys [data-ladder-build] { margin:0 0 8px; }
+.project-deploys .ladder-detail { display:grid; gap:4px; }
+.project-deploys .ladder-outcome { margin:4px 0 0; max-height:320px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
 .project-deploys .release-own summary { cursor:pointer; }
 .project-deploys .release-own[open] summary { margin-bottom:10px; }
 .project-deploys .release-own-head { margin:16px 0 4px; }

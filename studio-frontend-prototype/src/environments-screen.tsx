@@ -57,7 +57,7 @@ import {
   stateTone,
 } from "./environments";
 import { InfraPlacementField } from "./infra-services-view";
-import { DataTable, RowMenu } from "./data-table";
+import { DataTable, RowMenu, When } from "./data-table";
 import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
 import { BoxIcon, CloudIcon, FlaskIcon, LockIcon } from "./icons";
@@ -1916,10 +1916,10 @@ export function ProjectEnvironments({
           </div>
         </>
       )}
-      {show === "history" && targets && deployments.length === 0 && <p className="empty">Nothing deployed yet.</p>}
-      {show !== "bindings" && deployments.length > 0 && targets && (
+      {show === "history" && targets && <DeployHistory token={token} org={targets.organization_id} deployments={deployments} />}
+      {show === "both" && deployments.length > 0 && targets && (
         <ul className="env-list">
-          {deployments.slice(0, show === "history" ? 20 : 10).map((d) => (
+          {deployments.slice(0, 10).map((d) => (
             <li key={d.id}>
               <DeploymentLine d={d} showProject={false} />
               {canReadStatus(d) && <StatusButton token={token} org={targets.organization_id} d={d} />}
@@ -1928,6 +1928,63 @@ export function ProjectEnvironments({
         </ul>
       )}
     </div>
+  );
+}
+
+/** A project's deploys, newest first, one row each: what, where, who and
+ *  when. A row opens on what the deploy said -- its reason, its outcome with
+ *  a crashed container's error -- and asks the cluster how it is now. */
+function DeployHistory({ token, org, deployments }: { token: string; org: string; deployments: Deployment[] }) {
+  return (
+    <DataTable<Deployment>
+      list="deploy-history"
+      urlPrefix="history."
+      rows={deployments}
+      rowKey={(d) => d.id}
+      rowLabel={(d) => `${d.product} to ${d.environment_name}`}
+      expand={(d) => (
+        <div data-deploy-history-detail={d.id}>
+          <DeploymentLine d={d} showProject={false} />
+          {canReadStatus(d) && <StatusButton token={token} org={org} d={d} />}
+        </div>
+      )}
+      expandOnClick
+      search={{ placeholder: "Search deploys…" }}
+      searchText={(d) => [d.product, d.environment_name, d.namespace, d.commit, d.requested_by_name, d.requested_by, d.state]}
+      empty={{ title: "Nothing deployed yet." }}
+      columns={[
+        { id: "state", header: "State", cell: (d) => <StateBadge d={d} /> },
+        {
+          id: "what",
+          header: "What",
+          cell: (d) => (
+            <>
+              <b>{d.product}</b>
+              {versionOf(d) ? <span className="sub"> · {versionOf(d)}</span> : null}{" "}
+              {d.preview && <span className="badge">preview {d.preview.name}</span>}
+              {(d.action ?? "install") === "uninstall" && <span className="badge">taken out</span>}
+            </>
+          ),
+        },
+        {
+          id: "where",
+          header: "Where",
+          cell: (d) => (
+            <>
+              {d.environment_name} <span className="sub">· <code>{d.namespace}</code></span>
+            </>
+          ),
+        },
+        { id: "commit", header: "Commit", cell: (d) => (d.commit ? <code>{shortCommit(d.commit)}</code> : "—") },
+        { id: "by", header: "By", cell: (d) => d.requested_by_name || d.requested_by },
+        {
+          id: "when",
+          header: "When",
+          compare: (a, b) => a.requested_at.localeCompare(b.requested_at),
+          cell: (d) => <When iso={d.requested_at} />,
+        },
+      ]}
+    />
   );
 }
 
