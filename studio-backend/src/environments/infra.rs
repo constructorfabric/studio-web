@@ -20,9 +20,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::components_catalog::service_gdl::{self, TemplateRef};
+use crate::components_catalog::port::{self as service_gdl, TemplateRef};
 
-pub(crate) use crate::components_catalog::service_gdl::variable;
+pub(crate) use crate::components_catalog::port::variable;
 
 /// How many infra services a project may add.
 pub const MAX_SERVICES: usize = 20;

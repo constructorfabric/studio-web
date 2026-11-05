@@ -18,6 +18,11 @@ use uuid::Uuid;
 pub use super::roadmap::{RoadmapFields, RoadmapSource as BoardSource};
 pub use super::service::UnreadBoard;
 use super::service::{CatalogCounts, CatalogService, SyncSources};
+/// What a service's `service.gdl` may declare (ADR-0064): studio-environments
+/// checks and places a product's infra services by these rules.
+pub(crate) use super::service_gdl::{
+    TemplateRef, capability, env_name, template_refs, variable, volume_size,
+};
 
 /// The boards a finished `catalog.sync` run could not read, from its result.
 pub fn unread_boards(result: &Value) -> Vec<UnreadBoard> {

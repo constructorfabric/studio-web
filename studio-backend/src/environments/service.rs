@@ -2203,10 +2203,10 @@ impl EnvironmentService {
         // build takes its branch and records the commit it got; a protected
         // environment builds only the commits the revision pinned at save.
         let refs = if research || own.is_some() {
-            crate::product::sources_lock::SourceRefs::default()
+            crate::product::port::SourceRefs::default()
         } else {
             match &description {
-                Some(d) => crate::product::sources_lock::build_refs(
+                Some(d) => crate::product::port::build_refs(
                     d.sources_lock.as_ref(),
                     &d.planned,
                     env.protected,
@@ -2221,7 +2221,7 @@ impl EnvironmentService {
                         ),
                     ));
                 }
-                None => crate::product::sources_lock::SourceRefs::default(),
+                None => crate::product::port::SourceRefs::default(),
             }
         };
         let git_ref = match (&refs.home, env.protected) {

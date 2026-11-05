@@ -43,6 +43,7 @@ pub(crate) mod infra; // a product's infra services, placed and installed with i
 mod migrations;
 mod model;
 mod placement; // a project's slug, namespaces and registry path (ADR-0062 §3, §7)
+pub(crate) mod port; // what another gear asks of this one directly
 mod preflight; // what a deploy checks before and while it installs
 mod preview; // a build tried in a namespace of its own, removed when it expires (ADR-0055)
 mod readiness; // what a build or a deploy checks before it is queued

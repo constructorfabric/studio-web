@@ -2558,7 +2558,7 @@ impl IngestService {
                 continue;
             }
             // Its images become the project's image records too (ADR-0062 §4).
-            crate::environments::images_sink::record(crate::environments::images_sink::Published {
+            crate::environments::port::record(crate::environments::port::Published {
                 project_id,
                 build_id: &report.build_id,
                 commit: report.commit.as_deref(),

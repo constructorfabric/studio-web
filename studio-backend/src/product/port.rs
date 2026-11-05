@@ -27,6 +27,9 @@ use super::gearbox::Gearbox;
 /// Where a product's description goes when nothing recorded another path:
 /// `products/<id>/product.gdl`.
 pub use super::gearbox::product_gdl_path;
+/// The commits a build takes for each source a description uses (ADR-0060
+/// §3): studio-environments resolves them before it queues a build.
+pub use super::sources_lock::{SourceRefs, build_refs};
 
 #[async_trait]
 pub trait ProjectProducts: Send + Sync + 'static {
