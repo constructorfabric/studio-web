@@ -20,7 +20,7 @@ const src = (full_path: string, extra: Partial<ProjectSource> = {}): ProjectSour
   ...extra,
 });
 
-const SHA = "f83375c1586330aa12597ee999641de4be3799e8";
+const SHA = "75f5d9eaffe1a78552e004dfed0aab14cbb266d7";
 
 describe("source roles", () => {
   it("marks one source per flag, and clears it on the others", () => {
@@ -55,7 +55,7 @@ describe("source roles", () => {
     expect(lines[1].external).toBe(true);
     expect(protectedReady(lines)).toBe(true);
     expect(protectedReady(releaseSources([{ ...lock[0], commit: null }]))).toBe(false);
-    expect(shortCommit(SHA)).toBe("f83375c1");
+    expect(shortCommit(SHA)).toBe("75f5d9ea");
     expect(shortCommit(null)).toBe("—");
   });
 });

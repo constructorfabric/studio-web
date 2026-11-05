@@ -60,7 +60,7 @@ fn the_home_repository_is_one_source_and_its_frontend_names_it() {
         SourcePin {
             id: "gears-rust",
             url: "https://github.com/acme/gears-rust.git",
-            rev: Some("f83375c1586330aa12597ee999641de4be3799e8"),
+            rev: Some("75f5d9eaffe1a78552e004dfed0aab14cbb266d7"),
             within: None,
         },
         SourcePin {
