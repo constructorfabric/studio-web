@@ -1,13 +1,13 @@
 use super::*;
 
-const SHA: &str = "c14f0fb5dd420fbed2476768064962e0b4c74d48";
+const SHA: &str = "f83375c1586330aa12597ee999641de4be3799e8";
 
 /// Revision 5 of Studioweb: studio-web named twice.
 const TWICE: &str = r#"gdl_version = "1.5"
 # source(id = "commented", at = path("x"))
 product(
     id = "studioweb",
-    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "c14f0fb5dd420fbed2476768064962e0b4c74d48")),
+    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "f83375c1586330aa12597ee999641de4be3799e8")),
                source(id = "studio-backend", at = git(url = "https://github.com/AndrejK666/studio-web.git", rev = "fadb42ff")),
                source(id = "frontx-studio-web", at = path("../.."))],
     frontend = frontx_product(
@@ -109,7 +109,7 @@ fn one_repository_named_twice_is_refused_with_both_names() {
 fn directories_side_by_side_and_one_source_per_repository_stand() {
     // Revision 6: one studio-web.
     let one = r#"product(id = "studioweb", sources = [
-        source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "c14f0fb5dd420fbed2476768064962e0b4c74d48")),
+        source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "f83375c1586330aa12597ee999641de4be3799e8")),
         source(id = "studio-web", at = path("../.."))])"#;
     assert!(
         duplicates(
@@ -135,7 +135,7 @@ fn directories_side_by_side_and_one_source_per_repository_stand() {
 #[test]
 fn a_dev_build_takes_each_branch_and_a_protected_one_the_lock() {
     let text = r#"product(id = "shop", sources = [
-        source(id = "gears-rust", at = git(url = "https://github.com/acme/gears-rust.git", rev = "c14f0fb5dd420fbed2476768064962e0b4c74d48")),
+        source(id = "gears-rust", at = git(url = "https://github.com/acme/gears-rust.git", rev = "f83375c1586330aa12597ee999641de4be3799e8")),
         source(id = "shop", at = path("../..")),
         source(id = "billing", at = git(url = "https://github.com/acme/billing.git", rev = "main"))])"#;
     let home = project("acme/shop", "dev");
