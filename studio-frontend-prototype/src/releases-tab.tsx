@@ -41,7 +41,6 @@ import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews, RungPlace, 
 import { EnvironmentForm, ProjectEnvironments } from "./environments-screen";
 import { clusterConnections, registryConnections, researchConnections } from "./environments";
 import { errText, relTime } from "./format";
-import { KUBERNETES_PROFILES } from "./product";
 import { deployableBuilds, productUrls, profilesBoundTo } from "./project-deploys";
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
@@ -285,7 +284,6 @@ export function ProjectReleases({
                 key={round}
                 token={token}
                 projectId={projectId}
-                profiles={KUBERNETES_PROFILES}
                 title="Deploy history"
                 show="history"
               />
@@ -398,7 +396,6 @@ export function ProjectReleases({
             key={round}
             token={token}
             projectId={projectId}
-            profiles={KUBERNETES_PROFILES}
             title="Which profile each environment runs"
             show="bindings"
             onSaved={() => changed("Bindings saved.")}

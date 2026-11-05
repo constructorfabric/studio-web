@@ -1280,13 +1280,21 @@ async fn start_build(
     Query(q): Query<ProjectQuery>,
     Json(body): Json<StudioBuildRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<StudioBuildDto>)> {
+    let profile = match body.profile.filter(|p| !p.trim().is_empty()) {
+        Some(p) => p,
+        None => {
+            envs.0
+                .profile_for(&ctx, q.project_id, body.environment_id)
+                .await
+        }
+    };
     let started = envs
         .0
         .request_build(
             &ctx,
             q.project_id,
             body.environment_id,
-            body.profile.as_deref().unwrap_or("prod"),
+            &profile,
             body.product_file.as_deref(),
             body.git_ref,
             false,
@@ -1341,7 +1349,14 @@ async fn scaffold_build_workflow(
     Query(q): Query<ProjectQuery>,
     Json(body): Json<BuildWorkflowRequest>,
 ) -> ApiResult<JsonBody<BuildWorkflowDto>> {
-    let profile = body.profile.unwrap_or_else(|| "prod".to_owned());
+    let profile = match body.profile.filter(|p| !p.trim().is_empty()) {
+        Some(p) => p,
+        None => {
+            envs.0
+                .profile_for(&ctx, q.project_id, body.environment_id)
+                .await
+        }
+    };
     let w = envs
         .0
         .propose_workflow(

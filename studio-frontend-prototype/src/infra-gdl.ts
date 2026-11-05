@@ -212,3 +212,39 @@ export function homeSource(text: string): string | null {
   const m = /source\(\s*id\s*=\s*"([^"]+)"\s*,\s*at\s*=\s*path\(/.exec(text);
   return m?.[1] ?? null;
 }
+
+/** One profile a product declares: its id and the constructor that makes it
+ *  (`kubernetes`, `embedded`, `self_hosted`, ...). */
+export interface ProfileDecl {
+  id: string;
+  kind: string;
+}
+
+/** The profiles `text`'s product declares, in its order: each call in its
+ *  `profiles = [...]` that names an `id` string. Null when the product has
+ *  no literal `profiles` list (or no product at all). */
+export function readProfiles(text: string): ProfileDecl[] | null {
+  const toks = tokens(text);
+  const call = productCall(toks);
+  if (!call) return null;
+  const arg = argument(toks, call.open, call.close, "profiles");
+  if (!arg || toks[arg.value]?.text !== "[") return null;
+  const listClose = closing(toks, arg.value);
+  if (listClose < 0) return null;
+  const out: ProfileDecl[] = [];
+  let i = arg.value + 1;
+  while (i < listClose) {
+    const t = toks[i];
+    if (t.kind === "ident" && toks[i + 1]?.text === "(") {
+      const open = i + 1;
+      const close = closing(toks, open);
+      if (close < 0) break;
+      const id = argument(toks, open, close, "id");
+      if (id && toks[id.value]?.kind === "str" && id.end === id.value + 1) out.push({ id: toks[id.value].value, kind: t.text });
+      i = close + 1;
+    } else {
+      i = opens(t) ? closing(toks, i) + 1 : i + 1;
+    }
+  }
+  return out;
+}

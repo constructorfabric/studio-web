@@ -14,6 +14,7 @@
 //! `gear.gdl` says) and a project's gear repository, both through
 //! [`port`].
 
+mod description_edit;
 mod descriptions;
 mod explanations;
 mod frontx;

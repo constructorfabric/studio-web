@@ -136,6 +136,15 @@ pub const PROFILES: [&str; 3] = ["dev", "local", "prod"];
 /// say, so checking another profile must not make a new revision.
 pub const DEFAULT_PROFILE: &str = "dev";
 
+/// A profile id as a description may declare one: `[A-Za-z0-9_-]{1,63}`.
+pub fn is_profile_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 63
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 #[derive(Debug, Clone)]
 pub struct GearboxConfig {
     pub bin: PathBuf,
@@ -2538,6 +2547,17 @@ pub struct PreviewInput {
     /// Check the profile as a development one (`development = True`): an
     /// environment of dev strictness (ADR-0060 §5). The text is unchanged.
     pub development: bool,
+    /// The latest revision's text, when the product has one: the
+    /// description is that text edited by what the caller changed, never a
+    /// fresh render over it (ADR-0060 §4, [`super::description_edit`]).
+    pub latest: Option<String>,
+    /// Gears and plugins, as picked, the caller took out against the record.
+    pub removed: Vec<String>,
+    /// Gears and plugins, as configured, whose configuration the caller
+    /// changed against the record.
+    pub config_changed: Vec<String>,
+    /// What the save does to the latest revision's `frontend` block.
+    pub frontend_change: super::description_edit::FrontendChange,
 }
 
 /// A project's home repository, checked out on the server at its branch.
@@ -4250,12 +4270,11 @@ impl Gearbox {
                 input.product_id
             );
         }
-        if !PROFILES.contains(&input.profile.as_str()) {
-            bail!(
-                "profile `{}` is not one of {}",
-                input.profile,
-                PROFILES.join(", ")
-            );
+        // Any profile the description declares (a saved one may declare
+        // more than the three a new one starts with); the engine refuses one
+        // it does not.
+        if !is_profile_id(&input.profile) {
+            bail!("`{}` is not a profile id", input.profile);
         }
         let started = Instant::now();
         let mut loaded = self.ensure(scope).await?;
@@ -4361,6 +4380,34 @@ impl Gearbox {
             &by_id,
             frontend.as_ref().map(|pick| (pick, input.repo.as_deref())),
         );
+        // The latest revision edited, not replaced: only what the caller
+        // changed is written, the rest stays as it is written there.
+        let product_gdl = match &input.latest {
+            None => product_gdl,
+            Some(latest) => {
+                let ids = |names: &[String]| -> BTreeSet<String> {
+                    names
+                        .iter()
+                        .flat_map(|n| {
+                            std::iter::once(n.clone())
+                                .chain(catalogue.find(n).map(|g| g.id.clone()))
+                        })
+                        .collect()
+                };
+                let (removed, config_changed) = (ids(&input.removed), ids(&input.config_changed));
+                super::description_edit::onto_latest(
+                    latest,
+                    &product_gdl,
+                    &super::description_edit::Change {
+                        removed: &removed,
+                        config_changed: &config_changed,
+                        frontend: input.frontend_change,
+                        product_path: &input.product_path,
+                        repo: input.repo.as_deref(),
+                    },
+                )?
+            }
+        };
         Ok(Described {
             corpus_commit: loaded.commit(),
             product_gdl,

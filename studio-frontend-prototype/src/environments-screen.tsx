@@ -17,7 +17,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { profileLabel } from "./product";
+import { type DeclaredProfile, deployableProfiles, profileLabel } from "./product";
+import { useDeclaredProfiles } from "./declared-profiles";
 import { oneEach } from "./project-deploys";
 import {
   ApiError,
@@ -1798,7 +1799,9 @@ export function ProjectEnvironments({
 }: {
   token: string;
   projectId: string;
-  profiles: readonly string[];
+  /** The profiles to offer; by default the ones the saved description
+   *  declares (its latest revision), each with its kind. */
+  profiles?: readonly DeclaredProfile[];
   /** The heading: where the bindings sit decides what they are called. */
   title?: string;
   /** Which of the two to draw. */
@@ -1813,6 +1816,11 @@ export function ProjectEnvironments({
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const read = useDeclaredProfiles(token, projectId);
+  const declared = profiles ?? read;
+  // An environment runs a profile it can deploy: a cluster, a `kubernetes`
+  // one (ADR-0057).
+  const offered = deployableProfiles(declared).map((p) => p.id);
 
   useEffect(() => {
     let live = true;
@@ -1889,9 +1897,9 @@ export function ProjectEnvironments({
                   <select value={bound(env.id)} onChange={(e) => bind(env.id, e.target.value)} aria-label={`Profile for ${env.name}`}>
                     <option value="">nothing: not bound</option>
                     {/* A profile bound before that this list does not offer stays shown. */}
-                    {[...profiles, ...(bound(env.id) && !profiles.includes(bound(env.id)) ? [bound(env.id)] : [])].map((p) => (
+                    {[...offered, ...(bound(env.id) && !offered.includes(bound(env.id)) ? [bound(env.id)] : [])].map((p) => (
                       <option key={p} value={p}>
-                        {profileLabel(p)}
+                        {profileLabel(p, declared)}
                       </option>
                     ))}
                   </select>

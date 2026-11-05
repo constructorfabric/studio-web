@@ -1181,6 +1181,30 @@ impl EnvironmentService {
 
     /* ── a project's bindings and targets ── */
 
+    /// The profile a build for `environment` takes when the caller names
+    /// none: the one the project binds to it, else `prod` (the profile a new
+    /// description's cluster starts with). Any profile the description
+    /// declares may be bound.
+    pub async fn profile_for(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        environment: Uuid,
+    ) -> String {
+        let bound = self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await
+            .ok()
+            .and_then(|(list, ..)| {
+                list.items
+                    .into_iter()
+                    .find(|b| b.environment_id == environment)
+                    .map(|b| b.profile)
+            });
+        bound.unwrap_or_else(|| "prod".to_owned())
+    }
+
     pub async fn targets(&self, ctx: &SecurityContext, project: Uuid) -> Result<Targets> {
         let org = self.organization_of_project(ctx, project).await?;
         let project_name = self.store.tenant_name(ctx, project).await;

@@ -1171,11 +1171,8 @@ async fn save_project_product(
         patch.insert("gears".into(), serde_json::json!(gears));
     }
     if let Some(profile) = body.profile {
-        if !PROFILES.contains(&profile.as_str()) {
-            return Err(invalid(format!(
-                "profile `{profile}` is not one of {}",
-                PROFILES.join(", ")
-            )));
+        if !super::gearbox::is_profile_id(&profile) {
+            return Err(invalid(format!("`{profile}` is not a profile id")));
         }
         patch.insert("profile".into(), profile.into());
     }
@@ -1906,7 +1903,61 @@ async fn preview_product(
     } else {
         None
     };
+    // What the caller changed against the record: the latest revision is
+    // edited by that alone (ADR-0060 §4), never written over by a render.
+    let kept = product.service.descriptions().is_some();
+    let write = body.write.unwrap_or(false);
+    let latest = if kept {
+        product
+            .service
+            .latest_description(&ctx, project_id)
+            .await
+            .map_err(|e| descriptions_rest::internal(&e))?
+    } else {
+        None
+    };
+    let latest_text = match &latest {
+        Some(l) => Some(l.text.clone()),
+        // Without kept revisions, the repository's file is the latest.
+        None if write && !kept => product
+            .service
+            .read_project_file(&ctx, &project, &product_path)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let record_value = record.as_ref().map(|n| &n.value);
+    let removed: Vec<String> = record_value
+        .and_then(super::port::picks_of)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| !composed.gears.contains(p))
+        .collect();
+    let config_before =
+        super::gearbox::gear_config_from(record_value.and_then(|r| r.get("config")))
+            .unwrap_or_default();
+    let config_changed: Vec<String> = config
+        .iter()
+        .filter(|(k, v)| config_before.get(*k) != Some(*v))
+        .map(|(k, _)| k.clone())
+        .chain(
+            config_before
+                .keys()
+                .filter(|k| !config.contains_key(*k))
+                .cloned(),
+        )
+        .collect();
+    let frontend_change = match record_value.and_then(|r| r.get("frontend")) {
+        Some(Value::Null) => super::description_edit::FrontendChange::Remove,
+        Some(_) if frontend.is_some() => super::description_edit::FrontendChange::Write,
+        _ => super::description_edit::FrontendChange::Keep,
+    };
     let input = PreviewInput {
+        latest: latest_text,
+        removed,
+        config_changed,
+        frontend_change,
         product_id: body.product_id.clone(),
         product_path: product_path.clone(),
         name,
@@ -1926,7 +1977,16 @@ async fn preview_product(
     // never waits on a check to be kept (the check of a product of sixty
     // gears outlasted the gateway, and the save was lost with it).
     let described = gearbox.describe(scope, &input).await.map_err(|e| {
-        if e.downcast_ref::<super::gearbox::HomeStillReading>()
+        if let Some(drop) = e.downcast_ref::<super::description_edit::WouldDrop>() {
+            StudioProductError::failed_precondition()
+                .with_precondition_violation(
+                    "product_description",
+                    drop.to_string(),
+                    super::description_edit::DESCRIPTION_WOULD_DROP,
+                )
+                .create()
+        } else if e
+            .downcast_ref::<super::gearbox::HomeStillReading>()
             .is_some()
         {
             CanonicalError::service_unavailable()
@@ -1945,14 +2005,7 @@ async fn preview_product(
     // written only when the person publishes (§3). A deployment whose gear
     // has no database keeps writing branches, as before.
     let mut description_revision = None;
-    let kept = product.service.descriptions().is_some();
-    let write = body.write.unwrap_or(false);
     if write && kept {
-        let latest = product
-            .service
-            .latest_description(&ctx, project_id)
-            .await
-            .map_err(|e| descriptions_rest::internal(&e))?;
         // Nothing the latest revision had and the product still wants is
         // dropped without a word (ADR-0060 §4).
         if let Some(latest) = &latest {
