@@ -174,17 +174,21 @@ resource_group_sdk = { package = "cf-gears-resource-group-sdk", version = "=0.3.
 # catalogue, the repository importer) talk to the gear through the SDK's
 # `GraphStorageClientV1` from the ClientHub, exactly as they talk to credstore.
 #
-# The official crates, published by gears-rust's release-plz since
-# constructorfabric/gears-rust#4794 merged; they replace the interim `weftgraph`
-# preview crates, whose libraries had the same names. The embedding plugins come
-# in through the gear's `onnx` and `remote` features. Every other gears crate
+# Interim: the `weftgraph` release candidate of the gear's 0.3 line
+# (constructorfabric/gears-rust#5571), whose libraries have the same names as
+# the official `cf-gears-graph-storage` crates. 0.3 carries what Studio asked
+# for in gears-rust#5529: a type update on the in-process client, a count, a
+# node's version on read, traversal direction and edge discriminators. Pinned
+# exactly, because a release candidate may change; it goes back to the
+# official crates once 0.3.0 is released. The embedding plugins come in
+# through the gear's `onnx` and `remote` features. Every other gears crate
 # comes from crates.io too, so there is one toolkit in the binary and no
 # `[patch]` block.
 #
 # NB: this gear runs ONLY against `pg_graph` (PostgreSQL 19 + pgvector) — see
 # the graph-postgres service in docker-compose.yml.
-graph_storage = { package = "cf-gears-graph-storage", version = "=0.2.2", optional = true }
-graph_storage_sdk = { package = "cf-gears-graph-storage-sdk", version = "=0.2.1", optional = true }
+graph_storage = { package = "weftgraph", version = "=0.3.0-rc.2", optional = true }
+graph_storage_sdk = { package = "weftgraph-sdk", version = "=0.3.0-rc.2", optional = true }
 
 # ── Core toolkit ──
 toolkit = { package = "cf-gears-toolkit", version = "=0.12.0", features = ["bootstrap"] }

@@ -600,10 +600,11 @@ impl CatalogSink for GraphSink {
     }
 
     /// One atomic batch, idempotent: a byte-identical re-registration
-    /// converges. Each type derives from a graph-storage family — a free-form
-    /// type has no chain to validate against and is refused.
+    /// converges, and a compatible change to a stored type updates it
+    /// (`on_existing: Update`). Each type derives from a graph-storage family —
+    /// a free-form type has no chain to validate against and is refused.
     async fn register_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
-        use graph_storage_sdk::models::TypeRegistration;
+        use graph_storage_sdk::models::{OnExisting, TypeRegistration, TypeRegistrationOptions};
         let batch: Vec<TypeRegistration> = gts::graph_node_type_schemas()
             .into_iter()
             .chain(gts::graph_edge_type_schemas())
@@ -617,12 +618,19 @@ impl CatalogSink for GraphSink {
                 schema,
             })
             .collect();
-        self.client.register_types(ctx, batch).await.map_err(|e| {
-            anyhow!(
-                "register catalog types: {}",
-                crate::graph_error::explain(&e)
-            )
-        })?;
+        let options = TypeRegistrationOptions {
+            on_existing: OnExisting::Update,
+            ..Default::default()
+        };
+        self.client
+            .register_types_with(ctx, batch, options)
+            .await
+            .map_err(|e| {
+                anyhow!(
+                    "register catalog types: {}",
+                    crate::graph_error::explain(&e)
+                )
+            })?;
         Ok(())
     }
 
@@ -1083,9 +1091,9 @@ mod graph_sink_tests {
     use graph_storage_sdk::GraphStorageClientV1;
     use graph_storage_sdk::models::{
         DeleteOutcome, EdgeKey, ElementEnvelope, GraphRevision, GtsTypeId, IngestCounts,
-        IngestOutcome, IngestRequest, NeighborhoodRequest, NodeKey, NodeRow, NodeView, Page,
-        SearchRequest, SearchResponse, Subject, TraversalResponse, TraverseRequest, TypeQuery,
-        TypeRecord, TypeRegistration,
+        IngestOutcome, IngestRequest, NeighborhoodRequest, NodeCount, NodeKey, NodeRow, NodeView,
+        Page, RegisteredType, SearchRequest, SearchResponse, Subject, TraversalResponse,
+        TraverseRequest, TypeQuery, TypeRecord, TypeRegistration, TypeRegistrationOptions,
     };
     use toolkit_canonical_errors::CanonicalError;
     use uuid::Uuid;
@@ -1138,6 +1146,7 @@ mod graph_sink_tests {
             updated_by: subject,
             deleted_at: None,
             deleted_by: None,
+            version: Some(1),
             graph_revision: GraphRevision {
                 source_epoch: 0,
                 revision: 0,
@@ -1160,12 +1169,21 @@ mod graph_sink_tests {
 
     #[async_trait]
     impl GraphStorageClientV1 for FakeGraph {
-        async fn register_types(
+        async fn register_types_with(
             &self,
             _ctx: &SecurityContext,
             _batch: Vec<TypeRegistration>,
-        ) -> Result<Vec<TypeRecord>, CanonicalError> {
+            _options: TypeRegistrationOptions,
+        ) -> Result<Vec<RegisteredType>, CanonicalError> {
             Ok(Vec::new())
+        }
+        async fn count_nodes(
+            &self,
+            _ctx: &SecurityContext,
+            _type_patterns: &[String],
+            _query: toolkit_odata::ODataQuery,
+        ) -> Result<NodeCount, CanonicalError> {
+            unimplemented!()
         }
         async fn get_type(
             &self,

@@ -18,7 +18,12 @@ The bootstrap job connects with the bootstrap credentials: they must be able to
 
 ## By hand, once
 
-1. **Right after the deploy, before the first repository sync (G-17).** The
+1. **No longer needed (graph-storage 0.3, #966).** The artifact and catalog
+   registrations now pass `on_existing: update` in process, so a compatible
+   change to a stored type is applied on the first sync, and the script below
+   was deleted. Kept for the record:
+
+   **Right after the deploy, before the first repository sync (G-17).** The
    connector's edge types are stored on studio-dev with `full_text_search`; the
    in-process client cannot update them, so syncs answer 409 until they are
    updated over REST:
