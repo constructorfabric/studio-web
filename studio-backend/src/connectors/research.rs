@@ -85,12 +85,31 @@ impl ConnectorDriver for ResearchDriver {
         true
     }
 
-    fn sign_in_url(&self, state: &str, pkce: &Pkce) -> anyhow::Result<String> {
-        self.oauth.authorize(state, pkce)
+    fn sign_in_url(
+        &self,
+        state: &str,
+        pkce: &Pkce,
+        redirect_uri: Option<&str>,
+    ) -> anyhow::Result<(String, String)> {
+        let redirect_uri = self.oauth.redirect_uri(redirect_uri)?;
+        Ok((
+            self.oauth.authorize(state, pkce, &redirect_uri)?,
+            redirect_uri,
+        ))
     }
 
-    async fn exchange_code(&self, code: &str, verifier: &str) -> anyhow::Result<Tokens> {
-        self.oauth.exchange_code(&self.http, code, verifier).await
+    async fn exchange_code(
+        &self,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> anyhow::Result<Tokens> {
+        // A sign-in started before the callback was kept has none: it was the
+        // default's.
+        let redirect_uri = self.oauth.redirect_uri(Some(redirect_uri))?;
+        self.oauth
+            .exchange_code(&self.http, code, verifier, &redirect_uri)
+            .await
     }
 
     async fn signed_in(&self, base_url: &str, tokens: Tokens) -> anyhow::Result<SignedIn> {

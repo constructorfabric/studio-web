@@ -15,6 +15,7 @@ import {
     CHECK_FOR_UPDATES_COMMAND_ID, DESKTOP_UPDATE_CHANNEL_PREFERENCE_SCHEMA, DesktopUpdateChannelContribution
 } from './desktop-update-channel';
 import { bindDesktopLanding } from '../browser/desktop-landing-contribution';
+import { bindDesktopDomainModel } from '../browser/desktop-domain-model-contribution';
 import { DesktopGitContribution, DesktopWorkspaceSourcesController } from '../browser/desktop-git-contribution';
 import { DesktopSourcesWidget } from '../browser/desktop-sources-widget';
 import { WorkspaceSourcesFrontendController } from '../browser/workspace-sources-controller';
@@ -91,4 +92,8 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(FrontendApplicationContribution).toService(DesktopGitContribution);
     rebind(WorkspaceSourcesFrontendController).to(DesktopWorkspaceSourcesController).inSingletonScope();
     rebind(WorkspaceSourcesWidget).to(DesktopSourcesWidget);
+    // The project's domain model beside the documents it is read from
+    // (desktop-domain-model-contribution.ts): Doc editing's Specs > Domain
+    // model, and its findings as Problems markers in those files.
+    bindDesktopDomainModel(bind);
 });

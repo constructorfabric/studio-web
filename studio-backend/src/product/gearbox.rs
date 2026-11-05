@@ -1715,6 +1715,7 @@ pub fn render_product_gdl(
         &[source],
         &BTreeMap::new(),
         config,
+        None,
     )
 }
 
@@ -1732,6 +1733,7 @@ pub fn render_product_gdl_from(
     sources: &[SourcePin<'_>],
     gear_source: &BTreeMap<String, String>,
     config: &BTreeMap<String, serde_json::Map<String, Value>>,
+    frontend: Option<(&FrontendPick, Option<&str>)>,
 ) -> String {
     // `config` is keyed by engine id here; the caller maps crate names.
     let config_arg = |id: &str| {
@@ -1798,6 +1800,9 @@ pub fn render_product_gdl_from(
         .map(|s| format!("--root {up}{}", s.id))
         .collect::<Vec<_>>()
         .join(" ");
+    let (frontend_sources, frontend_block) = frontend
+        .map(|(pick, repo)| frontend_gdl(pick, repo, depth))
+        .unwrap_or_default();
     let declared = sources
         .iter()
         .map(|s| {
@@ -1818,8 +1823,16 @@ pub fn render_product_gdl_from(
             };
             format!("source(id = {}, at = {at})", gdl_string(s.id))
         })
+        .chain(frontend_sources)
         .collect::<Vec<_>>()
         .join(",\n                   ");
+    // `frontend` is GDL 1.5; an engine that reads less says so by the version
+    // rather than by an unknown argument.
+    let version = if frontend.is_some() {
+        "gdl_version = \"1.5\"\n\n"
+    } else {
+        ""
+    };
     // A cluster's Postgres password comes out of an existing Secret.
     let cluster_db = format!(
         "postgres(host = \"postgres\", user = \"app\", password = \"${{GEARS_PG_PASSWORD}}\",\n\
@@ -1827,7 +1840,7 @@ pub fn render_product_gdl_from(
         gdl_string(&format!("{product_id}-db"))
     );
     format!(
-        "# The product this project ships, as Gearbox composes it.\n\
+        "{version}# The product this project ships, as Gearbox composes it.\n\
          #\n\
          # Written by Constructor Studio from the gears picked for the project. The\n\
          {from}\n\
@@ -1857,6 +1870,7 @@ pub fn render_product_gdl_from(
          \x20                  database = {cluster_db}),\n\
          \x20   ],\n\
          \x20   default_profile = {profile},\n\
+         {frontend_block}\
          \x20   gears = [\n\
          {gears}\
          \x20   ],\n\
@@ -1872,6 +1886,198 @@ pub fn render_product_gdl_from(
 /// resolve since GDL 1.1 (GBX0306); a product with none resolves with it too.
 const PROFILE_DATABASE: &str =
     "postgres(host = \"127.0.0.1\", user = \"app\", password = \"${GEARS_PG_PASSWORD}\")";
+
+/// A product's `FrontX` frontend as Studio's Frontend section picks it
+/// (ADR-0050): the shell and each package by repository, directory and ref.
+/// Written into `product.gdl` as `frontend = frontx_product(...)` (GDL 1.5),
+/// each repository a source of its own.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrontendPick {
+    pub shell: FrontxPlace,
+    #[serde(default)]
+    pub mfes: Vec<FrontxMfePick>,
+    /// Packages the micro-frontends share that the shell does not have.
+    #[serde(default)]
+    pub libraries: Vec<FrontxPlace>,
+}
+
+/// Where a `FrontX` package is: `owner/name`, its directory there, and the ref
+/// it is taken at (`main` when absent).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub struct FrontxPlace {
+    pub repo: String,
+    pub path: String,
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    /// Its npm name as the catalogue knows it: how the Frontend section finds
+    /// it again. Not written into the description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+}
+
+/// Whether the engine Studio runs reads a product's `FrontX` frontend (GDL 1.5,
+/// Gearbox's `frontx_product`): `STUDIO_GEARBOX_FRONTX=1`. Until it does, the
+/// product keeps its frontend and the description leaves it out, so the
+/// engine still resolves the rest.
+pub fn engine_reads_frontx() -> bool {
+    std::env::var("STUDIO_GEARBOX_FRONTX").is_ok_and(|v| matches!(v.trim(), "1" | "true"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub struct FrontxMfePick {
+    #[serde(flatten)]
+    pub place: FrontxPlace,
+    /// Gears, by engine id, its screens call; the engine checks the product
+    /// has them.
+    #[serde(default)]
+    pub requires: Vec<String>,
+}
+
+/// The frontend a product record or request carries. `null` or absent is none;
+/// a package outside its repository or a gear id that is not one is refused.
+pub fn frontend_pick_from(value: Option<&Value>) -> anyhow::Result<Option<FrontendPick>> {
+    let Some(value) = value.filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let pick: FrontendPick =
+        serde_json::from_value(value.clone()).context("frontend is not a FrontX pick")?;
+    let places = std::iter::once(&pick.shell)
+        .chain(pick.mfes.iter().map(|m| &m.place))
+        .chain(&pick.libraries);
+    for place in places {
+        let parts: Vec<&str> = place.repo.split('/').collect();
+        let named = parts.len() == 2
+            && parts.iter().all(|p| {
+                !p.is_empty()
+                    && p.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+            });
+        if !named {
+            bail!("frontend repository `{}` is not `owner/name`", place.repo);
+        }
+        let inside = !place.path.contains('\\')
+            && place
+                .path
+                .split('/')
+                .all(|s| !s.is_empty() && s != "." && s != "..");
+        if !inside {
+            bail!(
+                "frontend package `{}` is not a directory inside its repository",
+                place.path
+            );
+        }
+        if let Some(rev) = &place.rev
+            && (rev.trim().is_empty() || rev.chars().any(|c| c.is_whitespace() || c.is_control()))
+        {
+            bail!("frontend ref `{rev}` is not a ref");
+        }
+    }
+    for mfe in &pick.mfes {
+        if let Some(bad) = mfe.requires.iter().find(|id| !is_kebab_id(id)) {
+            bail!("`{bad}` in a micro-frontend's requires is not a gear id");
+        }
+    }
+    Ok(Some(pick))
+}
+
+/// The sources a frontend's repositories are, and its `frontend = ...` lines.
+/// The product's own repository (`product_repo`) is a `path(...)` up to its
+/// root from the description, `depth` segments deep; another is a git source
+/// at the picked ref.
+fn frontend_gdl(
+    pick: &FrontendPick,
+    product_repo: Option<&str>,
+    depth: usize,
+) -> (Vec<String>, String) {
+    let mut ids: BTreeMap<(String, String), String> = BTreeMap::new();
+    let mut sources = Vec::new();
+    let mut source_of = |place: &FrontxPlace| -> String {
+        let rev = place.rev.clone().unwrap_or_else(|| "main".to_owned());
+        let own = product_repo.is_some_and(|r| repo_key(r) == repo_key(&place.repo));
+        // One source per repository and ref; the product's own is one whatever
+        // the ref, since it travels with the file.
+        let key = (
+            repo_key(&place.repo),
+            if own { String::new() } else { rev.clone() },
+        );
+        if let Some(id) = ids.get(&key) {
+            return id.clone();
+        }
+        let name = place.repo.rsplit('/').next().unwrap_or_default();
+        let stem = format!("frontx-{name}")
+            .to_ascii_lowercase()
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|p| !p.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+        let mut id = stem.clone();
+        let mut n = 2;
+        while ids.values().any(|v| *v == id) {
+            id = format!("{stem}-{n}");
+            n += 1;
+        }
+        let at = if own {
+            let up = "../".repeat(depth.saturating_sub(1));
+            let up = up.trim_end_matches('/');
+            format!("path({})", gdl_string(if up.is_empty() { "." } else { up }))
+        } else {
+            format!(
+                "git(url = {}, rev = {})",
+                gdl_string(&format!("https://github.com/{}.git", place.repo)),
+                gdl_string(&rev)
+            )
+        };
+        sources.push(format!("source(id = {}, at = {at})", gdl_string(&id)));
+        ids.insert(key, id.clone());
+        id
+    };
+    let shell_source = source_of(&pick.shell);
+    let mut block = format!(
+        "\x20   # The product's screens (GDL 1.5): a FrontX shell with the\n\
+         \x20   # micro-frontends Studio's Frontend section mounts in it.\n\
+         \x20   frontend = frontx_product(\n\
+         \x20       source = {},\n\
+         \x20       shell = path({}),\n\
+         \x20       mfes = [\n",
+        gdl_string(&shell_source),
+        gdl_string(&pick.shell.path),
+    );
+    for mfe in &pick.mfes {
+        let source = source_of(&mfe.place);
+        let requires = if mfe.requires.is_empty() {
+            String::new()
+        } else {
+            let ids = mfe
+                .requires
+                .iter()
+                .map(|r| gdl_string(r))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(", requires = [{ids}]")
+        };
+        block.push_str(&format!(
+            "            frontx_mfe(package = path({}), source = {}{requires}),\n",
+            gdl_string(&mfe.place.path),
+            gdl_string(&source),
+        ));
+    }
+    block.push_str("        ],\n");
+    if !pick.libraries.is_empty() {
+        block.push_str("        libraries = [\n");
+        for library in &pick.libraries {
+            let source = source_of(library);
+            block.push_str(&format!(
+                "            frontx_library(package = path({}), source = {}),\n",
+                gdl_string(&library.path),
+                gdl_string(&source),
+            ));
+        }
+        block.push_str("        ],\n");
+    }
+    block.push_str("        entry_points = {\"Portal\": \"/\"},\n    ),\n");
+    (sources, block)
+}
 
 // ── What the engine said ──────────────────────────────────────────────────
 
@@ -2085,6 +2291,8 @@ pub struct PreviewInput {
     /// same description against the same commits. A preview that is saved
     /// asks the engine afresh.
     pub reuse: bool,
+    /// The product's `FrontX` frontend, written as its `frontend` block.
+    pub frontend: Option<FrontendPick>,
 }
 
 /// Where a pinned root sits for the description: inside the repository the
@@ -3591,6 +3799,10 @@ impl Gearbox {
             &pins,
             &gear_source,
             &by_id,
+            input
+                .frontend
+                .as_ref()
+                .map(|pick| (pick, input.repo.as_deref())),
         );
         // A product at its project's birth names no gears yet. There is nothing
         // for the engine to resolve, and the description is still the file the
@@ -5203,6 +5415,84 @@ mod tests {
     }
 
     #[test]
+    fn a_picked_frontend_is_a_frontx_block_with_a_source_per_repository() {
+        let c = compose(&catalogue(), &names(&["api-gateway"]));
+        let pick = frontend_pick_from(Some(&serde_json::json!({
+            "shell": {"repo": "constructorfabric/frontx-templates", "path": "template-shell", "ref": "v0.6"},
+            "mfes": [
+                {"repo": "constructorfabric/studio-web", "path": "studio-frontend/src-app/mfe_packages/people-mfe",
+                 "requires": ["account-management"]},
+                {"repo": "constructorfabric/frontx-templates", "path": "blank-mfe", "ref": "v0.6"},
+            ],
+            "libraries": [{"repo": "constructorfabric/studio-web", "path": "studio-frontend/src-app/mfe_packages/shared"}],
+        })))
+        .unwrap()
+        .unwrap();
+        let gdl = render_product_gdl_from(
+            "studio-web",
+            "products/studio-web/product.gdl",
+            "Studio",
+            &c,
+            "dev",
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            Some((&pick, Some("constructorfabric/studio-web"))),
+        );
+        assert!(gdl.starts_with("gdl_version = \"1.5\"\n"), "{gdl}");
+        assert!(gdl.contains(r#"source(id = "frontx-frontx-templates", at = git(url = "https://github.com/constructorfabric/frontx-templates.git", rev = "v0.6"))"#), "{gdl}");
+        assert!(
+            gdl.contains(r#"source(id = "frontx-studio-web", at = path("../.."))"#),
+            "{gdl}"
+        );
+        assert!(
+            gdl.contains(
+                r#"source = "frontx-frontx-templates",
+        shell = path("template-shell"),"#
+            ),
+            "{gdl}"
+        );
+        assert!(gdl.contains(r#"frontx_mfe(package = path("studio-frontend/src-app/mfe_packages/people-mfe"), source = "frontx-studio-web", requires = ["account-management"]),"#), "{gdl}");
+        assert!(
+            gdl.contains(
+                r#"frontx_mfe(package = path("blank-mfe"), source = "frontx-frontx-templates"),"#
+            ),
+            "{gdl}"
+        );
+        assert!(gdl.contains(r#"frontx_library(package = path("studio-frontend/src-app/mfe_packages/shared"), source = "frontx-studio-web"),"#), "{gdl}");
+
+        // Without one, the description is GDL as before.
+        let plain = render_product_gdl_from(
+            "studio-web",
+            "products/studio-web/product.gdl",
+            "Studio",
+            &c,
+            "dev",
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+        );
+        assert!(
+            !plain.contains("gdl_version") && !plain.contains("frontend"),
+            "{plain}"
+        );
+    }
+
+    #[test]
+    fn a_frontend_package_stays_inside_its_repository() {
+        for bad in [
+            serde_json::json!({"shell": {"repo": "o/r", "path": "../x"}}),
+            serde_json::json!({"shell": {"repo": "o/r", "path": "/abs"}}),
+            serde_json::json!({"shell": {"repo": "not-a-repo", "path": "x"}}),
+            serde_json::json!({"shell": {"repo": "o/r", "path": "x"}, "mfes": [{"repo": "o/r", "path": "m", "requires": ["Not Id"]}]}),
+        ] {
+            assert!(frontend_pick_from(Some(&bad)).is_err(), "{bad}");
+        }
+        assert_eq!(frontend_pick_from(Some(&Value::Null)).unwrap(), None);
+    }
+
+    #[test]
     fn a_source_inside_the_projects_repository_is_a_path_from_the_product_file() {
         let c = compose(&catalogue(), &names(&["api-gateway"]));
         let pins = [SourcePin {
@@ -5220,6 +5510,7 @@ mod tests {
             &pins,
             &BTreeMap::new(),
             &BTreeMap::new(),
+            None,
         );
         assert!(
             at_root.contains(r#"source(id = "studio-backend", at = path("studio-backend"))"#),
@@ -5234,6 +5525,7 @@ mod tests {
             &pins,
             &BTreeMap::new(),
             &BTreeMap::new(),
+            None,
         );
         assert!(
             below.contains(r#"source(id = "studio-backend", at = path("../../studio-backend"))"#),
@@ -5268,6 +5560,7 @@ mod tests {
             ],
             &gear_source,
             &BTreeMap::new(),
+            None,
         );
         assert!(gdl.contains(r#"source(id = "gears-core", at = git(url = "https://github.com/constructorfabric/gears-core.git", rev = "aaaa"))"#), "{gdl}");
         assert!(gdl.contains(r#"source(id = "gears-security", at = git(url = "https://github.com/constructorfabric/gears-security.git", rev = "bbbb"))"#), "{gdl}");

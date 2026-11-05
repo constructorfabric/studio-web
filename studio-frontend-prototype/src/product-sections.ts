@@ -19,7 +19,15 @@
  *
  * Pure, so it is tested without a backend. */
 
-import type { DeployEnvironment, EnvironmentBinding, ProductTechnology, ProjectConfig, ProjectProduct } from "./api";
+import type {
+  DeployEnvironment,
+  EnvironmentBinding,
+  FrontendPick,
+  ProductTechnology,
+  ProjectConfig,
+  ProjectProduct,
+} from "./api";
+import { parseShellRef } from "./frontend-constructor";
 import { PRODUCT_PROFILES } from "./product";
 
 export type ProductSectionId = "parts" | "infrastructure" | "backend" | "frontend";
@@ -41,20 +49,25 @@ export const MOVED_PROJECT_TABS: Readonly<Record<string, { tab: "components"; se
   frontend: { tab: "components", section: "frontend" },
 };
 
-/** Whether the product has a frontend: its configuration names one. A project
- *  that picked micro-frontends before this was a question has one. */
-export function hasFrontend(cfg: ProjectConfig | null | undefined): boolean {
-  return !!cfg?.frontend && typeof cfg.frontend === "object";
+/** Whether the product has a frontend: the product records one, or -- for a
+ *  project that picked micro-frontends before the product kept them -- its
+ *  configuration does. */
+export function hasFrontend(
+  cfg: ProjectConfig | null | undefined,
+  product?: Pick<ProjectProduct, "frontend"> | null,
+): boolean {
+  return !!product?.frontend || (!!cfg?.frontend && typeof cfg.frontend === "object");
 }
 
-/** The configuration with a frontend added from the FrontX shell template,
- *  keeping any micro-frontends already picked. */
-export function withFrontend(cfg: ProjectConfig | null | undefined): ProjectConfig {
-  const base = cfg ?? {};
-  return { ...base, frontend: { mfes: [], ...(base.frontend ?? {}), shell: base.frontend?.shell ?? FRONTX_SHELL_TEMPLATE } };
+/** The frontend a product starts with: the FrontX shell template, nothing
+ *  mounted yet. */
+export function newFrontend(): FrontendPick {
+  const { repo, path, ref } = parseShellRef(FRONTX_SHELL_TEMPLATE)!;
+  return { shell: { repo, path, ref }, mfes: [] };
 }
 
-/** The configuration without its frontend: the product is gears alone again. */
+/** The configuration without the frontend it recorded before the product
+ *  kept it. */
 export function withoutFrontend(cfg: ProjectConfig | null | undefined): ProjectConfig {
   const out = { ...(cfg ?? {}) };
   delete out.frontend;
@@ -149,7 +162,10 @@ export interface ProductSummary {
 }
 
 export function productSummary(
-  product: Pick<ProjectProduct, "product_id" | "profile" | "gears" | "written" | "description" | "last_preview"> | null,
+  product: Pick<
+    ProjectProduct,
+    "product_id" | "profile" | "gears" | "written" | "description" | "last_preview" | "frontend"
+  > | null,
   cfg: ProjectConfig | null | undefined,
 ): ProductSummary {
   const profile = product?.profile ?? null;
@@ -162,7 +178,7 @@ export function productSummary(
     preview: product?.last_preview
       ? { ok: product.last_preview.ok, errors: product.last_preview.errors, warnings: product.last_preview.warnings }
       : null,
-    frontend: hasFrontend(cfg),
+    frontend: hasFrontend(cfg, product),
   };
 }
 

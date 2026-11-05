@@ -2842,3 +2842,29 @@ div.dm-block { padding-left: 0; }
   font: 11px/1.45 var(--font-mono);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+
+/* The Frontend section's build steps (frontend-constructor-view.tsx): one
+   button per step, marked with what the constructor found. */
+.fc-steps ol { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.fc-step { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: inherit; font: inherit; font-size: 12.5px; padding: 3px 10px 3px 4px; cursor: pointer; }
+.fc-step:hover, .fc-step.on { border-color: var(--primary); }
+.fc-step-mark { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700; background: var(--muted); color: var(--muted-foreground); }
+.fc-step-n { font-size: 11px; color: var(--muted-foreground); }
+.fc-step.ok .fc-step-mark { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+.fc-step.warn .fc-step-mark { background: var(--warning-soft); color: var(--warning-foreground); }
+.fc-step.bad .fc-step-mark { background: color-mix(in srgb, var(--destructive) 16%, transparent); color: var(--destructive); }
+.fc-step.bad { border-color: color-mix(in srgb, var(--destructive) 40%, var(--border)); }
+.fc-step-detail { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--accent); font-size: 13px; display: grid; gap: 8px; }
+.fc-shell-pick select { max-width: 100%; }
+.fc-carries { display: flex; flex-wrap: wrap; gap: 4px; }
+.fc-carries code { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--card); border: 1px solid var(--border); }
+.fc-commands { margin: 0; padding-left: 20px; display: grid; gap: 2px; }
+.fc-shell-name { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.fc-tag { margin-left: 6px; font-size: 10.5px; padding: 0 6px; border-radius: 999px; }
+.fc-tag.ok { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.fc-tag.bad { background: color-mix(in srgb, var(--destructive) 14%, transparent); color: var(--destructive); }
+.fc-fit { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fc-fit td { padding: 2px 4px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.fc-fit tr.differs td:last-child { color: var(--warning-foreground); font-weight: 600; }
+.fc-fit tr.fits td:last-child { color: var(--success); }
+.fc-fit tr.outside td:last-child { color: var(--muted-foreground); }

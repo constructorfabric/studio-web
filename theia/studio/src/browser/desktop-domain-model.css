@@ -1,0 +1,196 @@
+/* The desktop's Domain model view (desktop-domain-model-widget.tsx). Theia's
+   theme variables only, so it follows the light and dark themes. */
+
+.studio-domain-model {
+    overflow: auto;
+}
+
+.studio-domain-model__body {
+    padding: 8px 12px;
+    font-size: var(--theia-ui-font-size1);
+}
+
+.studio-domain-model__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+}
+
+.studio-domain-model__line {
+    color: var(--theia-descriptionForeground);
+}
+
+.studio-domain-model__actions {
+    display: flex;
+    gap: 4px;
+}
+
+.studio-domain-model__actions .theia-button {
+    margin-left: 0;
+}
+
+.studio-domain-model__note,
+.studio-domain-model__hint {
+    color: var(--theia-descriptionForeground);
+    margin: 6px 0;
+}
+
+.studio-domain-model__hint {
+    font-size: var(--theia-ui-font-size0);
+}
+
+.studio-domain-model__note--error {
+    color: var(--theia-errorForeground);
+}
+
+.studio-domain-model__tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--theia-panel-border);
+    margin: 6px 0;
+}
+
+.studio-domain-model__tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--theia-foreground);
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.studio-domain-model__tab--active {
+    border-bottom-color: var(--theia-focusBorder);
+    font-weight: 600;
+}
+
+.studio-domain-model__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.studio-domain-model__finding {
+    border-left: 3px solid var(--theia-editorWarning-foreground);
+    margin: 0 0 8px;
+    padding: 4px 8px;
+}
+
+.studio-domain-model__finding--low {
+    border-left-color: var(--theia-editorInfo-foreground);
+}
+
+.studio-domain-model__finding--dismissed {
+    border-left-color: var(--theia-panel-border);
+    opacity: 0.6;
+}
+
+.studio-domain-model__finding--confirmed {
+    border-left-color: var(--theia-editorError-foreground);
+}
+
+.studio-domain-model__finding-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.studio-domain-model__rule {
+    font-weight: 600;
+}
+
+.studio-domain-model__severity,
+.studio-domain-model__decided,
+.studio-domain-model__meta,
+.studio-domain-model__status,
+.studio-domain-model__kind {
+    color: var(--theia-descriptionForeground);
+}
+
+.studio-domain-model__kind {
+    font-size: var(--theia-ui-font-size0);
+    margin-top: 4px;
+    text-transform: uppercase;
+}
+
+.studio-domain-model__decide {
+    margin-left: auto;
+    display: flex;
+    gap: 2px;
+}
+
+.studio-domain-model__decide .theia-button {
+    margin-left: 0;
+    min-width: 28px;
+    padding: 0 6px;
+}
+
+.studio-domain-model__link {
+    background: none;
+    border: none;
+    color: var(--theia-textLink-foreground);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+}
+
+.studio-domain-model__link:hover {
+    text-decoration: underline;
+}
+
+.studio-domain-model__gone {
+    color: var(--theia-editorWarning-foreground);
+    margin-left: 6px;
+}
+
+.studio-domain-model__quote {
+    border-left: 2px solid var(--theia-panel-border);
+    color: var(--theia-descriptionForeground);
+    margin: 2px 0 4px;
+    padding-left: 6px;
+}
+
+.studio-domain-model__questions {
+    margin: 4px 0 0;
+    padding-left: 18px;
+}
+
+.studio-domain-model__fact--inactive {
+    opacity: 0.6;
+}
+
+.studio-domain-model__entity-head {
+    background: none;
+    border: none;
+    color: var(--theia-foreground);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0;
+    font: inherit;
+}
+
+.studio-domain-model__entity > section {
+    padding-left: 20px;
+}
+
+.studio-domain-model__heading {
+    font-size: var(--theia-ui-font-size1);
+    margin: 10px 0 4px;
+}
+
+.studio-domain-model__glossary {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+.studio-domain-model__glossary th,
+.studio-domain-model__glossary td {
+    border-bottom: 1px solid var(--theia-panel-border);
+    padding: 3px 6px;
+    text-align: left;
+    vertical-align: top;
+}

@@ -186,6 +186,9 @@ pub struct NewSignIn<'a> {
     pub label: &'a str,
     pub base_url: Option<&'a str>,
     pub scope: &'a str,
+    /// The callback page of the portal the person starts from; `None` = the
+    /// driver's default. It must be one the driver is configured with.
+    pub redirect_uri: Option<&'a str>,
 }
 
 /// How long a person has to come back from the identity provider.
@@ -201,6 +204,10 @@ struct PendingSignIn {
     owner_tenant: Uuid,
     verifier: String,
     started_at_epoch_secs: u64,
+    /// The callback the person was sent back to; the code is exchanged with
+    /// the same one. Empty in a sign-in started before it was kept.
+    #[serde(default)]
+    redirect_uri: String,
 }
 
 fn pending_key(state: &str) -> anyhow::Result<SecretRef> {
@@ -927,7 +934,7 @@ impl ConnectorService {
 
         let state = Uuid::new_v4().simple().to_string();
         let pkce = super::oauth::Pkce::new();
-        let url = driver.sign_in_url(&state, &pkce)?;
+        let (url, redirect_uri) = driver.sign_in_url(&state, &pkce, req.redirect_uri)?;
         let pending = PendingSignIn {
             provider: req.provider.to_owned(),
             label: req.label.trim().to_owned(),
@@ -936,6 +943,7 @@ impl ConnectorService {
             owner_tenant: req.owner_tenant,
             verifier: pkce.verifier,
             started_at_epoch_secs: now_secs(),
+            redirect_uri,
         };
         self.credstore
             .create(
@@ -981,7 +989,9 @@ impl ConnectorService {
         }
 
         let driver = self.driver(&pending.provider)?;
-        let tokens = driver.exchange_code(code.trim(), &pending.verifier).await?;
+        let tokens = driver
+            .exchange_code(code.trim(), &pending.verifier, &pending.redirect_uri)
+            .await?;
         let signed = driver.signed_in(&pending.base_url, tokens).await?;
         let identity = driver
             .test(&ConnectionAuth {

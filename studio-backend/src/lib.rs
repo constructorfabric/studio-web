@@ -32,6 +32,7 @@ mod kit_registry; // Git-backed kit catalogue + project-scoped desired installat
 // registered_gears.rs). The former in-crate implementation was removed once the
 // official plugin went green — see docs/keycloak-idp-migration.md.
 mod llm_proxy; // studio-llm-proxy: Studio's one way out to a model provider (ADR-0039); always linked
+mod mcp; // studio-mcp: Studio's functions as MCP tools for a developer's own agent (docs/mcp.md)
 mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
 mod org_scope; // `?organization_id=`: a request acts in the organization it names, once the caller reaches it
 mod organizations; // studio-organizations: a person creates an organization and owns it (ADR-0018)

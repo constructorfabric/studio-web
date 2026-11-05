@@ -896,6 +896,7 @@ export const SURFACES: Surface[] = [
       "account-management",
       "studio-artifact-ingest",
       "studio-components-catalog",
+      "studio-documents",
       "studio-environments",
       "studio-events",
       "studio-git",
