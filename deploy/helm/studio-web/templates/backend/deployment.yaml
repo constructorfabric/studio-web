@@ -343,6 +343,10 @@ spec:
               {{- else }}
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_finalize_secret } }
               {{- end }}
+            # oagw's registry generation guard (config/k8s.yaml): monotonic
+            # across upgrades and rollbacks, which a Helm revision is.
+            - name: STUDIO_OAGW_GENERATION
+              value: {{ .Release.Revision | quote }}
             {{- if .Values.backend.fileStorage.enabled }}
             - name: STUDIO_FS_SIDECAR_BASE_URL
               value: {{ default (printf "https://%s" .Values.global.hostname) .Values.backend.fileStorage.publicBaseUrl | quote }}

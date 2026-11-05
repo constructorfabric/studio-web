@@ -566,6 +566,11 @@ gears:
       dbname: "studio_oagw"
     config:
       proxy_timeout_secs: 120
+      # The deployment's generation (Helm .Release.Revision): a pod of an
+      # older release does not revert what a newer one reconciled. Unset
+      # (null) turns the guard off, with a startup warning.
+      registry_provisioning:
+        generation: ${STUDIO_OAGW_GENERATION:-null}
 
   credstore:
     database:
