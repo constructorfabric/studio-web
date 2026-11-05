@@ -46,6 +46,8 @@ mod graph_sync;
 mod graph_sync_task;
 pub(crate) mod gts;
 mod kubernetes; // a cluster an organization deploys into (ADR-0043)
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 mod notify;
 mod oauth; // a connection signed in to rather than pasted (ADR-0049)
 mod ownership;

@@ -21,6 +21,8 @@ mod graph;
 pub(crate) mod graph_backend;
 pub(crate) mod gts;
 mod index;
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 mod ingest_task;
 pub mod sdk;
 pub(crate) use ingest_task::{IngestPayload, TASK_TYPE as INGEST_TASK_TYPE};
