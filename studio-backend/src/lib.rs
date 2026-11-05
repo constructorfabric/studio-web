@@ -442,13 +442,14 @@ mod config_expansion_tests {
 
     /// The union of no-default placeholders across the profiles — what the
     /// Helm chart (k8s) and docker-compose (docker/oidc/postgres) provide.
-    const REQUIRED: [&str; 11] = [
+    const REQUIRED: [&str; 12] = [
         "STUDIO_PG_HOST",
         "STUDIO_PG_USER",
         "STUDIO_PG_PASSWORD",
         "STUDIO_PG_DBNAME",
         "STUDIO_OIDC_ISSUER",
         "STUDIO_FS_SIGNING_SEED",
+        "STUDIO_FS_FINALIZE_SECRET",
         "STUDIO_IDP_ADMIN_BASE_URL",
         "STUDIO_IDP_ADMIN_SECRET",
         "STUDIO_SESSION_ENABLED",
