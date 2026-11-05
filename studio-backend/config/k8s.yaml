@@ -545,6 +545,10 @@ gears:
       # Stable Ed25519 seed; Helm loads it from the environment-specific
       # file-storage signing Secret. The value is base64url without padding.
       signing_key_seed: "${STUDIO_FS_SIGNING_SEED}"
+      # The token the sidecar sends on its finalize callbacks (its
+      # FS_SIDECAR_INTERNAL_TOKEN, the same Secret key); file-storage >= 0.4
+      # refuses to start without it.
+      finalize_internal_secret: "${STUDIO_FS_FINALIZE_SECRET}"
       # JSON is valid YAML. Helm supplies one S3 entry in Kubernetes; an empty
       # list preserves local-fs for non-S3/manual deployments.
       sidecar_base_url: "${STUDIO_FS_SIDECAR_BASE_URL:-http://127.0.0.1:8087}"

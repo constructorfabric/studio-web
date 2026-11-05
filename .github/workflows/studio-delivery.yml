@@ -1647,16 +1647,22 @@ jobs:
             --from-literal=access_key_id="$S3_ACCESS_KEY_ID" \
             --from-literal=secret_access_key="$S3_SECRET_ACCESS_KEY" \
             --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+          # file-storage >= 0.4 requires a token the sidecar sends on its
+          # finalize callbacks (backend finalize_internal_secret, sidecar
+          # FS_SIDECAR_INTERNAL_TOKEN). Derived from the signing seed, so it is
+          # as secret as the seed, rotates with it and needs no secret of its own.
+          FINALIZE_SECRET=$(printf 'studio-file-storage-finalize:%s' "$SIGNING_SEED" | sha256sum | cut -d' ' -f1)
           kubectl create secret generic studio-web-file-storage-signing -n "$NAMESPACE" \
             --from-literal=signing_seed="$SIGNING_SEED" \
             --from-literal=sidecar_public_key="$SIDECAR_PUBLIC_KEY" \
+            --from-literal=finalize_internal_secret="$FINALIZE_SECRET" \
             --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
           revision=$(printf '%s\0%s\0%s\0%s' \
             "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" "$SIGNING_SEED" "$SIDECAR_PUBLIC_KEY" \
             | sha256sum | cut -d' ' -f1)
           echo "secret_revision=$revision" >> "$GITHUB_OUTPUT"
-          unset S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SIGNING_SEED SIDECAR_PUBLIC_KEY
+          unset S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SIGNING_SEED SIDECAR_PUBLIC_KEY FINALIZE_SECRET
 
       - name: Verify images and namespace prerequisites
         id: versions
