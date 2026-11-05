@@ -183,3 +183,14 @@ export function specCode(c: Pick<Conformance, "items">): SpecCode {
   const missing = n("missing");
   return { implemented, missing, nonfunctional: n("nonfunctional"), functional: implemented + missing };
 }
+
+/** A read that failed, as a chip says it: the server's whole text is for the
+ *  popover. `connection`: what fixes it is the connection the repository is
+ *  read through (a token gone, not readable, no access). */
+export function readProblem(text: string): { short: string; connection: boolean } {
+  const connection =
+    /precondition|could not be\s+read|not readable|token|credential|permission|access|unauthori[sz]ed|forbidden|\b40[134]\b/i.test(text);
+  return connection
+    ? { short: "the repository can't be read", connection: true }
+    : { short: "couldn't be checked", connection: false };
+}

@@ -182,7 +182,7 @@ export function alsoCovers(plan: readonly PlanRow[]): Record<string, string[]> {
 
 // ── The next step ────────────────────────────────────────────────────────
 
-/** `builds`: the product is written; building it is the Builds tab's. */
+/** `builds`: the product is written; building it is Releases'. */
 export type NextAction = "add-recommended" | "take-from-code" | "preview" | "fix" | "save" | "build" | "open" | "builds";
 
 export interface NextStep {
@@ -254,9 +254,9 @@ export function nextStep(s: FlowState): NextStep {
   };
 }
 
-/** One step of the way from the specs to a built product. */
+/** One step of Backend's way from the specs to a product that resolves. */
 export interface ProductStep {
-  id: "needs" | "product" | "build";
+  id: "needs" | "product";
   title: string;
   /** Where it stands, in a few words. */
   status: string;
@@ -265,10 +265,11 @@ export interface ProductStep {
   state: "done" | "current" | "todo" | "off";
 }
 
-/** The three steps — what the specs ask for, the product composed and
- *  checked, the product built — each with where it stands. A step is done
- *  when the next can start on it: gears picked, the product resolving,
- *  the product saved. */
+/** Backend's two steps -- what the specs ask for, the product composed and
+ *  checked -- each with where it stands. A step is done when the next can
+ *  start on it: gears picked, the product resolving. Saving it is the
+ *  product card's, in step 2; building it is the page's next step, the
+ *  Builds tab (product-flow.ts). */
 export function productSteps(s: FlowState): ProductStep[] {
   const closing =
     s.composing && s.picks > 0 && s.covered !== undefined
@@ -289,15 +290,10 @@ export function productSteps(s: FlowState): ProductStep[] {
   const steps: Omit<ProductStep, "state">[] = [
     { id: "needs", title: "What the specs ask for", status: caps },
     { id: "product", title: "Compose and check", status: compose },
-    {
-      id: "build",
-      title: "Save and build",
-      status: !s.written ? "not saved yet" : s.resolves === true ? "saved in Studio" : "saved earlier · save again once it resolves",
-    },
   ];
-  // A step is done only on the steps before it: a product built earlier is
-  // not built while it no longer resolves.
-  const own = [s.composing && s.picks > 0, s.composing && s.resolves === true, s.composing && s.written];
+  // A step is done only on the steps before it: a product that resolved
+  // earlier does not while its gears are gone.
+  const own = [s.composing && s.picks > 0, s.composing && s.resolves === true];
   const done = own.map((d, i) => d && own.slice(0, i).every(Boolean));
   const current = done.findIndex((d) => !d);
   return steps.map((step, i) => ({

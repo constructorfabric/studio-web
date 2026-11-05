@@ -7,7 +7,8 @@
 //!   it is published, and a change made to it in the repository since (§3).
 //! - `GET  product-description-revisions` and `…/{revision}`.
 //! - `POST product-description-revisions` -- a new revision, made against
-//!   `base_revision`; 409 with both texts when that is not the latest.
+//!   `base_revision`; 409 with both texts when that is not the latest and
+//!   the text is not the latest's already.
 //! - `POST product-description-publications` -- the latest revision onto
 //!   `product/<id>` with one pull request, or onto the base branch (§3).
 //! - `GET  product-description-branches` -- the `product/*` branches from
@@ -53,6 +54,28 @@ pub struct ProductDescriptionRevisionDto {
     /// `studio`, `repository` (read back from the base branch) or `migrated`
     /// (taken from where the project last saved it).
     pub source: String,
+    /// The commit of each source the text uses, pinned when it was saved
+    /// (ADR-0060 §3). Empty for a revision saved before locks were kept.
+    pub sources_lock: Vec<LockedSourceDto>,
+}
+
+/// One source of a revision as its lock pins it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct LockedSourceDto {
+    /// The source's id in the description.
+    pub id: String,
+    /// `path` or `git`.
+    pub kind: String,
+    /// `owner/name` of the project source it is; absent for another
+    /// repository the description names by git.
+    pub repository: Option<String>,
+    pub url: String,
+    /// The branch a dev build takes it at.
+    pub branch: Option<String>,
+    /// The commit a protected environment builds; absent when it could not
+    /// be read at save.
+    pub commit: Option<String>,
 }
 
 /// A revision as a list shows it: without its text.
@@ -186,6 +209,22 @@ pub fn revision_dto(r: Revision) -> ProductDescriptionRevisionDto {
         author: r.author,
         sha256: r.sha256,
         source: r.source,
+        sources_lock: r
+            .sources_lock
+            .map(|l| {
+                l.sources
+                    .into_iter()
+                    .map(|s| LockedSourceDto {
+                        id: s.id,
+                        kind: s.kind,
+                        repository: s.repository,
+                        url: s.url,
+                        branch: s.branch,
+                        commit: s.commit,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -243,6 +282,13 @@ fn unavailable() -> CanonicalError {
 
 /// A project the caller does not reach is a 404; anything else a 500.
 pub fn internal(e: &anyhow::Error) -> CanonicalError {
+    if let Some(twice) = e.downcast_ref::<crate::product::sources_lock::OneRepositoryTwice>() {
+        return StudioProductError::invalid_argument()
+            .with_constraint(format!(
+                "the description names one repository twice: {twice}"
+            ))
+            .create();
+    }
     not_reachable(e).unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create())
 }
 
@@ -497,7 +543,8 @@ pub fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
              saved and the answer is 409 with both texts \
              (`DESCRIPTION_REVISION_STALE`): keep yours by saving again against the \
              latest, or take it. The same text as the latest's is no new revision \
-             (`created: false`). 400 for an empty text or one over 512 KiB.",
+             but that one (`created: false`), whatever its base: a save sent again \
+             after a lost answer is not a conflict with itself. 400 for an empty text or one over 512 KiB.",
         )
         .tag("StudioProduct")
         .authenticated()

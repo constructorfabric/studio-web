@@ -8,7 +8,7 @@ date: 2026-08-27
 
 **ID**: `cpt-studio-adr-authentication-does-not-grant-organization-membership`
 
-Status: accepted · 2026-08-27 · Amends ADR-0004
+Status: accepted · 2026-08-27 · Amends ADR-0004 · §3 and §4 superseded by [ADR-0018](0018-an-identity-proves-it-is-you-and-decides-nothing-else.md)
 
 ## Table of Contents
 
@@ -223,6 +223,16 @@ GitHub / Keycloak login
                                           v
                                 Server-validated active scope
 ```
+
+> **Changed by later records.** ADR-0018 superseded §3 and §4: creating an
+> organization became self-service, the person who creates it owns it, and an
+> owner may appoint another owner ("What this changes in ADR-0011"). ADR-0051
+> then made creation an installation setting (`open`, `request`, `off`), gave
+> the platform administrator the approval of requested organizations, and kept
+> creating an organization and appointing its owner available to the platform
+> administrator as one option among them. The bullets below on
+> creating organizations and appointing owners hold in that
+> narrower sense only.
 
 Platform administrators have a separate administration surface for:
 

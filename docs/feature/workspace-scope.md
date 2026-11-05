@@ -399,6 +399,7 @@ into.
 
 The system **MUST** create a project as a child of the current workspace, and
 **MUST NOT** offer a parent picker — the workspace in the top bar is the answer.
+The workspace is the level a project belongs in (ADR-0010, and §1.2 above).
 
 This supersedes the assumption in `project-create.md` that a project is created
 under the organization. Both parents are allowed by the type registry; the

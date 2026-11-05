@@ -242,16 +242,6 @@ jobs:
         run: cargo clippy --locked --all-targets --features theia-bridge -- -D warnings
       - name: Build
         run: cargo build --locked --features theia-bridge
-      # `backend-bootstrap` is built `--no-default-features`, which nothing else
-      # here compiles, so a change could be green above and still fail
-      # `docker compose up`. `check` rather than `build`: this is about the code
-      # compiling under that set, and a second link would cost minutes to prove
-      # nothing more. Deliberately without `-D warnings`, unlike the lint above:
-      # a reduced build leaves about sixteen dead-code warnings for items only
-      # the default features use, which is its expected shape rather than a set
-      # of defects to fix.
-      - name: Compile the reduced set backend-bootstrap builds
-        run: cargo check --locked --no-default-features
       - name: Test
         run: cargo test --locked --features theia-bridge
       - name: "Smoke: the assembly resolves its gears"
@@ -296,6 +286,25 @@ jobs:
           name: studio-frontend-dist
           path: studio-frontend/dist
           retention-days: 7
+      # A picture of every micro-frontend screen of the shell just built, taken
+      # signed in with a made-up session against an empty stand-in backend
+      # (scripts/mfe-screen-previews.mjs). Kept as an artifact for now: handing
+      # them to the components catalogue (--upload) needs a token this job
+      # does not hold. Advisory -- a browser that will not start must not fail
+      # the portal's tests.
+      - name: Screen previews
+        continue-on-error: true
+        run: |
+          npx playwright install chromium
+          PLAYWRIGHT_MODULE="$PWD/node_modules/playwright" node ../scripts/mfe-screen-previews.mjs             --dist dist --mfes src-app/mfe_packages --out ../mfe-screen-previews             --commit "$(git rev-parse --short=12 HEAD)"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        continue-on-error: true
+        with:
+          name: mfe-screen-previews
+          path: mfe-screen-previews
+          retention-days: 7
+          if-no-files-found: ignore
 
   # The prototype is independently deployable on its dedicated POC host, so changes to
   # it must now pass Test before an immutable image may be published.
@@ -389,6 +398,9 @@ jobs:
       # Not a contract, but Node-only and seconds: the hunk mapping and
       # scoring of docs/probe-calibration.md.
       - run: node --test scripts/probe-calibrate.test.mjs
+      # Which screens the build's previews visit and what the stand-in backend
+      # answers (scripts/mfe-screen-previews.mjs).
+      - run: node --test scripts/mfe-screen-previews.test.mjs
       # The other contract both portals owe, and the reason it lives in this
       # job rather than test-frontend: the event stream must not be
       # compressed, and a config change that breaks it is invisible in
@@ -898,6 +910,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ env.SOURCE_SHA }}
+      # A dispatch's source_ref may be a branch, and `sha-<branch>` is not an
+      # image tag: the build failed with "invalid reference format". From
+      # here on SOURCE_SHA is the commit that was checked out, so the tags
+      # are `sha-<40 hex>`, the same the deploy resolves the branch to.
+      # Overwritten rather than given a second name, as IMAGE_PREFIX below.
+      - name: Name the source commit
+        run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v7
         if: needs.build-require-ci.outputs.backend == 'true'
         with:
@@ -1004,6 +1023,35 @@ jobs:
           docker buildx build $(ci-cache-buildx-args studio-backend) --push \
             -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-backend:$tag" studio-backend
 
+      # The builder target (a build Job's prepare and publish steps) must run
+      # as the Job's pod runs it: uid 1000, no capabilities (ADR-0048 §9). Its
+      # stages are the server's, already built above.
+      - name: Check the builder image runs non-root
+        if: needs.build-require-ci.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          docker buildx build --load --target builder \
+            -f studio-backend/Dockerfile -t studio-backend-builder:check studio-backend
+          bash studio-backend/scripts/check-builder-image.sh studio-backend-builder:check
+
+      # The builder is published as an image of its own, `studio-builder`
+      # (ADR-0062 §1): a project's build runs in it by digest, never in the
+      # server's image, so a build does not change with the Studio that runs
+      # it and the platform's image is never pushed into a project's registry.
+      # The digest is in the summary and is what the deploy pins.
+      - name: Build & push the builder image
+        if: needs.build-require-ci.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          # shellcheck disable=SC2046
+          docker buildx build $(ci-cache-buildx-args studio-builder) --push --target builder \
+            --metadata-file /tmp/studio-builder.json \
+            -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-builder:$tag" studio-backend
+          digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' /tmp/studio-builder.json)"
+          echo "studio-builder: $IMAGE_PREFIX/studio-builder@$digest"
+          echo "- builder \`$IMAGE_PREFIX/studio-builder@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build and push file-storage sidecar image
         if: needs.build-require-ci.outputs.backend == 'true'
         run: |
@@ -1094,6 +1142,8 @@ jobs:
           if [ "$BUILD_BACKEND" != true ]; then
             copy_image studio-backend
             copy_image file-storage-sidecar
+            # Absent from an edge older than the builder image itself.
+            copy_image studio-builder || echo "::warning::no studio-builder:edge to copy yet"
           fi
           if [ "$BUILD_FRONTEND" != true ]; then
             copy_image studio-frontend
@@ -1118,6 +1168,7 @@ jobs:
             cf-studio-theia
           )
           for promotion in ${{ steps.tags.outputs.promotions }}; do
+            docker buildx imagetools create               --tag "$IMAGE_PREFIX/studio-builder:$promotion"               "$IMAGE_PREFIX/studio-builder:$immutable"               || echo "::warning::no studio-builder:$immutable to promote"
             for image in "${images[@]}"; do
               docker buildx imagetools create \
                 --tag "$IMAGE_PREFIX/$image:$promotion" \
@@ -1566,7 +1617,6 @@ jobs:
           S3_SECRET_ACCESS_KEY: ${{ secrets.FILE_STORAGE_S3_SECRET_ACCESS_KEY }}
           SIGNING_SEED: ${{ secrets.FILE_STORAGE_SIGNING_SEED }}
           SIDECAR_PUBLIC_KEY: ${{ secrets.FILE_STORAGE_SIDECAR_PUBLIC_KEY }}
-          INTERNAL_TOKEN: ${{ secrets.FILE_STORAGE_INTERNAL_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1574,7 +1624,6 @@ jobs:
           test -n "$S3_SECRET_ACCESS_KEY" || { echo "GitHub Environment secret FILE_STORAGE_S3_SECRET_ACCESS_KEY is empty" >&2; exit 1; }
           test -n "$SIGNING_SEED" || { echo "GitHub Environment secret FILE_STORAGE_SIGNING_SEED is empty" >&2; exit 1; }
           test -n "$SIDECAR_PUBLIC_KEY" || { echo "GitHub Environment secret FILE_STORAGE_SIDECAR_PUBLIC_KEY is empty" >&2; exit 1; }
-          test -n "$INTERNAL_TOKEN" || { echo "GitHub Environment secret FILE_STORAGE_INTERNAL_TOKEN is empty" >&2; exit 1; }
           [[ "$SIGNING_SEED" =~ ^[A-Za-z0-9_-]{43}$ ]] || {
             echo "FILE_STORAGE_SIGNING_SEED must be a 32-byte base64url value without padding" >&2
             exit 1
@@ -1583,26 +1632,27 @@ jobs:
             echo "FILE_STORAGE_SIDECAR_PUBLIC_KEY must be a 32-byte base64url value without padding" >&2
             exit 1
           }
-          [[ "$INTERNAL_TOKEN" =~ ^[A-Za-z0-9_-]{43}$ ]] || {
-            echo "FILE_STORAGE_INTERNAL_TOKEN must be a 32-byte base64url value without padding" >&2
-            exit 1
-          }
 
           kubectl create secret generic studio-web-file-storage-s3 -n "$NAMESPACE" \
             --from-literal=access_key_id="$S3_ACCESS_KEY_ID" \
             --from-literal=secret_access_key="$S3_SECRET_ACCESS_KEY" \
             --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+          # file-storage >= 0.4 requires a token the sidecar sends on its
+          # finalize callbacks (backend finalize_internal_secret, sidecar
+          # FS_SIDECAR_INTERNAL_TOKEN). Derived from the signing seed, so it is
+          # as secret as the seed, rotates with it and needs no secret of its own.
+          FINALIZE_SECRET=$(printf 'studio-file-storage-finalize:%s' "$SIGNING_SEED" | sha256sum | cut -d' ' -f1)
           kubectl create secret generic studio-web-file-storage-signing -n "$NAMESPACE" \
             --from-literal=signing_seed="$SIGNING_SEED" \
             --from-literal=sidecar_public_key="$SIDECAR_PUBLIC_KEY" \
-            --from-literal=internal_token="$INTERNAL_TOKEN" \
+            --from-literal=finalize_internal_secret="$FINALIZE_SECRET" \
             --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
-          revision=$(printf '%s\0%s\0%s\0%s\0%s' \
-            "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" "$SIGNING_SEED" "$SIDECAR_PUBLIC_KEY" "$INTERNAL_TOKEN" \
+          revision=$(printf '%s\0%s\0%s\0%s' \
+            "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" "$SIGNING_SEED" "$SIDECAR_PUBLIC_KEY" \
             | sha256sum | cut -d' ' -f1)
           echo "secret_revision=$revision" >> "$GITHUB_OUTPUT"
-          unset S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SIGNING_SEED SIDECAR_PUBLIC_KEY INTERNAL_TOKEN
+          unset S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SIGNING_SEED SIDECAR_PUBLIC_KEY FINALIZE_SECRET
 
       - name: Verify images and namespace prerequisites
         id: versions
@@ -1693,6 +1743,18 @@ jobs:
           wait_for_image "$IMAGE_PREFIX/cf-studio-theia:$theia_tag"
           wait_for_image "$IMAGE_PREFIX/cf-studio-keycloak:$keycloak_tag"
 
+          # The builder of the same snapshot, by digest (ADR-0062 §1): the
+          # backend refuses a build in an image that names none. A snapshot
+          # from before studio-builder was published has none, and builds
+          # then say so (BUILDER_NOT_PINNED) until the next one.
+          builder_image=""
+          if digest="$(docker buildx imagetools inspect "$IMAGE_PREFIX/studio-builder:$backend_tag" \
+                --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')" && [ -n "$digest" ]; then
+            builder_image="$IMAGE_PREFIX/studio-builder@$digest"
+          else
+            echo "::warning::no studio-builder:$backend_tag in GHCR; Studio builds are refused until one is published"
+          fi
+          echo "builder_image=$builder_image" >> "$GITHUB_OUTPUT"
           echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
           echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
           echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
@@ -1723,6 +1785,7 @@ jobs:
             --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}"
             --set-string "backend.sessions.image.tag=${{ steps.versions.outputs.theia_tag }}"
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}"
+            --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}"
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
             --set-string "keycloak.image.tag=${{ steps.versions.outputs.keycloak_tag }}"
@@ -1755,6 +1818,7 @@ jobs:
             --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}" \
             --set-string "backend.sessions.image.tag=${{ steps.versions.outputs.theia_tag }}" \
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}" \
+            --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}" \
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
             --set-string "keycloak.image.tag=${{ steps.versions.outputs.keycloak_tag }}" \
@@ -2037,6 +2101,10 @@ jobs:
           backend_tag="$(current_tag backend)"
           frontend_tag="$(current_tag frontend)"
           prototype_tag="$(current_tag frontend-prototype 2>/dev/null || printf '%s' "$frontend_tag")"
+          # The builder the running backend builds with (ADR-0062 §1), kept as
+          # it is: an infrastructure release does not change it.
+          builder_image="$(kubectl get deployment studio-studio-web-backend -n "$NAMESPACE"             -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="STUDIO_BUILDER_IMAGE")].value}'             2>/dev/null || true)"
+          echo "builder_image=$builder_image" >> "$GITHUB_OUTPUT"
           echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
           echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
           echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
@@ -2056,6 +2124,7 @@ jobs:
           common_args=(
             -f "$values"
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}"
+            --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}"
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
             --set-string "keycloak.image.tag=$INFRA_TAG"
@@ -2108,6 +2177,7 @@ jobs:
             -n "$NAMESPACE" \
             -f "deploy/helm/values-${{ github.event.inputs.environment }}.example.yaml" \
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}" \
+            --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}" \
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
             --set-string "keycloak.image.tag=$INFRA_TAG" \

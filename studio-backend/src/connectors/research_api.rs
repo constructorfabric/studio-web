@@ -15,7 +15,7 @@
 //! stream: a build is a desk's files and an image per Dockerfile, a deploy is
 //! one call per service, and both are polled.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -272,6 +272,11 @@ pub struct Pace {
     pub build_for: Duration,
     /// Every service running.
     pub start_for: Duration,
+    /// Between an upload and the builds: a build started at once does not
+    /// see the files yet.
+    pub settle: Duration,
+    /// Every public link answering, after the services run; zero skips it.
+    pub ready_for: Duration,
 }
 
 impl Pace {
@@ -280,6 +285,8 @@ impl Pace {
         desk_for: Duration::from_secs(10 * 60),
         build_for: Duration::from_secs(90 * 60),
         start_for: Duration::from_secs(15 * 60),
+        settle: Duration::from_secs(30),
+        ready_for: Duration::from_secs(60),
     };
 }
 
@@ -457,10 +464,9 @@ impl ResearchApi {
                 Body::Json(v) => req.json(v),
                 Body::Bytes(b) => req.body(b.to_vec()),
             };
-            let res = req
-                .send()
-                .await
-                .map_err(|e| anyhow!("Constructor Research did not answer {what}: {e}"))?;
+            let res = req.send().await.map_err(|e| {
+                super::oauth::not_reached(&format!("Constructor Research ({what})"), url, &e)
+            })?;
             if res.status() != reqwest::StatusCode::UNAUTHORIZED {
                 return Ok(res);
             }
@@ -577,6 +583,31 @@ impl ResearchApi {
     /// `/access-keys` sits on the account API's root, not under `/v1`.
     fn keys_root(&self) -> &str {
         self.account.strip_suffix("/v1").unwrap_or(&self.account)
+    }
+
+    /// Turn on the project's deployments, off in a new project, before its
+    /// applications are changed: Research's UI shows a project's applications
+    /// only with them on.
+    pub async fn enable_deployment(&self, project: &str) -> anyhow::Result<()> {
+        #[derive(Deserialize)]
+        struct Flag {
+            #[serde(default)]
+            deployment_enabled: Option<bool>,
+        }
+        let path = format!("/projects/{}", seg(project));
+        let flag: Flag = self
+            .call(reqwest::Method::GET, &path, Body::Empty, "the project")
+            .await?;
+        if flag.deployment_enabled != Some(false) {
+            return Ok(());
+        }
+        self.act(
+            reqwest::Method::PATCH,
+            &path,
+            Body::Json(&serde_json::json!({ "deployment_enabled": true })),
+            "turning on the project's deployments",
+        )
+        .await
     }
 
     pub async fn projects(&self) -> anyhow::Result<Vec<Project>> {
@@ -765,13 +796,44 @@ impl ResearchApi {
     }
 
     /// The last lines of an image's build log, while Research still has it
-    /// (the build's Job; Research keeps no log after it).
-    pub async fn build_log_tail(&self, image: &str, lines: usize) -> Option<String> {
+    /// (the build's Job; Research keeps no log after it). `Ok(None)` when
+    /// the log says nothing; an error when Research could not be asked.
+    pub async fn build_log_tail(
+        &self,
+        image: &str,
+        lines: usize,
+    ) -> anyhow::Result<Option<String>> {
         let url = format!(
             "{}/api/platform-keeper/image-builds/{}/logs",
             self.base,
             seg(image)
         );
+        self.stream_tail(url, lines).await
+    }
+
+    /// The last lines of a running service's log: what its newest pod has
+    /// written. Research serves it only as a live stream with no tail of its
+    /// own, so the stream is read for a few seconds and its end kept.
+    /// `Ok(None)` when the log says nothing; an error when Research could
+    /// not be asked, so a refused sign-in does not read as an empty log.
+    pub async fn service_log_tail(
+        &self,
+        service: &str,
+        lines: usize,
+    ) -> anyhow::Result<Option<String>> {
+        let url = format!(
+            "{}/api/platform-keeper/services/{}/logs",
+            self.base,
+            seg(service)
+        );
+        self.stream_tail(url, lines).await
+    }
+
+    /// An event stream read for up to ten seconds, its last `lines` data
+    /// lines kept. `Ok(None)` when it opens but says nothing; an error when
+    /// it cannot be opened (unreachable, refused, no answer in time).
+    async fn stream_tail(&self, url: String, lines: usize) -> anyhow::Result<Option<String>> {
+        let what = "reading a log";
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let res = tokio::time::timeout_at(
             deadline,
@@ -780,10 +842,10 @@ impl ResearchApi {
                 .send(),
         )
         .await
-        .ok()?
-        .ok()?;
+        .map_err(|_| anyhow!("Constructor Research did not answer {what} in time"))?
+        .map_err(|e| anyhow!("Constructor Research could not be reached for {what}: {e}"))?;
         if !res.status().is_success() {
-            return None;
+            return Err(Self::refused(res, what).await);
         }
         let mut stream = res.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
@@ -794,26 +856,94 @@ impl ResearchApi {
             }
         }
         let text = String::from_utf8_lossy(&buf);
-        let kept: Vec<&str> = text
-            .lines()
-            .filter_map(|l| {
-                if let Some(d) = l.strip_prefix("data:") {
-                    Some(d.strip_prefix(' ').unwrap_or(d))
-                } else if l.is_empty()
-                    || l.starts_with(':')
-                    || l.starts_with("event:")
-                    || l.starts_with("id:")
-                    || l.starts_with("retry:")
-                {
-                    None
-                } else {
-                    Some(l)
-                }
-            })
-            .filter(|l| !l.trim().is_empty())
-            .collect();
+        let kept: Vec<&str> = text.lines().filter_map(log_line).collect();
         let tail = kept[kept.len().saturating_sub(lines)..].join("\n");
-        (!tail.is_empty()).then_some(tail)
+        Ok((!tail.is_empty()).then_some(tail))
+    }
+
+    /// Follow a service's log until `until`, reopening the stream (after
+    /// `retry`) whenever it closes, and tell its containers apart. Research
+    /// keeps no log of a container once it is gone, and each connection
+    /// replays the current one from its start: a connection that begins
+    /// with the line the current container began with is a replay; one that
+    /// begins otherwise, or a "Container is waiting to start" after the
+    /// container's own lines, is a new container.
+    pub async fn watch_log(
+        &self,
+        service: &str,
+        until: tokio::time::Instant,
+        retry: Duration,
+    ) -> Watched {
+        let url = format!(
+            "{}/api/platform-keeper/services/{}/logs",
+            self.base,
+            seg(service)
+        );
+        let mut w = Watched::default();
+        // The current container's first line, and how many of its lines were seen.
+        let mut first: Option<String> = None;
+        let mut seen = 0usize;
+        while tokio::time::Instant::now() < until {
+            let opened = tokio::time::timeout_at(
+                until,
+                self.authorized(self.http.get(&url))
+                    .header("accept", "text/event-stream")
+                    .send(),
+            )
+            .await;
+            if let Ok(Ok(res)) = opened
+                && res.status().is_success()
+            {
+                let mut stream = res.bytes_stream();
+                let mut partial = String::new();
+                // Lines of this connection, and replayed ones left to skip.
+                let mut here = 0usize;
+                let mut skip = 0usize;
+                while let Ok(Some(Ok(chunk))) = tokio::time::timeout_at(until, stream.next()).await
+                {
+                    partial.push_str(&String::from_utf8_lossy(&chunk));
+                    let Some(end) = partial.rfind('\n') else {
+                        continue;
+                    };
+                    let complete: String = partial.drain(..=end).collect();
+                    for line in complete.lines().filter_map(log_line) {
+                        if line.starts_with(WAITING) {
+                            if here > 0 && !w.lines.is_empty() {
+                                w.restarted();
+                                (first, seen) = (None, 0);
+                            }
+                            continue;
+                        }
+                        if here == 0 {
+                            match &first {
+                                Some(f) if f == line => skip = seen,
+                                Some(_) => {
+                                    w.restarted();
+                                    (first, seen) = (None, 0);
+                                }
+                                None => {}
+                            }
+                        }
+                        here += 1;
+                        if first.is_none() {
+                            first = Some(line.to_owned());
+                        }
+                        if skip > 0 {
+                            skip -= 1;
+                            continue;
+                        }
+                        seen += 1;
+                        w.lines.push(line.to_owned());
+                        if w.lines.len() > WATCHED_LINES {
+                            w.lines.remove(0);
+                        }
+                    }
+                }
+            }
+            let next = tokio::time::Instant::now() + retry;
+            tokio::time::sleep_until(next.min(until)).await;
+        }
+        w
     }
 
     /* ── applications and services ── */
@@ -933,13 +1063,14 @@ impl ResearchApi {
         .await
     }
 
-    /// Stop a running service and start it again; start a stopped one.
-    pub async fn restart_service(&self, service: &str) -> anyhow::Result<Service> {
+    /// Research stops only a running service, and starts only a stopped or
+    /// failed one.
+    pub async fn stop_service(&self, service: &str) -> anyhow::Result<Service> {
         self.call(
             reqwest::Method::POST,
-            &format!("/services/{}/restart", seg(service)),
+            &format!("/services/{}/stop", seg(service)),
             Body::Empty,
-            "restarting the service",
+            "stopping the service",
         )
         .await
     }
@@ -1110,30 +1241,46 @@ impl ResearchApi {
             images.len()
         ))
         .await;
+        if !pace.settle.is_zero() {
+            progress(format!(
+                "waiting {} s for the files to reach the builder",
+                pace.settle.as_secs()
+            ))
+            .await;
+            tokio::time::sleep(pace.settle).await;
+        }
 
+        // Each image's build, its current name and id.
         let mut pending = Vec::new();
         for i in images {
             let image = self
                 .build_image(desk, &i.name, &format!("{folder}/{}", i.dockerfile))
                 .await?;
-            pending.push((i, image.id));
+            pending.push((i, i.name.clone(), image.id));
         }
         let until = tokio::time::Instant::now() + pace.build_for;
         let mut done: BTreeMap<String, Built> = BTreeMap::new();
+        // Research reports `error` for a moment while it retries a build
+        // itself, so an error counts once seen twice for the same image. A
+        // confirmed one is built once more, under a new name, before the build
+        // gives up: the first name each image failed under.
+        let mut erred: BTreeSet<String> = BTreeSet::new();
+        let mut retried: BTreeMap<String, String> = BTreeMap::new();
         loop {
-            for (i, id) in &pending {
+            for n in 0..pending.len() {
+                let (i, name, id) = pending[n].clone();
                 if done.contains_key(&i.key) {
                     continue;
                 }
-                let state = self.image(id).await?;
+                let state = self.image(&id).await?;
                 match state.build_status.as_str() {
                     "done" => {
                         done.insert(
                             i.key.clone(),
                             Built {
                                 key: i.key.clone(),
-                                name: i.name.clone(),
-                                id: id.clone(),
+                                name,
+                                id,
                             },
                         );
                         progress(format!(
@@ -1144,11 +1291,21 @@ impl ResearchApi {
                         ))
                         .await;
                     }
+                    "error" if erred.insert(id.clone()) => {}
+                    "error" if !retried.contains_key(&i.key) => {
+                        let again = retry_name(&i.name);
+                        progress(format!("{name} failed; building it once more as {again}")).await;
+                        let image = self
+                            .build_image(desk, &again, &format!("{folder}/{}", i.dockerfile))
+                            .await?;
+                        retried.insert(i.key.clone(), name);
+                        pending[n] = (i, again, image.id);
+                    }
                     "error" => {
-                        let tail = self.build_log_tail(id, 30).await;
+                        let tail = self.build_log_tail(&id, 30).await.ok().flatten();
                         bail!(
-                            "Constructor Research could not build image {} ({}){}",
-                            i.name,
+                            "Constructor Research could not build image {} ({}), nor again as {name}{}",
+                            retried[&i.key],
                             i.dockerfile,
                             tail.map(|t| format!(":\n{t}")).unwrap_or_default()
                         );
@@ -1159,7 +1316,7 @@ impl ResearchApi {
             if done.len() == pending.len() {
                 return Ok(pending
                     .iter()
-                    .filter_map(|(i, _)| done.remove(&i.key))
+                    .filter_map(|(i, _, _)| done.remove(&i.key))
                     .collect());
             }
             if cancelled() {
@@ -1188,6 +1345,7 @@ impl ResearchApi {
         pace: Pace,
         progress: Progress<'_>,
     ) -> anyhow::Result<Application> {
+        self.enable_deployment(project).await?;
         let app = match self.application_named(project, name).await? {
             Some(app) => app,
             None => {
@@ -1203,11 +1361,17 @@ impl ResearchApi {
         let mut ids = Vec::new();
         for body in services {
             match existing.remove(&body.name) {
+                // Changed while stopped, as Research's own deployment MCP
+                // does: a running service would take the change half-way.
                 Some(s) => {
                     progress(format!("changing service {}", body.name)).await;
-                    self.patch_service(&app.id, &s.id, body).await?;
                     self.settled(&s.id, pace).await?;
-                    self.restart_service(&s.id).await?;
+                    if self.service(&s.id).await?.status == "running" {
+                        self.stop_service(&s.id).await?;
+                        self.settled(&s.id, pace).await?;
+                    }
+                    self.patch_service(&app.id, &s.id, body).await?;
+                    self.start_service(&s.id).await?;
                     ids.push((body.name.clone(), s.id));
                 }
                 None => {
@@ -1239,7 +1403,14 @@ impl ResearchApi {
                     "running" => {
                         running.insert(id.clone());
                     }
-                    "failed" => bail!("service {svc} did not start in Constructor Research"),
+                    "failed" => {
+                        let tail = self.service_log_tail(id, 20).await.ok().flatten();
+                        bail!(
+                            "service {svc} did not start in Constructor Research{}",
+                            tail.map(|t| format!("; its last log lines:\n{t}"))
+                                .unwrap_or_default()
+                        )
+                    }
                     _ => {}
                 }
             }
@@ -1262,8 +1433,40 @@ impl ResearchApi {
         }
     }
 
-    /// Wait while a service is starting or stopping: Research restarts only
-    /// one that is running, stopped or failed.
+    /// The services of `app` whose public link has not answered within
+    /// `pace.ready_for`: running is not ready. Any answer below 500 counts,
+    /// as Research's own deployment MCP counts it.
+    pub async fn unanswered(&self, app: &Application, pace: Pace) -> Vec<Service> {
+        let mut waiting: Vec<Service> = app
+            .services
+            .iter()
+            .filter(|s| s.link.is_some())
+            .cloned()
+            .collect();
+        if pace.ready_for.is_zero() {
+            return Vec::new();
+        }
+        let until = tokio::time::Instant::now() + pace.ready_for;
+        loop {
+            let mut still = Vec::new();
+            for s in waiting {
+                let url = s.link.clone().unwrap_or_default();
+                let answer =
+                    tokio::time::timeout(Duration::from_secs(10), self.http.get(&url).send()).await;
+                if !matches!(answer, Ok(Ok(r)) if r.status().as_u16() < 500) {
+                    still.push(s);
+                }
+            }
+            waiting = still;
+            if waiting.is_empty() || tokio::time::Instant::now() >= until {
+                return waiting;
+            }
+            tokio::time::sleep(pace.poll).await;
+        }
+    }
+
+    /// Wait while a service is starting or stopping: Research stops only a
+    /// running service, and starts only a stopped or failed one.
     async fn settled(&self, service: &str, pace: Pace) -> anyhow::Result<()> {
         let until = tokio::time::Instant::now() + pace.start_for;
         loop {
@@ -1277,6 +1480,53 @@ impl ResearchApi {
             tokio::time::sleep(pace.poll).await;
         }
     }
+}
+
+/// The platform's line before a service's container starts.
+const WAITING: &str = "Container is waiting to start";
+
+/// Lines kept of a watched container.
+const WATCHED_LINES: usize = 50;
+
+/// What following a service's log for a while saw.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Watched {
+    /// The current container's last lines.
+    pub lines: Vec<String>,
+    /// New containers started while it was watched.
+    pub restarts: u32,
+    /// The last lines of the container before the newest one: why it stopped.
+    pub before: Vec<String>,
+}
+
+impl Watched {
+    fn restarted(&mut self) {
+        self.restarts += 1;
+        self.before = std::mem::take(&mut self.lines);
+    }
+}
+
+/// A log line of an event stream: its `data`, or a plain line; `None` for the
+/// stream's own fields and blank lines.
+fn log_line(l: &str) -> Option<&str> {
+    let l = if let Some(d) = l.strip_prefix("data:") {
+        d.strip_prefix(' ').unwrap_or(d)
+    } else if l.starts_with(':')
+        || l.starts_with("event:")
+        || l.starts_with("id:")
+        || l.starts_with("retry:")
+    {
+        return None;
+    } else {
+        l
+    };
+    (!l.trim().is_empty()).then_some(l)
+}
+
+/// The name an image is built again under: Research's 30 characters at most.
+fn retry_name(name: &str) -> String {
+    let base: String = name.chars().take(27).collect();
+    format!("{}-r2", base.trim_end_matches('-'))
 }
 
 /// The folders and files under `root`, relative and `/`-separated, parents

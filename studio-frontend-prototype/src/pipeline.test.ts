@@ -90,7 +90,7 @@ describe("where the Builds tab stands", () => {
   });
 
   it("sends a published build on to Deploys", () => {
-    expect(buildsHint([build({})], true)).toMatchObject({ tone: "done", go: "deploys" });
+    expect(buildsHint([build({})], true)).toMatchObject({ tone: "done", go: "releases" });
   });
 
   it("says what failed, and that a rebuild comes next", () => {
@@ -150,9 +150,9 @@ describe("where the Deploys tab stands", () => {
   const ready = { environments: 1, bound: 1, deployable: 1, deployments: [] };
 
   it("asks for an environment, then a binding, then a build", () => {
-    expect(deploysHint({ ...ready, environments: 0 }).text).toMatch(/Organization › Environments/);
+    expect(deploysHint({ ...ready, environments: 0 }).text).toMatch(/Organization › Infrastructure/);
     expect(deploysHint({ ...ready, bound: 0 }).text).toMatch(/Bind/);
-    expect(deploysHint({ ...ready, deployable: 0 })).toMatchObject({ go: "builds" });
+    expect(deploysHint({ ...ready, deployable: 0 })).toMatchObject({ go: "releases" });
     expect(deploysHint(ready).text).toMatch(/Deploy a build/);
   });
 

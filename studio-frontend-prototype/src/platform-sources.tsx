@@ -28,6 +28,7 @@ import { CreateGearRepository } from "./org-repository-create";
 import { type RepositoryRoles, refLabel, repositoryRoles, rolesNote } from "./component-repositories";
 import { type Column, DataTable, type EmptySpec, type RowAction } from "./data-table";
 import { errText } from "./format";
+import { EmptyState, InfoPopover, PageHeader, StatusChip } from "./ui-standard";
 import {
   GEAR_REPOSITORY,
   type GearRepositoryRow,
@@ -82,7 +83,7 @@ export function OrgSources({
       .then((r) => setMayManage(r.may_manage))
       .catch(() => setMayManage(false));
   }, [token]);
-  if (!orgId) return <p className="hint">Open an organization to see its sources.</p>;
+  if (!orgId) return <EmptyState title="Open an organization to see its sources." />;
   return (
     <GearSources
       token={token}
@@ -285,15 +286,42 @@ function GearSources({
     addRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
+  const intro = org
+    ? "Where this organization's components come from. A repository can be in the catalogue (synced into the Components list) and built from (the Gearbox engine reads it, after the platform's, when it composes a product); one of those is where Create a gear writes."
+    : "Where the platform's components come from. A repository can be in the catalogue (synced into the Components list every organization sees) and built from (the Gearbox engine reads it when it composes a product; where two declare the same gear, the first wins).";
+  const manager = org
+    ? "An organization administrator adds and removes the organization's gear repositories."
+    : "A platform administrator adds and removes the platform's gear repositories.";
+
   return (
     <div className="gear-sources" data-platform-sources={org ? undefined : ""} data-org-sources={org ? "" : undefined}>
       <style>{SOURCES_CSS}</style>
-      {!embedded && <h1>Repositories</h1>}
-      <p className="subtitle">
-        {org
-          ? "Where this organization's components come from. A repository can be in the catalogue (synced into the Components list) and built from (the Gearbox engine reads it, after the platform's, when it composes a product); one of those is where Create a gear writes."
-          : "Where the platform's components come from. A repository can be in the catalogue (synced into the Components list every organization sees) and built from (the Gearbox engine reads it when it composes a product; where two declare the same gear, the first wins)."}
-      </p>
+      {embedded ? (
+        <p className="hint">
+          Where this organization&apos;s components come from <InfoPopover label="About repositories">{intro}</InfoPopover>
+        </p>
+      ) : (
+        <PageHeader
+          title="Repositories"
+          info={
+            <>
+              <p>{intro}</p>
+              <p>{manager}</p>
+            </>
+          }
+          status={
+            !loading && (
+              <>
+                <StatusChip tone={roles.length > 0 ? "neutral" : "warn"}>
+                  {roles.length} {roles.length === 1 ? "repository" : "repositories"}
+                </StatusChip>
+                {status?.problem && <StatusChip tone="danger">engine cannot read</StatusChip>}
+                {!mayManage && <StatusChip tone="info">read-only</StatusChip>}
+              </>
+            )
+          }
+        />
+      )}
       {error && <div className="error">{error}</div>}
       {note && (
         <div className="hint" data-gear-source-note>
@@ -409,11 +437,7 @@ function GearSources({
           />
         </div>
       ) : (
-        <p className="hint">
-          {org
-            ? "An organization administrator adds and removes the organization's gear repositories."
-            : "A platform administrator adds and removes the platform's gear repositories."}
-        </p>
+        embedded && <p className="hint">{manager}</p>
       )}
     </div>
   );
@@ -495,10 +519,10 @@ function RolesTable({
         ) : (
           <span data-role-catalogue>
             {r.catalogue.map((s, i) => (
-              <span key={i} className="badge gear-role-chip">
+              <StatusChip key={i} tone={s.shadowed_by_platform ? "warn" : "neutral"} className="gear-role-chip">
                 {s.mode || "gears"} · {refLabel(s.git_ref)}
                 {s.shadowed_by_platform ? " · the platform lists it too" : ""}
-              </span>
+              </StatusChip>
             ))}
           </span>
         ),
@@ -526,7 +550,7 @@ function RolesTable({
       header: "New gears",
       cell: (r) =>
         writesHere?.(r) ? (
-          <span className="badge">Create a gear writes here</span>
+          <StatusChip tone="info">Create a gear writes here</StatusChip>
         ) : (
           <span className="ing-dash">—</span>
         ),
@@ -695,7 +719,13 @@ function AddGearRepository({
 
   return (
     <section className="card gear-source-add" data-gear-source-add>
-      <h3>Add a gear repository</h3>
+      <h3>
+        Add a gear repository{" "}
+        <InfoPopover label="About adding a gear repository">
+          Studio checks that the repository is there at that ref, and counts its <code>gear.gdl</code> files, before it
+          adds it. Create a gear and Publish need a token that may write.
+        </InfoPopover>
+      </h3>
       <div className="gear-source-form">
         <label>
           Repository
@@ -732,10 +762,6 @@ function AddGearRepository({
       <button type="button" className="primary" disabled={busy || !repo || !!problem} onClick={() => void add()}>
         {busy ? "Testing…" : "Test & add"}
       </button>
-      <p className="hint">
-        Studio checks that the repository is there at that ref, and counts its <code>gear.gdl</code> files, before it adds
-        it. Create a gear and Publish need a token that may write.
-      </p>
     </section>
   );
 }

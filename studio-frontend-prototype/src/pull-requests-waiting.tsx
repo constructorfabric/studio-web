@@ -26,6 +26,7 @@ import {
   prRef,
   queuesByPerson,
 } from "./pull-request-waits";
+import { EmptyState, InfoPopover, StatusChip, type Tone } from "./ui-standard";
 
 /** How many queues are open on arrival; the rest are one click away. */
 const OPEN_QUEUES = 3;
@@ -81,28 +82,30 @@ export function PullRequestsWaiting({
   return (
     <div className="card prw">
       <div className="card-head">
-        <h2>Pull requests — who they're waiting on</h2>
-        {items && items.length > 0 && <span className="hint">{items.length} open</span>}
+        <h2>
+          Pull requests — who they're waiting on{" "}
+          <InfoPopover label="About pull requests">
+            A pull request is a proposed change that somebody has to review before it goes in. Each
+            open one is listed under the person it is waiting on right now, as of the last sync of the
+            project's repositories.
+          </InfoPopover>
+        </h2>
+        {items && items.length > 0 && <StatusChip tone="neutral">{items.length} open</StatusChip>}
       </div>
-      <p className="hint">
-        A pull request is a proposed change that somebody has to review before it goes in. Each
-        open one is listed under the person it is waiting on right now, as of the last sync of the
-        project's repositories.
-      </p>
 
       {error ? (
-        <p className="empty">Pull requests could not be read: {error}</p>
+        <EmptyState title="Pull requests could not be read." body={error} />
       ) : items === null ? (
         <p className="empty">Reading pull requests…</p>
       ) : empty ? (
-        <p className="empty">{empty}</p>
+        <EmptyState title={empty} />
       ) : (
         <>
           <div className="dash-mix prw-totals">
             {WAITING_ORDER.filter((w) => totals[w] > 0).map((w) => (
-              <span key={w} className={`badge ${WAITING_TONE[w]}`} title={WAITING_SENTENCE[w]}>
+              <StatusChip key={w} tone={WAITING_TONE[w] as Tone} title={WAITING_SENTENCE[w]}>
                 {totals[w]} {WAITING_LABEL[w]}
-              </span>
+              </StatusChip>
             ))}
           </div>
           {!membersKnown && (
@@ -124,9 +127,9 @@ export function PullRequestsWaiting({
                   </span>
                   <span className="prw-counts">
                     {WAITING_ORDER.filter((w) => q.counts[w] > 0).map((w: PullWaiting) => (
-                      <span key={w} className={`badge ${WAITING_TONE[w]}`}>
+                      <StatusChip key={w} tone={WAITING_TONE[w] as Tone}>
                         {q.counts[w]} {WAITING_LABEL[w]}
-                      </span>
+                      </StatusChip>
                     ))}
                   </span>
                 </summary>
@@ -148,12 +151,12 @@ export function PullRequestsWaiting({
                         </div>
                         <div className="sub">
                           {ageLine(pr)}
-                          {isQuiet(pr) && <span className="badge warn prw-quiet">quiet</span>}
+                          {isQuiet(pr) && <StatusChip tone="warn" className="prw-quiet">quiet</StatusChip>}
                         </div>
                       </div>
-                      <span className={`badge ${WAITING_TONE[pr.waiting]}`}>
+                      <StatusChip tone={WAITING_TONE[pr.waiting] as Tone}>
                         {WAITING_LABEL[pr.waiting]}
-                      </span>
+                      </StatusChip>
                     </li>
                   ))}
                 </ul>

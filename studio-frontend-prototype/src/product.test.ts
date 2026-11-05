@@ -9,12 +9,21 @@ import { describe, expect, it } from "vitest";
 import type { GearboxStatus, RepoEntry } from "./api";
 import type { Candidate, PlanRow } from "./api";
 import {
+  KUBERNETES_PROFILES,
+  PRODUCT_PROFILES,
+  checkLanded,
+  checkOf,
   corpusErrors,
   defaultPicks,
+  diagnosticsByCode,
   groupDiagnostics,
+  productPathOf,
   isPickable,
   productIdFrom,
+  profilesToCheck,
   sortDiagnostics,
+  verdictOf,
+  verdictText,
   withCorpusSource,
 } from "./product";
 
@@ -133,6 +142,29 @@ describe("groupDiagnostics", () => {
   });
 });
 
+describe("diagnosticsByCode", () => {
+  it("holds one warning said once per gear as one group, errors first", () => {
+    const authz = (gear: string) => ({
+      code: "GBX0215",
+      severity: "warning",
+      message: `\`${gear}\` resolves \`dyn AuthZResolverApi\``,
+      file: "gear.gdl",
+    });
+    const groups = diagnosticsByCode([
+      authz("a"),
+      { code: "GBX0517", severity: "info", message: "two plugins share a vendor" },
+      authz("b"),
+      { code: "GBX0511", severity: "error", message: "no implementation" },
+      authz("c"),
+    ]);
+    expect(groups.map((g) => [g.code, g.items.length])).toEqual([
+      ["GBX0511", 1],
+      ["GBX0215", 3],
+      ["GBX0517", 1],
+    ]);
+  });
+});
+
 describe("sortDiagnostics", () => {
   it("puts errors first and keeps the engine's order within a severity", () => {
     const d = (code: string, severity: string) => ({ code, severity, message: "" });
@@ -172,5 +204,64 @@ describe("corpusErrors", () => {
 
   it("is zero for a product whose problems are its own", () => {
     expect(corpusErrors([d("product.gdl"), d(null)])).toEqual({ errors: 0, files: 0 });
+  });
+});
+
+describe("profiles and their verdicts (ADR-0057)", () => {
+  const check = { ok: true, errors: 0, warnings: 0, applications: [], gears: [], gdl_sha256: "now" };
+
+  it("are labelled shape first, and only kubernetes ones bind", () => {
+    expect(PRODUCT_PROFILES.map((p) => p.label)).toEqual(["Kubernetes · prod", "One host · local", "One process · dev"]);
+    expect(KUBERNETES_PROFILES).toEqual(["prod"]);
+  });
+
+  it("checks the profiles environments run, once each, or prod with none bound", () => {
+    const b = (profile: string, environment_id: string) => ({ profile, environment_id });
+    expect(profilesToCheck([b("prod", "stage"), b("prod", "prod"), b("local", "lab")])).toEqual(["prod", "local"]);
+    expect(profilesToCheck([])).toEqual(["prod"]);
+  });
+
+  it("keeps each profile's verdict, stale once the description changes", () => {
+    const product = {
+      checks: { prod: check, local: { ...check, ok: false, errors: 2 }, dev: { ...check, gdl_sha256: "before" } },
+      last_preview: { ...check, profile: "prod" },
+    };
+    expect(verdictText(verdictOf(product, "prod"))).toBe("✓");
+    expect(verdictText(verdictOf(product, "local"))).toBe("✗ 2 errors");
+    expect(verdictText(verdictOf(product, "dev"))).toBe("stale");
+    expect(verdictText(verdictOf({ checks: {} }, "prod"))).toBe("not checked");
+    // Against a newer description than the record's.
+    expect(verdictOf(product, "prod", "newer").state).toBe("stale");
+  });
+
+  it("reads a record from before checks were kept: its last preview answers for its own profile", () => {
+    const old = { last_preview: { profile: "dev", ok: true, errors: 0, warnings: 0, applications: [], gears: [] } };
+    expect(checkOf(old, "dev")).toBe(old.last_preview);
+    expect(checkOf(old, "prod")).toBeNull();
+    expect(verdictOf(old, "dev").state).toBe("ok");
+  });
+
+  it("tells when a save's background check has landed on the record", () => {
+    const product = { checks: { prod: { ...check, gdl_sha256: "saved" } } };
+    expect(checkLanded(product, "prod", "saved")).toBe(true);
+    // Still the check of the description before the save, or another profile.
+    expect(checkLanded({ checks: { prod: { ...check, gdl_sha256: "before" } } }, "prod", "saved")).toBe(false);
+    expect(checkLanded(product, "dev", "saved")).toBe(false);
+    // An older backend says no hash: nothing to match.
+    expect(checkLanded(product, "prod", "")).toBe(false);
+  });
+});
+
+describe("productPathOf", () => {
+  it("is the recorded path, else the product's own, never the root's", () => {
+    expect(productPathOf({ product_id: "shop", written: { branch: "b", commit_sha: "c", path: "product.gdl" } })).toBe(
+      "product.gdl",
+    );
+    expect(productPathOf({ product_id: "shop", description: { revision: 1, path: "products/x/product.gdl" } })).toBe(
+      "products/x/product.gdl",
+    );
+    expect(productPathOf({ product_id: "shop" })).toBe("products/shop/product.gdl");
+    expect(productPathOf({})).toBeNull();
+    expect(productPathOf(null)).toBeNull();
   });
 });

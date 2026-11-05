@@ -1,9 +1,9 @@
 /* ── Waiting on you ────────────────────────────────────────────────────────────
  *
- * The Home page's answer to "what is somebody waiting on me for", across
- * every project the reader can see: the reviews somebody asked them for, and
- * the open pull requests whose next move is theirs. One list, the overdue
- * first. Each item is read from its fact, so it leaves by itself when the
+ * The "For you" half of the organization overview's "Needs attention" list:
+ * what somebody waits on the reader for, across every project they can see --
+ * the reviews somebody asked them for, and the open pull requests whose next
+ * move is theirs. The overdue first; a row is one sentence and one action. Each item is read from its fact, so it leaves by itself when the
  * fact changes; what the reader keeps is a mark — done, or snoozed — which
  * follows them to any browser (studio-user `me/inbox-marks`).
  *
@@ -30,6 +30,7 @@ import {
 } from "./pull-request-waits";
 import type { ReviewRequest } from "./review-requests";
 import { subscribeStudioEvents } from "./studio-events";
+import { InfoPopover, StatusChip, type Tone } from "./ui-standard";
 import { concernsMe, inboxItems, snoozeUntil, type InboxItem, type InboxMark } from "./waiting-on-me";
 
 export interface OnMeWorkspace {
@@ -41,10 +42,13 @@ export function WaitingOnYou<W extends OnMeWorkspace>({
   token,
   workspaces,
   onOpenWorkspace,
+  onCount,
 }: {
   token: string;
   workspaces: W[];
   onOpenWorkspace: (ws: W) => void;
+  /** How many items are open, once read (null until then). */
+  onCount?: (n: number | null) => void;
 }) {
   const [pulls, setPulls] = useState<{ workspace: string; items: OpenPullRequest[] }[] | null>(null);
   const [reviews, setReviews] = useState<{ workspace: string; items: ReviewRequest[] }[]>([]);
@@ -168,113 +172,110 @@ export function WaitingOnYou<W extends OnMeWorkspace>({
   const shown = showHidden ? [...open, ...hiddenItems] : open;
   const wsName = (id: string) => workspaces.find((w) => w.id === id)?.name ?? "";
   const wsOf = (id: string) => workspaces.find((w) => w.id === id);
-  const reviewCount = open.filter((i) => i.kind === "review").length;
-  const pullCount = open.length - reviewCount;
+
+  // The overview's header counts these with the organization's own.
+  useEffect(() => {
+    onCount?.(pulls === null ? null : open.length);
+  }, [onCount, pulls, open.length]);
 
   return (
-    <div className="card span-all prw">
-      <div className="card-head">
-        <h2>Waiting on you</h2>
-        {open.length > 0 && (
-          <span className="hint">
-            {[reviewCount && `${reviewCount} review${reviewCount === 1 ? "" : "s"}`, pullCount && `${pullCount} pull request${pullCount === 1 ? "" : "s"}`]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
-        )}
-      </div>
-      <p className="hint">
-        Reviews somebody asked you for, and open pull requests in your projects whose next step is yours — overdue
-        first. Done or snoozed items stay away until they change.
-      </p>
+    <div className="att-group" data-attention-group="you">
+      <h3 className="att-group-title">
+        For you{pulls !== null && open.length > 0 ? <span className="att-count">{open.length}</span> : null}
+      </h3>
       {pulls === null ? (
-        <p className="empty">Reading what waits for you…</p>
+        <p className="sub att-empty">Reading what waits for you…</p>
       ) : shown.length === 0 ? (
-        <p className="empty">
+        <p className="sub att-empty">
           {failed.length === workspaces.length && failed.length > 0
             ? `Pull requests could not be read: ${failed[0]}`
             : hidden > 0
               ? `Nothing new. ${hidden} item${hidden === 1 ? " is" : "s are"} done or snoozed.`
-              : myEmptyMessage({ membersKnown, workspaces: workspaces.length })}
+              : (
+                <>
+                  Nothing waits on you.{" "}
+                  <InfoPopover label="Why is nothing here?">{myEmptyMessage({ membersKnown, workspaces: workspaces.length })}</InfoPopover>
+                </>
+              )}
         </p>
       ) : (
-        <ul className="rows">
-          {shown.map((item) => (
-            <li key={item.key} data-hidden-item={hiddenItems.includes(item) || undefined}>
-              <div className="grow">
-                {item.kind === "review" ? (
-                  <>
-                    <div className="name">
+        <ul className="att-list">
+          {shown.map((item) => {
+            const isHidden = hiddenItems.includes(item);
+            return (
+              <li
+                key={item.key}
+                className={`att-row tone-${item.overdue ? "warn" : "info"}`}
+                data-attention={item.kind}
+                data-hidden-item={isHidden || undefined}
+              >
+                <span className="att-text">
+                  {item.kind === "review" ? (
+                    <>
                       Review <b>{item.review.title}</b>
-                    </div>
-                    <div className="sub">
-                      {wsName(item.workspace)} · asked by {item.review.requested_by_name ?? "a colleague"}
-                      {item.due && <> · due {item.due.slice(0, 10)}</>}
-                      {item.overdue && <span className="badge warn prw-quiet">overdue</span>}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="name">
-                      {item.pull.url ? (
-                        <a href={item.pull.url} target="_blank" rel="noreferrer">
-                          {item.pull.title}
-                        </a>
-                      ) : (
-                        item.pull.title
-                      )}
-                    </div>
-                    <div className="sub">
-                      {wsName(item.workspace)} · {prRef(item.pull)} · {item.pull.reason}
-                    </div>
-                    <div className="sub">
-                      {ageLine(item.pull)}
-                      {isQuiet(item.pull) && <span className="badge warn prw-quiet">quiet</span>}
-                    </div>
-                  </>
-                )}
-              </div>
-              {item.kind === "pull" ? (
-                <span className={`badge ${WAITING_TONE[item.pull.waiting]}`} title={WAITING_SENTENCE[item.pull.waiting]}>
-                  {MY_LABEL[item.pull.waiting]}
+                      <span className="sub">
+                        {" "}
+                        · {item.review.requested_by_name ?? "a colleague"} asked, {wsName(item.workspace)}
+                        {item.due && <> · due {item.due.slice(0, 10)}</>}
+                      </span>
+                      {item.overdue && <StatusChip tone="warn">overdue</StatusChip>}
+                    </>
+                  ) : (
+                    <>
+                      <b>{item.pull.title}</b>
+                      <span className="sub">
+                        {" "}
+                        · {prRef(item.pull)}, {wsName(item.workspace)} · {ageLine(item.pull)}
+                      </span>{" "}
+                      <StatusChip tone={chipTone(WAITING_TONE[item.pull.waiting])} title={WAITING_SENTENCE[item.pull.waiting]}>
+                        {MY_LABEL[item.pull.waiting]}
+                      </StatusChip>
+                      {isQuiet(item.pull) && <StatusChip tone="warn">quiet</StatusChip>}
+                    </>
+                  )}
                 </span>
-              ) : (
-                <button
-                  className="linklike"
-                  onClick={() => {
-                    const ws = wsOf(item.workspace);
-                    if (ws) onOpenWorkspace(ws);
-                  }}
-                >
-                  Open project →
-                </button>
-              )}
-              <span className="wo-marks">
-                {hiddenItems.includes(item) ? (
-                  <button className="linklike" title="Show it again" onClick={() => void mark(item, "open")}>
+                {item.kind === "pull" && item.pull.url ? (
+                  <a className="att-action" href={item.pull.url} target="_blank" rel="noreferrer">
+                    Open pull request ↗
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="ghost att-action"
+                    onClick={() => {
+                      const ws = wsOf(item.workspace);
+                      if (ws) onOpenWorkspace(ws);
+                    }}
+                  >
+                    Open project
+                  </button>
+                )}
+                {isHidden ? (
+                  <button type="button" className="linklike att-mark" title="Show it again" onClick={() => void mark(item, "open")}>
                     Unmark
                   </button>
                 ) : (
-                  <>
-                    <button className="linklike" title="Hide it until it changes" onClick={() => void mark(item, "done")}>
-                      Done
-                    </button>
-                    <button
-                      className="linklike"
-                      title="Hide it until this time tomorrow"
-                      onClick={() => void mark(item, "snoozed")}
-                    >
-                      Snooze 1 day
-                    </button>
-                  </>
+                  <details className="att-more">
+                    <summary aria-label="More" title="Done or snooze">
+                      ⋯
+                    </summary>
+                    <div className="att-more-list" onClick={(e) => (e.currentTarget.parentElement as HTMLDetailsElement).removeAttribute("open")}>
+                      <button type="button" onClick={() => void mark(item, "done")}>
+                        Done: hide until it changes
+                      </button>
+                      <button type="button" onClick={() => void mark(item, "snoozed")}>
+                        Snooze 1 day
+                      </button>
+                    </div>
+                  </details>
                 )}
-              </span>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
       {pulls !== null && hidden > 0 && (
-        <p className="hint">
+        <p className="sub att-hidden">
           {hidden} done or snoozed.{" "}
           <button className="linklike" onClick={() => setShowHidden((s) => !s)}>
             {showHidden ? "Hide them again" : "Show them"}
@@ -287,8 +288,13 @@ export function WaitingOnYou<W extends OnMeWorkspace>({
         </p>
       )}
       {pulls !== null && open.length > 0 && failed.length > 0 && (
-        <p className="hint">Some projects could not be read: {failed.join("; ")}</p>
+        <p className="sub att-hidden">Some projects could not be read: {failed.join("; ")}</p>
       )}
     </div>
   );
+}
+
+/** A waiting state's tone (pull-request-waits.ts, a `.badge` class) as a StatusChip's. */
+function chipTone(badge: string): Tone {
+  return badge === "danger" || badge === "bad" ? "danger" : badge === "warn" ? "warn" : badge === "ok" ? "ok" : badge === "info" ? "info" : "neutral";
 }

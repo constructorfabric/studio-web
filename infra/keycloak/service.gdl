@@ -1,0 +1,33 @@
+# A product's own identity provider, an infra service (ADR-0064): stock
+# Keycloak, imported into the project's path and run beside the product, so
+# a deployed product never signs in through Studio's own IdP (ADR-0062 §9).
+# The realm `product` is the product's to create or import; the admin
+# password is made by Studio once per environment and kept in credstore.
+gdl_version = "1.6"
+
+service(
+    name = "keycloak",
+    kind = "infra",
+    version = "26.0.7",
+    description = "Keycloak: the product's own OIDC identity provider, one per environment",
+    image = "quay.io/keycloak/keycloak:26.0.7",
+    args = ["start-dev"],
+    # 8080 serves the realms; the management interface (health) is on 9000.
+    ports = {"http": 8080, "management": 9000},
+    health = "/health/ready",
+    config = {
+        "KC_HEALTH_ENABLED": "true",
+        "KC_HTTP_ENABLED": "true",
+        "KC_PROXY_HEADERS": "xforwarded",
+        "KC_BOOTSTRAP_ADMIN_USERNAME": "admin",
+    },
+    secrets = ["KC_BOOTSTRAP_ADMIN_PASSWORD"],
+    provides = {
+        "oidc.issuer": "{public_url}/realms/product",
+        "keycloak.admin_url": "http://{host}:{port.http}",
+        "keycloak.admin_password": "{secret.KC_BOOTSTRAP_ADMIN_PASSWORD}",
+    },
+    # A ready chart, when the project imports it into its path.
+    chart = "oci://registry-1.docker.io/bitnamicharts/keycloak",
+    chart_version = "24.4.0",
+)

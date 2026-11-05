@@ -21,7 +21,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::gearbox::{CORPUS_SOURCE_ID, GearRoot, Gearbox, PROFILES, PreviewInput, Scope};
+use super::gearbox::{GearRoot, Gearbox, PROFILES, PreviewInput, Scope};
 use super::service::ProductService;
 use crate::catalog_graph::gts::GtsNode;
 use crate::org_scope::OrgCtx;
@@ -110,6 +110,27 @@ impl Product {
         let org = self.service.organization_of_project(ctx, tenant).await;
         let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&self.hub));
         super::gear_roots::scope_for(gearbox, &connectors, &self.hub, ctx, org, now).await
+    }
+
+    /// The project's home repository, checked out (ADR-0060 §6). `Ok(None)`
+    /// when the project has none the server reads; an error while it is
+    /// still being cloned.
+    async fn home(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> anyhow::Result<Option<super::gearbox::HomeCheckout>> {
+        let (Some(gearbox), Ok(am)) = (
+            self.gearbox.as_ref(),
+            self.hub
+                .get::<dyn account_management_sdk::AccountManagementClient>(),
+        ) else {
+            return Ok(None);
+        };
+        let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&self.hub));
+        super::project_roots::home_checkout(gearbox, &connectors, am.as_ref(), ctx, project)
+            .await
+            .transpose()
     }
 
     fn gearbox(&self) -> ApiResult<&Arc<Gearbox>> {
@@ -287,6 +308,34 @@ pub struct GearboxStatusDto {
     /// The organization's repositories left out because a platform
     /// repository has the same source id, by source id.
     pub shadowed: Vec<String>,
+    /// Where a product's frontend starts in this deployment
+    /// (`STUDIO_FRONTX_*`); filled whether or not Gearbox is.
+    pub frontx: FrontxDefaultsDto,
+}
+
+/// The deployment's FrontX starting points (`product/frontx.rs`).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct FrontxDefaultsDto {
+    /// The shell template a new frontend is assembled on, as
+    /// `github:<owner>/<repo>//<dir>@<ref>`.
+    pub shell_template: String,
+    /// The FrontX repository the frontend constructor suggests as a
+    /// micro-frontend source, `owner/repo`.
+    pub source_repo: String,
+    /// Its ref.
+    pub source_ref: String,
+}
+
+impl FrontxDefaultsDto {
+    fn from_env() -> Self {
+        let d = super::frontx::FrontxDefaults::from_env();
+        Self {
+            shell_template: d.shell_template,
+            source_repo: d.source_repo,
+            source_ref: d.source_ref,
+        }
+    }
 }
 
 /// One gear repository as the engine last read it.
@@ -495,9 +544,12 @@ pub struct ProductPreviewRequest {
     /// Display name. Omitted means the id.
     pub name: Option<String>,
     /// Gears by crate name (`cf-gears-api-gateway`) or engine id (`api-gateway`).
-    /// Empty only with `write`: the description a product project starts from.
+    /// Empty: the product record's picks (ADR-0060 §4); with `write` and a
+    /// record with none, the description a product project starts from.
     pub gears: Vec<String>,
-    /// `dev` (embedded), `local` (self-hosted) or `prod` (kubernetes). Default `dev`.
+    /// The profile to check: `dev` (embedded), `local` (self-hosted) or
+    /// `prod` (kubernetes). Default `dev`. The description names `dev` as its
+    /// default whichever is checked (ADR-0057).
     pub profile: Option<String>,
     /// Save the composed `product.gdl` as the project's next description
     /// revision, which Studio keeps (ADR-0053 §1). Nothing goes to the
@@ -519,7 +571,15 @@ pub struct ProductPreviewRequest {
     pub onto_base: Option<bool>,
     /// How the product configures its gears: gear crate name -> {field: value}.
     /// Written into `product.gdl` and kept with the project's product.
+    /// Absent: the record's configuration. The frontend is always the
+    /// record's (`PUT …/product`). A save that would still drop a gear or the
+    /// frontend the latest revision has is refused (ADR-0060 §4).
     pub config: Option<Value>,
+    /// `dev` checks the profile as a development one -- the production
+    /// rules' findings as warnings -- for an environment of dev strictness
+    /// (ADR-0060 §5). Absent or `prod`: as the description says. Only the
+    /// check: the saved text is unchanged.
+    pub strictness: Option<String>,
 }
 
 #[derive(Debug)]
@@ -607,6 +667,9 @@ pub struct ProductPreviewRevisionDto {
 pub struct ProductPreviewDto {
     /// The description, exactly as it would be committed.
     pub product_gdl: String,
+    /// Hex SHA-256 of `product_gdl`: a profile's kept check (`checks` on the
+    /// product) is about this description while its hash is this one.
+    pub gdl_sha256: String,
     pub profile: String,
     /// No error diagnostics: the product resolves for this profile.
     pub ok: bool,
@@ -624,6 +687,11 @@ pub struct ProductPreviewDto {
     pub written: Option<ProductWriteDto>,
     /// Set when `write` saved it as a revision Studio keeps (ADR-0053).
     pub description_revision: Option<ProductPreviewRevisionDto>,
+    /// A save answered before the engine finished checking it: `ok`,
+    /// `diagnostics`, `applications` and `gears` are not known yet (and
+    /// `ok` is false). The check carries on and is kept under the product's
+    /// `checks.<profile>` when it finishes.
+    pub checking: bool,
 }
 
 /// Where the scaffold landed, and what it wrote.
@@ -683,7 +751,8 @@ pub struct SetProjectRepoRequest {
     pub connection_id: Option<Uuid>,
     /// `owner/name` of the repository.
     pub repo: String,
-    /// Branch scaffolded gears are written to (default `main`).
+    /// Branch scaffolded gears are written to (default the repository's
+    /// default branch, `main` when it cannot be read).
     pub branch: Option<String>,
 }
 
@@ -711,25 +780,35 @@ async fn set_project_repo(
 ) -> ApiResult<JsonBody<ProductRecordDto>> {
     // Every write to it would go through this connection: refuse one the
     // organization does not own before it is recorded.
+    let target = super::port::RepositoryTarget {
+        tenant: body.tenant,
+        connection_id: body.connection_id,
+        repo: body.repo.clone(),
+        base_branch: String::new(),
+    };
     product
         .service
-        .ensure_owned(
-            &ctx,
-            project_id,
-            &super::port::RepositoryTarget {
-                tenant: body.tenant,
-                connection_id: body.connection_id,
-                repo: body.repo.clone(),
-                base_branch: String::new(),
-            },
-        )
+        .ensure_owned(&ctx, project_id, &target)
         .await
         .map_err(|e| write_problem("invalid gear repo", &e))?;
+    // Not every repository's branch is `main`: ask the host which it is.
+    let branch = match body
+        .branch
+        .map(|b| b.trim().to_owned())
+        .filter(|b| !b.is_empty())
+    {
+        Some(b) => b,
+        None => product
+            .service
+            .default_branch_of(&ctx, &target)
+            .await
+            .unwrap_or_else(|| "main".to_string()),
+    };
     let repo = serde_json::json!({
         "tenant": body.tenant,
         "connection_id": body.connection_id,
         "repo": body.repo,
-        "branch": body.branch.unwrap_or_else(|| "main".to_string()),
+        "branch": branch,
     });
     let node = product
         .service
@@ -1619,11 +1698,12 @@ async fn gearbox_status(
             corpus_url: None,
             corpus_ref: None,
             corpus_commit: None,
-            source_id: CORPUS_SOURCE_ID.to_string(),
+            source_id: super::gearbox::corpus_source_id().to_string(),
             profiles,
             problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
             sources: Vec::new(),
             shadowed: Vec::new(),
+            frontx: FrontxDefaultsDto::from_env(),
         }));
     };
     let scope = product
@@ -1644,6 +1724,7 @@ async fn gearbox_status(
         profiles,
         problem: status.problem,
         shadowed: status.shadowed,
+        frontx: FrontxDefaultsDto::from_env(),
         sources: status
             .sources
             .into_iter()
@@ -1691,17 +1772,13 @@ async fn preview_product(
     Path(project_id): Path<Uuid>,
     Json(body): Json<ProductPreviewRequest>,
 ) -> ApiResult<Response> {
+    let started = std::time::Instant::now();
     let gearbox = product.gearbox()?;
     let invalid = |e: anyhow::Error| {
         StudioProductError::invalid_argument()
             .with_constraint(format!("{e:#}"))
             .create()
     };
-    // Saving no gears is how a product project gets its `product.gdl` when it
-    // is created; previewing none has nothing to show.
-    if body.gears.is_empty() && !body.write.unwrap_or(false) {
-        return Err(invalid(anyhow::anyhow!("pick at least one gear")));
-    }
     let profile = body.profile.clone().unwrap_or_else(|| "dev".to_string());
     let name = body
         .name
@@ -1710,24 +1787,52 @@ async fn preview_product(
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| body.product_id.clone());
     let name_for_record = name.clone();
-    let config = super::gearbox::gear_config_from(body.config.as_ref()).map_err(invalid)?;
     // Three reads that do not need each other: the record, the corpus the
     // project's organization reads, and the repository the description goes
     // to. Read side by side; each stage's time is logged.
     let project = project_id.to_string();
-    let ((record, record_ms), (scope, scope_ms), (repo, repo_ms)) = tokio::join!(
+    let ((record, record_ms), (scope, scope_ms), (repo, repo_ms), (home, home_ms)) = tokio::join!(
         timed(product.service.get_project_product(&ctx, &project)),
         timed(product.scope(&ctx, project_id, false)),
         timed(product.service.write_repo(&ctx, &project)),
+        timed(product.home(&ctx, project_id)),
     );
     tracing::info!(
         %project_id,
         record_ms,
         scope_ms,
         repo_ms,
+        home_ms,
         "studio-product: preview inputs read"
     );
+    // The project's own repository is read as a build reads it (ADR-0060
+    // §6): a description of its gears without it would leave them out.
+    let home = home.map_err(|e| {
+        if e.downcast_ref::<super::gearbox::HomeStillReading>()
+            .is_some()
+        {
+            CanonicalError::service_unavailable()
+                .with_detail(format!("{e:#}"))
+                .create()
+        } else {
+            invalid(e)
+        }
+    })?;
     let record = record.map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // The whole product, with the request's fields only overriding (ADR-0060
+    // §4): a save that names only its gears keeps the record's configuration
+    // and frontend, and one that names none keeps its gears.
+    let composed = super::save_guard::compose_request(
+        &body.gears,
+        body.config.as_ref(),
+        record.as_ref().map(|n| &n.value),
+    );
+    // Saving no gears is how a product project gets its `product.gdl` when it
+    // is created; previewing none has nothing to show.
+    if composed.gears.is_empty() && !body.write.unwrap_or(false) {
+        return Err(invalid(anyhow::anyhow!("pick at least one gear")));
+    }
+    let config = super::gearbox::gear_config_from(composed.config.as_ref()).map_err(invalid)?;
     let product_path = product_path_for(record.as_ref().map(|n| &n.value), &body.product_id);
     // The frontend the Frontend section saved with the product: the
     // description is the whole product, its screens with its gears, once the
@@ -1738,23 +1843,40 @@ async fn preview_product(
     } else {
         None
     };
-    let preview = gearbox
-        .preview(
-            scope,
-            PreviewInput {
-                product_id: body.product_id.clone(),
-                product_path: product_path.clone(),
-                name,
-                gears: body.gears.clone(),
-                profile: profile.clone(),
-                config: config.clone(),
-                repo,
-                reuse: !body.write.unwrap_or(false),
-                frontend,
-            },
-        )
-        .await
-        .map_err(invalid)?;
+    let input = PreviewInput {
+        product_id: body.product_id.clone(),
+        product_path: product_path.clone(),
+        name,
+        gears: composed.gears.clone(),
+        profile: profile.clone(),
+        config: config.clone(),
+        repo,
+        // A check may take the answer of an earlier check of the same text
+        // against the same commits (the key holds both): it is the answer a
+        // fresh run gives.
+        reuse: true,
+        frontend,
+        home,
+        development: body.strictness.as_deref().map(str::trim) == Some("dev"),
+    };
+    // The text first, without the engine: it is all a save keeps, so a save
+    // never waits on a check to be kept (the check of a product of sixty
+    // gears outlasted the gateway, and the save was lost with it).
+    let described = gearbox.describe(scope, &input).await.map_err(|e| {
+        if e.downcast_ref::<super::gearbox::HomeStillReading>()
+            .is_some()
+        {
+            CanonicalError::service_unavailable()
+                .with_detail(format!("{e:#}"))
+                .create()
+        } else {
+            invalid(e)
+        }
+    })?;
+    let product_gdl = described.product_gdl.clone();
+    let gdl_sha256 = super::descriptions::digest(&product_gdl);
+    let composition = described.composition.clone();
+    let corpus_commit = described.corpus_commit.clone();
 
     // ADR-0053 §1: a save is a revision Studio keeps; the repository is
     // written only when the person publishes (§3). A deployment whose gear
@@ -1763,14 +1885,35 @@ async fn preview_product(
     let kept = product.service.descriptions().is_some();
     let write = body.write.unwrap_or(false);
     if write && kept {
+        let latest = product
+            .service
+            .latest_description(&ctx, project_id)
+            .await
+            .map_err(|e| descriptions_rest::internal(&e))?;
+        // Nothing the latest revision had and the product still wants is
+        // dropped without a word (ADR-0060 §4).
+        if let Some(latest) = &latest {
+            let frontend_kept = record
+                .as_ref()
+                .and_then(|n| n.value.get("frontend"))
+                .is_some_and(|f| !f.is_null());
+            let lost = super::save_guard::stripped(
+                &latest.text,
+                &product_gdl,
+                &composed.gears,
+                frontend_kept,
+            );
+            if !lost.is_empty() {
+                return Err(invalid(anyhow::anyhow!(
+                    "the save is refused, so revision {} is not stripped: {}",
+                    latest.revision,
+                    lost.join("; ")
+                )));
+            }
+        }
         let base = match body.base_revision {
             Some(b) => Some(b),
-            None => product
-                .service
-                .latest_description(&ctx, project_id)
-                .await
-                .map_err(|e| descriptions_rest::internal(&e))?
-                .map(|l| l.revision),
+            None => latest.as_ref().map(|l| l.revision),
         };
         let saved = product
             .service
@@ -1778,7 +1921,7 @@ async fn preview_product(
                 &ctx,
                 project_id,
                 base,
-                &preview.product_gdl,
+                &product_gdl,
                 super::descriptions::SOURCE_STUDIO,
                 Some(&product_path),
             )
@@ -1799,7 +1942,7 @@ async fn preview_product(
                 return Ok(descriptions_rest::conflict_response(
                     body.base_revision,
                     latest,
-                    preview.product_gdl,
+                    product_gdl,
                 ));
             }
         });
@@ -1847,12 +1990,8 @@ async fn preview_product(
             None
         };
         let (open_pr, onto_base) = save_mode(body.open_pr, body.onto_base, share);
-        let branch = (!onto_base).then(|| {
-            use sha2::Digest as _;
-            let hash = sha2::Sha256::digest(preview.product_gdl.as_bytes());
-            let digest: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
-            format!("product/{}-{digest}", body.product_id)
-        });
+        let branch =
+            (!onto_base).then(|| format!("product/{}-{}", body.product_id, &gdl_sha256[..8]));
         let pr_title = open_pr.then(|| format!("Describe the {} product", body.product_id));
         let w = product
             .service
@@ -1862,7 +2001,7 @@ async fn preview_product(
                 branch.as_deref(),
                 &[super::scaffold::ScaffoldFile {
                     path: product_path.clone(),
-                    content: preview.product_gdl.clone(),
+                    content: product_gdl.clone(),
                 }],
                 &format!("product: describe {} for Gearbox", body.product_id),
                 pr_title.as_deref(),
@@ -1878,38 +2017,16 @@ async fn preview_product(
         None
     };
 
-    let r = preview.resolution;
-
     // The preview is the project's product now: what was asked, what the
     // engine said, and where it was saved. Recorded on every run, so the
     // project remembers its product without anybody pressing a second button.
-    let errors = r.diagnostics.iter().filter(|d| d.is_error()).count();
-    let warnings = r
-        .diagnostics
-        .iter()
-        .filter(|d| d.severity == "warning")
-        .count();
     let mut record = serde_json::Map::new();
     record.insert("product_id".into(), body.product_id.clone().into());
     record.insert("name".into(), name_for_record.into());
-    record.insert("gears".into(), serde_json::json!(body.gears));
+    record.insert("gears".into(), serde_json::json!(composed.gears));
     record.insert(
         "config".into(),
         serde_json::to_value(&config).unwrap_or(Value::Null),
-    );
-    record.insert("profile".into(), profile.clone().into());
-    record.insert(
-        "last_preview".into(),
-        serde_json::json!({
-            "profile": profile,
-            "ok": errors == 0,
-            "errors": errors,
-            "warnings": warnings,
-            "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
-            "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
-            "corpus_commit": preview.corpus_commit,
-            "infrastructure": preview.infrastructure,
-        }),
     );
     if let Some(w) = &written {
         record.insert(
@@ -1922,21 +2039,115 @@ async fn preview_product(
             }),
         );
     }
-    if let Err(e) = product
-        .service
-        .update_project_product(&ctx, &project_id.to_string(), record)
-        .await
-    {
-        // The preview itself stands; only its memory is lost.
-        tracing::warn!(error = %format!("{e:#}"), "gearbox: could not record the project's product");
+    // A save is recorded now, before its check: what was saved stands
+    // whatever the check says and however long it takes. A check alone is
+    // recorded with its verdict, as before.
+    if write {
+        record_product(
+            &product.service,
+            &ctx,
+            project_id,
+            std::mem::take(&mut record),
+        )
+        .await;
     }
 
+    // The check runs on a task of its own, so it finishes -- and its verdict
+    // is kept under `checks.<profile>` -- even when nobody waits for it any
+    // more: a save answers by `SAVE_ANSWERS_WITHIN` whether or not it is done, and
+    // the gateway may give up on a check alone.
+    let check = tokio::spawn(check_and_record(
+        Arc::clone(gearbox),
+        Arc::clone(&product.service),
+        ctx.clone(),
+        project_id,
+        scope,
+        input,
+        described,
+        record,
+    ));
+    let checked = if write {
+        let left = SAVE_ANSWERS_WITHIN.saturating_sub(started.elapsed());
+        tokio::time::timeout(left, check).await.ok()
+    } else {
+        Some(check.await)
+    };
+    let verdict = match checked {
+        Some(Ok(Ok(preview))) => Verdict::Checked(preview.resolution),
+        Some(Ok(Err(e))) if !write => return Err(invalid(e)),
+        Some(Ok(Err(e))) => {
+            tracing::warn!(%project_id, error = %format!("{e:#}"), "gearbox: the check of a saved description failed");
+            Verdict::Failed(format!("{e:#}"))
+        }
+        Some(Err(e)) => {
+            return Err(CanonicalError::internal(format!("the check task failed: {e}")).create());
+        }
+        None => {
+            tracing::info!(%project_id, %profile, "gearbox: the save answers before its check; the check is kept when it finishes");
+            Verdict::Checking
+        }
+    };
+
     Ok(axum::response::IntoResponse::into_response(axum::Json(
-        ProductPreviewDto {
-            ok: !r.diagnostics.iter().any(|d| d.is_error()),
-            product_gdl: preview.product_gdl,
-            profile,
-            diagnostics: r
+        preview_dto(
+            ProductPreviewDto {
+                ok: false,
+                product_gdl,
+                gdl_sha256,
+                profile,
+                diagnostics: Vec::new(),
+                applications: Vec::new(),
+                gears: Vec::new(),
+                added: composition
+                    .added_hosts
+                    .into_iter()
+                    .map(|(host, plugin)| GearboxAddedDto {
+                        reason: format!("host of {plugin}"),
+                        id: host,
+                    })
+                    .collect(),
+                plugin_options: composition
+                    .plugin_options
+                    .into_iter()
+                    .map(|(host, available)| GearboxPluginOptionDto { host, available })
+                    .collect(),
+                not_described: composition.not_described,
+                corpus_commit,
+                written,
+                description_revision,
+                checking: false,
+            },
+            verdict,
+        ),
+    )))
+}
+
+/// The api-gateway's request timeout: fixed at 30 s in cf-gears-api-gateway
+/// 0.5.2, which has no setting for it (config/*.yaml say so).
+const GATEWAY_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// By when, from its start, a save answers: with its check when the check is
+/// done by then, else without it. Well inside [`GATEWAY_REQUEST_TIMEOUT`], so
+/// a save is never lost to the gateway; the check carries on and is kept
+/// under the product's `checks.<profile>`.
+const SAVE_ANSWERS_WITHIN: std::time::Duration = std::time::Duration::from_secs(20);
+const _: () = assert!(SAVE_ANSWERS_WITHIN.as_secs() + 5 < GATEWAY_REQUEST_TIMEOUT.as_secs());
+
+/// What the engine said of a description, as far as the request knows.
+enum Verdict {
+    Checked(super::gearbox::Resolution),
+    /// Still running: kept on the product's record when it finishes.
+    Checking,
+    /// The engine could not check it (a save stands regardless).
+    Failed(String),
+}
+
+/// `dto` with the engine's verdict in it.
+fn preview_dto(mut dto: ProductPreviewDto, verdict: Verdict) -> ProductPreviewDto {
+    match verdict {
+        Verdict::Checked(r) => {
+            dto.ok = !r.diagnostics.iter().any(|d| d.is_error());
+            dto.diagnostics = r
                 .diagnostics
                 .into_iter()
                 .map(|d| GearboxDiagnosticDto {
@@ -1947,8 +2158,8 @@ async fn preview_product(
                     file: d.file,
                     line: d.line,
                 })
-                .collect(),
-            applications: r
+                .collect();
+            dto.applications = r
                 .applications
                 .into_iter()
                 .map(|a| GearboxApplicationDto {
@@ -1967,8 +2178,8 @@ async fn preview_product(
                         })
                         .collect(),
                 })
-                .collect(),
-            gears: r
+                .collect();
+            dto.gears = r
                 .gears
                 .into_iter()
                 .map(|g| GearboxGearDto {
@@ -1976,28 +2187,98 @@ async fn preview_product(
                     crate_name: g.crate_name,
                     reasons: g.reasons,
                 })
-                .collect(),
-            added: preview
-                .composition
-                .added_hosts
-                .into_iter()
-                .map(|(host, plugin)| GearboxAddedDto {
-                    reason: format!("host of {plugin}"),
-                    id: host,
-                })
-                .collect(),
-            plugin_options: preview
-                .composition
-                .plugin_options
-                .into_iter()
-                .map(|(host, available)| GearboxPluginOptionDto { host, available })
-                .collect(),
-            not_described: preview.composition.not_described,
-            corpus_commit: preview.corpus_commit,
-            written,
-            description_revision,
-        },
-    )))
+                .collect();
+        }
+        Verdict::Checking => {
+            dto.ok = false;
+            dto.checking = true;
+        }
+        Verdict::Failed(why) => {
+            dto.ok = false;
+            dto.diagnostics = vec![GearboxDiagnosticDto {
+                code: "check-failed".to_owned(),
+                severity: "error".to_owned(),
+                message: format!("the engine could not check the description: {why}"),
+                help: Some("the description is saved; check it again".to_owned()),
+                file: None,
+                line: None,
+            }];
+        }
+    }
+    dto
+}
+
+/// Merge `patch` into the project's product record. A failure is logged,
+/// not the request's: what was asked stands, only its memory is lost.
+async fn record_product(
+    service: &ProductService,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+    patch: serde_json::Map<String, Value>,
+) {
+    if patch.is_empty() {
+        return;
+    }
+    if let Err(e) = service
+        .update_project_product(ctx, &project_id.to_string(), patch)
+        .await
+    {
+        tracing::warn!(error = %format!("{e:#}"), "gearbox: could not record the project's product");
+    }
+}
+
+/// The engine's check of `described` for its profile, kept on the project's
+/// product record -- with `record`, what else the request records -- under
+/// `checks.<profile>` (ADR-0057) and `last_preview`. Run on a task of its
+/// own, so the verdict is kept whether or not anybody still waits for it.
+#[allow(clippy::too_many_arguments)]
+async fn check_and_record(
+    gearbox: Arc<Gearbox>,
+    service: Arc<ProductService>,
+    ctx: SecurityContext,
+    project_id: Uuid,
+    scope: Scope,
+    input: PreviewInput,
+    described: super::gearbox::Described,
+    mut record: serde_json::Map<String, Value>,
+) -> anyhow::Result<super::gearbox::Preview> {
+    let profile = input.profile.clone();
+    let preview = gearbox.check(scope, input, described).await?;
+    let (check, last) = check_record(&preview, &profile);
+    record.insert("last_preview".into(), last);
+    let mut checks = serde_json::Map::new();
+    checks.insert(profile, check);
+    record.insert("checks".into(), Value::Object(checks));
+    record_product(&service, &ctx, project_id, record).await;
+    Ok(preview)
+}
+
+/// A profile's kept check (ADR-0057), and `last_preview`: the same with the
+/// profile in it, for older readers. The description's hash says whether the
+/// check is still about the product as it is now.
+fn check_record(preview: &super::gearbox::Preview, profile: &str) -> (Value, Value) {
+    let r = &preview.resolution;
+    let errors = r.diagnostics.iter().filter(|d| d.is_error()).count();
+    let warnings = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == "warning")
+        .count();
+    let check = serde_json::json!({
+        "ok": errors == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
+        "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
+        "infrastructure": preview.infrastructure,
+        "corpus_commit": preview.corpus_commit,
+        "gdl_sha256": super::descriptions::digest(&preview.product_gdl),
+    });
+    let mut last = check.clone();
+    if let Some(o) = last.as_object_mut() {
+        o.insert("profile".into(), profile.into());
+    }
+    (check, last)
 }
 
 async fn create_repo(
@@ -2039,11 +2320,15 @@ pub fn register_routes(
 ) -> Router {
     let router = OperationBuilder::get("/studio-product/v1/projects/{project_id}/gear-repo")
         .operation_id("studio_product.get_project_repo")
-        .summary("The gear repository connected to a project (0 or 1 node)")
+        .summary("The project source new gears go to (0 or 1 node)")
         .description(
-            "Returns the repository a project's gears are scaffolded into, as \
-                 zero or one node — a project with none has simply not connected \
-                 one yet.",
+            "Returns the project's source marked `gears_here` (ADR-0060), the \
+                 repository \"Create a gear\" writes into, as zero or one node \
+                 `{tenant, connection_id, repo, branch, source: true}`. The old \
+                 per-project gear repository record is folded into the project's \
+                 sources the first time it is read, and answered as it was until \
+                 it can be. It decides neither where product.gdl is published nor \
+                 what a build clones.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -2062,11 +2347,12 @@ pub fn register_routes(
 
     let router = OperationBuilder::post("/studio-product/v1/projects/{project_id}/gear-repo")
         .operation_id("studio_product.set_project_repo")
-        .summary("Connect (or update) the gear repository for a project")
+        .summary("Mark the project source new gears go to")
         .description(
-            "Connects a project to the repository its gears are scaffolded \
-                 into, or replaces that connection. The branch defaults to \
-                 `main`. The repository is reached through a studio-connector \
+            "Marks the project source that is this repository `gears_here` \
+                 (ADR-0060), adding it to the project's sources when it is not \
+                 one, and clears the mark on every other source. The branch \
+                 defaults to the repository's default branch, else `main`. The repository is reached through a studio-connector \
                  connection, so its credential stays in credstore. The \
                  connection must be the organization's own -- held by it, a \
                  workspace or a project of it; one inherited from the platform \
@@ -2148,9 +2434,9 @@ pub fn register_routes(
         .operation_id("studio_product.get_project_product")
         .summary("The product a project is composing out of gears")
         .description(
-            "The gears picked for the project's product, its deployment \
-                 profile, and what the Gearbox engine said at the last preview. \
-                 Empty until something is picked.",
+            "The gears picked for the project's product, and what the Gearbox \
+                 engine said of it per deployment profile (`checks`, ADR-0057) and \
+                 at the last preview. Empty until something is picked.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -2488,13 +2774,19 @@ pub fn register_routes(
          the resolution arrived at. With `write`, also saves product.gdl as the \
          project's next description revision, which Studio keeps (ADR-0053): \
          made against `base_revision`, a 409 with both texts when that is not \
-         the latest. With `publish` (or `open_pr` / `onto_base`) it is also \
+         the latest -- unless the text is the latest's already, which is that \
+         revision (`created: false`), so a save sent again is safe. A save \
+         answers within 20 s: with the engine's verdict when it is done by then, \
+         else `checking: true` and none, the check carrying on. With `publish` \
+         (or `open_pr` / `onto_base`) it is also \
          published to the repository, onto `product/<id>` with one pull request \
          or onto the base branch. A deployment whose product gear has no \
          database commits it onto a branch instead, as before. `write` with no \
          gears saves the description a new product project starts from, without \
          resolving it. A write through a connection the organization does not \
-         own is a 400 `CONNECTION_NOT_OWNED`.",
+         own is a 400 `CONNECTION_NOT_OWNED`. The verdict is kept on the \
+         product under `checks.<profile>` with the description's hash, beside \
+         the other profiles' (ADR-0057), whenever the check finishes.",
         )
         .tag("StudioProduct")
         .authenticated()

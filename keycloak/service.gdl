@@ -1,0 +1,18 @@
+# Studio's own Keycloak image: the stock runtime, optimized, with Studio's
+# authentication provider built in (Dockerfile). Realms and credentials come
+# at run time, never in the image. See ADR-0061 for the vocabulary.
+gdl_version = "1.6"
+
+service(
+    name = "studio-keycloak",
+    description = "Keycloak with Studio's authentication provider; realms and secrets come at run time",
+    dockerfile = "Dockerfile",
+    context = ".",
+    # Keycloak serves on 8080 under KC_HTTP_RELATIVE_PATH=/auth, and its
+    # management interface (KC_HEALTH_ENABLED) on 9000 at the root.
+    ports = {"http": 8080, "management": 9000},
+    health = "/health/ready",
+    env = {"KC_DB": "postgres"},
+    provides = ["oidc-identity-provider"],
+    docs = ["README.md", "GITHUB_SSO.md"],
+)

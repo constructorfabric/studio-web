@@ -126,3 +126,86 @@ export const LayersIcon = icon(
     <path d="M2.2 11.1L8 14l5.8-2.9" />
   </>,
 );
+
+/* ── Marks a workspace or a project may wear (tenant-glyphs.tsx) ── */
+
+export const FolderIcon = icon("Folder", <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.7l1.5 1.5h4.8A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" />);
+
+export const BoxIcon = icon(
+  "Box",
+  <>
+    <path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8z" />
+    <path d="M2.5 4.8L8 7.8l5.5-3M8 7.8v6.4" />
+  </>,
+);
+
+export const CodeIcon = icon("Code", <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9 3l-2 10" />);
+
+export const DatabaseIcon = icon(
+  "Database",
+  <>
+    <ellipse cx="8" cy="3.8" rx="5" ry="1.8" />
+    <path d="M3 3.8v8.4c0 1 2.2 1.8 5 1.8s5-.8 5-1.8V3.8M3 8c0 1 2.2 1.8 5 1.8S13 9 13 8" />
+  </>,
+);
+
+export const GlobeIcon = icon(
+  "Globe",
+  <>
+    <circle cx="8" cy="8" r="6" />
+    <path d="M2 8h12M8 2c1.7 1.7 2.5 3.7 2.5 6S9.7 12.3 8 14C6.3 12.3 5.5 10.3 5.5 8S6.3 3.7 8 2z" />
+  </>,
+);
+
+export const RocketIcon = icon(
+  "Rocket",
+  <>
+    <path d="M9.5 2.5c2-.6 3.6-.6 4 0 .6.4.6 2-.1 4L8.5 11.3 4.7 7.5z" />
+    <path d="M4.7 7.5 2.5 7l2-2.5 3 .2M8.5 11.3 9 13.5l2.5-2-.2-3" />
+    <path d="M4 12c-.6.6-1 1.6-1 1.6s1-.4 1.6-1" />
+  </>,
+);
+
+export const StarIcon = icon("Star", <path d="M8 2l1.8 3.8 4.2.5-3.1 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1L2 6.3l4.2-.5z" />);
+
+export const HeartIcon = icon("Heart", <path d="M8 13.5S2 10 2 6a3 3 0 0 1 6-1 3 3 0 0 1 6 1c0 4-6 7.5-6 7.5z" />);
+
+export const FlagIcon = icon("Flag", <path d="M3.5 14V2.5M3.5 3c3-1.5 5 1.5 9 0v6c-4 1.5-6-1.5-9 0" />);
+
+export const BoltIcon = icon("Bolt", <path d="M9 1.8 3.5 9H8l-1 5.2L12.5 7H8z" />);
+
+export const LeafIcon = icon(
+  "Leaf",
+  <>
+    <path d="M3 13c0-6 3.5-9.5 10-10 0 6.5-3.5 10-9 10z" />
+    <path d="M3 13l5.5-5.5" />
+  </>,
+);
+
+export const FlaskIcon = icon(
+  "Flask",
+  <>
+    <path d="M6 2h4M6.5 2v4L2.8 12.5A1 1 0 0 0 3.7 14h8.6a1 1 0 0 0 .9-1.5L9.5 6V2" />
+    <path d="M4.5 9.5h7" />
+  </>,
+);
+
+export const ChartIcon = icon("Chart", <path d="M2.5 13.5h11M4.5 11V8M8 11V4.5M11.5 11V6.5" />);
+
+export const CloudIcon = icon("Cloud", <path d="M4.5 12.5a3 3 0 0 1-.3-6 4 4 0 0 1 7.6-1A3.3 3.3 0 0 1 11.5 12.5z" />);
+
+export const LockIcon = icon(
+  "Lock",
+  <>
+    <rect x="3" y="7" width="10" height="7" rx="1.5" />
+    <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+  </>,
+);
+
+export const UsersIcon = icon(
+  "Users",
+  <>
+    <circle cx="6" cy="5.5" r="2.3" />
+    <path d="M2 13.5c0-2.2 1.8-4 4-4s4 1.8 4 4M10.5 3.4a2.3 2.3 0 0 1 0 4.3M14 13.5c0-1.8-1-3.2-2.5-3.8" />
+  </>,
+);

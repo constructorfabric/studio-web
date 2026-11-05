@@ -35,7 +35,9 @@ oversights but a missing rule. Three examples, all live:
   `(ctx.subject_id(), ctx.subject_tenant_id())`. Its field is called `user_id`
   and it holds an identity. The name is what hid the defect: nobody noticed that
   *user* and *identity* had come apart, so a person signing in the other way
-  silently lost their theme. ADR-0017 took the gear over.
+  silently lost their theme. ADR-0017, "We own the settings gear for now",
+  took the gear over; that record never reached `main`, and the
+  [index](README.md) keeps its number reserved.
 - **Administrative rights.** `config/oidc.yaml` maps the Keycloak user attribute
   `tenant_id` into `subject_tenant_id`, and three comparisons against the
   platform root — guarding eight administrative routes between them — decide

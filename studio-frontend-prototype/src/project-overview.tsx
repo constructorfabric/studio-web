@@ -1,51 +1,81 @@
-/* ── Project Overview — the project's dashboard ───────────────────────────────
+/* ── Project Overview — the project manager's home ───────────────────────────
  *
- * The one screen that answers "what is in this project, and what state is it
- * in", from the systems that actually hold the answer:
+ * The one screen that answers "how is this project doing?", top to bottom:
  *
- *   documents   studio-documents — the effective type catalogue as the spec
- *               pipeline, plus every project document's status and whether it
- *               conforms to its type. "Validate all" re-runs the checks here.
- *   sources     workspace settings (the repositories attached to the project)
- *               crossed with the artifact graph's repo nodes, which carry the
- *               last sync and what it pulled. Sync runs from this screen.
- *   artifacts   what the builds produced: the CI artifacts and releases the
- *               sync keeps (studio-artifact-ingest), scoped to this project.
- *   quality     spec_finding nodes the Spec Quality tab wrote back.
- *   pull requests  who each open one is waiting on, from
- *               studio-artifact-ingest's /open-pull-requests
- *               (pull-requests-waiting.tsx).
- *   kits/team/automation — kit installations, tenant users, the trust ramp.
- *   studio      the IDE session for this project — launched from here.
+ *   1. A header with ONE verdict -- On track, At risk or Blocked -- its main
+ *      reason in a phrase, and ONE primary action: the next step of the path
+ *      (Open IDE once the path is done). The rules are
+ *      `project-overview-model.ts` (projectSignals, projectVerdict).
+ *   2. The path as a strip, one row (project-path-view.tsx): the current step
+ *      outlined, each step's line on hover or click.
+ *   3. Metrics: "This project now" (releases and where each environment's
+ *      version sits, spec health, the team), then the shared metrics board
+ *      (metrics-board.tsx) scoped to the project, without the panels only an
+ *      organization's overview fills.
+ *   4. Needs attention, beside it: what waits on the PM or the team, one
+ *      sentence and one action a row. Stuck pull requests open their list
+ *      (pull-requests-waiting.tsx) in place.
+ *   5. Recent activity: the newest five rows of the Activity feed.
  *
- * Nothing on this screen is decoration: every number is a live read, and a
- * gear that does not answer is named rather than shown as a confident zero.
- */
+ * Detail lives on its own tab: the spec pipeline by type and the findings are
+ * on Specs, kits on Components, artifacts on Artifacts.
+ *
+ * Reads, each on its own so a slow one never holds the screen:
+ *   sources       project-sources.ts (the repositories) and the artifact
+ *                 graph's repo nodes (synced or not; comment threads waiting)
+ *   path          project-path-view.tsx readPathFacts
+ *   rollup        studio-organizations /rollups (spec health, open threads)
+ *   health        studio-organizations /overview, this project's line
+ *                 (a refused connection, stuck pull requests, a quiet project)
+ *   pull requests studio-artifact-ingest /open-pull-requests
+ *   deployments   studio-environments /deployments
+ *   activity      studio-artifact-ingest's Activity feed
+ *   team          the organization's members the project's access reaches (org-people.ts)
+ *   studio        the IDE session for this project, launched from here
+ *
+ * A source that does not answer is named under Needs attention, never shown
+ * as a confident zero. */
 
-import { LevelBadge } from "./level-marks";
+import { HeaderIcon } from "./tenant-icon-view";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { projectTeam } from "./org-people";
 import type {
+  ActivityEvent,
   ArtifactNode,
-  Doc,
-  PipelineRow,
-  JourneyStage,
-  DocType,
-  DocValidation,
-  KitInstallation,
+  Deployment,
   Me,
+  OpenPullRequest,
+  OrgProjectHealth,
   ProjectConfig,
   RepoEntry,
+  RollupRow,
   StudioSession,
   User,
-  WorkspaceSettings,
 } from "./api";
 import { findRepoNode } from "./artifact-sync";
 import { projectRepoRows } from "./project-sources";
-import { errText, initials, relTime } from "./format";
+import { relTime } from "./format";
+import { MetricsBoard } from "./metrics-board";
+import type { PanelTarget } from "./metrics-model";
+import { MetricPanel, type TargetLabels } from "./metrics-panels";
 import { OpenInDesktop } from "./open-in-desktop";
+import {
+  lastDeploy,
+  nextStep,
+  projectSignals,
+  projectVerdict,
+  recentActivity,
+  specHealthPanel,
+  teamPanel,
+  versionsByEnvironment,
+  type Signal,
+  type SignalTarget,
+} from "./project-overview-model";
+import { projectPath, type PathFacts } from "./project-path";
+import { ProjectPath, readPathFacts } from "./project-path-view";
 import { PullRequestsWaiting } from "./pull-requests-waiting";
-import { ProjectPath } from "./project-path-view";
+import { EmptyState, InfoPopover, PageHeader, StatusChip, type Tone } from "./ui-standard";
 
 /** The sections of an open project. Lives here because Overview is the screen
  *  that links to all of them; the shell's rail renders the list.
@@ -60,13 +90,11 @@ import { ProjectPath } from "./project-path-view";
  * the product says "Specs", is a prototype of a different product.
  *
  * Renamed rather than rebuilt, screens unchanged: "kits" is Components,
- * "people" is Team, "documents" is Specs. Two — activity and timeline — have
- * NO screen behind them yet and say so on the page; they are in the list
- * because the list is the thing being matched, and quietly omitting them would
- * make the nav wrong in the one way that is being checked. "automation" has no
- * counterpart in the product's list and is kept after Team rather than dropped,
- * because dropping it would delete a working screen to win a screenshot
- * comparison.
+ * "people" is Team, "documents" is Specs. Timeline had no screen behind it
+ * and Automation stored a trust ramp nothing read, so both were removed
+ * (2026-11-03): a tab is in the list when it does something. Builds and
+ * Deploys became one Releases tab (ADR-0056 §4); their old ids still open it
+ * (MOVED_PROJECT_TABS).
  *
  * SOURCES was ours first and the product has since grown it, in the same place
  * and under the same name — worth knowing before anyone "aligns" it away.
@@ -84,16 +112,14 @@ export type ProjTab =
   | "model"
   | "components"
   | "parts"
-  | "builds"
+  | "releases"
   | "tests"
-  | "deploys"
   | "kits"
   | "artifacts"
   | "sources"
+  | "connections"
   | "activity"
-  | "timeline"
-  | "people"
-  | "automation";
+  | "people";
 
 /** What the dashboard needs to know about the project it is showing — the
  *  project tenant, plus the organization it hangs under. */
@@ -106,319 +132,149 @@ export interface OverviewProject {
 }
 
 /** A read that may fail because its gear is not deployed (or answers 404 from
- *  outside a self-managed subtree). Record which one, hand back the fallback,
- *  and let the dashboard say so — a missing gear is not "zero of them". */
-async function optional<T>(label: string, p: Promise<T>, fallback: T, misses: string[]): Promise<T> {
+ *  outside a self-managed subtree): null, and the label named on screen -- a
+ *  missing gear is not "zero of them". */
+async function soft<T>(label: string, p: Promise<T>, misses: Set<string>): Promise<T | null> {
   try {
     return await p;
   } catch {
-    misses.push(label);
-    return fallback;
+    misses.add(label);
+    return null;
   }
 }
 
-/** `total` from a one-row page — the cheapest way to count a node type. */
-async function countNodes(token: string, type: string, scope: string): Promise<number> {
-  const page = await api.listArtifactNodes(token, type, scope, undefined, 1);
-  return page.total ?? 0;
-}
+/** The organization board's panels that only the organization's overview
+ *  fills, or that rank workspaces: not a project's. */
+const ORG_ONLY = ["waiting-on-nobody", "spec-health", "idle", "spend-by-workspace"];
 
-/* ── Small presentational pieces ── */
-
-/** A dashboard number: big count, what it counts, one line of detail. Clicking
- *  it goes to the tab that owns the thing. */
-function Stat({
-  label,
-  value,
-  sub,
-  tone,
-  onClick,
-}: {
-  label: string;
-  value: string | number;
-  sub?: string;
-  tone?: "ok" | "warn" | "danger";
-  onClick?: () => void;
-}) {
-  return (
-    <button type="button" className={`stat${tone ? ` ${tone}` : ""}`} onClick={onClick} disabled={!onClick}>
-      <span className="stat-k">{label}</span>
-      <span className="stat-n">{value}</span>
-      <span className="stat-sub">{sub ?? " "}</span>
-    </button>
-  );
-}
-
-/** Percentage + slim bar + count — the conformance and sync meters. */
-function Meter({ done, total, unit }: { done: number; total: number; unit: string }) {
-  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  return (
-    <div className="coverage">
-      <span className="pct">{total === 0 ? "—" : `${pct}%`}</span>
-      <span className="track">
-        <span className="fill" style={{ width: `${pct}%` }} />
-      </span>
-      <span className="count">
-        {done}/{total} {unit}
-      </span>
-    </div>
-  );
-}
-
-const STATUS_TONE: Record<Doc["status"], string> = {
-  draft: "draft",
-  review: "review",
-  approved: "ok",
+/** Where a panel opens, in a project's words. Spend has no project tab. */
+const LABELS: TargetLabels = {
+  projects: "Sources",
+  people: "Team",
+  environments: "Releases",
+  releases: "Releases",
+  reports: "Activity",
+  specs: "Specs",
+  costs: null,
+  tasks: null,
 };
+const PANEL_TAB: Partial<Record<PanelTarget, ProjTab>> = {
+  projects: "sources",
+  people: "people",
+  environments: "releases",
+  releases: "releases",
+  reports: "activity",
+  specs: "specs",
+};
+
+const LEVEL_TONE: Record<Signal["level"], string> = { blocked: "danger", risk: "warn", info: "info" };
+const BUILD_TONE: Record<string, Tone> = { passed: "ok", failed: "danger", running: "running", queued: "neutral" };
 
 /* ── The dashboard ── */
 
 export function ProjectOverview({
   token,
   project,
-  parentWorkspaceId,
   onOpenTab,
   onOpenStudio,
 }: {
   token: string;
   project: OverviewProject;
-  /** The parent workspace tenant — documents and their types are stored there
-   *  and inherited by the project, so every document read is scoped to it. */
-  parentWorkspaceId: string;
   onOpenTab: (tab: ProjTab) => void;
   /** Launch (or attach to) this project's IDE session and open it as a space. */
   onOpenStudio: () => void;
 }) {
-  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
-  /** The project's repositories (`project-sources.ts`), as rows. */
-  const [repos, setRepos] = useState<RepoEntry[]>([]);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
-  const [types, setTypes] = useState<DocType[]>([]);
-  // The workspace's effective stage catalogue: names, order and which are
-  // required. It used to be a constant in api.ts; an organization can change
-  // it now, so the dashboard asks instead of assuming (ADR-0014 s7).
-  const [stageCatalogue, setStageCatalogue] = useState<JourneyStage[]>([]);
-  const [docs, setDocs] = useState<Doc[]>([]);
-  /** Repository files joined to a document type. */
-  /** One row per declared type, folded by studio-documents. */
-  const [rows, setRows] = useState<PipelineRow[]>([]);
   const [repoNodes, setRepoNodes] = useState<ArtifactNode[]>([]);
-  const [counts, setCounts] = useState<{ build_artifact: number; release: number }>({
-    build_artifact: 0,
-    release: 0,
-  });
-  const [findings, setFindings] = useState<ArtifactNode[]>([]);
-  const [findingTotal, setFindingTotal] = useState(0);
-  const [kits, setKits] = useState<KitInstallation[]>([]);
-  const [team, setTeam] = useState<User[]>([]);
-  /* Who is reading this screen, for the one fact on it that is about them.
-   *
-   * Asked for here rather than handed down: the subject lives three components
-   * above, and threading it through two of them that have no use for it is a
-   * worse change than one more request on a screen that already makes a dozen.
-   * It is the CANONICAL person id (`GET /me`), not the token subject — the two
-   * are different UUIDs for the same human, and the IDE signs its comments with
-   * this one. */
-  const [meSubject, setMeSubject] = useState<string | null>(null);
   const [sessions, setSessions] = useState<StudioSession[]>([]);
+  /* The CANONICAL person id (`GET /me`), not the token subject: the IDE signs
+     its comments with this one, and the sync credits threads to it. */
+  const [meSubject, setMeSubject] = useState<string | null>(null);
+  // undefined: reading; null: could not be read.
+  const [path, setPath] = useState<PathFacts | null | undefined>(undefined);
+  const [rollup, setRollup] = useState<RollupRow | null | undefined>(undefined);
+  const [health, setHealth] = useState<OrgProjectHealth | null | undefined>(undefined);
+  const [pulls, setPulls] = useState<OpenPullRequest[] | null | undefined>(undefined);
+  const [deployments, setDeployments] = useState<Deployment[] | null | undefined>(undefined);
+  const [events, setEvents] = useState<ActivityEvent[] | null | undefined>(undefined);
+  const [team, setTeam] = useState<User[] | null | undefined>(undefined);
+  const [repoCount, setRepoCount] = useState<{ repos: number; synced: number | null } | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Validation run from this screen: per document id, what the checker said.
-  const [checks, setChecks] = useState<Record<string, DocValidation>>({});
-  const [validating, setValidating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [showPulls, setShowPulls] = useState(false);
 
-  const load = useCallback(
-    async (quiet = false) => {
-      if (!quiet) setLoading(true);
-      const misses: string[] = [];
-      const [
-        s,
-        cfg,
-        ownRepos,
-        typePage,
-        stagePage,
-        docPage,
-        pipelinePage,
-        repoPage,
-        buildArtifacts,
-        releases,
-        findingPage,
-        kitPage,
-        users,
-        sessionPage,
-        who,
-      ] =
-        await Promise.all([
-          optional("workspace settings", api.workspaceSettings(token, project.id), null, misses),
-          optional("project config", api.projectConfig(token, project.id), null, misses),
-          optional("repositories", projectRepoRows(token, project.id), [] as RepoEntry[], misses),
-          optional("document types", api.docTypes(token, parentWorkspaceId), { items: [] as DocType[] }, misses),
-          optional(
-            "journey stages",
-            api.stages(token, parentWorkspaceId),
-            { items: [] as JourneyStage[] },
-            misses,
-          ),
-          optional(
-            "documents",
-            api.projectDocuments(token, parentWorkspaceId, project.id),
-            { items: [] as Doc[] },
-            misses,
-          ),
-          // The repository's side of the same question. A file bound to a type
-          // is a document of that type, and reading only the authored ones is
-          // why this screen used to say "not started" about types the Specs
-          // table was already listing fourteen documents under. Both sides are
-          // folded by the server now, so the bindings themselves are no longer
-          // fetched here — only the answer.
-          optional(
-            "spec pipeline",
-            api.specPipeline(token, project.id),
-            { items: [] as PipelineRow[], total: 0 },
-            misses,
-          ),
-          optional(
-            "artifact graph",
-            api.listArtifactNodes(token, "repo", project.id, undefined, 200),
-            { nodes: [] as ArtifactNode[], total: 0 },
-            misses,
-          ),
-          optional("CI artifacts", countNodes(token, "build_artifact", project.id), 0, misses),
-          optional("releases", countNodes(token, "release", project.id), 0, misses),
-          optional(
-            "spec-quality findings",
-            api.listArtifactNodes(token, "spec_finding", project.id, undefined, 200),
-            { nodes: [] as ArtifactNode[], total: 0 },
-            misses,
-          ),
-          optional("kit registry", api.kitInstallations(token, project.id), { items: [] as KitInstallation[] }, misses),
-          optional("team", api.tenantUsersAll(token, project.id), { items: [] as User[] }, misses),
-          optional("IDE sessions", api.studioSessions(token), { items: [] as StudioSession[] }, misses),
-          // The fallback is a whole Me, not a partial: `optional` types its
-          // answer from it, and a screen that cannot ask who you are simply
-          // has nobody to address rather than a different shape to handle.
-          optional(
-            "who you are",
-            api.me(token),
-            { subject_id: "", subject_tenant_id: "" } as Me,
-            misses,
-          ),
+  const load = useCallback(async () => {
+    const misses = new Set<string>();
+    const settle = () => setMissing([...misses]);
+    const id = project.id;
+    const jobs: Promise<unknown>[] = [];
+    // The sources first: the path counts them.
+    jobs.push(
+      (async () => {
+        const [repos, nodes] = await Promise.all([
+          soft("repositories", projectRepoRows(token, id), misses),
+          soft("artifact graph", api.listArtifactNodes(token, "repo", id, undefined, 200), misses),
         ]);
-
-      setSettings(s);
-      setRepos(ownRepos);
-      setConfig(cfg);
-      setTypes(typePage.items ?? []);
-      setStageCatalogue(stagePage.items ?? []);
-      setDocs(docPage.items ?? []);
-      setRows(pipelinePage.items ?? []);
-      setRepoNodes(repoPage.nodes ?? []);
-      setCounts({ build_artifact: buildArtifacts, release: releases });
-      setFindings(findingPage.nodes ?? []);
-      setFindingTotal(findingPage.total ?? (findingPage.nodes ?? []).length);
-      setKits(kitPage.items ?? []);
-      setTeam(users.items ?? []);
-      // A session is keyed by the tenant it was launched for, so the project's
-      // own sessions are the ones carrying its id.
-      setSessions((sessionPage.items ?? []).filter((x) => x.workspace_id === project.id));
-      setMeSubject(who.subject_id || null);
-      // De-duplicated so one unreachable gear is named once.
-      setMissing([...new Set(misses)]);
-      setLoading(false);
-    },
-    [token, project.id, parentWorkspaceId],
-  );
+        const repoList: RepoEntry[] | null = repos;
+        const nodeList = nodes?.nodes ?? null;
+        setRepoNodes(nodeList ?? []);
+        const synced = repoList && nodeList ? repoList.filter((r) => findRepoNode(nodeList, r) !== undefined).length : null;
+        setRepoCount(repoList ? { repos: repoList.length, synced } : null);
+        setPath(await readPathFacts(token, id, repoList ? repoList.length : null, synced));
+      })(),
+    );
+    jobs.push(soft("project config", api.projectConfig(token, id), misses).then(setConfig));
+    jobs.push(
+      soft("rollup", api.rollups(token, id), misses).then((r) => setRollup(r ? (r.items.find((x) => x.id === id) ?? null) : null)),
+    );
+    jobs.push(
+      project.orgId
+        ? soft("organization overview", api.orgOverview(token, project.orgId), misses).then((o) =>
+            setHealth(o ? (o.workspaces.flatMap((w) => w.projects).find((p) => p.id === id) ?? null) : null),
+          )
+        : Promise.resolve(setHealth(null)),
+    );
+    jobs.push(soft("pull requests", api.openPullRequests(token, id), misses).then((r) => setPulls(r ? r.items : null)));
+    jobs.push(soft("deployments", api.deployments(token, { project: id }), misses).then((r) => setDeployments(r ? r.items : null)));
+    jobs.push(soft("activity", api.activityFeed(token, id), misses).then((r) => setEvents(r ? r.items : null)));
+    jobs.push(
+      project.orgId
+        ? soft("team", projectTeam(token, project.orgId, id), misses).then((r) => setTeam(r))
+        : Promise.resolve(setTeam(null)),
+    );
+    jobs.push(
+      soft("IDE sessions", api.studioSessions(token), misses).then((r) =>
+        // A session is keyed by the tenant it was launched for.
+        setSessions((r?.items ?? []).filter((x) => x.workspace_id === id)),
+      ),
+    );
+    jobs.push(soft("who you are", api.me(token), misses).then((who: Me | null) => setMeSubject(who?.subject_id || null)));
+    await Promise.all(jobs.map((j) => j.finally(settle)));
+  }, [token, project.id, project.orgId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  /** Re-read everything without tearing the screen down: a dashboard that
-   *  blanks to "Loading…" on every refresh is worse than a stale number. */
+  /** Re-read everything without blanking the screen: a stale number beats a
+   *  dashboard that flashes "Loading…" on every refresh. */
   const refresh = async () => {
     setRefreshing(true);
     try {
-      await load(true);
+      await load();
     } finally {
       setRefreshing(false);
     }
   };
 
-  /* ── Derived state ── */
+  /* ── Derived ── */
 
-  /** True when the gear behind a number did not answer — the number is then
-   *  unknown, which is not the same as zero. */
-  const missed = (label: string) => missing.includes(label);
+  const steps = useMemo(() => (path ? projectPath(path) : path === null ? null : undefined), [path]);
 
-  /** The graph's record of an attached source: present once it has been synced
-   *  at least once, and carrying when that was and what came in. */
-  const graphRepo = useCallback(
-    (r: RepoEntry): ArtifactNode | undefined => findRepoNode(repoNodes, r),
-    [repoNodes],
-  );
-
-  const syncedRepos = repos.filter((r) => graphRepo(r) !== undefined).length;
-  const artifactTotal = counts.build_artifact + counts.release;
-  const artifactsKnown = !["CI artifacts", "releases"].some(missed);
-
-  const started = rows.filter((r) => !r.untouched);
-  const notStarted = rows.filter((r) => r.untouched);
-  const approved = docs.filter((d) => d.status === "approved").length;
-  /** Every document the project has, written here or bound from a repository
-   *  — the same count the Spec pipeline rows add up to. Counting only the
-   *  authored ones made this card say "none yet" beside a pipeline listing a
-   *  hundred documents. */
-  const specTotal = rows.reduce((n, r) => n + r.total, 0);
-  const specValid = rows.reduce((n, r) => n + r.valid, 0);
-
-  /** Findings by severity — the detectors write `high`/`medium`/`low`, and
-   *  anything unlabelled counts as `info`. */
-  const bySeverity = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const f of findings) {
-      const sev = String(f.value.severity ?? "info").toLowerCase();
-      m.set(sev, (m.get(sev) ?? 0) + 1);
-    }
-    return m;
-  }, [findings]);
-  const highFindings = (bySeverity.get("high") ?? 0) + (bySeverity.get("critical") ?? 0);
-
-  // Catalogue order, filtered to what this project carries. Never re-sorted:
-  // the order is the catalogue's, and the catalogue is the workspace's.
-  //
-  // No selection means the whole catalogue, not an empty row. It used to mean
-  // an empty row, which was right while the New project card asked for a
-  // subset and wrong the moment it stopped: `stage_status` has always computed
-  // against every stage the workspace has, so showing none of them hid an
-  // answer the server had already worked out. A project that carries a subset
-  // -- one created before, or one that gets a stage setting later -- still
-  // gets exactly that subset.
-  const stages = (config?.stages ?? []).length
-    ? stageCatalogue.filter((s) => config?.stages?.includes(s.key))
-    : stageCatalogue;
-
-  const liveSession = sessions.find((s) => s.state === "running") ?? sessions[0];
-
-  /* ── Actions ── */
-
-  /*
-   * Open comment threads across this project that are waiting on the person
-   * reading the screen.
-   *
-   * The sync writes this onto each repository node (`waiting_on`), crediting
-   * everybody in an open thread except whoever spoke last. The id it writes is
-   * the author record's — `oidc:<subject>` — and the subject is the canonical
-   * person id, which is why the match is an identity rather than a name: two
-   * people can share a display name, and one person can change theirs.
-   *
-   * Summed across repositories, because a project can have several and the
-   * question is about the project. Undefined rather than zero when no
-   * repository carries the key at all: a sync that never read a checkout has
-   * no answer, and "nothing is waiting on you" is a different thing to say.
-   */
+  /* Open comment threads waiting on the reader, summed across the project's
+     repositories: the sync writes `waiting_on` onto each repo node, crediting
+     everybody in an open thread except whoever spoke last, as `oidc:<subject>`.
+     Undefined when no repository carries the key: no answer is not zero. */
   const waitingOnMe = useMemo(() => {
     if (!meSubject) return undefined;
     const mine = `oidc:${meSubject}`;
@@ -431,503 +287,328 @@ export function ProjectOverview({
     return total;
   }, [repoNodes, meSubject]);
 
-  /* Running a sync moved to the Sources section along with the card that
-     offered it. This screen still READS the repositories — the Repositories
-     stat counts them and warns when some are unsynced — but a job that takes
-     minutes should not be owned by a dashboard people leave as soon as they
-     have read it. */
+  const signals = useMemo(
+    () => projectSignals({ path, rollup, pulls, deployments, health, waitingOnMe }),
+    [path, rollup, pulls, deployments, health, waitingOnMe],
+  );
+  const verdict = projectVerdict(signals, steps);
+  const next = nextStep(steps);
+  const liveSession = sessions.find((s) => s.state === "running") ?? sessions[0];
 
-  /** Re-run every document's type checks and keep the reports. The stored
-   *  `conforms` flag is only as fresh as each document's last save, and it
-   *  says nothing about WHY — the reports give both, without having to open
-   *  seven documents one at a time. */
-  const validateAll = async () => {
-    if (docs.length === 0) return;
-    setValidating(true);
-    setError(null);
-    try {
-      const results = await Promise.all(
-        docs.map(async (d) => {
-          try {
-            return [d.id, await api.validateDocument(token, parentWorkspaceId, d.id)] as const;
-          } catch {
-            return null;
-          }
-        }),
-      );
-      setChecks(Object.fromEntries(results.filter((r): r is [string, DocValidation] => r !== null)));
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setValidating(false);
-    }
+  const act = (target: SignalTarget) => {
+    if (target === "ide") onOpenStudio();
+    else if (target === "pulls") setShowPulls(true);
+    else onOpenTab(target);
+  };
+  const openPanel = (t: PanelTarget) => {
+    const tab = PANEL_TAB[t];
+    if (tab) onOpenTab(tab);
   };
 
-  if (loading) return <p className="empty">Loading project…</p>;
-
-  // What the last "Validate all" run objected to, each line named by the
-  // document it is about — an unattributed list of complaints is unusable.
-  const issues = Object.entries(checks).flatMap(([id, v]) => {
-    const title = docs.find((d) => d.id === id)?.title ?? id.slice(0, 8);
-    return (v.issues ?? []).map((line) => ({ id, title, line }));
-  });
+  const openIde = (primary: boolean) => (
+    <button
+      className={primary ? "primary" : "ghost"}
+      onClick={onOpenStudio}
+      title={liveSession ? `The IDE is ${liveSession.state}: open it in this window` : "Start a session for this project and open it in this window"}
+      data-open-ide
+      data-ide-state={liveSession?.state}
+    >
+      Open IDE
+    </button>
+  );
 
   return (
-    <div className="dash">
-      {/* How this project is SET UP — one line, not a card.
-          Where it sits is no longer repeated here. The id was already under the
-          title two lines above ("project · d5e76267…") and the organization is
-          the first segment of the bar's PathBar, so this row opened by telling
-          the reader twice what they could already see, and buried the part only
-          it knows — kind, status, automation level — behind that. */}
-      <div className="dash-context">
-        <LevelBadge level="project" />
-        <h1 className="level-title">{project.name}</h1>
-        {config?.kind && <span className="badge info">{config.kind.replace("_", " ")}</span>}
-        {config?.status && (
-          <span
-            className={`badge ${config.status === "active" ? "ok" : config.status === "archived" ? "neutral" : "draft"}`}
-          >
-            {config.status}
-          </span>
-        )}
-        {project.self_managed && <span className="badge selfmanaged">self-managed</span>}
-        {settings?.automation_level && <span className="badge">{settings.automation_level}</span>}
-        <button className="ghost" disabled={refreshing} onClick={() => void refresh()}>
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
-
-      {error && <div className="error">{error}</div>}
-      {missing.length > 0 && (
-        <p className="hint">
-          No answer from: {missing.join(", ")} — what they hold is shown as “—”, not as zero.
-        </p>
-      )}
-
-      {/* Where the project is on its way to a product that builds. Loads on
-          its own, after the numbers below, so a slow model read never holds
-          the dashboard. */}
-      <ProjectPath
-        token={token}
-        projectId={project.id}
-        repositories={missed("repositories") ? null : repos.length}
-        onOpenTab={onOpenTab}
+    <div className="dash proj-dash" data-project-overview>
+      <style>{PROJ_DASH_CSS}</style>
+      <PageHeader
+        icon={<HeaderIcon token={token} level="project" id={project.id} name={project.name} kind={config?.kind} />}
+        title={project.name}
+        info={
+          <>
+            <p>
+              How the project is doing: one verdict, the path from its sources to a running product, its numbers, and
+              what waits on you or the team.
+            </p>
+            <p>
+              <b>Blocked</b>: the repository connection is refused, the product does not resolve, the last build or
+              deploy failed, or a high finding is open. <b>At risk</b>: specs fail their checks, or pull requests have
+              waited over a week or have nobody asked to review them. <b>On track</b>: none of those. The button is
+              the next step of the path; the rest is under Needs attention.
+            </p>
+          </>
+        }
+        status={
+          <>
+            <StatusChip tone={verdict.tone} data-verdict={verdict.state}>
+              {verdict.label}
+            </StatusChip>
+            {verdict.reason && (
+              <span className="pov-reason" data-verdict-reason>
+                {verdict.reason}
+              </span>
+            )}
+            {verdict.more > 0 && <span className="sub">+{verdict.more} more below</span>}
+          </>
+        }
+        actions={
+          <>
+            {next ? (
+              <button className="primary" onClick={() => onOpenTab(next.tab)} title={next.status} data-next-step={next.id}>
+                {next.action}
+              </button>
+            ) : (
+              openIde(true)
+            )}
+            {next && openIde(false)}
+            <OpenInDesktop token={token} project={project} />
+            <button
+              className="ghost pov-refresh"
+              disabled={refreshing}
+              onClick={() => void refresh()}
+              title="Read everything again"
+              aria-label="Refresh"
+            >
+              {refreshing ? "…" : "↻"}
+            </button>
+          </>
+        }
       />
 
-      {/* The project in six numbers. Each one opens the tab that owns it. */}
-      <div className="dash-stats">
-        <Stat
-          label="Specs"
-          value={missed("spec pipeline") ? "—" : specTotal}
-          sub={
-            specTotal
-              ? `${specValid} valid${approved ? ` · ${approved} approved` : ""}`
-              : "none yet"
-          }
-          tone={specTotal > 0 && specValid < specTotal ? "warn" : undefined}
-          onClick={() => onOpenTab("specs")}
-        />
-        <Stat
-          label="Pipeline"
-          value={missed("document types") ? "—" : `${started.length}/${types.length}`}
-          sub={notStarted.length ? `${notStarted.length} type${notStarted.length === 1 ? "" : "s"} not started` : "every type covered"}
-          onClick={() => onOpenTab("specs")}
-        />
-        <Stat
-          label="Repositories"
-          value={missed("repositories") ? "—" : repos.length}
-          sub={repos.length ? `${syncedRepos} synced` : "none attached"}
-          tone={repos.length > 0 && syncedRepos < repos.length ? "warn" : undefined}
-          /* Sources, not Artifacts. The stat counts sources and the tone warns
-             about unsynced ones, so the place it opens should be the one where
-             a sync is run — not the list of what a sync produced. */
-          onClick={() => onOpenTab("sources")}
-        />
-        <Stat
-          label="Artifacts"
-          value={artifactsKnown ? artifactTotal : "—"}
-          sub={`${counts.build_artifact} from CI · ${counts.release} releases`}
-          onClick={() => onOpenTab("artifacts")}
-        />
-        <Stat
-          label="Findings"
-          value={missed("spec-quality findings") ? "—" : findingTotal}
-          sub={highFindings ? `${highFindings} high severity` : findingTotal ? "none high" : "not analysed"}
-          tone={highFindings ? "danger" : undefined}
-          onClick={() => onOpenTab("specs")}
-        />
-        <Stat
-          label="Team"
-          value={missed("team") ? "—" : team.length}
-          sub={
-            team.length === 0
-              ? "nobody assigned"
-              : team
-                  .slice(0, 2)
-                  .map((u) => u.display_name || u.username)
-                  .join(", ") + (team.length > 2 ? ` +${team.length - 2}` : "")
-          }
-          onClick={() => onOpenTab("people")}
-        />
-      </div>
+      <ProjectPath steps={steps ?? null} facts={path} onOpenTab={onOpenTab} />
 
-      <div className="dash-grid">
-        <div className="dash-col">
-          {/* ── Spec pipeline: which document types this project has produced,
-                and whether what it produced passes its own type's checks. ── */}
-          <div className="card">
-            <div className="card-head">
-              <h2>Spec pipeline</h2>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="ghost" disabled={validating || docs.length === 0} onClick={() => void validateAll()}>
-                  {validating ? "Validating…" : "Validate all"}
-                </button>
-                <button className="ghost" onClick={() => onOpenTab("specs")}>
-                  Documents →
-                </button>
-              </div>
+      <div className="pov-layout">
+        <div className="pov-main">
+          {showPulls && (
+            <div className="pov-pulls" data-pulls-open>
+              <button className="ghost pov-pulls-close" onClick={() => setShowPulls(false)}>
+                Hide pull requests
+              </button>
+              <PullRequestsWaiting
+                token={token}
+                projectId={project.id}
+                repositories={repoCount?.repos ?? 0}
+                synced={(repoCount?.synced ?? 0) > 0}
+              />
             </div>
-            <p className="hint">
-              One row per document type the workspace defines, counting documents written here and
-              repository files bound to that type alike. A type with documents shows how they stand
-              and how many satisfy the type's required sections; the rest is what this project has
-              neither written nor found. A file a scan only guessed at is shown as unconfirmed and
-              left out of the count — a guess is not coverage. “Validate all” re-checks every
-              document and lists what the checker objects to.
-            </p>
+          )}
 
-            {stages.length > 0 && (
-              <div className="dash-stages">
-                {stages.map((s) => (
-                  <span key={s.key} className="chip on">
-                    {s.label}
-                  </span>
-                ))}
-              </div>
-            )}
+          <section className="mb-row" data-board-row="project" aria-label="This project now">
+            <h3 className="mb-row-title">This project now</h3>
+            <div className="mb-grid">
+              <ReleasesPanel path={path} deployments={deployments} onOpen={() => onOpenTab("releases")} />
+              <MetricPanel panel={specHealthPanel(rollup)} against="" onOpen={openPanel} labels={LABELS} />
+              <MetricPanel panel={teamPanel(team, rollup?.team, events, pulls)} against="" onOpen={openPanel} labels={LABELS} />
+            </div>
+          </section>
 
-            {types.length === 0 ? (
-              <p className="empty">No document types — define them on the workspace's Document types tab.</p>
-            ) : (
-              <table className="ptable">
-                <thead>
-                  <tr>
-                    <th>Type</th>
-                    <th>Documents</th>
-                    <th>Valid</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {started.map((row) => {
-                    // `row.valid` is the server's count, from the verdict on
-                    // each record. This screen may hold a fresher one — a
-                    // "Validate all" run — so it recounts when it does, and
-                    // takes the server's answer when it does not.
-                    const total = row.total;
-                    const counted = [...row.authored, ...row.bound];
-                    const valid = counted.some((e) => checks[e.id])
-                      ? counted.filter((e) => (checks[e.id]?.conforms ?? e.conforms) === true).length
-                      : row.valid;
-                    // Titles first, then repository paths: an authored
-                    // document has a name somebody chose, a bound file has a
-                    // path, and mixing them without order makes the line read
-                    // as neither.
-                    const names = [
-                      ...row.authored.map((d) => d.name),
-                      ...row.bound.map((b) => b.name),
-                    ];
-                    return (
-                      <tr key={row.type_key} className="prow root">
-                        <td>
-                          <div className="pcell">
-                            <div>
-                              <div className="name">{row.type_name}</div>
-                              <div className="sub">
-                                {names.slice(0, 3).join(", ")}
-                                {names.length > 3 ? ` +${names.length - 3}` : ""}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="dash-mix">
-                            {(["approved", "review", "draft"] as Doc["status"][]).map((st) => {
-                              const n = row.authored.filter((d) => d.status === st).length;
-                              return n > 0 ? (
-                                <span key={st} className={`badge ${STATUS_TONE[st]}`}>
-                                  {n} {st}
-                                </span>
-                              ) : null;
-                            })}
-                            {row.bound.length > 0 && (
-                              <span
-                                className="badge ok"
-                                title="Repository files bound to this type"
-                              >
-                                {row.bound.length} in repo
-                              </span>
-                            )}
-                            {/* A guess is not coverage, so it is shown and not
-                                counted — and it is shown, because it is the
-                                one thing on this row somebody can act on. */}
-                            {row.proposed.length > 0 && (
-                              <span
-                                className="badge warn"
-                                title="Detected by a scan, waiting for someone to confirm the type"
-                              >
-                                {row.proposed.length} unconfirmed
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td>
-                          {total > 0 ? (
-                            <Meter done={valid} total={total} unit="docs" />
-                          ) : (
-                            <button className="ghost" onClick={() => onOpenTab("specs")}>
-                              Review →
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {notStarted.map((t) => (
-                    <tr key={t.type_key} className="prow nested">
-                      <td>
-                        <div className="pcell">
-                          <div>
-                            <div className="name" style={{ fontWeight: 500 }}>
-                              {t.type_name}
-                            </div>
-                            <div className="sub">{t.type_description}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="sub">not started</td>
-                      <td className="pactions">
-                        <button className="ghost" onClick={() => onOpenTab("specs")}>
-                          Write it
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            {issues.length > 0 && (
-              <>
-                <p className="hint" style={{ marginTop: 12 }}>
-                  From the last validation run — {issues.length} issue{issues.length === 1 ? "" : "s"}
-                  {issues.length > 6 ? ", first six" : ""}:
-                </p>
-                <ul className="rows">
-                  {issues.slice(0, 6).map((it, i) => (
-                    <li key={`${it.id}-${i}`}>
-                      <div className="grow">
-                        <div className="name">{it.title}</div>
-                        <div className="sub">{it.line}</div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
-
-          {/* ── Pull requests: who each open one is waiting on. ── */}
-          <PullRequestsWaiting
+          <MetricsBoard
             token={token}
-            projectId={project.id}
-            repositories={repos.length}
-            synced={syncedRepos > 0}
+            org={project.orgId}
+            scope={{ kind: "project", id: project.id }}
+            overview={null}
+            exclude={ORG_ONLY}
+            onOpen={openPanel}
+            labels={LABELS}
           />
         </div>
 
-        <div className="dash-col">
-          {/* ── IDE: this project in the browser (a session) or in the desktop app. ── */}
-          <div className="card launcher">
+        <aside className="pov-side">
+          <section className="card pov-needs" data-project-needs>
             <div className="card-head">
-              <h2>IDE</h2>
-              {liveSession && <span className={`badge ${liveSession.state === "running" ? "ok" : "info"}`}>{liveSession.state}</span>}
+              <h3>Needs attention</h3>
+              {signals.length > 0 && <span className="att-count">{signals.length}</span>}
             </div>
-            {/* The one line on this screen that is about the reader. Above the
-                session state on purpose: it is the reason to open the IDE, and
-                a reason belongs before the door. Silent at zero — a dashboard
-                that reports nothing owed on every project teaches people to
-                stop reading it — and silent when the sync never read a
-                checkout, which is not the same as nothing owed. */}
-            {waitingOnMe ? (
-              <p className="hint waiting">
-                <b>
-                  {waitingOnMe} comment {waitingOnMe === 1 ? "thread is" : "threads are"} waiting on
-                  you
-                </b>{" "}
-                in this project. They are answered in the IDE, where the thread sits on the text it
-                is about.
-              </p>
-            ) : null}
-            {liveSession ? (
-              <>
-                <p className="hint">
-                  A session is up for this project
-                  {liveSession.sources.length
-                    ? ` with ${liveSession.sources.length} source${liveSession.sources.length === 1 ? "" : "s"} mounted`
-                    : " with an empty workspace"}
-                  . Opening it brings the IDE into this window; the Spaces list in the sidebar is
-                  where you stop it.
-                </p>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <button className="primary" onClick={onOpenStudio} title="Open the running session in this window">
-                    Web IDE
-                  </button>
-                  <OpenInDesktop token={token} project={project} />
-                </div>
-              </>
+            {signals.length === 0 ? (
+              <EmptyState
+                title={path === undefined ? "Reading the project…" : "Nothing waits on you or the team."}
+                body={path === undefined ? undefined : "No failing gate, stuck pull request or refused connection."}
+              />
             ) : (
-              <>
-                <p className="hint">
-                  Open this project in an IDE. The Web IDE is a session in your browser that clones{" "}
-                  {repos.length === 0
-                    ? "an empty workspace — attach a repository first to have it check something out"
-                    : `${repos.length} attached repositor${repos.length === 1 ? "y" : "ies"} and opens them together`}
-                  ; the desktop app does the same in the Constructor Studio app on your machine.
-                </p>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <button className="primary" onClick={onOpenStudio} title="Start a session for this project and open it in this window">
-                    Web IDE
-                  </button>
-                  <OpenInDesktop token={token} project={project} />
-                </div>
-              </>
+              <ul className="att-list">
+                {signals.map((s) => (
+                  <li key={s.key} className={`att-row tone-${LEVEL_TONE[s.level]}`} data-attention={s.key} data-level={s.level}>
+                    <span className="att-text">
+                      <b>{s.phrase}</b>
+                      {s.detail && <span className="sub">{s.detail}</span>}
+                    </span>
+                    <button type="button" className="ghost att-action" onClick={() => act(s.action.target)}>
+                      {s.action.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
-          </div>
+            {missing.length > 0 && (
+              <p className="sub pov-missing" data-no-answer title="What they hold is unknown, which is not zero.">
+                Not read: {missing.join(", ")}.
+              </p>
+            )}
+          </section>
 
-          {/* ── Spec quality: what the detectors found, written back to the
-                graph as findings on the documents they are about. ── */}
-          <div className="card">
+          <section className="card pov-activity" data-project-activity>
             <div className="card-head">
-              <h2>Spec quality</h2>
-              <button className="ghost" onClick={() => onOpenTab("specs")}>
-                Analyse →
+              <h3>Recent activity</h3>
+              <button className="linklike" onClick={() => onOpenTab("activity")}>
+                Activity →
               </button>
             </div>
-            {findingTotal === 0 ? (
-              <p className="empty">
-                No findings stored yet — run a detector on the Spec Quality tab and save its results.
-              </p>
+            {events === undefined ? (
+              <p className="sub">Reading…</p>
+            ) : events === null ? (
+              <EmptyState title="The Activity feed could not be read." />
+            ) : events.length === 0 ? (
+              <EmptyState title="Nothing has happened here yet." body="Checks and comments appear once a sync reads the documents." />
             ) : (
-              <>
-                <div className="dash-mix">
-                  {[...bySeverity.entries()]
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([sev, n]) => (
-                      <span
-                        key={sev}
-                        className={`badge ${sev === "high" || sev === "critical" ? "danger" : sev === "medium" ? "warn" : "info"}`}
-                      >
-                        {n} {sev}
-                      </span>
-                    ))}
-                </div>
-                <ul className="rows">
-                  {findings.slice(0, 5).map((f) => (
-                    <li key={f.instance_id}>
-                      <div className="grow">
-                        <div className="name">{String(f.value.summary ?? f.value.title ?? f.value.detector)}</div>
-                        <div className="sub">
-                          {String(f.value.detector ?? "detector")}
-                          {f.value.path ? ` · ${String(f.value.path)}` : ""}
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
-
-          {/* ── Kits: the capability bundles installed into this project. ── */}
-          <div className="card">
-            <div className="card-head">
-              <h2>Kits{kits.length ? ` · ${kits.length}` : ""}</h2>
-              <button className="ghost" onClick={() => onOpenTab("components")}>
-                Kits →
-              </button>
-            </div>
-            {kits.length === 0 ? (
-              <p className="empty">No kits installed — the registry is on the Kits tab.</p>
-            ) : (
-              <ul className="rows">
-                {kits.map((k) => (
-                  <li key={k.kit_slug}>
-                    <div className="grow">
-                      <div className="name">{k.kit_slug}</div>
-                      <div className="sub">
-                        {k.version} · {k.install_mode}
-                        {k.installed_at ? ` · ${relTime(k.installed_at)}` : ""}
-                      </div>
-                    </div>
-                    <span
-                      className={`badge ${k.status === "installed" ? "ok" : k.status === "failed" ? "danger" : "info"}`}
-                    >
-                      {k.status}
+              <ul className="pov-events">
+                {recentActivity(events).map((e) => (
+                  <li key={e.id} data-activity-row>
+                    <span className="pov-ev-what">
+                      <b>{e.event}</b>{" "}
+                      <span className="pov-ev-subject">{e.items ? `${e.items.length} documents` : e.subject}</span>
+                    </span>
+                    <span className="sub">
+                      {e.by} · {relTime(e.recorded)}
                     </span>
                   </li>
                 ))}
               </ul>
             )}
-          </div>
-
-          {/* ── Automation & team: how much the project lets workers do, and
-                who is on it. ── */}
-          <div className="card">
-            <div className="card-head">
-              <h2>Automation</h2>
-              <button className="ghost" onClick={() => onOpenTab("automation")}>
-                Settings →
-              </button>
-            </div>
-            <ul className="rows">
-              <li>
-                <div className="grow">
-                  <div className="name">{settings?.automation_level ?? "not set"}</div>
-                  <div className="sub">
-                    {(settings?.approved_worker_categories ?? []).length
-                      ? `approved: ${(settings?.approved_worker_categories ?? []).join(", ")}`
-                      : "no worker category approved yet"}
-                  </div>
-                </div>
-              </li>
-              <li>
-                <div className="grow">
-                  <div className="name">
-                    Team · {team.length} member{team.length === 1 ? "" : "s"}
-                  </div>
-                  <div className="sub">
-                    {team.length === 0
-                      ? "nobody assigned to this project tenant"
-                      : team
-                          .slice(0, 4)
-                          .map((u) => u.display_name || u.username)
-                          .join(", ")}
-                    {team.length > 4 ? ` +${team.length - 4}` : ""}
-                  </div>
-                </div>
-                <span className="avatars">
-                  {team.slice(0, 3).map((u) => (
-                    <span key={u.id} className="avatar" title={u.display_name || u.username}>
-                      {initials(u.display_name || u.username)}
-                    </span>
-                  ))}
-                </span>
-              </li>
-            </ul>
-          </div>
-        </div>
+          </section>
+        </aside>
       </div>
     </div>
   );
 }
+
+/* ── Releases: the last build and deploy, and what runs where ── */
+
+function ReleasesPanel({
+  path,
+  deployments,
+  onOpen,
+}: {
+  path: PathFacts | null | undefined;
+  deployments: Deployment[] | null | undefined;
+  onOpen: () => void;
+}) {
+  const build = path?.build;
+  const last = deployments ? lastDeploy(deployments) : null;
+  const envs = deployments ? versionsByEnvironment(deployments) : [];
+  const reading = path === undefined || deployments === undefined;
+  return (
+    <section className="card mb-panel pov-releases" data-panel="project-releases" data-source="Studio" data-panel-state={reading ? "loading" : "ok"}>
+      <header className="mb-panel-head">
+        <h4 className="mb-panel-title">Releases</h4>
+        <InfoPopover label="About Releases">
+          The newest finished build on the main branch (its CI runs), the newest deploy that ran, and the version each
+          environment runs: its newest successful install, by chart version, else build, else commit. A deploy that
+          failed after it is marked. It is now, not a range.
+          <br />
+          <br />
+          <b>Source:</b> Studio (its CI runs and deployments).
+        </InfoPopover>
+      </header>
+      {reading ? (
+        <div className="mb-loading" aria-busy="true">
+          <StatusChip tone="running">reading…</StatusChip>
+        </div>
+      ) : (
+        <dl className="pov-rel">
+          <dt>Last build</dt>
+          <dd data-last-build>
+            {build === null || build === undefined ? (
+              <span className="sub">CI runs not readable</span>
+            ) : build === "none" ? (
+              <span className="sub">no CI run yet</span>
+            ) : (
+              <>
+                <StatusChip tone={BUILD_TONE[build.status] ?? "neutral"}>{build.status}</StatusChip>
+                {build.sha && <code>{build.sha}</code>}
+              </>
+            )}
+          </dd>
+          <dt>Last deploy</dt>
+          <dd data-last-deploy>
+            {deployments === null ? (
+              <span className="sub">deployments not readable</span>
+            ) : !last ? (
+              <span className="sub">never deployed</span>
+            ) : (
+              <>
+                <StatusChip tone={last.state === "succeeded" ? "ok" : "danger"}>{last.state}</StatusChip>
+                <span>
+                  {last.environment_name} · {relTime(last.decided_at ?? last.requested_at)}
+                </span>
+              </>
+            )}
+          </dd>
+        </dl>
+      )}
+      {!reading && envs.length > 0 && (
+        <ul className="pov-envs" aria-label="What runs in each environment">
+          {envs.map((e) => (
+            <li key={e.environment} data-env={e.environment}>
+              <span className="pov-env-name">{e.environment}</span>
+              <code className="pov-env-ver" title={e.version}>
+                {e.version}
+              </code>
+              <span className="sub">{relTime(e.at)}</span>
+              {e.failedAfter && <StatusChip tone="warn">later deploy failed</StatusChip>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <button type="button" className="linklike mb-open" onClick={onOpen}>
+        Releases →
+      </button>
+    </section>
+  );
+}
+
+const PROJ_DASH_CSS = `
+.proj-dash .card-head { display:flex; align-items:center; gap:8px; }
+.proj-dash .card-head h3 { margin:0; font-size:14px; }
+.proj-dash .card-head .linklike { margin-left:auto; font-size:12px; }
+.proj-dash .sub { color:var(--muted-foreground); font-size:12px; overflow-wrap:anywhere; }
+.proj-dash .pov-reason { font-size:13px; }
+.proj-dash .pov-refresh { min-width:32px; padding-inline:8px; }
+.proj-dash .ppath-strip { margin:0 0 16px; padding:10px 14px; display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+.proj-dash .ppath-head { display:flex; align-items:center; gap:8px; flex:none; min-height:28px; }
+.proj-dash .ppath-head h2 { margin:0; font-size:14px; display:inline-flex; align-items:center; gap:4px; }
+.proj-dash .ppath-strip .ui-steps { flex:1; min-width:0; }
+.proj-dash .ppath-strip .fc-step-detail { margin-top:8px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:13px; }
+.proj-dash .ppath-reading { margin:6px 0 0; }
+.proj-dash .pov-layout { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start; }
+.proj-dash .pov-main { display:grid; gap:18px; min-width:0; }
+.proj-dash .pov-side { display:grid; gap:12px; position:sticky; top:12px; }
+@media (max-width: 1180px) {
+  .proj-dash .pov-layout { grid-template-columns:minmax(0,1fr); }
+  .proj-dash .pov-side { position:static; }
+}
+.proj-dash .pov-pulls { display:grid; gap:6px; }
+.proj-dash .pov-pulls-close { justify-self:end; font-size:12px; }
+.proj-dash .att-count { font-size:11px; padding:0 6px; border-radius:999px; background:var(--accent); color:var(--foreground); }
+.proj-dash .att-list { list-style:none; margin:0; padding:0; display:grid; gap:4px; }
+.proj-dash .att-row { display:flex; align-items:center; gap:10px; padding:4px 10px; min-height:34px; border-radius:8px; border:1px solid var(--border); border-left:3px solid var(--border); }
+.proj-dash .att-row.tone-danger { border-left-color:var(--destructive); }
+.proj-dash .att-row.tone-warn { border-left-color:var(--warning); }
+.proj-dash .att-row.tone-info { border-left-color:var(--primary); }
+.proj-dash .att-text { flex:1; min-width:0; font-size:13px; display:flex; flex-direction:column; gap:1px; }
+.proj-dash .att-text b { font-weight:600; }
+.proj-dash .att-action { flex:none; font-size:12px; white-space:nowrap; padding:2px 8px; min-height:0; }
+.proj-dash .pov-needs .dt-empty, .proj-dash .pov-activity .dt-empty { padding:6px 0; text-align:left; align-items:flex-start; }
+.proj-dash .pov-missing { margin:8px 0 0; }
+.proj-dash .pov-events { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.proj-dash .pov-events li { display:grid; gap:1px; font-size:13px; min-width:0; }
+.proj-dash .pov-ev-what { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.proj-dash .pov-ev-what b { font-weight:600; }
+.proj-dash .pov-ev-subject { color:var(--muted-foreground); }
+.proj-dash .pov-rel { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 10px; margin:6px 0 0; font-size:13px; align-items:center; }
+.proj-dash .pov-rel dt { color:var(--muted-foreground); font-size:12px; }
+.proj-dash .pov-rel dd { margin:0; display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0; }
+.proj-dash .pov-envs { list-style:none; margin:8px 0 0; padding:8px 0 0; border-top:1px solid var(--border); display:grid; gap:4px; }
+.proj-dash .pov-envs li { display:grid; grid-template-columns:minmax(0,6em) minmax(0,1fr) auto; gap:6px; align-items:center; font-size:12px; }
+.proj-dash .pov-envs li > .badge { grid-column:1 / -1; justify-self:start; }
+.proj-dash .pov-env-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.proj-dash .pov-env-ver { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+`;

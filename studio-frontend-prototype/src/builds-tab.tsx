@@ -1,5 +1,6 @@
-// A project's Builds tab (ADR-0045, ADR-0048 §9): the second step of the
-// product's way out, after Product composed it and before Deploys installs it.
+// A project's builds (ADR-0045, ADR-0048 §9), a part of its Releases tab
+// (ADR-0056 §4): the step after Product composed the product and before a
+// deploy installs it.
 // One line says where it stands; then Build the product, one scenario at a
 // time -- in Studio, as a Job in the organization's cluster; on my machine, in
 // the desktop IDE; or in CI, by the repository's workflow, whose runs show
@@ -15,8 +16,10 @@ import {
   type BuildLog,
   type Deployment,
   type DeployEnvironment,
+  type EnvironmentBinding,
   type ProjectBuildSetting,
   type ProjectConfig,
+  type ProjectImage,
 } from "./api";
 import {
   BUILD_STAGES,
@@ -39,6 +42,7 @@ import {
   isBuildWorkflow,
   isLost,
   openingScenario,
+  placeLines,
   productBuildsOf,
   repoPathsOf,
   statusTone,
@@ -57,7 +61,25 @@ import { errText } from "./format";
 import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
 import { buildsHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
+import { productPathOf } from "./product";
+import { recordFor, whereItRuns } from "./images";
 import { HowItBuilds } from "./project-build-card";
+import { showImage } from "./project-images";
+import { EmptyState, InfoPopover, PageHeader, StatusChip, type Tone } from "./ui-standard";
+
+/** What the three ways of building are, behind a "?". */
+const BUILD_INFO = (
+  <>
+    <p>
+      Build the product one way at a time: <b>In Studio</b>, as a Job in the organization&apos;s cluster; <b>On my
+      machine</b>, in the desktop IDE; or <b>In CI</b>, by the repository&apos;s workflow.
+    </p>
+    <p>
+      Every build shows in the table below whichever way it ran: how far it got (prepare, images, publish), what
+      failed and whose it is to fix, and, once it published its chart, Deploy.
+    </p>
+  </>
+);
 
 /** At most this many runs are read: the sync keeps the newest few hundred
  *  per repository. */
@@ -98,13 +120,22 @@ export function ProjectBuilds({
   projectId,
   projectName,
   onOpenTab,
+  round: outer = 0,
+  onChanged,
+  embedded = false,
 }: {
   token: string;
   projectId: string;
   /** What the desktop app calls the project it opens. */
   projectName?: string;
-  /** Open another tab of the project: Deploys, once a build is published. */
+  /** Open another tab of the project: Product, when the line says so. */
   onOpenTab?: (tab: PipelineTab) => void;
+  /** Bumped by Releases when something else on it changed: read again. */
+  round?: number;
+  /** Something here changed what Releases shows around it. */
+  onChanged?: () => void;
+  /** Inside Releases' first step, which gives the heading. */
+  embedded?: boolean;
 }) {
   const [ideBuilds, setIdeBuilds] = useState<IdeBuild[]>([]);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
@@ -112,7 +143,7 @@ export function ProjectBuilds({
   // Where the product can be built and deployed: the organization's
   // environments this project may use, its bindings, its deploys.
   const [environments, setEnvironments] = useState<DeployEnvironment[]>([]);
-  const [profiles, setProfiles] = useState<string[]>([]);
+  const [bindings, setBindings] = useState<EnvironmentBinding[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [saved, setSaved] = useState<SavedProduct | null>(null);
   const [chosen, setChosen] = useState<BuildScenario | null>(null);
@@ -126,10 +157,14 @@ export function ProjectBuilds({
   // How the project builds (ADR-0054 §7); `null` while it loads.
   const [build, setBuild] = useState<ProjectBuildSetting | null>(null);
   const [round, setRound] = useState(0);
-  const changed = useCallback((message: string) => {
-    setNote(message);
-    setRound((r) => r + 1);
-  }, []);
+  const changed = useCallback(
+    (message: string) => {
+      setNote(message);
+      setRound((r) => r + 1);
+      onChanged?.();
+    },
+    [onChanged],
+  );
 
   useEffect(() => {
     let live = true;
@@ -142,7 +177,7 @@ export function ProjectBuilds({
       .then((t) => {
         if (!live) return;
         setEnvironments(t.environments.map((e) => e.environment));
-        setProfiles([...new Set(t.bindings.map((b) => b.profile))]);
+        setBindings(t.bindings);
       })
       .catch(() => live && setEnvironments([]));
     api
@@ -150,19 +185,19 @@ export function ProjectBuilds({
       .then((b) => live && setBuild(b))
       .catch(() => live && setBuild({ kind: "gears", images: [], chart: null }));
     // What to build is the Product step's answer: where it last committed
-    // product.gdl, on which branch, for which profile.
+    // product.gdl and on which branch; the profile is the environment's.
     api
       .projectProduct(token, projectId)
       .then((p) => {
-        if (!live || !(p?.written || p?.description)) return;
+        const path = productPathOf(p);
+        if (!live || !(p?.written || p?.description) || !path) return;
         // A description Studio keeps is built with the code of the
         // repository's own branch (ADR-0053 §2); a branch is named only for
         // one that was never kept.
         setSaved({
-          path: p.description?.path ?? p.written?.path ?? "product.gdl",
+          path,
           branch: p.description ? null : p.written?.branch || null,
           prUrl: p.published?.pr_url ?? p.written?.pr_url ?? null,
-          profile: p.profile ?? null,
           revision: p.description?.revision ?? null,
         });
       })
@@ -207,7 +242,7 @@ export function ProjectBuilds({
     return () => {
       live = false;
     };
-  }, [token, projectId, round]);
+  }, [token, projectId, round, outer]);
   const builds = useMemo(
     () => productBuildsOf(ideBuilds, runs ?? [], config?.build, repoPaths),
     [ideBuilds, runs, config, repoPaths],
@@ -227,9 +262,15 @@ export function ProjectBuilds({
   };
 
   return (
-    <>
-      <h1>Builds</h1>
-      <PipelineLine hint={buildsHint(builds, canBuildInStudio)} onOpenTab={onOpenTab} />
+    <section data-release-builds>
+      {!embedded && (
+        <PageHeader
+          title="Builds"
+          status={<StatusChip tone={running ? "running" : "neutral"}>{running ? "a build runs" : `${builds.length} build${builds.length === 1 ? "" : "s"}`}</StatusChip>}
+          info={BUILD_INFO}
+        />
+      )}
+      <PipelineLine hint={buildsHint(builds, canBuildInStudio)} onOpenTab={onOpenTab} here="releases" />
       {note && (
         <div className="hint" data-builds-note>
           {note}
@@ -237,7 +278,12 @@ export function ProjectBuilds({
       )}
       <HowItBuilds token={token} projectId={projectId} projectName={projectName ?? "app"} build={build} onSaved={setBuild} />
       <section className="card" data-build-the-product>
-        <h2>Build the product</h2>
+        <div className="card-head">
+          <h2>
+            Build the product{" "}
+            <InfoPopover label="About building the product">{BUILD_INFO}</InfoPopover>
+          </h2>
+        </div>
         <div className="doc-views" role="tablist" aria-label="How to build" data-build-scenarios>
           {(Object.keys(SCENARIO_LABEL) as BuildScenario[]).map((s) => (
             <button
@@ -258,7 +304,7 @@ export function ProjectBuilds({
             token={token}
             projectId={projectId}
             environments={environments}
-            profiles={profiles}
+            bindings={bindings}
             saved={saved}
             own={build?.kind === "own" ? build : null}
             onChanged={changed}
@@ -270,7 +316,7 @@ export function ProjectBuilds({
             token={token}
             projectId={projectId}
             environments={environments}
-            profiles={profiles}
+            bindings={bindings}
             saved={saved}
             config={config}
             setConfig={setConfig}
@@ -290,7 +336,7 @@ export function ProjectBuilds({
         deployments={deployments}
         onChanged={changed}
       />
-    </>
+    </section>
   );
 }
 
@@ -314,8 +360,9 @@ function OnMyMachine({
       desktopLink({
         id: projectId,
         name: projectName,
-        // The desktop builds only a product it has open, so one is always named.
-        product: saved?.path ?? "product.gdl",
+        // The desktop builds only a product it has open, so one is always
+        // named: without a saved product the button is off.
+        product: saved?.path,
         branch: saved?.branch ?? undefined,
         build: true,
       }),
@@ -323,17 +370,24 @@ function OnMyMachine({
   return (
     <div data-build-on-my-machine>
       <p>
-        The desktop IDE builds on your machine: it opens the project, <b>Generates</b> the product and starts{" "}
-        <b>Build</b> by itself. <b>Publish</b> then pushes the images and the chart to an environment&apos;s registry
-        with a push-only token Studio gives for it. Each build reports itself and shows below, where it says{" "}
-        <code>desktop</code>.
+        The desktop IDE opens the project, generates the product and builds it on your machine.{" "}
+        <InfoPopover label="How a build on my machine works">
+          The desktop IDE opens the project, <b>Generates</b> the product and starts <b>Build</b> by itself.{" "}
+          <b>Publish</b> then pushes the images and the chart to an environment&apos;s registry with a push-only token
+          Studio gives for it. Each build reports itself and shows below, where it says <code>desktop</code>.
+        </InfoPopover>
       </p>
       <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <button
           type="button"
           className="primary"
           onClick={open}
-          title="Open this project in the Constructor Studio app on your machine and build it"
+          disabled={!saved}
+          title={
+            saved
+              ? "Open this project in the Constructor Studio app on your machine and build it"
+              : "Save the product in the Product step first"
+          }
           data-builds-open-ide
         >
           Build in the IDE
@@ -351,7 +405,7 @@ function InCi({
   token,
   projectId,
   environments,
-  profiles,
+  bindings,
   saved,
   config,
   setConfig,
@@ -364,7 +418,7 @@ function InCi({
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
-  profiles: string[];
+  bindings: EnvironmentBinding[];
   saved: SavedProduct | null;
   config: ProjectConfig | null;
   setConfig: (c: ProjectConfig) => void;
@@ -443,7 +497,7 @@ function InCi({
         token={token}
         projectId={projectId}
         environments={environments}
-        profiles={profiles}
+        bindings={bindings}
         saved={saved}
       />
       {failures.map((f) => (
@@ -465,9 +519,11 @@ function InCi({
       )}
       {!error && runs === null && <div className="empty">Loading the CI runs…</div>}
       {runs && runs.length === 0 && (
-        <div className="empty" data-builds-empty>
-          No CI runs yet: they arrive with the next sync of the project&apos;s sources, if the connection can read the
-          repository&apos;s Actions.
+        <div data-builds-empty>
+          <EmptyState
+            title="No CI runs yet."
+            body="They arrive with the next sync of the project's sources, if the connection can read the repository's Actions."
+          />
         </div>
       )}
       {runs && runs.length > 0 && (
@@ -475,13 +531,24 @@ function InCi({
           <div className="card-head" style={{ flexWrap: "wrap", gap: 8, marginTop: 12 }}>
             <div>
               <h3 data-builds-headline>{buildsHeadline(runs, chosen || null, branch || null)}</h3>
-              <p className="subtitle">
-                {chosenIsTheBuild
-                  ? "The project's build workflow; Build in CI starts it."
-                  : setting
-                    ? `The project's build workflow is ${setting.workflow} in ${setting.repo}.`
-                    : "Which workflow builds the product is not set yet; pick it and use it as the build workflow."}
-              </p>
+              <div className="subtitle" data-builds-workflow-state>
+                {chosenIsTheBuild ? (
+                  <StatusChip tone="ok">the project&apos;s build workflow</StatusChip>
+                ) : setting ? (
+                  <StatusChip tone="neutral" title={`The project's build workflow is ${setting.workflow} in ${setting.repo}.`}>
+                    build workflow: {setting.workflow}
+                  </StatusChip>
+                ) : (
+                  <StatusChip tone="warn">no build workflow set</StatusChip>
+                )}{" "}
+                <InfoPopover label="About the build workflow">
+                  {chosenIsTheBuild
+                    ? "This is the project's build workflow; Build in CI starts it."
+                    : setting
+                      ? `The project's build workflow is ${setting.workflow} in ${setting.repo}.`
+                      : "Which workflow builds the product is not set yet: pick it and use it as the build workflow."}
+                </InfoPopover>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <select
@@ -544,7 +611,7 @@ function InCi({
                 {shown.map((r) => (
                   <tr key={r.id} data-build-status={r.status}>
                     <td>
-                      <span className={`badge ${statusTone(r.status)}`}>{r.status}</span>
+                      <StatusChip tone={buildTone(r.status)}>{r.status}</StatusChip>
                       {r.externalId && published.get(`ci-run-${r.externalId}`) ? (
                         <span className="sub" data-run-published>
                           {" "}
@@ -705,6 +772,18 @@ function BuildDetails({
           from <code>{b.branch}</code>
         </div>
       )}
+      {b.place && placeLines(b.place).length > 0 && (
+        <dl className="sub" style={{ margin: "4px 0 0", display: "grid", gridTemplateColumns: "max-content 1fr", gap: "2px 8px" }} data-build-place>
+          {placeLines(b.place).map((l) => (
+            <div key={l.label} style={{ display: "contents" }}>
+              <dt>{l.label}</dt>
+              <dd style={{ margin: 0, overflowWrap: "anywhere" }}>
+                <code>{l.value}</code>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
       {lost && (
         <p className="hint" data-build-lost>
           {b.status === "failed" && b.failure
@@ -734,13 +813,7 @@ function BuildDetails({
         </div>
       )}
       {b.images.length > 0 ? (
-        <ul className="sub" style={{ margin: "8px 0 0", paddingLeft: 16 }} data-build-images>
-          {b.images.map((i) => (
-            <li key={i.app}>
-              {i.app} → <code>{i.image}</code>
-            </li>
-          ))}
-        </ul>
+        <BuildImages token={token} projectId={projectId} build={b} />
       ) : b.outputs.length > 0 ? (
         <div className="sub">{b.outputs.join(", ")}</div>
       ) : null}
@@ -761,6 +834,54 @@ function BuildDetails({
         />
       )}
     </div>
+  );
+}
+
+/** The images a build published, each linked to its record under Images:
+ *  where it runs now, whether it is pinned or gone. The records are read
+ *  when the build is opened; an image Studio did not record (a build from
+ *  before the records, or one the IDE pushed) is its reference alone. */
+function BuildImages({ token, projectId, build: b }: { token: string; projectId: string; build: IdeBuild }) {
+  const [records, setRecords] = useState<ProjectImage[]>([]);
+  useEffect(() => {
+    let live = true;
+    api
+      .projectImages(token, projectId, { build_id: b.buildId })
+      .then((page) => live && setRecords(page.items))
+      .catch(() => live && setRecords([]));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, b.buildId]);
+  return (
+    <ul className="sub" style={{ margin: "8px 0 0", paddingLeft: 16 }} data-build-images>
+      {b.images.map((i) => {
+        const record = recordFor(i, records, b.buildId);
+        return (
+          <li key={i.app} data-build-image={i.app}>
+            {i.app} → <code>{i.image}</code>
+            {record && (
+              <>
+                {" "}
+                ·{" "}
+                <a
+                  href={`#image-${record.id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    showImage(record.id);
+                  }}
+                  title={`${whereItRuns(record.running_in)}${record.pinned ? " Pinned." : ""}`}
+                  data-build-image-record={record.id}
+                >
+                  its record
+                </a>
+                {record.state !== "present" && <span> ({record.state})</span>}
+              </>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -873,15 +994,21 @@ const LOG_FOLLOW_MS = 5_000;
 /** The build's status; a lost one says so, in a warning's tone. */
 function StatusBadge({ build: b }: { build: IdeBuild }) {
   return isLost(b) ? (
-    <span className="badge warn" data-build-lost-badge>
+    <StatusChip tone="warn" data-build-lost-badge>
       lost
-    </span>
+    </StatusChip>
   ) : (
-    <span className={`badge ${statusTone(b.status)}`}>{b.status}</span>
+    <StatusChip tone={buildTone(b.status)}>{b.status}</StatusChip>
   );
 }
 
-const STAGE_TONE: Record<StageState, string> = { done: "ok", running: "info", failed: "danger", waiting: "neutral" };
+/** A build's status as a StatusChip's tone: statusTone, with a running build
+ *  drawn as running. */
+function buildTone(status: IdeBuild["status"]): Tone {
+  return status === "running" ? "running" : (statusTone(status) as Tone);
+}
+
+const STAGE_TONE: Record<StageState, Tone> = { done: "ok", running: "running", failed: "danger", waiting: "neutral" };
 const STAGE_MARK: Record<StageState, string> = { done: "✓", running: "…", failed: "✕", waiting: "" };
 
 /** prepare → images → publish, each as a badge in its state. A run of the
@@ -900,9 +1027,9 @@ function StageLane({ build: b }: { build: IdeBuild }) {
         return (
           <span key={stage} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
             {i > 0 && <span className="sub">→</span>}
-            <span className={`badge ${STAGE_TONE[state]}`} data-stage={stage} data-stage-state={state}>
+            <StatusChip tone={STAGE_TONE[state]} data-stage={stage} data-stage-state={state}>
               {STAGE_MARK[state]} {stage}
-            </span>
+            </StatusChip>
           </span>
         );
       })}

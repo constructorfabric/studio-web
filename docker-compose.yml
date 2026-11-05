@@ -225,6 +225,15 @@ services:
       # without them a session launch fails with a bare "unauthorized".
       STUDIO_REGISTRY_USER: ${STUDIO_REGISTRY_USER:-}
       STUDIO_REGISTRY_TOKEN: ${STUDIO_REGISTRY_TOKEN:-}
+      # A build Studio runs in an environment's cluster (ADR-0048 §9) runs its
+      # prepare and publish steps in Studio's own image, pulled by that cluster:
+      # a published studio-backend image, since this stand's image is local.
+      # Without it, Build in Studio answers 503 naming this variable.
+      # The builder a Studio build runs in (ADR-0062 §1): by digest, else
+      # refused -- but this local stand takes a tag, and says so in its log.
+      STUDIO_BUILDER_IMAGE: ${STUDIO_BUILDER_IMAGE:-}
+      STUDIO_BUILDER_ALLOW_TAG: ${STUDIO_BUILDER_ALLOW_TAG:-1}
+      STUDIO_BUILDKIT_IMAGE: ${STUDIO_BUILDKIT_IMAGE:-}
       # Read by the container ENTRYPOINT, not by any gear: it makes the
       # bind-mount below writable for the unprivileged server user. Keep it
       # equal to studio-session.workspaces_root in config/docker.yaml and to
@@ -240,6 +249,16 @@ services:
       STUDIO_GEARBOX_WORKDIR: /var/lib/studio/gearbox
       STUDIO_GEARBOX_CORPUS_URL: ${STUDIO_GEARBOX_CORPUS_URL:-https://github.com/MikeFalcon77/gears-rust.git}
       STUDIO_GEARBOX_CORPUS_REF: ${STUDIO_GEARBOX_CORPUS_REF:-feature/gearbox}
+      # The source id descriptions name the corpus by; unset takes the corpus
+      # repository's name (gears-rust here).
+      # STUDIO_GEARBOX_CORPUS_ID: gears-rust
+      # Where a product's frontend starts (product/frontx.rs); unset is
+      # FrontX's own templates.
+      # STUDIO_FRONTX_SHELL_TEMPLATE: github:constructorfabric/gears-frontx-templates//template-shell@main
+      # STUDIO_FRONTX_SOURCE: constructorfabric/gears-frontx-templates@main
+      # The kit catalogue (kit_registry/README.md), a JSON array of kits; unset
+      # is Constructor's own kits.
+      # STUDIO_KIT_CATALOGUE: '[{"slug":"sdlc","name":"SDLC","repository_url":"https://github.com/constructorfabric/studio-kit-sdlc","default_version":"main"}]'
     volumes:
       # studio-session gear: launches sibling Theia containers via the host
       # Docker daemon. The workspaces path must be IDENTICAL on host and in
@@ -270,12 +289,14 @@ services:
       # finished; on a warm volume it verifies the checksums and exits at once.
       embedding-model:
         condition: service_completed_successfully
-      # Keycloak only has to be STARTED, not healthy. Nothing in the backend's
-      # init path talks to it: oidc-authn-plugin just builds an HTTP client and
-      # registers itself (discovery + JWKS are fetched lazily, on the first
-      # token it validates), keycloak-idp-plugin gets its admin token on the
-      # first invite, and mini-chat's OAGW provisioning runs in
-      # RunnableCapability::start with its own retries. Gating on health only
+      # Keycloak only has to be STARTED, not healthy. oidc-authn-plugin just
+      # builds an HTTP client and registers itself (discovery + JWKS are
+      # fetched lazily, on the first token it validates), mini-chat's OAGW
+      # provisioning runs in RunnableCapability::start with its own retries,
+      # and keycloak-idp-plugin, which does take its admin token in init,
+      # retries for as long as config/docker.yaml's bootstrap_pre_warm says
+      # (three minutes, enough for a first realm import). The no-LLM seeder
+      # that used to run first waited for Keycloak's health and hid that. Gating on health only
       # meant that one failing IdP probe took down the entire stack —
       # including the API, which is perfectly usable meanwhile. Login starts
       # working the moment Keycloak is actually ready, with no restart.
@@ -285,10 +306,11 @@ services:
       # is for ordering — conflating the two is what cost an evening.
       keycloak:
         condition: service_started
-      # Fresh-DB gate: the no-LLM seeder must seed (and realm-bind) the platform
-      # root tenant and exit 0 before the LLM backend starts — otherwise oagw's
-      # post_init aborts boot resolving a root that account-management has not
-      # seeded yet. On a warm volume the seeder is a fast no-op (seconds).
+      # The gear databases exist and are migrated before the backend starts:
+      # `run` does not provision them. The root tenant is NOT a precondition:
+      # account-management seeds it in its serve phase, and oagw (>= 0.6, with
+      # a database) reconciles its registry in a background task that waits
+      # for that root instead of failing the boot.
       backend-bootstrap:
         condition: service_completed_successfully
       # A session cannot start without the image the gear launches, and the
@@ -311,23 +333,20 @@ services:
       start_period: 180s
       retries: 30
 
-  # Fresh-DB seeder — runs automatically on every `docker compose up`.
-  # On a brand-new volume the LLM chain's oagw gear aborts boot in post_init: it
-  # needs the platform root tenant, but account-management only seeds it later,
-  # in its serve phase. This variant is built --no-default-features, so it has
-  # NO oagw (and no graph): it reaches serve, seeds (and realm-binds) the root,
-  # then its bootstrap-seed.sh entrypoint exits 0. The main `backend` gates on
-  # this via `service_completed_successfully`, so nothing is left running.
-  # Idempotent: on a warm volume the root already exists and this exits in seconds.
+  # Database bootstrap — runs on every `docker compose up`, then exits: creates
+  # the gear databases config/docker.yaml names that do not exist yet and runs
+  # forward migrations (`studio-backend bootstrap --apply`, the same pass the
+  # Helm database-bootstrap hook runs before every deploy). Idempotent: on a
+  # warm volume it only confirms what is there. The main `backend` gates on it
+  # via `service_completed_successfully`. The same build as `backend`, so the
+  # second build is a cache hit.
   backend-bootstrap:
-    # Override the image entrypoint: run the backend, wait until the root tenant
-    # is seeded (gateway health 200), then exit so the gate above is satisfied.
-    entrypoint: ["/usr/local/bin/bootstrap-seed.sh"]
     build:
       context: .
       dockerfile: studio-backend/Dockerfile.src
       args:
-        CARGO_FEATURES: "--no-default-features"
+        CARGO_FEATURES: "--features theia-bridge"
+    command: ["--config", "/app/config/docker.yaml", "bootstrap", "--apply"]
     container_name: studio-backend-bootstrap
     restart: "no"
     environment:
@@ -335,16 +354,9 @@ services:
       STUDIO_CREDSTORE_KEY: ${STUDIO_CREDSTORE_KEY:-}
       STUDIO_WORKSPACES_ROOT: /srv/cf-studio-workspaces
     volumes:
-      - /srv/cf-studio-workspaces:/srv/cf-studio-workspaces
       - ./docker/keycloak/certs/dev-ca.pem:/app/certs/dev-ca.pem:ro
     depends_on:
       graph-postgres:
-        condition: service_healthy
-      # The seeder EAGERLY provisions the root tenant into Keycloak (realm-binds
-      # it via the keycloak-idp-plugin), so unlike the main backend it must wait
-      # for Keycloak to be fully ready — `/health/ready` is green only after the
-      # studio realm import completes. Gating on `started` would race the import.
-      keycloak:
         condition: service_healthy
 
   # Embedding model for the graph-storage `onnx` provider — a one-shot fetch

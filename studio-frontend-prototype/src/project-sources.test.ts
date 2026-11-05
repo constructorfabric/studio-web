@@ -6,6 +6,7 @@ import {
   checkoutDir,
   hasRepository,
   named,
+  sourcesByConnector,
   supportsPullRequests,
   withPicked,
   withShareMode,
@@ -145,5 +146,15 @@ describe("rows", () => {
       source: "git",
       url: "https://github.com/acme/api.git",
     });
+  });
+});
+
+describe("the connectors the sources came from", () => {
+  it("counts the repositories per connector, named as a person reads it", () => {
+    expect(sourcesByConnector([{ source: "github" }, { source: "gitlab" }, { source: "github" }])).toEqual([
+      { source: "github", label: "GitHub", count: 2 },
+      { source: "gitlab", label: "GitLab", count: 1 },
+    ]);
+    expect(sourcesByConnector([])).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
-// The path of a project, from an empty tenant to a product that builds: six
-// steps, each read off what the project already holds. Pure, so the rules for
+// The path of a project, from an empty tenant to a product that builds: seven
+// steps (what the product is comes after the specs), each read off what the project already holds. Pure, so the rules for
 // "done" sit in one place and are tested without a backend; the view in
 // project-path-view.tsx only gathers the numbers and draws them.
 
@@ -7,19 +7,25 @@ import type { ProjTab } from "./project-overview";
 
 export type StepState = "done" | "current" | "todo" | "unknown";
 
-export type StepId = "repos" | "types" | "model" | "findings" | "product" | "build";
+export type StepId = "repos" | "types" | "model" | "findings" | "kind" | "product" | "build";
 
 /** What the Overview could read. `null` everywhere means "that read failed":
  *  the step then says it does not know, rather than claiming it is not done. */
 export interface PathFacts {
   /** Repositories attached to the project. */
   repositories: number | null;
+  /** How many of them a sync has read; null (or absent) when unknown. */
+  synced?: number | null;
   /** The Specs queues: typed (bound), waiting for a decision, not read yet. */
   specs: { bound: number; needsReview: number; notScanned: number } | null;
   /** The domain model: documents read out of how many, facts, a build running. */
   model: { documents: number; extracted: number; facts: number; running: boolean } | null;
   /** Findings nobody has decided yet, and how many of those are high. */
   findings: { open: number; high: number } | null;
+  /** What the product is (product-kind.ts): confirmed, or what Studio
+   *  proposes. Absent: the path has no such step (an older caller); null:
+   *  it could not be read. */
+  kind?: { done: boolean; status: string } | null;
   /** The product record: gears picked, and what the last preview said. */
   product: { gears: number; resolves: boolean | null; errors: number; written: boolean } | null;
   /** The newest finished build on the main branch, or none ever. */
@@ -45,7 +51,13 @@ function repos(f: PathFacts): Draft {
   const base = { id: "repos" as const, title: "Connect a repository", tab: "sources" as const, action: "Open Sources" };
   if (f.repositories === null) return { ...base, done: null, status: "Could not read the project's sources." };
   return f.repositories > 0
-    ? { ...base, done: true, status: `${plural(f.repositories, "repository", "repositories")} attached.` }
+    ? {
+        ...base,
+        done: true,
+        status: `${plural(f.repositories, "repository", "repositories")} attached${
+          f.synced == null ? "" : f.synced === f.repositories ? `, ${f.synced === 1 ? "synced" : "all synced"}` : `, ${f.synced} synced`
+        }.`,
+      }
     : { ...base, done: false, status: "No repository yet. Attach one so Studio can read its documents." };
 }
 
@@ -97,6 +109,12 @@ function findings(f: PathFacts): Draft {
   };
 }
 
+function kind(f: PathFacts): Draft {
+  const base = { id: "kind" as const, title: "Decide what the product is", tab: "components" as const, action: "Open Product" };
+  if (!f.kind) return { ...base, done: null, status: "Could not read what the product is." };
+  return { ...base, done: f.kind.done, status: f.kind.status };
+}
+
 function product(f: PathFacts): Draft {
   const base = { id: "product" as const, title: "Compose the product", tab: "components" as const, action: "Open Product" };
   if (f.product === null) return { ...base, done: null, status: "Could not read the product." };
@@ -110,18 +128,28 @@ function product(f: PathFacts): Draft {
 }
 
 function build(f: PathFacts): Draft {
-  const base = { id: "build" as const, title: "Build and deploy", tab: "builds" as const, action: "Open Builds" };
+  const base = { id: "build" as const, title: "Build and deploy", tab: "releases" as const, action: "Open Releases" };
   if (f.build === null) return { ...base, done: null, status: "Could not read the CI runs." };
   if (f.build === "none") return { ...base, done: false, status: "No CI run seen yet." };
   const at = f.build.sha ? ` at ${f.build.sha}` : "";
   return { ...base, done: f.build.status === "passed", status: `Last build ${f.build.status}${at}.` };
 }
 
-/** The six steps in order. The current one is the first that is known and not
- *  done; an unknown step is skipped rather than made current, because a failed
- *  read is not where the project stands. */
+/** The steps in order: six, and "Decide what the product is" after the
+ *  findings when the caller read it -- the kind is proposed from the specs,
+ *  so it comes once they are read. The current one is the first that is
+ *  known and not done; an unknown step is skipped rather than made current,
+ *  because a failed read is not where the project stands. */
 export function projectPath(f: PathFacts): PathStep[] {
-  const drafts = [repos(f), types(f), model(f), findings(f), product(f), build(f)];
+  const drafts = [
+    repos(f),
+    types(f),
+    model(f),
+    findings(f),
+    ...(f.kind === undefined ? [] : [kind(f)]),
+    product(f),
+    build(f),
+  ];
   const current = drafts.findIndex((d) => d.done === false);
   return drafts.map(({ done, ...rest }, i) => ({
     ...rest,
@@ -141,15 +169,12 @@ export function specQueues(counts: readonly { queue: string; count: number }[]):
 }
 
 /** One line per project tab: what a person does there. Shown at the top of
- *  the tab, so a first visit is not spent guessing. Domain model and Builds are
- *  missing on purpose: each of Domain model's views carries its own line, and
- *  Builds opens on where the build stands and what comes next (pipeline.ts). */
+ *  the tab, so a first visit is not spent guessing. Domain model, Product and
+ *  Builds are missing on purpose: each of Domain model's views carries its own
+ *  line, Product opens on its way from configured to running
+ *  (product-flow.ts), and Builds on where the build stands and what comes next
+ *  (pipeline.ts). The others have a PageHeader (ui-standard.tsx) with their
+ *  status in a line and the explanation behind its "?". */
 export const TAB_HOWTO: Partial<Record<ProjTab, { lead: string; rest: string }>> = {
-  overview: { lead: "Where the project stands.", rest: "Follow the path below; each step opens the tab where it is done." },
-  sources: { lead: "Connect the repositories.", rest: "A sync reads their documents, issues, pull requests and CI runs into the project." },
-  specs: { lead: "Type the documents.", rest: "Confirm the template each file was written against; what Studio could not decide waits under Needs review." },
-  components: { lead: "Compose the product.", rest: "Pick the gears the specs ask for, preview until it resolves, then save it to the repository." },
-  artifacts: { lead: "Take what the project produced.", rest: "Download the files its CI builds kept and its releases; its typed documents and the files kept in Studio are beside them." },
   kits: { lead: "Install the project's ways of working.", rest: "Kits add workflows and conventions to the repository, pinned to a version." },
-  people: { lead: "Choose who works here.", rest: "Add people from the organization and give each a role on this project." },
 };

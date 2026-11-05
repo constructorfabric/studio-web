@@ -129,6 +129,12 @@ gears:
 
   api-gateway:
     config:
+      # Request timeout: 30 s, fixed in cf-gears-api-gateway 0.5.2 (a tower
+      # TimeoutLayer; "Request exceeded 30s timeout"). It is not configurable
+      # there, and this block denies unknown keys, so a `request_timeout` here
+      # would stop the boot. Studio works inside it: a product save answers
+      # within 20 s and its engine check carries on in the background
+      # (product/rest.rs SAVE_ANSWERS_WITHIN, ADR-0053, amendment 2026-11-04).
       # Throttling zones the mini-chat create-chat route names (its ThrottlingSpec);
       # api-gateway refuses to start when a route references an undefined zone.
       # Values follow gears-rust config/mini-chat.yaml. `ip` keys everyone behind
@@ -500,6 +506,14 @@ gears:
         platform_tenant_id: "00000000-0000-0000-0000-000000000001"
       keycloak:
         base_url: "http://keycloak:8080"
+        # The plugin takes its admin token in init and fails the boot when
+        # Keycloak does not answer within this budget (default 5 x 3s). Under
+        # compose the backend starts as soon as Keycloak has STARTED, and a
+        # first realm import takes a minute or two: 60 x 3s covers it, the
+        # same three minutes as the backend's health start_period.
+        bootstrap_pre_warm:
+          max_attempts: 60
+          backoff: 3s
         bootstrap_admin:
           # Shared-only mode: assert (GET) the studio realm — no master realm needed.
           realm: "studio"
@@ -528,13 +542,20 @@ gears:
       # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
       # own for any shared environment).
       signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
-      # Dev-only shared secret of the sidecar callbacks (file-storage 0.4
-      # requires it; a sidecar would get the same value as
-      # FS_SIDECAR_INTERNAL_TOKEN). None runs in this profile.
-      finalize_internal_secret: "studio-dev-fs-internal-token"
+      # Dev-only: the token a sidecar would send on its finalize callbacks
+      # (FS_SIDECAR_INTERNAL_TOKEN); file-storage >= 0.4 refuses to start
+      # without one.
+      finalize_internal_secret: "dev-file-storage-internal-secret"
 
   # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
+  # A database keeps upstreams and routes across restarts and moves the
+  # registry reconcile (which needs the root tenant) out of post_init into
+  # a background task in `start` (oagw >= 0.6, ADR-0018), so a fresh
+  # database no longer stops the boot before account-management seeds it.
   oagw:
+    database:
+      server: "pg_main"
+      dbname: "studio_oagw"
     config:
       proxy_timeout_secs: 120
 
@@ -676,6 +697,19 @@ gears:
         acquire_timeout: "10s"
         idle_timeout: "5m"
         max_lifetime: "30m"
+
+  # ── studio-environments (slugs, namespace assignments, image records, ADR-0062) ──
+  # A few rows per build and deploy. One connection: each one here is one
+  # more per replica on pg_main's budget.
+  studio-environments:
+    database:
+      server: "pg_main"
+      dbname: "studio_environments"
+      pool:
+        max_conns: 1
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
 
   # ── usage-collector (the platform's metering store, issue #781) ──
   # What model calls and IDE sessions use is recorded here by studio-llm-proxy

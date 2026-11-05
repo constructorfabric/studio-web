@@ -19,9 +19,9 @@
  * are not this module's; `pathToPlace` answers nothing for them.
  */
 
-// Project tabs that became a section of another (the Frontend tab is now
-// Product › Frontend): an old address opens the tab that holds it, and the
-// section scrolls itself into view (product-sections-view.tsx).
+// Project tabs that moved (the Frontend tab is now Product › Frontend, Builds
+// and Deploys are Releases): an old address opens the tab that holds it, and
+// a section scrolls itself into view (product-sections-view.tsx).
 import { MOVED_PROJECT_TABS } from "./product-sections";
 
 /** What of the shell's Place an address carries. */
@@ -40,7 +40,7 @@ export const VIEW_PATHS = {
   projects: "workspaces",
   people: "people",
   connectors: "connections",
-  environments: "environments",
+  environments: "infrastructure",
   costs: "costs",
   gears: "components",
   platform: "platform",
@@ -57,6 +57,14 @@ export const VIEW_PATHS = {
 /** Sections that moved into administration, by their old path. A link
  *  someone kept still lands on the same screen, now under `/admin/`. */
 const MOVED_TO_ADMIN: Record<string, string> = { objects: "objects", views: "views" };
+
+/** Sections whose path changed, by their old path: Environments is
+ *  Infrastructure now (ADR-0056 §2). */
+const MOVED_VIEWS: Record<string, keyof typeof VIEW_PATHS> = { environments: "environments" };
+
+/** Workspace sections that are gone, whose old address opens the default one:
+ *  Process, the hand-edited stage and capability catalogue (ADR-0058). */
+const RETIRED_WORKSPACE_TABS: readonly string[] = ["process"];
 
 /** What each part of a path may name; anything else is not an address of ours. */
 export interface KnownPlaces {
@@ -124,13 +132,14 @@ export function pathToPlace(pathname: string, search: string, known: KnownPlaces
       return withOrg({ view: "projects", adminOpen: false, crumb: { projectId: ws, nestedId: project }, projectTab });
     }
     if (rest.length > 2) return undefined;
-    const workspaceTab = second ?? DEFAULT_WORKSPACE_TAB;
+    const workspaceTab =
+      second === undefined || RETIRED_WORKSPACE_TABS.includes(second) ? DEFAULT_WORKSPACE_TAB : second;
     if (!known.workspaceTabs.includes(workspaceTab)) return undefined;
     return withOrg({ view: "projects", adminOpen: false, crumb: { projectId: ws }, workspaceTab });
   }
   if (rest.length > 0) return undefined;
   if (head in MOVED_TO_ADMIN) return withOrg({ adminOpen: true, adminView: MOVED_TO_ADMIN[head] });
-  const view = (Object.keys(VIEW_PATHS) as (keyof typeof VIEW_PATHS)[]).find((v) => VIEW_PATHS[v] === head);
+  const view = MOVED_VIEWS[head] ?? (Object.keys(VIEW_PATHS) as (keyof typeof VIEW_PATHS)[]).find((v) => VIEW_PATHS[v] === head);
   if (!view) return undefined;
   return withOrg({ view, adminOpen: false, crumb: {} });
 }

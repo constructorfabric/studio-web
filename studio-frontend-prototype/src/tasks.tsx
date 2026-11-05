@@ -13,32 +13,78 @@
  * belongs to that organization's tenant and is not listed here.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type TaskRun, type TaskSchedule } from "./api";
 import { DataTable, When, type PageRequest, type PageResult } from "./data-table";
 import { errText } from "./format";
 import { subscribeStudioEvents } from "./studio-events";
+import { PageHeader, StatusChip, type Tone } from "./ui-standard";
+import "./org-screens.css";
 
 /** How often the list refreshes while something is still moving. */
 const LIVE_POLL_MS = 4000;
 
 const STATES = ["queued", "running", "succeeded", "failed", "cancelled"] as const;
 
-/** Run state → the badge the rest of the prototype already uses. */
-function stateBadge(state: string): string {
+/** The list's default: what wants a look -- what failed and what is running. */
+export const ATTENTION_STATES = ["failed", "running"] as const;
+/** The filter value for every state (no filter is the default, failed + running). */
+export const EVERY_STATE = "all";
+
+/** Run state → a StatusChip's tone. */
+export function stateTone(state: string): Tone {
   switch (state) {
     case "succeeded":
       return "ok";
     case "running":
-      return "syncing";
+      return "running";
     case "failed":
-      return "failed";
+      return "danger";
     case "cancelled":
       return "warn";
     default:
       return "neutral";
   }
+}
+
+/** A run the list shows, with how many earlier runs of the same schedule it
+ *  stands for. */
+export type ShownRun = TaskRun & { folded?: number };
+
+/**
+ * A recurring task's succeeded runs, folded into one row: the newest stands
+ * for the rest of them on the page. Every other run is its own row. A session
+ * reaper firing every few minutes otherwise fills the list with "nothing
+ * expired" and buries what failed.
+ */
+export function foldRecurring(runs: TaskRun[], recurring: ReadonlySet<string>): ShownRun[] {
+  const out: ShownRun[] = [];
+  const head = new Map<string, ShownRun>();
+  for (const run of runs) {
+    if (run.state === "succeeded" && recurring.has(run.task_type)) {
+      const first = head.get(run.task_type);
+      if (first) {
+        first.folded = (first.folded ?? 0) + 1;
+        continue;
+      }
+      const row: ShownRun = { ...run, folded: 0 };
+      head.set(run.task_type, row);
+      out.push(row);
+      continue;
+    }
+    out.push(run);
+  }
+  return out;
+}
+
+/** Runs of several states as one page, newest first: one request per state,
+ *  each as deep as the page's end, merged and cut. */
+export function mergePages(pages: TaskRun[][], offset: number, limit: number): TaskRun[] {
+  return pages
+    .flat()
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .slice(offset, offset + limit);
 }
 
 /** The whole timestamp, for the details a run expands to. */
@@ -79,6 +125,32 @@ export function BackgroundWork({ token }: { token: string; query?: string }) {
   // while something on the page was still moving.
   const [tick, setTick] = useState(0);
   const [live, setLive] = useState(false);
+  /** How many runs are in each state, for the chips and the header. */
+  const [counts, setCounts] = useState<Partial<Record<string, number>>>({});
+  useEffect(() => {
+    let alive = true;
+    void Promise.all(
+      STATES.map((st) =>
+        api.taskRuns(token, { state: st, limit: 1 }).then(
+          (page) => [st, page.total ?? page.items.length] as const,
+          () => null,
+        ),
+      ),
+    ).then((pairs) => {
+      if (!alive) return;
+      const next: Partial<Record<string, number>> = {};
+      for (const pair of pairs) if (pair) next[pair[0]] = pair[1];
+      setCounts(next);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [token, tick]);
+  /** Task types a schedule fires: their succeeded runs fold into one row. */
+  const recurring = useMemo(() => new Set((schedules ?? []).map((sc) => sc.task_type)), [schedules]);
+  const recurringRef = useRef(recurring);
+  recurringRef.current = recurring;
+  const cadenceOf = (taskType: string) => schedules?.find((sc) => sc.task_type === taskType);
 
   useEffect(() => {
     api.taskTypes(token).then(
@@ -101,16 +173,33 @@ export function BackgroundWork({ token }: { token: string; query?: string }) {
   // The backend pages, and narrows by state and task type. It has no text
   // search, so the list offers none rather than searching one page of it.
   const loadRuns = useCallback(
-    async (req: PageRequest): Promise<PageResult<TaskRun>> => {
+    async (req: PageRequest): Promise<PageResult<ShownRun>> => {
       try {
+        const chosen = req.filters.state;
+        const taskType = req.filters.type || undefined;
+        setUnavailable(null);
+        if (!chosen) {
+          // The default: failed and running together. The backend narrows by
+          // one state, so it is asked once per state and the pages merged.
+          const pages = await Promise.all(
+            ATTENTION_STATES.map((state) => api.taskRuns(token, { state, taskType, limit: req.offset + req.limit, offset: 0 })),
+          );
+          return {
+            items: mergePages(
+              pages.map((pg) => pg.items),
+              req.offset,
+              req.limit,
+            ),
+            total: pages.reduce((n, pg) => n + (pg.total ?? pg.items.length), 0),
+          };
+        }
         const page = await api.taskRuns(token, {
-          state: req.filters.state || undefined,
-          taskType: req.filters.type || undefined,
+          state: chosen === EVERY_STATE ? undefined : chosen,
+          taskType,
           limit: req.limit,
           offset: req.offset,
         });
-        setUnavailable(null);
-        return { items: page.items, total: page.total ?? page.items.length };
+        return { items: foldRecurring(page.items, recurringRef.current), total: page.total ?? page.items.length };
       } catch (reason) {
         const text = errText(reason);
         // 503 means studio-tasks has no database in this deployment: a
@@ -162,35 +251,62 @@ export function BackgroundWork({ token }: { token: string; query?: string }) {
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>Background work</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            Every run this deployment has queued, and the schedules that fire them. Runs survive a
-            restart, are retried with backoff, and end up in a dead-letter table rather than
-            nowhere.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Background work"
+        status={
+          <>
+            {(counts.running ?? 0) > 0 && <StatusChip tone="running">{counts.running} running</StatusChip>}
+            {(counts.queued ?? 0) > 0 && <StatusChip tone="neutral">{counts.queued} queued</StatusChip>}
+            {(counts.failed ?? 0) > 0 && <StatusChip tone="danger">{counts.failed} failed</StatusChip>}
+            {counts.running === 0 && counts.failed === 0 && <StatusChip tone="ok">nothing failed or running</StatusChip>}
+            {schedules && schedules.length > 0 && (
+              <span>
+                · {schedules.length} schedule{schedules.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </>
+        }
+        info={
+          <>
+            <p>
+              Every run this deployment has queued, and the schedules that fire them. Runs survive a restart, are retried
+              with backoff, and end up in a dead-letter table rather than nowhere.
+            </p>
+            <p>
+              The list opens on what failed and what is running. A scheduled task&apos;s succeeded runs fold into one
+              row; pick a state to see them.
+            </p>
+            {taskTypes.length > 0 && (
+              <p>
+                What this deployment can run, one per registered handler: {taskTypes.join(", ")}. A task type missing
+                here cannot run, because the gear that owns it is not linked into the assembly.
+              </p>
+            )}
+          </>
+        }
+      />
 
       {error && <div className="error">{error}</div>}
       {unavailable && <div className="hint">{unavailable}</div>}
 
       <div className="card">
-        <DataTable<TaskRun>
+        <DataTable<ShownRun>
           list="runs"
           title="Runs"
           load={loadRuns}
-          reloadKey={tick}
+          reloadKey={`${tick}:${recurring.size}`}
           onLoaded={(page) => setLive(page.items.some((r) => r.state === "queued" || r.state === "running"))}
           rowKey={(run) => run.id}
           rowLabel={(run) => `${run.task_type} ${run.id.slice(0, 8)}`}
           filters={[
             {
               id: "state",
-              allLabel: "All states",
+              allLabel: "Failed + running",
               kind: "chips",
-              options: STATES.map((st) => ({ value: st, label: st })),
+              options: [
+                ...STATES.map((st) => ({ value: st, label: st, count: counts[st] })),
+                { value: EVERY_STATE, label: "every state" },
+              ],
             },
             ...(taskTypes.length > 0
               ? [
@@ -204,24 +320,36 @@ export function BackgroundWork({ token }: { token: string; query?: string }) {
               : []),
           ]}
           extra={live ? <span className="sub">live · refreshing</span> : null}
-          empty={{ title: "Nothing has been queued yet." }}
+          empty={{ title: "Nothing failed and nothing is running." }}
           columns={[
             {
               id: "task",
               header: "Task",
-              cell: (run) => (
-                <>
-                  <div className="pname plain">{run.task_type}</div>
-                  <div className="sub">{run.id.slice(0, 8)}</div>
-                </>
-              ),
+              cell: (run) => {
+                const sc = run.folded !== undefined ? cadenceOf(run.task_type) : undefined;
+                return (
+                  <>
+                    <div className="pname plain">{run.task_type}</div>
+                    <div className="sub">
+                      {run.folded !== undefined ? (
+                        <span data-run-schedule title="A recurring task: its succeeded runs on this page are one row">
+                          ↻ {sc ? sc.expression : "scheduled"}
+                          {run.folded > 0 && ` · +${run.folded} earlier`}
+                        </span>
+                      ) : (
+                        run.id.slice(0, 8)
+                      )}
+                    </div>
+                  </>
+                );
+              },
             },
             {
               id: "state",
               header: "State",
               cell: (run) => (
                 <>
-                  <span className={`badge ${stateBadge(run.state)}`}>{run.state}</span>
+                  <StatusChip tone={stateTone(run.state)}>{run.state}</StatusChip>
                   {run.cancel_requested && !finished(run) && (
                     <div className="sub" style={{ marginTop: 4 }}>
                       stop requested
@@ -345,22 +473,6 @@ export function BackgroundWork({ token }: { token: string; query?: string }) {
         />
       </div>
 
-      {taskTypes.length > 0 && (
-        <div className="card">
-          <h2>What this deployment can run</h2>
-          <p className="hint" style={{ marginTop: 0 }}>
-            One entry per registered handler. A task type missing from this list cannot run here
-            because the gear that owns it is not linked into the assembly.
-          </p>
-          <div className="chipset">
-            {taskTypes.map((t) => (
-              <span key={t} className="chip">
-                {t}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
     </>
   );
 }

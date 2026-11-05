@@ -1,15 +1,24 @@
-/* The one line a tab of the product's way out opens on (pipeline.ts): where
- * the project stands, and a button to the tab that does what comes next. */
+/* The one line a part of the product's way out opens on (pipeline.ts): where
+ * the project stands, and a button to the tab that does what comes next --
+ * none when that is the tab the line is on (`here`). */
 
 import type { PipelineHint, PipelineTab } from "./pipeline";
 
 const TAB_LABELS: Record<PipelineTab, string> = {
   components: "Product →",
-  builds: "Builds →",
-  deploys: "Deploys →",
+  releases: "Releases →",
 };
 
-export function PipelineLine({ hint, onOpenTab }: { hint: PipelineHint; onOpenTab?: (tab: PipelineTab) => void }) {
+export function PipelineLine({
+  hint,
+  onOpenTab,
+  here,
+}: {
+  hint: PipelineHint;
+  onOpenTab?: (tab: PipelineTab) => void;
+  /** The tab the line is drawn on: a button to it would go nowhere. */
+  here?: PipelineTab;
+}) {
   return (
     <div
       className={`next-step ${hint.tone}`}
@@ -30,7 +39,7 @@ export function PipelineLine({ hint, onOpenTab }: { hint: PipelineHint; onOpenTa
     >
       <b style={{ fontSize: 13 }}>Next:</b>
       <span style={{ fontSize: 13 }}>{hint.text}</span>
-      {hint.go && onOpenTab && (
+      {hint.go && hint.go !== here && onOpenTab && (
         <button type="button" className="primary" style={{ marginLeft: "auto" }} onClick={() => onOpenTab(hint.go as PipelineTab)}>
           {TAB_LABELS[hint.go]}
         </button>

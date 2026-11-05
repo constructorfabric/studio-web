@@ -1,0 +1,30 @@
+# This micro-frontend's passport: everything a tool that assembles a product
+# from FrontX packages (Gearbox, Constructor Studio) needs to know about it, in
+# one file. It restates what package.json and mfe.json say, and those tools
+# check that they agree, so keep them in step when either changes.
+gdl_version = "1.5"
+
+mfe(
+    # Who it is: package.json's name and version (it has no description).
+    name = "@constructor-studio/space-mfe",
+    version = "0.1.0",
+
+    # The backend gears its screens call, by gear id. None: it frames the
+    # editor at the URL the shell hands it and makes no API call of its own.
+    requires = [],
+
+    # What it brings, as mfe.json says: the label of its screen, then the
+    # route of its extension (presentation.route).
+    screens = ["Editor"],
+    mounts = ["/space"],
+
+    # No `frontx`: it pins no @gears-frontx/react (its package.json has only
+    # vite and typescript); it is a plain page the shell frames.
+
+    # The permissions its screen needs: none, it calls no gear.
+    roles = [],
+
+    # No route worth a screenshot: its screen is hidden (mfe.json's
+    # placement), opened on an artifact, and frames an editor session.
+    preview = [],
+)

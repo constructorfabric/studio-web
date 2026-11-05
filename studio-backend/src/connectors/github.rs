@@ -840,6 +840,7 @@ impl ConnectorDriver for GitHubDriver {
         }
         let user: GitHubUser = res.json().await?;
         Ok(DriverIdentity {
+            checks: Vec::new(),
             account: user.login,
             display_name: user.name,
         })

@@ -179,17 +179,20 @@ async fn a_scaffold_into_a_gear_repository_the_root_holds_is_refused() {
     assert_eq!(refusal.organization, ORG);
     assert!(e.to_string().contains("the platform's root"), "{e}");
 
-    let e = service
-        .write_to_project_repo(&ctx, &project, None, &file(), "product", None)
-        .await
-        .unwrap_err();
-    assert_eq!(refused(&e).map(|r| r.holder), Some(ROOT));
-
     let problem = format!(
         "{:?}",
         super::super::rest::write_problem("scaffold failed", &e)
     );
     assert!(problem.contains("CONNECTION_NOT_OWNED"), "{problem}");
+
+    // Where new gears go decides nothing about the product (ADR-0060 §1):
+    // with no source, the project's description has nowhere to be written.
+    let e = service
+        .write_to_project_repo(&ctx, &project, None, &file(), "product", None)
+        .await
+        .unwrap_err();
+    assert!(refused(&e).is_none(), "{e}");
+    assert!(e.to_string().contains("no repository connected"), "{e}");
 }
 
 /// A project with no gear repository writes into its sources: one read

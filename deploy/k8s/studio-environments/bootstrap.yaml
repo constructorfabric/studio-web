@@ -16,6 +16,31 @@
 # the preview ends. Needs Kubernetes 1.30 or newer
 # (ValidatingAdmissionPolicy).
 #
+# Studio checks it rather than assuming it. Testing the cluster connection
+# reports whether the account holds each right the ClusterRole below gives
+# (create namespaces, create rolebindings, bind clusterroles/admin), one
+# SelfSubjectAccessReview each, without failing the test. A build or a deploy
+# into a namespace that is not there yet is refused before it is queued,
+# CLUSTER_CANNOT_CREATE_NAMESPACE naming this file, when one of them is
+# missing; into one that is there, when the account may not create secrets,
+# Jobs and Deployments in it (studio-backend/src/environments/README.md).
+#
+# Version 2 (ADR-0062 §6). The ClusterRole carries the label
+# studio.constructor.tech/bootstrap-version, and the account may read that
+# ClusterRole alone, so Studio tells a current bootstrap from an old or a
+# partial one. A cluster's readiness is one of: bootstrapped (this file, at
+# this version, with the admission policy refusing a namespace without
+# Studio's label -- asked as a dry run), namespace-limited (no create right,
+# but the environment lists namespaces the cluster gives), or partial (what
+# is missing is named). A build or a deploy on a partial cluster is refused,
+# CLUSTER_NOT_BOOTSTRAPPED. Version 1 had no label: apply this file again.
+#
+# Each project gets a namespace of its own per environment, recorded at the
+# first build or deploy and named from the project's immutable slug, and a
+# build namespace (`<slug>-build` by default) where its build Jobs and their
+# repository and push tokens live; the runtime namespace holds only the pull
+# secret.
+#
 # The Studio prototype shows this file, as it is, in its "Connect a cluster"
 # form (studio-frontend-prototype/src/kubeconfig-field.tsx reads it at build
 # time).
@@ -43,7 +68,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: constructor-studio-environments
+  labels:
+    studio.constructor.tech/bootstrap-version: "2"
 rules:
+  # Read this role, whose label says which version of this file is applied.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["constructor-studio-environments"]
+    verbs: ["get"]
   # Find a project's namespace, and make it when it is not there; delete a
   # preview's (the policy below allows no other).
   - apiGroups: [""]

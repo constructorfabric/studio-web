@@ -119,12 +119,144 @@ pub struct Environment {
     /// `None` takes no previews.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previews: Option<PreviewSettings>,
+    /// How strictly a product is checked for this environment (ADR-0060
+    /// §5); `None` follows [`Environment::protected`] ([`Self::strictness`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strictness: Option<Strictness>,
+    /// Who builds and pulls here, and where (ADR-0062).
+    #[serde(flatten)]
+    pub boundaries: Boundaries,
     pub updated_by: String,
     pub updated_at: String,
 }
 
 fn default_pattern() -> String {
     DEFAULT_NAMESPACE_PATTERN.to_owned()
+}
+
+/// The build namespace pattern an environment gets unless it says otherwise
+/// (ADR-0062 §7): one per project, beside its runtime namespaces.
+pub const DEFAULT_BUILD_NAMESPACE_PATTERN: &str = "{project}-build";
+
+/// What separates a project's build from Studio and from its runtime, per
+/// environment (ADR-0062): the builder image, the registry identities, the
+/// build namespace, and the namespaces a cluster gives when Studio may not
+/// make its own. Every field is optional; absent, the platform's default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Boundaries {
+    /// The image `prepare` and `publish` run in, by digest
+    /// (`registry.acme.example/mirror/studio-builder@sha256:…`): an
+    /// organization's mirror of the platform's builder. `None`: the
+    /// platform's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builder_image: Option<String>,
+    /// The `registry` connection the builder image is pulled with, when it
+    /// is on another registry than the environment's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builder_registry_connection_id: Option<Uuid>,
+    /// A read-only `registry` connection the cluster pulls with. `None`
+    /// falls back to [`Environment::registry_connection_id`], which can
+    /// write, and the environment says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_pull_connection_id: Option<Uuid>,
+    /// The pattern of the namespace builds run in; `None`:
+    /// [`DEFAULT_BUILD_NAMESPACE_PATTERN`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_namespace: Option<String>,
+    /// The namespaces the cluster gives Studio when its connection may not
+    /// make namespaces: each project is assigned one, by an administrator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespaces: Option<Vec<String>>,
+    /// A server build takes a registry token whose scopes reach past pushing
+    /// and pulling. Off: refused, `REGISTRY_TOKEN_TOO_BROAD`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_broad_registry_token: bool,
+    /// Where a product's infra services run here (ADR-0064 §3); `None`:
+    /// with the product.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub infra: Option<super::infra::InfraPlacement>,
+}
+
+/// Is `image` an image reference: no scheme, the characters of one.
+pub fn is_image_reference(image: &str) -> bool {
+    !image.is_empty()
+        && !image.contains("://")
+        && image.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/' | b':' | b'@')
+        })
+}
+
+/// `input`'s boundaries, checked.
+fn check_boundaries(b: &Boundaries, env_name: &str, registry: &str) -> Result<Boundaries, Invalid> {
+    let b = b.clone();
+    let builder_image = b
+        .builder_image
+        .map(|i| i.trim().to_owned())
+        .filter(|i| !i.is_empty());
+    if let Some(image) = &builder_image
+        && !is_image_reference(image)
+    {
+        return Err(invalid(
+            "builder_image",
+            format!(
+                "'{image}' is not an image, e.g. registry.acme.example/studio-builder@sha256:…"
+            ),
+        ));
+    }
+    if b.builder_registry_connection_id.is_some() && builder_image.is_none() {
+        return Err(invalid(
+            "builder_registry_connection_id",
+            "a builder's registry connection goes with a builder image of the environment's own",
+        ));
+    }
+    if b.registry_pull_connection_id.is_some() && registry.is_empty() {
+        return Err(invalid(
+            "registry_pull_connection_id",
+            "a pull connection goes with a registry the images are pulled from",
+        ));
+    }
+    let build_namespace = b
+        .build_namespace
+        .map(|p| p.trim().to_owned())
+        .filter(|p| !p.is_empty());
+    if let Some(p) = &build_namespace {
+        if !p.contains("{project}") {
+            return Err(invalid(
+                "build_namespace",
+                "the build namespace pattern must contain {project}: a project's builds are its own",
+            ));
+        }
+        namespace_for(p, "a-project", env_name)
+            .map_err(|e| invalid("build_namespace", e.reason))?;
+    }
+    let namespaces = match b.namespaces {
+        None => None,
+        Some(list) => {
+            let mut out: Vec<String> = list
+                .into_iter()
+                .map(|n| n.trim().to_owned())
+                .filter(|n| !n.is_empty())
+                .collect();
+            if let Some(bad) = out.iter().find(|n| !is_dns_label(n)) {
+                return Err(invalid(
+                    "namespaces",
+                    format!("'{bad}' is not a Kubernetes namespace"),
+                ));
+            }
+            out.sort();
+            out.dedup();
+            (!out.is_empty()).then_some(out)
+        }
+    };
+    Ok(Boundaries {
+        builder_image,
+        builder_registry_connection_id: b.builder_registry_connection_id,
+        registry_pull_connection_id: b.registry_pull_connection_id,
+        build_namespace,
+        namespaces,
+        allow_broad_registry_token: b.allow_broad_registry_token,
+        infra: b.infra,
+    })
 }
 
 /// The organization's environments: one metadata row on the organization.
@@ -136,6 +268,36 @@ pub struct EnvironmentList {
     /// their own on (ADR-0054 §2): `kubernetes` connection ids.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_clusters: Vec<Uuid>,
+}
+
+/// How strictly the engine holds a product to the production rules for an
+/// environment (ADR-0060 §5). `dev` checks the profile as a development one
+/// -- Gearbox's `development = True`, the production rules' findings as
+/// warnings -- so a dev cluster can run static sign-in while it is set up;
+/// `prod` holds it to them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Strictness {
+    Dev,
+    Prod,
+}
+
+impl Strictness {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Prod => "prod",
+        }
+    }
+
+    /// `dev` or `prod`; anything else is `None`.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "dev" => Some(Self::Dev),
+            "prod" => Some(Self::Prod),
+            _ => None,
+        }
+    }
 }
 
 /// What a person may set on an environment.
@@ -155,6 +317,8 @@ pub struct EnvironmentInput {
     pub promote_from: Option<Uuid>,
     pub projects: Option<Vec<Uuid>>,
     pub previews: Option<PreviewSettings>,
+    pub strictness: Option<Strictness>,
+    pub boundaries: Boundaries,
 }
 
 /// A refusal of an environment as written.
@@ -317,6 +481,14 @@ pub fn checked(
              e.g. ghcr.io/acme",
         ));
     }
+    let mut boundaries = check_boundaries(&input.boundaries, &name, &registry)?;
+    let dev = input.strictness.unwrap_or(if input.protected {
+        Strictness::Prod
+    } else {
+        Strictness::Dev
+    }) == Strictness::Dev;
+    boundaries.infra = super::infra::check_placement(boundaries.infra.take(), dev)
+        .map_err(|e| invalid("infra", e))?;
     Ok(Environment {
         id: own,
         name,
@@ -338,6 +510,8 @@ pub fn checked(
         }),
         project_id: None,
         previews,
+        strictness: input.strictness,
+        boundaries,
         updated_by: by,
         updated_at: at,
     })
@@ -481,6 +655,16 @@ fn check_promotion(list: &EnvironmentList, own: Uuid, from: Uuid) -> Result<(), 
 }
 
 impl Environment {
+    /// How strictly a product is checked here: as set, else `prod` for a
+    /// protected environment and `dev` for any other.
+    pub fn strictness(&self) -> Strictness {
+        self.strictness.unwrap_or(if self.protected {
+            Strictness::Prod
+        } else {
+            Strictness::Dev
+        })
+    }
+
     /// May `project` deploy here? A project's own environment takes only
     /// its project's deploys.
     pub fn admits(&self, project: Uuid) -> bool {
@@ -495,6 +679,40 @@ impl Environment {
     /// project holds is found and the organization's still inherited.
     pub fn connections_from(&self, org: Uuid) -> Uuid {
         self.project_id.unwrap_or(org)
+    }
+
+    /// The connection the cluster pulls with: the pull identity, else the
+    /// push one (which can write: [`Self::warnings`] says so).
+    pub fn pull_connection(&self) -> Option<Uuid> {
+        self.boundaries
+            .registry_pull_connection_id
+            .or(self.registry_connection_id)
+    }
+
+    /// What is not wrong enough to refuse but should be fixed, in a
+    /// sentence each.
+    pub fn warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.registry_connection_id.is_some()
+            && self.boundaries.registry_pull_connection_id.is_none()
+        {
+            out.push(
+                "the cluster gets a credential that can write: give the environment a read-only \
+                 pull connection"
+                    .to_owned(),
+            );
+        }
+        out
+    }
+
+    /// The namespace builds of a project with `slug` run in here.
+    pub fn build_namespace_for(&self, slug: &str) -> Result<String, Invalid> {
+        let pattern = self
+            .boundaries
+            .build_namespace
+            .as_deref()
+            .unwrap_or(DEFAULT_BUILD_NAMESPACE_PATTERN);
+        namespace_for(pattern, slug, &self.name).map_err(|e| invalid("build_namespace", e.reason))
     }
 
     /// An image as this environment's registry holds it. One already named
@@ -532,7 +750,10 @@ impl DeploymentAction {
     }
 }
 
-/// One of a project's product profiles bound to an environment.
+/// An environment of the project and the product profile it runs
+/// (ADR-0057): each environment bound once, a profile to any number of them,
+/// so stage and prod may both run `prod`. Rows written when a profile could
+/// be bound only once have the same shape and still load.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Binding {
     /// The `kubernetes` profile's id in `product.gdl` (`prod`).
@@ -569,6 +790,9 @@ pub struct BindingList {
     /// and Helm chart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<OwnBuild>,
+    /// The infra services the product runs beside its gears (ADR-0064).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra: Vec<super::infra::InfraService>,
 }
 
 /// A project built without a product description (ADR-0054 §7): the
@@ -743,7 +967,7 @@ pub fn deploy_values(
         .unwrap_or_else(|| serde_json::json!({}));
     merge(&mut values, image_values(env, images));
     if !secret_keys.is_empty() {
-        for i in images {
+        for i in images.iter().filter(|i| !is_generated_ui(i)) {
             merge(
                 &mut values,
                 serde_json::json!({ i.app.clone(): {
@@ -756,8 +980,9 @@ pub fn deploy_values(
     values
 }
 
-/// Bindings as written: each profile once, each a profile id, values an
-/// object of a sane size.
+/// Bindings as written: each environment once (it runs one profile), each a
+/// profile id, values an object of a sane size. A profile may be bound to
+/// many environments (ADR-0057).
 pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
     let mut seen = std::collections::BTreeSet::new();
     for b in &items {
@@ -786,10 +1011,10 @@ pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
                 format!("'{}' is not a profile id", b.profile),
             ));
         }
-        if !seen.insert(b.profile.clone()) {
+        if !seen.insert(b.environment_id) {
             return Err(invalid(
-                "profile",
-                format!("profile '{}' is bound twice", b.profile),
+                "environment_id",
+                format!("environment {} is bound twice", b.environment_id),
             ));
         }
     }
@@ -798,6 +1023,7 @@ pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
         secrets: Vec::new(),
         environments: Vec::new(),
         build: None,
+        infra: Vec::new(),
     })
 }
 
@@ -1346,6 +1572,13 @@ pub fn image_values(env: &Environment, images: &[DeployImage]) -> serde_json::Va
         );
     }
     for i in images {
+        if is_generated_ui(i) {
+            values.insert(
+                i.app.clone(),
+                serde_json::json!({ "image": env.image(&i.image) }),
+            );
+            continue;
+        }
         let (repository, tag) = split_image(&env.image(&i.image));
         let mut image = serde_json::Map::new();
         image.insert("repository".into(), repository.into());
@@ -1355,6 +1588,18 @@ pub fn image_values(env: &Environment, images: &[DeployImage]) -> serde_json::Va
         values.insert(i.app.clone(), serde_json::json!({ "image": image }));
     }
     serde_json::Value::Object(values)
+}
+
+/// A generated product's UI image: Gearbox's chart reads it as one string,
+/// `ui.image`, and takes no configuration secret (its values allow nothing
+/// else). Told apart from a repository's own `ui` image by Gearbox's `gbx-`
+/// image names.
+fn is_generated_ui(i: &DeployImage) -> bool {
+    i.app == super::build::UI_APP
+        && i.image
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("gbx-"))
 }
 
 /// The pull secret a deploy writes into the namespace (ADR-0048 §2).
@@ -1379,6 +1624,53 @@ pub fn split_image(image: &str) -> (String, Option<String>) {
             (image[..at].to_owned(), Some(image[at + 1..].to_owned()))
         }
         _ => (image.to_owned(), None),
+    }
+}
+
+/// An image of a deploy as the project's own path holds it (ADR-0062 §4):
+/// a bare name (`gbx-api:1`) is put under it; one already under it stays;
+/// anything else -- another project's path, an external registry -- is
+/// refused, since a deploy takes only images in the organization's registry
+/// under the project's path. An external image is imported first.
+pub fn project_image(
+    env: &Environment,
+    project_prefix: &str,
+    image: &str,
+) -> Result<String, Invalid> {
+    if env.registry.is_empty() {
+        return Ok(image.to_owned());
+    }
+    if super::images::is_under(image, project_prefix) {
+        return Ok(image.to_owned());
+    }
+    let first = image.split('/').next().unwrap_or_default();
+    let has_host =
+        image.contains('/') && (first.contains('.') || first.contains(':') || first == "localhost");
+    if has_host || image.starts_with(&format!("{}/", env.registry)) {
+        return Err(invalid(
+            "images",
+            format!(
+                "'{image}' is not under the project's path {project_prefix}: a deploy takes only \
+                 images in the organization's registry -- import an external image into the \
+                 project first (IMAGE_NOT_IN_PROJECT_PATH)"
+            ),
+        ));
+    }
+    Ok(format!("{project_prefix}/{image}"))
+}
+
+/// A published chart a deploy names must be under the project's own path.
+pub fn check_chart_in_project(chart: &ChartRef, project_prefix: &str) -> Result<(), Invalid> {
+    if super::images::is_under(&chart.reference, project_prefix) {
+        Ok(())
+    } else {
+        Err(invalid(
+            "chart_ref",
+            format!(
+                "'{}' is not under the project's path {project_prefix} (IMAGE_NOT_IN_PROJECT_PATH)",
+                chart.reference
+            ),
+        ))
     }
 }
 
@@ -1427,7 +1719,120 @@ mod tests {
             promote_from: None,
             projects: None,
             previews: None,
+            strictness: None,
+            boundaries: Boundaries::default(),
         }
+    }
+
+    #[test]
+    fn a_projects_images_are_its_own_path_and_nothing_else() {
+        let e = env("dev");
+        let own = "ghcr.io/acme/shop";
+        assert_eq!(
+            project_image(&e, own, "gbx-api:1").unwrap(),
+            "ghcr.io/acme/shop/gbx-api:1"
+        );
+        assert_eq!(
+            project_image(&e, own, "ghcr.io/acme/shop/api@sha256:1").unwrap(),
+            "ghcr.io/acme/shop/api@sha256:1"
+        );
+        for bad in [
+            "ghcr.io/acme/other/api:1",
+            "ghcr.io/acme/api:1",
+            "docker.io/library/postgres:16",
+            "quay.io/x/y",
+        ] {
+            assert!(project_image(&e, own, bad).is_err(), "{bad}");
+        }
+        let chart = ChartRef {
+            reference: "oci://ghcr.io/acme/charts/shop".into(),
+            version: "1".into(),
+        };
+        assert!(check_chart_in_project(&chart, own).is_err());
+        let chart = ChartRef {
+            reference: "oci://ghcr.io/acme/shop/charts/shop".into(),
+            version: "1".into(),
+        };
+        assert!(check_chart_in_project(&chart, own).is_ok());
+    }
+
+    #[test]
+    fn an_environment_says_when_the_cluster_pulls_with_a_writing_credential() {
+        let mut e = env("dev");
+        assert!(
+            e.warnings().is_empty(),
+            "no registry, nothing pulled with it"
+        );
+        e.registry_connection_id = Some(Uuid::from_u128(1));
+        assert_eq!(e.pull_connection(), Some(Uuid::from_u128(1)));
+        assert!(e.warnings()[0].contains("can write"));
+        e.boundaries.registry_pull_connection_id = Some(Uuid::from_u128(2));
+        assert_eq!(e.pull_connection(), Some(Uuid::from_u128(2)));
+        assert!(e.warnings().is_empty());
+        assert_eq!(e.build_namespace_for("shop").unwrap(), "shop-build");
+    }
+
+    #[test]
+    fn boundaries_are_checked_as_they_are_written() {
+        let mut i = input("dev");
+        i.boundaries.build_namespace = Some("builds".into());
+        let e = checked(
+            &EnvironmentList::default(),
+            None,
+            i,
+            String::new(),
+            "t".into(),
+        )
+        .unwrap_err();
+        assert_eq!(e.field, "build_namespace");
+        let mut i = input("dev");
+        i.boundaries.namespaces = Some(vec!["Shop_Dev".into()]);
+        let e = checked(
+            &EnvironmentList::default(),
+            None,
+            i,
+            String::new(),
+            "t".into(),
+        )
+        .unwrap_err();
+        assert_eq!(e.field, "namespaces");
+        let mut i = input("dev");
+        i.boundaries.builder_image = Some(" mirror.acme.example/studio-builder@sha256:ab ".into());
+        i.boundaries.namespaces = Some(vec!["shop-dev".into(), "shop-dev".into()]);
+        let e = checked(
+            &EnvironmentList::default(),
+            None,
+            i,
+            String::new(),
+            "t".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            e.boundaries.builder_image.as_deref(),
+            Some("mirror.acme.example/studio-builder@sha256:ab")
+        );
+        assert_eq!(e.boundaries.namespaces, Some(vec!["shop-dev".to_owned()]));
+        let json = serde_json::to_value(&e).unwrap();
+        assert!(
+            json.get("allow_broad_registry_token").is_none(),
+            "off is not written"
+        );
+        let back: Environment = serde_json::from_value(json).unwrap();
+        assert_eq!(back, e);
+    }
+
+    #[test]
+    fn a_protected_environment_is_checked_by_prod_rules_and_another_by_dev_ones() {
+        let mut e = env("dev");
+        assert_eq!(e.strictness(), Strictness::Dev);
+        e.protected = true;
+        assert_eq!(e.strictness(), Strictness::Prod);
+        e.strictness = Some(Strictness::Dev);
+        assert_eq!(e.strictness(), Strictness::Dev, "set, it is what was set");
+        assert_eq!(Strictness::parse("prod"), Some(Strictness::Prod));
+        assert_eq!(Strictness::parse("strict"), None);
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["strictness"], "dev");
     }
 
     fn env(name: &str) -> Environment {
@@ -1721,6 +2126,36 @@ mod tests {
     }
 
     #[test]
+    fn a_generated_ui_image_is_one_string_and_takes_no_secret() {
+        let e = env("prod");
+        let images = [
+            DeployImage {
+                app: "api".into(),
+                image: "studio/gbx-api:sha-1".into(),
+            },
+            DeployImage {
+                app: "ui".into(),
+                image: "studio/gbx-shop-frontend:sha-1".into(),
+            },
+        ];
+        let v = deploy_values(&e, &images, None, &["K".into()], "shop");
+        assert_eq!(
+            v["ui"],
+            serde_json::json!({ "image": "ghcr.io/acme/studio/gbx-shop-frontend:sha-1" })
+        );
+        assert_eq!(v["api"]["existingSecret"], "shop-config");
+        // A repository's own `ui` image keeps the usual keys.
+        let own = image_values(
+            &e,
+            &[DeployImage {
+                app: "ui".into(),
+                image: "studio/web:1".into(),
+            }],
+        );
+        assert_eq!(own["ui"]["image"]["repository"], "ghcr.io/acme/studio/web");
+    }
+
+    #[test]
     fn image_values_point_each_application_at_the_registry() {
         let e = env("prod");
         let v = image_values(
@@ -1739,15 +2174,35 @@ mod tests {
     }
 
     #[test]
-    fn a_profile_is_bound_once() {
-        let b = |p: &str| Binding {
+    fn an_environment_is_bound_once_and_a_profile_to_many() {
+        let b = |p: &str, env: u128| Binding {
             profile: p.into(),
-            environment_id: Uuid::nil(),
+            environment_id: Uuid::from_u128(env),
             values: None,
         };
-        assert!(checked_bindings(vec![b("prod"), b("stage")]).is_ok());
-        assert!(checked_bindings(vec![b("prod"), b("prod")]).is_err());
-        assert!(checked_bindings(vec![b("pr od")]).is_err());
+        // Stage and prod both run `prod`.
+        assert!(checked_bindings(vec![b("prod", 1), b("prod", 2)]).is_ok());
+        assert_eq!(
+            checked_bindings(vec![b("prod", 1), b("stage", 1)])
+                .unwrap_err()
+                .field,
+            "environment_id"
+        );
+        assert!(checked_bindings(vec![b("pr od", 1)]).is_err());
+    }
+
+    #[test]
+    fn bindings_written_one_per_profile_still_load() {
+        let row = serde_json::json!({
+            "items": [
+                {"profile": "prod", "environment_id": Uuid::from_u128(1)},
+                {"profile": "stage", "environment_id": Uuid::from_u128(2), "values": {"a": 1}}
+            ]
+        });
+        let list: BindingList = serde_json::from_value(row).unwrap();
+        assert_eq!(list.items.len(), 2);
+        assert_eq!(list.items[1].profile, "stage");
+        assert!(checked_bindings(list.items).is_ok());
     }
 
     fn deployment(n: u128, project: u128, state: DeploymentState) -> Deployment {

@@ -383,13 +383,20 @@ gears:
       # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
       # own for any shared environment).
       signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
-      # Dev-only shared secret of the sidecar callbacks (file-storage 0.4
-      # requires it; a sidecar would get the same value as
-      # FS_SIDECAR_INTERNAL_TOKEN). None runs in this profile.
-      finalize_internal_secret: "studio-dev-fs-internal-token"
+      # Dev-only: the token a sidecar would send on its finalize callbacks
+      # (FS_SIDECAR_INTERNAL_TOKEN); file-storage >= 0.4 refuses to start
+      # without one.
+      finalize_internal_secret: "dev-file-storage-internal-secret"
 
   # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
+  # A database keeps upstreams and routes across restarts and moves the
+  # registry reconcile (which needs the root tenant) out of post_init into
+  # a background task in `start` (oagw >= 0.6, ADR-0018), so a fresh
+  # database no longer stops the boot before account-management seeds it.
   oagw:
+    database:
+      server: "pg_main"
+      dbname: "studio_oagw"
     config:
       proxy_timeout_secs: 120
 
@@ -464,6 +471,19 @@ gears:
         acquire_timeout: "10s"
         idle_timeout: "5m"
         max_lifetime: "30m"
+
+  # ── studio-environments (slugs, namespace assignments, image records, ADR-0062) ──
+  # A few rows per build and deploy. One connection: each one here is one
+  # more per replica on pg_main's budget.
+  studio-environments:
+    database:
+      server: "pg_main"
+      dbname: "studio_environments"
+      pool:
+        max_conns: 1
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
 
   # ── studio-artifact-ingest (the artifact index) ──
   # A mirror of the artifact graph's listing fields — scope, repo, type,
@@ -680,7 +700,8 @@ gears:
       # dev graph are still clipped (5,944 of 79,184 relations) against 27,852
       # under the per-node read this replaced.
       traversal_max_nodes: 10000
-      traversal_hop: pgq
+      # `pgq` is refused at startup from graph-storage 0.2 (SQL/PGQ retired, gears-rust #5267).
+      traversal_hop: two_query
       # Embedding provider for a backend run on the host. Defaults to the
       # deterministic `fake` so `cargo run` needs no model artifacts; set
       # STUDIO_EMBEDDING_PROVIDER=onnx with STUDIO_EMBED_MODEL_PATH /

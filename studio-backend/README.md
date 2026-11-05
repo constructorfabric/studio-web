@@ -10,7 +10,7 @@ Studio is described the way any product built from gears is, so the portal and t
 
 - **`gear.gdl` beside every Studio gear** (`src/<module>/gear.gdl`, the connector drivers under `src/connectors/plugins/<provider>/`): what Gearbox needs that Rust does not already say — the name, a description, the category, the module file the `#[toolkit::gear]` is in (`cargo(..., attr = ...)`, since every Studio gear is a module of this one crate), what a plugin implements. The id, the capabilities and the dependencies are projected from the attribute.
 - **`product.gdl` at the repository root**: Studio as a product — the gears this binary links, each from `studio-backend` (this crate) or `gears-rust`, plugins under their hosts. The engine writes it, not we: `studio-backend gears` prints what is linked, and `node scripts/product-gdl.mjs --gears <that> --gears-rust ../gears-rust [--image studio-backend]` hands the list to `gearbox/product/create` and `applyEdits`; which host a plugin goes under is the catalogue's answer. The script refuses an engine other than the one the images pin (`STUDIO_GEARBOX_REF`).
-- **`cargo test`** fails when `product.gdl` names other gears than the binary links (`assembly::product_tests`). `service-discovery` is linked and named by no product: it is the toolkit's runtime.
+- **`cargo test`** fails when `product.gdl` names other gears than the binary links (`assembly::product_tests`). `gear-orchestrator` is linked and named by no product: it is the toolkit's runtime.
 
 Checked with the pinned engine: `gearbox validate --root ../gears-rust --root studio-backend --product product.gdl` reports no error. `gearbox resolve` stops at one gap outside this repository: account-management fills tenant-resolver's point itself (`tr_plugin.enabled: true` in our profiles), which gears-rust's description of it does not say (GBX0511, constructorfabric/gears-rust#5374). studio-connector takes its drivers by `vendor` like any toolkit host (`ConnectorGearConfig`, each driver publishing what it registered under beside it), so its point resolves.
 
@@ -20,7 +20,7 @@ Checked with the pinned engine: `gearbox validate --root ../gears-rust --root st
 |---|---|
 | Entry | api-gateway (port 8090, prefix `/cf`, per-request auth, OpenAPI UI at `/cf/docs`) |
 | Auth (dev stubs) | authn-resolver + **static-authn** (bearer tokens + mini-chat S2S), authz-resolver + **static-authz** (permissive PDP) |
-| Platform | grpc-hub, service-discovery, nodes-registry, types-registry (GTS), tenant-resolver |
+| Platform | grpc-hub, gear-orchestrator, nodes-registry, types-registry (GTS), tenant-resolver |
 | Domain | **account-management** (tenants, users, conversions, metadata) + its co-located TR plugin + IdP plugins (**keycloak-idp** for real Keycloak provisioning in docker/oidc/k8s; **static-idp** echo for the Keycloak-less dev/postgres profiles), resource-group (group hierarchies, memberships) |
 | Features | **mini-chat** (workspace AI chat, SSE) + static model-policy plugin, **oagw** (LLM egress) + **credstore** + static secrets plugin, **simple-user-settings** (per-user theme/language), **file-storage** |
 

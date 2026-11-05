@@ -10,6 +10,8 @@ date: 2026-10-23
 
 Status: **proposed** 路 Date: 2026-10-23 路 Completes `cpt-studio-adr-deployment-environments` (ADR-0043: the registry connection it names, and its phase 3 for builds that do not come from a desktop) 路 Uses `cpt-studio-adr-project-builds` (ADR-0045) 路 Keeps `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` (ADR-0027)
 
+Amended by [ADR-0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) (2026-11-04): images and charts go under the project's own path, `{prefix}/{project-slug}/卄, and a deploy takes nothing outside it (an external image is imported first). A build runs in `studio-builder` by digest, never the server's image, pushes with a token minted for exactly the names it pushes, and the cluster pulls with a read-only identity of its own; a token that administers or deletes is refused. Every published image and chart is a record a project lists, pins, promotes by digest and lets a retention policy sweep; an organization browses its registries and their orphans.
+
 ## Table of Contents
 
 <!-- toc -->
@@ -201,6 +203,8 @@ protected environment and the same record as a deploy.
 
 ### 9. Studio builds in the organization's cluster
 
+> Amended by ADR-0059 ([a build or a deploy names its cause before it starts](0059-a-build-or-deploy-names-its-cause-before-it-starts.md)): the image `prepare` and `publish` run in starts as uid 1000 with no capability (`studio-backend/Dockerfile`'s `builder` target, checked by `scripts/check-builder-image.sh`); a build is refused before it is queued when its connections or the cluster would stop it, and its record says where it ran and with what.
+
 A build need not wait for a pipeline. **Build in Studio** (portal or
 desktop) asks the server, which starts a Kubernetes Job in the project's
 namespace of the chosen environment: the organization's nodes do the work,
@@ -296,3 +300,5 @@ This decision directly addresses the following requirements or design elements:
 * `cpt-studio-adr-deployment-environments`
 * `cpt-studio-adr-project-builds`
 * `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server`
+
+> Amended by ADR-0064 ([a product's infra services are catalogue components, deployed with it](0064-a-products-infra-services-are-catalogue-components-deployed-with-it.md)): when the project has an infra service that provides `postgres`, the product's database server runs that service's image, imported into the project's path, instead of `database_image` or `pgvector/pgvector:pg18`.

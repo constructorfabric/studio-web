@@ -1,0 +1,29 @@
+# This micro-frontend's passport: everything a tool that assembles a product
+# from FrontX packages (Gearbox, Constructor Studio) needs to know about it, in
+# one file. It restates what package.json and mfe.json say, and those tools
+# check that they agree, so keep them in step when either changes.
+gdl_version = "1.5"
+
+mfe(
+    # Who it is: package.json's name and version (it has no description).
+    name = "@constructor-studio/iframe-fixture",
+    version = "0.1.0",
+
+    # The backend gears its screens call, by gear id. None: a fixture frame
+    # for tests, with no API service.
+    requires = [],
+
+    # What it brings, as mfe.json says: the label of its screen, then the
+    # route of its extension (presentation.route).
+    screens = ["Frame fixture"],
+    mounts = ["/fixture/frame"],
+
+    # No `frontx`: it pins no @gears-frontx/react (its package.json has only
+    # vite and typescript); it is a plain page the shell frames.
+
+    # The permissions its screen needs: none, it calls no gear.
+    roles = [],
+
+    # Nothing worth a screenshot: it is a test fixture, not a product screen.
+    preview = [],
+)

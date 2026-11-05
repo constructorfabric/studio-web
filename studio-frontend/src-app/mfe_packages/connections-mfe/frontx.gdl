@@ -1,0 +1,31 @@
+# This micro-frontend's passport: everything a tool that assembles a product
+# from FrontX packages (Gearbox, Constructor Studio) needs to know about it, in
+# one file. It restates what package.json and mfe.json say, and those tools
+# check that they agree, so keep them in step when either changes.
+gdl_version = "1.5"
+
+mfe(
+    # Who it is: package.json's name and version (it has no description).
+    name = "@constructor-studio/connections-mfe",
+    version = "0.2.0-alpha.0",
+
+    # The backend gears its screens call, by gear id (the `<gear>` of a
+    # `/cf/<gear>/v1` base URL), its own and those it calls through
+    # @constructor-studio/mfe-shared: ConnectorsApiService.
+    requires = ["studio-connector"],
+
+    # What it brings, as mfe.json says: the labels of its screen and overlay,
+    # then the route of each extension (presentation.route), in mfe.json's order.
+    screens = ["Connections", "Connect source"],
+    mounts = ["/connections", "/connections/new"],
+
+    # The FrontX it is written against: its @gears-frontx/react pin. A shell
+    # mounting it gives it the shell's own version, whatever this says.
+    frontx = "0.2.0-alpha.15",
+
+    # No `roles`: the permissions studio-connector checks are not written
+    # down on this side yet.
+
+    # Routes worth a screenshot: its screen; the overlay opens over it.
+    preview = ["/connections"],
+)

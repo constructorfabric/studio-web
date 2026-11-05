@@ -11,14 +11,35 @@
  * catalogue — it is simply not a place you navigate to.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import type { CSSProperties, FormEvent } from "react";
-import { api, TENANT_TYPES, type User } from "./api";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, FormEvent, RefObject } from "react";
+import { api, TENANT_TYPES, type OrgOverview, type OrgWorkspace, type RollupRow, type User } from "./api";
+import { money } from "./costs";
 import { DataTable } from "./data-table";
 import { errText } from "./format";
 import { Modal } from "./modal";
+import { growthText, quietText, reasonLine, workspaceDescription, workspaceLine, workspaceStatus } from "./org-dashboard-model";
+import { kindLine, teamText } from "./project-rows";
 import { portfolioRollups, rollupText, type WorkspaceRollup } from "./rollups";
+import { TenantMark } from "./tenant-icon-view";
+import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
 import { Tile } from "./view-mode";
+import {
+  firstOf,
+  healthSplit,
+  healthText,
+  projectChip,
+  reasonColumn,
+  topSpender,
+  type HealthSplit,
+} from "./workspace-tree";
+
+/** A project under its workspace: its name, and its rollup row once read. */
+interface Kid {
+  id: string;
+  name: string;
+  row?: RollupRow;
+}
 
 /** Initials + a stable hue from a name — the mockups' colored member discs. */
 function initials(name: string): string {
@@ -53,20 +74,6 @@ function Avatars({ users }: { users?: User[] }) {
       })}
       {users.length > 3 && <span className="avatars-more">+{users.length - 3}</span>}
     </span>
-  );
-}
-
-/** A small folder glyph for the workspace name cell. */
-function FolderIcon() {
-  return (
-    <svg className="folder" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M1.6 4.4A1.4 1.4 0 0 1 3 3h2.8l1.4 1.4H13A1.4 1.4 0 0 1 14.4 5.8v5.0A1.4 1.4 0 0 1 13 12.2H3A1.4 1.4 0 0 1 1.6 10.8z"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }
 
@@ -143,7 +150,7 @@ export function ProjectsPortfolio({
     }
   };
   // Nested projects per workspace, read the first time a row is expanded.
-  const [children, setChildren] = useState<Record<string, { id: string; name: string }[]>>({});
+  const [children, setChildren] = useState<Record<string, Kid[]>>({});
   const loadChildren = useCallback(
     async (wsId: string) => {
       try {
@@ -151,7 +158,8 @@ export function ProjectsPortfolio({
         const kids = (page.items ?? [])
           .filter((t) => t.tenant_type === TENANT_TYPES.project)
           .map((t) => ({ id: t.id, name: t.name }));
-        setChildren((c) => ({ ...c, [wsId]: kids }));
+        // A rollup that arrived first keeps its rows: this only fills a gap.
+        setChildren((c) => (c[wsId] ? c : { ...c, [wsId]: kids }));
       } catch {
         setChildren((c) => ({ ...c, [wsId]: [] }));
       }
@@ -197,7 +205,7 @@ export function ProjectsPortfolio({
       for (const id of list) {
         const kids = [...projects.entries()]
           .filter(([, p]) => p.parentId === id)
-          .map(([pid, p]) => ({ id: pid, name: p.name }));
+          .map(([pid, p]) => ({ id: pid, name: p.name, row: p.row }));
         if (kids.length) next[id] = kids;
       }
       return next;
@@ -207,6 +215,39 @@ export function ProjectsPortfolio({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Spend, failing specs, stuck pull requests and quiet days per workspace:
+  // the organization overview's numbers, shown where the workspaces are.
+  const [overview, setOverview] = useState<OrgOverview | null>(null);
+  useEffect(() => {
+    if (!org) return;
+    let live = true;
+    api
+      .orgOverview(token, org.id)
+      .then((o) => live && setOverview(o))
+      .catch(() => live && setOverview(null));
+    return () => {
+      live = false;
+    };
+  }, [token, org?.id]);
+  const health = (id: string): OrgWorkspace | undefined => overview?.workspaces.find((w) => w.id === id);
+  const stuckDays = overview?.stuck_days ?? 7;
+  const cash = (n: number) => money(n, overview?.spend?.currency || "USD");
+  /** A workspace's projects: undefined until read, [] when it has none. */
+  const kidsOf = (r: RootProject): Kid[] | undefined =>
+    children[r.id] ?? (rollups[r.id]?.projects === 0 ? [] : undefined);
+  const describe = (r: RootProject) => {
+    const h = health(r.id);
+    if (h && h.projects.some((p) => p.reasons.length > 0)) return workspaceLine(h, stuckDays);
+    return workspaceDescription(kidsOf(r)?.map((p) => p.name), r.self_managed);
+  };
+  /** Under a workspace's name: its projects' marks, their health and the top
+   *  spender when there are projects; the plain description otherwise. */
+  const summary = (r: RootProject) => {
+    const kids = kidsOf(r);
+    if (!kids?.length) return <div className="sub" data-workspace-description>{describe(r)}</div>;
+    return <WorkspaceSummary token={token} kids={kids} ws={health(r.id)} stuckDays={stuckDays} />;
+  };
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -233,18 +274,18 @@ export function ProjectsPortfolio({
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          {/* The organization is chosen in the sidebar switcher now; the
-              portfolio just names where you are. */}
-          {org && <div className="eyebrow">{org.name}</div>}
-          <h1 style={{ marginTop: 8 }}>Workspaces</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            A workspace groups related projects. Open one to see its projects — each project owns its
-            connectors, artifacts and people, and its own IDE sessions.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Workspaces"
+        status={
+          <>
+            <StatusChip tone="neutral">
+              {roots.length} {roots.length === 1 ? "workspace" : "workspaces"}
+            </StatusChip>
+            {org && <span>in {org.name}</span>}
+          </>
+        }
+        info="A workspace groups related projects. Open one to see its projects — each project owns its connectors, artifacts and people, and its own IDE sessions."
+      />
 
       {creating && (
         <div className="card">
@@ -298,7 +339,7 @@ export function ProjectsPortfolio({
       <div className="card">
         <DataTable<RootProject>
           list="workspaces"
-          title={org ? `Workspaces in ${org.name}` : "Workspaces"}
+          title="Workspaces"
           rows={roots === null ? null : byName}
           rowKey={(r) => r.id}
           rowLabel={(r) => r.name}
@@ -330,12 +371,10 @@ export function ProjectsPortfolio({
               compare: (a, b) => a.name.localeCompare(b.name),
               cell: (r) => (
                 <div className="pcell">
-                  <span className="pico" aria-hidden>
-                    <FolderIcon />
-                  </span>
-                  <div>
+                  <TenantMark token={token} level="workspace" id={r.id} name={r.name} className="pico ticon-mark" />
+                  <div className="ws-name-cell">
                     <div className="pname">{r.name}</div>
-                    <div className="sub">{r.self_managed ? "self-managed" : "workspace"}</div>
+                    {summary(r)}
                   </div>
                 </div>
               ),
@@ -348,8 +387,59 @@ export function ProjectsPortfolio({
               cell: (r) => rollupText(rollups[r.id]?.projects ?? null),
             },
             { id: "people", header: "People", cell: (r) => <Avatars users={people[r.id]} /> },
+            {
+              id: "spend",
+              header: "Spend, 30 d",
+              num: true,
+              cell: (r) => {
+                const h = health(r.id);
+                return h?.spend == null ? "—" : cash(h.spend);
+              },
+              compare: (a, b) => (health(a.id)?.spend ?? 0) - (health(b.id)?.spend ?? 0),
+            },
+            {
+              id: "delta",
+              header: "Δ",
+              num: true,
+              cell: (r) => {
+                const h = health(r.id);
+                return h?.spend == null || h.previous === null ? "—" : growthText(h.spend, h.previous);
+              },
+            },
+            {
+              id: "failing",
+              header: "Failing specs",
+              num: true,
+              cell: (r) => health(r.id)?.specs_failing || "—",
+              compare: (a, b) => (health(a.id)?.specs_failing ?? 0) - (health(b.id)?.specs_failing ?? 0),
+            },
+            {
+              id: "stuck",
+              header: `PRs > ${stuckDays} d`,
+              num: true,
+              cell: (r) => health(r.id)?.stuck || "—",
+              compare: (a, b) => (health(a.id)?.stuck ?? 0) - (health(b.id)?.stuck ?? 0),
+            },
+            {
+              id: "quiet",
+              header: "Quiet",
+              num: true,
+              cell: (r) => quietText(health(r.id)?.quiet_days ?? null),
+              compare: (a, b) => (health(a.id)?.quiet_days ?? -1) - (health(b.id)?.quiet_days ?? -1),
+            },
           ]}
-          expand={(r) => <NestedProjects kids={children[r.id]} load={() => loadChildren(r.id)} onOpen={(p) => onOpenProject?.(r.id, p)} />}
+          expand={(r) => (
+            <NestedProjects
+              token={token}
+              wsId={r.id}
+              kids={children[r.id]}
+              ws={health(r.id)}
+              stuckDays={stuckDays}
+              cash={cash}
+              load={() => loadChildren(r.id)}
+              onOpen={(p) => onOpenProject?.(r.id, p)}
+            />
+          )}
           actions={(r) => [
             { label: "Open", onSelect: () => onOpen(r) },
             {
@@ -373,36 +463,163 @@ export function ProjectsPortfolio({
               },
             },
           ]}
-          tile={(r, open) => (
+          tile={(r, open) => {
             /* The tree does not come with: a card that unfolds into other
-               cards is a table with extra steps. */
-            <Tile
-              icon={<FolderIcon />}
-              title={r.name}
-              subtitle={r.self_managed ? "self-managed" : "workspace"}
-              onClick={open}
-              /* People come from the avatar list, not the rollup, and `?? null`
-                 keeps "not read yet" a dash instead of nobody. */
-              stats={[
-                { label: "projects", value: rollupText(rollups[r.id]?.projects ?? null) },
-                { label: "people", value: rollupText(people[r.id]?.length ?? null) },
-              ]}
-              footer={<Avatars users={people[r.id]} />}
-            />
-          )}
+               cards is a table with extra steps. Its projects come as marks
+               and a health split instead. */
+            const kids = kidsOf(r);
+            const h = health(r.id);
+            return (
+              <Tile
+                icon={<TenantMark token={token} level="workspace" id={r.id} name={r.name} />}
+                title={r.name}
+                subtitle={
+                  kids?.length ? (
+                    <WorkspaceHealth kids={kids} ws={h} stuckDays={stuckDays} withTop />
+                  ) : (
+                    describe(r)
+                  )
+                }
+                onClick={open}
+                /* `?? null` keeps "not read yet" a dash instead of nothing. */
+                stats={[
+                  { label: "projects", value: rollupText(rollups[r.id]?.projects ?? null) },
+                  { label: "spend, 30 d", value: h?.spend == null ? "—" : cash(h.spend) },
+                  { label: "failing", value: h ? String(h.specs_failing) : "—" },
+                ]}
+                footer={
+                  <span className="ws-tile-foot">
+                    {kids?.length ? <ProjectMarks token={token} kids={kids} /> : <span />}
+                    <Avatars users={people[r.id]} />
+                  </span>
+                }
+              />
+            );
+          }}
         />
       </div>
     </>
   );
 }
 
-/** A workspace's projects, under its row: read on first open. */
-function NestedProjects({
+/** A workspace's projects as marks: up to four, then "+N". */
+function ProjectMarks({ token, kids }: { token: string; kids: Kid[] }) {
+  const { shown, more } = firstOf(kids, 4);
+  return (
+    <span className="ws-marks" aria-label={`Projects: ${kids.map((k) => k.name).join(", ")}`}>
+      {shown.map((k) => (
+        <span key={k.id} className="ws-mark" title={k.name}>
+          <TenantMark token={token} level="project" id={k.id} name={k.name} kind={k.row?.project_kind} />
+        </span>
+      ))}
+      {more > 0 && <span className="ws-marks-more">+{more}</span>}
+    </span>
+  );
+}
+
+/** How a workspace's projects split, as a bar of segments and its words. */
+function HealthBar({ split, title }: { split: HealthSplit; title?: string }) {
+  const parts = (["danger", "warn", "ok", "unknown"] as const).filter((t) => split[t] > 0);
+  return (
+    <span className="ws-health" title={title} data-health-split={`${split.danger}/${split.warn}/${split.ok}/${split.unknown}`}>
+      <span className="ws-health-bar" aria-hidden>
+        {parts.map((t) => (
+          <span key={t} className={`ws-health-seg ${t}`} style={{ flexGrow: split[t] }} />
+        ))}
+      </span>
+      <span className="ws-health-text">{healthText(split)}</span>
+    </span>
+  );
+}
+
+/** The health split and, with `withTop`, the project that spends most. */
+function WorkspaceHealth({
   kids,
+  ws,
+  stuckDays,
+  withTop,
+}: {
+  kids: Kid[];
+  ws: OrgWorkspace | undefined;
+  stuckDays: number;
+  withTop?: boolean;
+}) {
+  const split = healthSplit(
+    kids.map((k) => k.id),
+    ws,
+  );
+  const top = withTop ? topSpender(ws) : null;
+  return (
+    <span className="ws-health-line">
+      <HealthBar split={split} title={ws ? workspaceLine(ws, stuckDays) : "Health not read"} />
+      {top && (
+        <span className="ws-top" title={`${top.name} spent ${top.share}% of this workspace's last 30 days`}>
+          top spend <b>{top.name}</b> {top.share}%
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Under a workspace's name: its projects' marks, their health, the top
+ *  spender. One line; it wraps on a narrow table. */
+function WorkspaceSummary({
+  token,
+  kids,
+  ws,
+  stuckDays,
+}: {
+  token: string;
+  kids: Kid[];
+  ws: OrgWorkspace | undefined;
+  stuckDays: number;
+}) {
+  return (
+    <div className="ws-summary" data-workspace-summary>
+      <ProjectMarks token={token} kids={kids} />
+      <WorkspaceHealth kids={kids} ws={ws} stuckDays={stuckDays} withTop />
+    </div>
+  );
+}
+
+/** The workspace table's column widths, read off its header so the nested
+ *  rows line up under the same columns. Re-read when the table resizes. */
+function useParentColumns(ref: RefObject<HTMLElement | null>, ready: boolean): number[] | null {
+  const [widths, setWidths] = useState<number[] | null>(null);
+  useLayoutEffect(() => {
+    const table = ref.current?.parentElement?.closest("table");
+    const head = table?.querySelector(":scope > thead > tr");
+    if (!head) return;
+    const read = () => {
+      const next = [...head.children].map((th) => th.getBoundingClientRect().width);
+      setWidths((w) => (w && w.length === next.length && w.every((v, i) => Math.abs(v - next[i]) < 0.5) ? w : next));
+    };
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(head);
+    return () => ro.disconnect();
+  }, [ref, ready]);
+  return widths;
+}
+
+/** A workspace's projects, under its row, in the table's own columns: read
+ *  on first open when the rollup has not already brought them. */
+function NestedProjects({
+  token,
+  wsId,
+  kids,
+  ws,
+  stuckDays,
+  cash,
   load,
   onOpen,
 }: {
-  kids: { id: string; name: string }[] | undefined;
+  token: string;
+  wsId: string;
+  kids: Kid[] | undefined;
+  ws: OrgWorkspace | undefined;
+  stuckDays: number;
+  cash: (n: number) => string;
   load: () => void;
   onOpen: (p: { id: string; name: string }) => void;
 }) {
@@ -410,32 +627,127 @@ function NestedProjects({
     if (kids === undefined) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const ref = useRef<HTMLTableElement | null>(null);
+  const widths = useParentColumns(ref, !!kids?.length);
   if (kids === undefined) return <div className="nested-projects nested-note">Loading projects…</div>;
-  if (kids.length === 0) return <div className="nested-projects nested-note">No projects in this workspace yet.</div>;
+  if (kids.length === 0)
+    return (
+      <div className="ws-tree-empty">
+        <EmptyState title="No projects in this workspace yet." body="Open the workspace to start one." />
+      </div>
+    );
+  // Ten cells, as the header has: ▸, the eight columns, the "…" menu.
+  const aligned = widths?.length === 10 ? widths : null;
   return (
-    <ul className="nested-projects" aria-label="Projects in this workspace">
-      {kids.map((p) => (
-        <li key={p.id}>
-          <button type="button" className="nested-project" onClick={() => onOpen(p)}>
-            <ProjectGlyph />
-            <span className="nested-name">{p.name}</span>
-            <span className="nested-open" aria-hidden>
-              Open ›
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <table
+      ref={ref}
+      className="ws-tree"
+      aria-label="Projects in this workspace"
+      style={aligned ? { width: aligned.reduce((a, b) => a + b, 0), tableLayout: "fixed" } : undefined}
+    >
+      {aligned && (
+        <colgroup>
+          {aligned.map((w, i) => (
+            <col key={i} style={{ width: w }} />
+          ))}
+        </colgroup>
+      )}
+      <tbody>
+        {kids.map((p, i) => {
+          const h = ws?.projects.find((x) => x.id === p.id);
+          const chip = projectChip(h);
+          // The cells a reason is about carry its tone, instead of the chip
+          // repeating their numbers.
+          const hot = new Map<string, string>();
+          for (const r of h?.reasons ?? []) {
+            const col = reasonColumn(r.kind);
+            if (col && !hot.has(col)) hot.set(col, r.kind === "specs_failing" ? "danger" : "warn");
+          }
+          const num = (col: string) => ["pnum", hot.has(col) ? `ws-hot ${hot.get(col)}` : ""].join(" ").trim();
+          const brief = p.row?.brief?.split(/\r?\n/)[0]?.trim();
+          const kind = kindLine(p.row ? { ...p.row, brief: null } : undefined);
+          const failing = h?.specs_failing ?? p.row?.specs_failing ?? null;
+          return (
+            <tr key={p.id} className={i === kids.length - 1 ? "ws-tree-row last" : "ws-tree-row"} data-nested-project={p.id}>
+              <td />
+              <td className="ws-tree-name">
+                <div className="pcell">
+                  <TenantMark token={token} level="project" id={p.id} name={p.name} kind={p.row?.project_kind} className="pico ticon-mark" />
+                  <div className="ws-tree-text">
+                    <div className="ws-tree-title">
+                      <a
+                        className="pname ws-tree-link"
+                        href={`/workspaces/${wsId}/projects/${p.id}`}
+                        onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                          e.preventDefault();
+                          onOpen(p);
+                        }}
+                      >
+                        {p.name}
+                      </a>
+                      {chip && (
+                        <StatusChip
+                          tone={chip.tone}
+                          title={h && h.reasons.length ? reasonLine(h.reasons, stuckDays) : undefined}
+                          data-project-status
+                        >
+                          {chip.label}
+                          {chip.more > 0 ? ` +${chip.more}` : ""}
+                        </StatusChip>
+                      )}
+                    </div>
+                    <div className="sub ws-tree-brief">{brief || kind}</div>
+                  </div>
+                </div>
+              </td>
+              <td className="ws-tree-kind">{brief ? kind : ""}</td>
+              <td className="ws-tree-team">{teamText(p.row)}</td>
+              <td className="pnum">{h?.spend == null ? "—" : cash(h.spend)}</td>
+              <td className={num("delta")}>{h?.spend == null || h.previous === null ? "—" : growthText(h.spend, h.previous)}</td>
+              <td className={num("failing")}>{failing || "—"}</td>
+              <td className={num("stuck")}>{h?.stuck || "—"}</td>
+              <td className={num("quiet")}>{quietText(h?.quiet_days ?? null)}</td>
+              <td />
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
-/** A small project glyph: a document with a fold, beside the folder of its
- *  workspace. */
-function ProjectGlyph() {
+/** A workspace page's line under its name: what it holds -- its projects by
+ *  name and "3 projects · 213 findings" -- read once, in one request. */
+export function WorkspaceStatusLine({ token, workspaceId, selfManaged }: { token: string; workspaceId: string; selfManaged: boolean }) {
+  const [read, setRead] = useState<{ names: string[]; projects: number | null; findings: number | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setRead(null);
+    portfolioRollups(token, workspaceId)
+      .then(({ workspaces, projects }) => {
+        if (!live) return;
+        const mine = [...projects.values()].filter((p) => p.parentId === workspaceId);
+        const counted = mine.filter((p) => p.findings !== null);
+        setRead({
+          names: mine.map((p) => p.name),
+          projects: workspaces.get(workspaceId)?.projects ?? mine.length,
+          findings: counted.length ? counted.reduce((n, p) => n + (p.findings ?? 0), 0) : null,
+        });
+      })
+      .catch(() => live && setRead({ names: [], projects: null, findings: null }));
+    return () => {
+      live = false;
+    };
+  }, [token, workspaceId]);
+  if (!read) return <span className="sub">…</span>;
+  const status = workspaceStatus(read.projects, read.findings);
+  const description = workspaceDescription(read.projects === null ? undefined : read.names, selfManaged);
   return (
-    <svg className="nested-glyph" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M4 1.8h5.2L12.4 5v8.2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-      <path d="M9 1.9V5h3.3" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-    </svg>
+    <span className="ws-status" data-workspace-status>
+      {description && <span>{description}</span>}
+      {description && status && <span aria-hidden> · </span>}
+      {status && <b>{status}</b>}
+    </span>
   );
 }

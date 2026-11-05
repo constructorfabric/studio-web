@@ -53,6 +53,40 @@ export function groupOutputs(
   };
 }
 
+/** The files of one version of the code -- a commit -- from the builds of
+ *  it that kept any. A file is listed once per build that kept it, under the
+ *  build's own output (what a download asks for). */
+export interface OutputVersion {
+  /** The commit: its short sha, or the artifact's own when the run is gone. */
+  version: string;
+  branch: string | null;
+  /** Whether a build of it passed; null when no run of it is known. */
+  passed: boolean | null;
+  at: string;
+  files: BuildOutput[];
+}
+
+/** The CI files by version, newest first; `passedOnly` keeps the versions a
+ *  build passed for. The runs themselves are Tests' and Releases'. */
+export function outputVersions(builds: readonly OutputBuild[], passedOnly: boolean): OutputVersion[] {
+  const byVersion = new Map<string, OutputVersion>();
+  for (const b of builds) {
+    const sha = b.run?.shortSha || (b.artifacts[0]?.sha ?? "").slice(0, 7) || b.runId;
+    const at = b.run?.createdAt ?? b.artifacts[0]?.created_at ?? "";
+    let v = byVersion.get(sha);
+    if (!v) {
+      v = { version: sha, branch: b.run?.branch ?? b.artifacts[0]?.branch ?? null, passed: null, at, files: [] };
+      byVersion.set(sha, v);
+    }
+    if (b.run) v.passed = v.passed === true || b.run.status === "passed";
+    if (at > v.at) v.at = at;
+    v.files.push(...b.artifacts);
+  }
+  return [...byVersion.values()]
+    .filter((v) => !passedOnly || v.passed === true)
+    .sort((a, b) => b.at.localeCompare(a.at));
+}
+
 /** `84 MB`, `3.1 KB`, `512 B`; a dash when unknown. */
 export function formatBytes(n: number | null | undefined): string {
   if (typeof n !== "number" || n < 0) return "—";

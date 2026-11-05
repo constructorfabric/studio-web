@@ -978,6 +978,9 @@ async fn upsert_organization_stage(
     .await
 }
 
+// No Studio screen writes stages any more: the workspace's Process catalogue,
+// the only caller, was retired by ADR-0058, and stages are a computed status.
+// The route and the table stay so overrides already saved keep resolving.
 /// As for document types, the level is the ROUTE's and never the payload's.
 async fn upsert_stage_at(
     ctx: SecurityContext,
@@ -1335,6 +1338,10 @@ async fn upsert_organization_capability(
     .await
 }
 
+// No Studio screen writes capabilities any more: the workspace's Process
+// catalogue, the only caller, was retired by ADR-0058. The vocabulary is the
+// platform's built-in one until it is derived from what gears declare. The
+// route and the table stay so overrides already saved keep resolving.
 async fn upsert_capability_at(
     ctx: SecurityContext,
     service: Arc<DocumentsService>,

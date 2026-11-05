@@ -10,9 +10,8 @@ Dev and test are isolated:
 | Dev | `studio-dev` | `dev-webstudio` | `https://studio-dev.cfabric.org` |
 | Test | `studio-test` | `test-webstudio` | `https://studio-test.cfabric.org` |
 
-Each environment has its own S3 credentials, Ed25519 signing pair and callback
-secret. No secret value, rendered Kubernetes Secret, or kubeconfig belongs in
-Git.
+Each environment has its own S3 credentials and Ed25519 signing pair. No secret
+value, rendered Kubernetes Secret, or kubeconfig belongs in Git.
 
 ## Architecture
 
@@ -76,7 +75,7 @@ revision remains defined in one place. Updating the `gears-rust` dependency and
 
 ## GitHub Environment secrets
 
-Create these five secrets independently in both GitHub Environments (`dev` and
+Create these four secrets independently in both GitHub Environments (`dev` and
 `test`):
 
 | Secret | Meaning |
@@ -85,16 +84,15 @@ Create these five secrets independently in both GitHub Environments (`dev` and
 | `FILE_STORAGE_S3_SECRET_ACCESS_KEY` | Matching S3 secret key |
 | `FILE_STORAGE_SIGNING_SEED` | 32-byte Ed25519 seed, base64url without padding |
 | `FILE_STORAGE_SIDECAR_PUBLIC_KEY` | Matching raw Ed25519 public key, base64url without padding |
-| `FILE_STORAGE_INTERNAL_TOKEN` | 32 random bytes, base64url without padding: the secret the sidecar's upload callbacks carry, which the backend checks |
 
-Generate a new signing pair and callback secret for each environment:
+Generate a new signing pair for each environment:
 
 ```powershell
 py -m pip install cryptography
 py deploy/scripts/generate-file-storage-keypair.py
 ```
 
-Copy the three printed values directly into the selected GitHub Environment. Do
+Copy the two printed values directly into the selected GitHub Environment. Do
 not paste them into issues, pull requests, chat, workflow inputs, or repository
 variables. Run the script again for the other environment.
 

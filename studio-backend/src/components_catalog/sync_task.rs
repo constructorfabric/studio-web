@@ -96,6 +96,11 @@ impl TaskHandler for CatalogSyncTask {
                 Err(e) => return TaskOutcome::Failed(format!("studio-components-catalog: {e:#}")),
             };
         }
+        // A project's own catalogue (ADR-0061): its repositories, read now,
+        // into the project's tenant, where only the project sees them.
+        if let Some(project) = sources.project {
+            return self.run_project(ctx, project).await;
+        }
         if !sources.names_a_catalogue_source() && !sources.registry {
             return TaskOutcome::Failed(
                 "studio-components-catalog: this run names no source to read".to_owned(),
@@ -198,6 +203,68 @@ impl TaskHandler for CatalogSyncTask {
     }
 }
 
+impl CatalogSyncTask {
+    /// Sync one project's own catalogue. The run is queued in the
+    /// organization's tenant; the project must be one of its projects.
+    async fn run_project(&self, ctx: &TaskContext, project: uuid::Uuid) -> TaskOutcome {
+        let org_ctx = match super::registry::in_tenant(&ctx.security, ctx.tenant) {
+            Ok(s) => s,
+            Err(e) => return TaskOutcome::Failed(format!("studio-components-catalog: {e:#}")),
+        };
+        if !self
+            .service
+            .tenant_within(&org_ctx, ctx.tenant, project)
+            .await
+            || project == ctx.tenant
+        {
+            return TaskOutcome::Failed(format!(
+                "studio-components-catalog: project {project} is not one of organization {}'s",
+                ctx.tenant
+            ));
+        }
+        let pctx = match super::registry::in_tenant(&ctx.security, project) {
+            Ok(s) => s,
+            Err(e) => return TaskOutcome::Failed(format!("studio-components-catalog: {e:#}")),
+        };
+        let (sources, refused) = match self.service.project_sync_sources(&org_ctx, &pctx).await {
+            Ok(s) => s,
+            Err(e) => return TaskOutcome::Retry(format!("{e:#}")),
+        };
+        let not_owned: Vec<String> = refused.iter().map(|r| r.repo.clone()).collect();
+        if !sources.names_a_catalogue_source() {
+            return TaskOutcome::done(format!(
+                "project {project} names no repository it can read{}",
+                if not_owned.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; not read, its connection is not the organization's: {}",
+                        not_owned.join(", ")
+                    )
+                }
+            ));
+        }
+        let (progress, drain) = ctx.progress_bridge();
+        let outcome = self.service.run_sync(&pctx, sources, &progress).await;
+        drop(progress);
+        let _ = drain.await;
+        match outcome {
+            Ok(mut counts) => {
+                counts.not_owned = not_owned;
+                let summary = format!(
+                    "project {project}: {} component(s), {} node(s) stored",
+                    counts.gears, counts.stored
+                );
+                match serde_json::to_value(counts) {
+                    Ok(result) => TaskOutcome::done_with(summary, result),
+                    Err(_) => TaskOutcome::done(summary),
+                }
+            }
+            Err(e) => TaskOutcome::Retry(format!("{e:#}")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +285,7 @@ mod tests {
             roadmaps: Vec::new(),
             registry: false,
             platform: false,
+            project: None,
         };
         let back: SyncSources =
             serde_json::from_value(serde_json::to_value(&sources).unwrap()).unwrap();
@@ -269,6 +337,23 @@ mod tests {
                 .as_object()
                 .unwrap()
                 .contains_key("platform")
+        );
+    }
+
+    #[test]
+    fn a_project_payload_names_the_project_and_round_trips() {
+        let p = Uuid::from_u128(5);
+        let back: SyncSources =
+            serde_json::from_value(serde_json::json!({ "project": p })).unwrap();
+        assert_eq!(back.project, Some(p));
+        assert!(!back.names_a_catalogue_source());
+        let org: SyncSources = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(
+            !serde_json::to_value(&org)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("project")
         );
     }
 

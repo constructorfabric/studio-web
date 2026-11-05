@@ -197,14 +197,20 @@ RUN --mount=type=secret,id=github_token \
 # the workflow publishes for a commit before it is tagged; once the engine
 # tags versions, pin a `v<version>` release the same way.
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS gearbox
-ARG STUDIO_GEARBOX_REPO=https://github.com/constructorfabric/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-cf63925
-ARG STUDIO_GEARBOX_VERSION=0.1.0-cf63925
-ARG STUDIO_GEARBOX_REF=cf639255c2e63002bfb76764f3e397a5c61877de
-ARG STUDIO_GEARBOX_SHA256=04c21dd6187abc70f401fb34b78717e7c46576b2d847ede6a17dc801df4dd92d
+# Until constructorfabric/gearbox#17 (GDL 1.5, `frontend = frontx_product(...)`)
+# merges, the engine is the snapshot of that PR's branch on its author's fork;
+# move back to a constructorfabric/gearbox release once it does.
+ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
+ARG STUDIO_GEARBOX_RELEASE=snapshot-c6bcfe5
+ARG STUDIO_GEARBOX_VERSION=0.1.0-c6bcfe5
+ARG STUDIO_GEARBOX_REF=c6bcfe58b40b00e94286cc4a3fa2734d5f8eaf3d
+ARG STUDIO_GEARBOX_SHA256=b886e945b83fd423ffca3dde6fa28796500063313ab842d7abae9342d0d5c0b7
 # Not used here: gearbox-engine.yml reads them for the desktop's archives.
-ARG STUDIO_GEARBOX_SHA256_WIN32_X64=3cccce0b1b4cd9ca49d6fd8853e96e30a52187ebd0d91cc53e6df2ac0966d693
-ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=3ba42bd8f244c6d6de2df80262df9ac100b2388a0456ab55c6a1ceee05fa31b1
+# Empty when the release has no archive for that platform: the workflow then
+# packs no engine for it (snapshot-c6bcfe5 has no macOS build; its runner
+# never came). Fill it in with the next release that has one.
+ARG STUDIO_GEARBOX_SHA256_WIN32_X64=912720b3265384916b95bccd30b21421dac8a2a31446bbd50b15eefa156770ba
+ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \

@@ -33,6 +33,10 @@ use super::preflight;
 use crate::connectors::sdk::{ClusterAccess, Connectors, RegistryAccess, same_registry};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
+// Installing a product's infra services before its release (ADR-0064 §5).
+#[path = "infra_install.rs"]
+mod infra_install;
+
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "environments.deploy";
 
@@ -101,10 +105,18 @@ pub struct DeployPayload {
     /// prepares and where it puts the application. `None` for a cluster.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub research: Option<super::research::ResearchDeploy>,
+    /// The project's build namespace there, recorded with its namespace once
+    /// the run made or found it (ADR-0062 §3); absent from a deploy queued
+    /// before it was recorded, and for a preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_namespace: Option<String>,
     /// A preview (ADR-0055): its namespace is labelled as one, and its host
     /// routed once the release is installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<super::preview::PreviewRoute>,
+    /// The product's infra services, as this run brings them (ADR-0064).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra: Vec<super::infra::InfraInstall>,
 }
 
 pub struct DeployTask {
@@ -288,12 +300,35 @@ impl TaskHandler for DeployTask {
         if let Err(e) = ensure_namespace(&client, &payload).await {
             return TaskOutcome::Failed(format!("{e:#}"));
         }
+        if payload.preview.is_none() {
+            super::placement::record(
+                &self.hub,
+                payload.organization_id,
+                payload.project_id,
+                payload.environment_id,
+                payload.connection_id,
+                &payload.namespace,
+                payload
+                    .build_namespace
+                    .as_deref()
+                    .unwrap_or(&payload.namespace),
+            )
+            .await;
+        }
         if let Some(registry) = &registry {
             ctx.progress(format!("writing the pull secret for {}", registry.host))
                 .await;
             if let Err(e) = write_pull_secret(&client, &payload.namespace, registry).await {
                 return TaskOutcome::Failed(format!("{e:#}"));
             }
+        }
+        // The product's infra services come first (ADR-0064 §5): what they
+        // provide is part of the configuration written next.
+        if !payload.infra.is_empty()
+            && let Err(e) =
+                infra_install::bring(&self.hub, ctx, &access, registry.as_ref(), &payload).await
+        {
+            return TaskOutcome::Failed(format!("{e:#}"));
         }
         if !payload.secret_keys.is_empty() {
             ctx.progress("writing the release's configuration secrets")
@@ -359,6 +394,12 @@ impl TaskHandler for DeployTask {
                     Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
                 }
             }
+        }
+        // The product signs in through an IdP of its own (ADR-0062 §9).
+        if let Some((code, why)) =
+            preflight::platform_idp_refusal(&rendered, preflight::studio_issuer().as_deref())
+        {
+            return TaskOutcome::Failed(format!("{code}: {why}"));
         }
         ctx.progress("checking the namespace has every secret the chart reads")
             .await;
@@ -443,8 +484,10 @@ fn tail(s: &str, n: usize) -> String {
 }
 
 /// Make sure the namespace exists, creating it when the connection may. A
-/// connection limited to its namespaces cannot read namespaces at all, and is
-/// trusted to have been given this one.
+/// connection that may not even read the namespace is refused with the
+/// reason: it used to be trusted to have been given it, and then failed
+/// later with a bare 403 (see `readiness`, which asks before anything is
+/// queued).
 pub(super) async fn prepare_namespace(
     client: &kube::Client,
     namespace: &str,
@@ -463,7 +506,21 @@ async fn make_namespace(
 ) -> anyhow::Result<()> {
     let namespaces: kube::Api<Namespace> = kube::Api::all(client.clone());
     match namespaces.get_opt(namespace).await {
-        Ok(Some(_)) => Ok(()),
+        // A namespace another project's label claims is never this one's
+        // (ADR-0062 §3); one without the label was assigned by hand, which
+        // the check before the run asked.
+        Ok(Some(found)) => {
+            let label = found
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|l| l.get(super::placement::PROJECT_LABEL))
+                .cloned();
+            match super::placement::owner_refusal(namespace, label.as_deref(), project, true) {
+                Some((_, why)) => Err(anyhow!(why)),
+                None => Ok(()),
+            }
+        }
         Ok(None) => {
             let mut labels: std::collections::BTreeMap<String, String> = [
                 (
@@ -503,10 +560,13 @@ async fn make_namespace(
                 })?;
             grant_self_admin(client, namespace).await
         }
-        Err(kube::Error::Api(status)) if status.code == 403 => {
-            warn!(namespace = %namespace, "studio-environments: cannot read namespaces; assuming it exists");
-            Ok(())
-        }
+        Err(kube::Error::Api(status)) if status.code == 403 => Err(anyhow!(
+            "the cluster connection may not read namespace {namespace}, so whether it exists \
+             cannot be told: a cluster administrator applies {}, or gives the connection's \
+             account admin in {namespace} ({})",
+            crate::connectors::sdk::BOOTSTRAP_FILE,
+            status.message
+        )),
         Err(e) => Err(anyhow!("the cluster did not answer: {e}")),
     }
 }
@@ -983,8 +1043,116 @@ async fn watch_start(client: kube::Client, namespace: &str) -> String {
         };
         let now: Vec<_> = list.items.iter().flat_map(preflight::waiting).collect();
         if let Some(why) = watch.look(&now) {
-            return why;
+            // The release is taken back after this, and its pods with it: what
+            // a crashing container said is kept in the reason, or it is lost.
+            let mut said = Vec::new();
+            for w in now.iter().filter(|w| w.restarts > 0) {
+                let params = LogParams {
+                    container: Some(w.container.clone()),
+                    previous: true,
+                    tail_lines: Some(CRASH_LOG_LINES),
+                    limit_bytes: Some(CRASH_LOG_BYTES),
+                    ..LogParams::default()
+                };
+                if let Ok(Ok(text)) =
+                    tokio::time::timeout(Duration::from_secs(10), pods.logs(&w.pod, &params)).await
+                    && let Some(last) = last_words(&text)
+                {
+                    said.push(format!("{} stopped: {last}", w.container));
+                }
+            }
+            if said.is_empty() {
+                return why;
+            }
+            // A run's reason is cut to 500 characters: what the container
+            // said goes first, the cluster's account of it after.
+            return format!("{}; {why}", said.join("; "));
         }
+    }
+}
+
+/// How much of a crashing container's last run is read for its reason.
+const CRASH_LOG_LINES: i64 = 60;
+const CRASH_LOG_BYTES: i64 = 16 * 1024;
+
+/// What a container that stopped said last that matters: its last lines
+/// that name an error, or its last lines when none does -- without their
+/// timestamps and colours, so the reason's few hundred characters go to the
+/// error itself.
+pub fn last_words(log: &str) -> Option<String> {
+    let lines: Vec<String> = log
+        .lines()
+        .map(plain_log_line)
+        .filter(|l| !l.is_empty())
+        .collect();
+    // A server that returns its error from `main` prints `Error: ...` and the
+    // chain of causes under it: that is the whole story, in order.
+    if let Some(at) = lines.iter().rposition(|l| l.starts_with("Error: ")) {
+        let chain: Vec<&str> = lines[at..]
+            .iter()
+            .map(String::as_str)
+            .filter(|l| *l != "Caused by:")
+            .collect();
+        return Some(chain.join(" / ").chars().take(400).collect());
+    }
+    let errors: Vec<&String> = lines
+        .iter()
+        .filter(|l| {
+            let l = l.to_ascii_lowercase();
+            ["error", "panic", "fatal", "failed"]
+                .iter()
+                .any(|w| l.contains(w))
+        })
+        .collect();
+    let pick: Vec<&String> = if errors.is_empty() {
+        lines.iter().rev().take(2).rev().collect()
+    } else {
+        errors.iter().rev().take(3).rev().copied().collect()
+    };
+    if pick.is_empty() {
+        return None;
+    }
+    Some(
+        pick.iter()
+            .map(|l| l.chars().take(240).collect::<String>())
+            .collect::<Vec<_>>()
+            .join(" / "),
+    )
+}
+
+/// A log line without its colour codes and the timestamp a server puts
+/// first.
+fn plain_log_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // An escape sequence: `ESC [` up to its final letter.
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for f in chars.by_ref() {
+                    if f.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if c.is_control() || c == '\u{fffd}' {
+            continue;
+        }
+        out.push(c);
+    }
+    let out = out.trim();
+    match out.split_once(' ') {
+        Some((first, rest))
+            if first.len() >= 20
+                && first.as_bytes().get(4) == Some(&b'-')
+                && first.contains('T') =>
+        {
+            rest.trim().to_string()
+        }
+        _ => out.to_string(),
     }
 }
 
@@ -1020,7 +1188,7 @@ pub struct ContainerLog {
 
 /// How many lines of each log a reader gets when it does not say.
 pub const LOG_LINES: i64 = 200;
-const LOG_LINES_MAX: i64 = 2000;
+pub const LOG_LINES_MAX: i64 = 2000;
 const LOG_BYTES: i64 = 128 * 1024;
 /// A release with more pods than this is read for its first ones only.
 const LOG_PODS: usize = 12;
@@ -1198,7 +1366,7 @@ mod tests {
         assert_eq!(user.api_group.as_deref(), Some("rbac.authorization.k8s.io"));
     }
 
-    fn payload() -> DeployPayload {
+    pub(super) fn payload() -> DeployPayload {
         DeployPayload {
             deployment_id: Uuid::nil(),
             organization_id: Uuid::nil(),
@@ -1217,7 +1385,9 @@ mod tests {
             connections_from: None,
             values: serde_json::json!({}),
             research: None,
+            build_namespace: None,
             preview: None,
+            infra: Vec::new(),
         }
     }
 
@@ -1274,6 +1444,34 @@ mod tests {
         assert_eq!(log_lines(Some(50)), 50);
         assert_eq!(log_lines(Some(0)), 1);
         assert_eq!(log_lines(Some(1_000_000)), LOG_LINES_MAX);
+    }
+
+    #[test]
+    fn a_stopped_container_is_remembered_by_its_errors() {
+        let log = "2026-11-05T07:13:06.882117449Z \u{1b}[32m INFO\u{1b}[0m toolkit: Initializing a gear... gear=\"a\"\n\
+                   2026-11-05T07:13:06.990000000Z \u{1b}[31mERROR\u{1b}[0m toolkit: gear init failed: oidc discovery: connection refused\n\
+                   2026-11-05T07:13:07.000000000Z  INFO toolkit: shutting down\n";
+        assert_eq!(
+            last_words(log).as_deref(),
+            Some("ERROR toolkit: gear init failed: oidc discovery: connection refused")
+        );
+        // Nothing names an error: the last lines are what is left.
+        assert_eq!(
+            last_words("one\ntwo\nthree\n").as_deref(),
+            Some("two / three")
+        );
+        assert_eq!(last_words("\n \n"), None);
+        // An error returned from `main` is told with its causes.
+        let log = "2026-11-05T07:16:48.383Z ERROR hw: Failed to get hardware machine ID\n\
+                   Error: initialization failed for gear 'm'\n\
+                   \n\
+                   Caused by:\n    invalid config for gear 'm': missing field `model_catalog`\n";
+        assert_eq!(
+            last_words(log).as_deref(),
+            Some(
+                "Error: initialization failed for gear 'm' / invalid config for gear 'm': missing field `model_catalog`"
+            )
+        );
     }
 
     #[test]

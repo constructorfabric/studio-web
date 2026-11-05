@@ -160,3 +160,132 @@ fn a_share_mode_is_spelled_as_the_config_spells_it() {
     }
     assert_eq!(ShareMode::default(), ShareMode::Branch);
 }
+
+#[test]
+fn a_fork_names_its_upstream_among_the_project_repositories() {
+    let config = json!({
+        "sources": [{
+            "full_path": "AndrejK666/studio-web",
+            "clone_url": "https://github.com/AndrejK666/studio-web.git",
+        }],
+        "source_git_url": "https://github.com/constructorfabric/studio-web.git",
+        "build": { "repo": "constructorfabric/studio-web", "workflow": "build.yml" },
+    });
+    assert_eq!(
+        repositories(&config),
+        vec![
+            "andrejk666/studio-web".to_owned(),
+            "constructorfabric/studio-web".to_owned()
+        ],
+    );
+}
+
+#[test]
+fn a_git_url_gives_its_owner_and_name() {
+    assert_eq!(
+        url_path("https://github.com/acme/api.git").as_deref(),
+        Some("acme/api")
+    );
+    assert_eq!(
+        url_path("git@github.com:acme/api.git").as_deref(),
+        Some("acme/api")
+    );
+    assert_eq!(
+        url_path("https://gitlab.example/group/sub/api/").as_deref(),
+        Some("group/sub/api")
+    );
+    assert_eq!(url_path("https://github.com/acme").as_deref(), None);
+    assert_eq!(url_path("").as_deref(), None);
+}
+
+#[test]
+fn a_project_has_one_list_and_its_flags_say_what_each_source_is_for() {
+    let c = Uuid::new_v4().to_string();
+    let config = json!({ "sources": [
+        { "connection_id": c, "full_path": "acme/app", "clone_url": "https://github.com/acme/app.git" },
+        { "connection_id": c, "full_path": "acme/gears", "clone_url": "https://github.com/acme/gears.git",
+          "gears_here": true },
+        { "connection_id": c, "full_path": "acme/release", "clone_url": "https://github.com/acme/release.git",
+          "publish_here": true },
+    ]});
+    let sources = parse(&config);
+    assert_eq!(gears_source(&sources).unwrap().full_path, "acme/gears");
+    assert_eq!(publish_source(&sources).unwrap().full_path, "acme/release");
+    assert_eq!(
+        description_home(&sources).unwrap().full_path,
+        "acme/release",
+        "the description travels with the source it is published to"
+    );
+    // Nothing marked: Studio keeps revisions only, and the description
+    // travels with the first source read through a connection.
+    let plain = parse(&json!({ "sources": [
+        { "full_path": "acme/docs", "clone_url": "https://github.com/acme/docs.git" },
+        { "connection_id": c, "full_path": "acme/app", "clone_url": "https://github.com/acme/app.git" },
+    ]}));
+    assert!(publish_source(&plain).is_none());
+    assert!(gears_source(&plain).is_none());
+    assert_eq!(description_home(&plain).unwrap().full_path, "acme/app");
+    assert!(description_home(&[]).is_none());
+}
+
+#[test]
+fn the_old_gear_repository_becomes_a_source_marked_gears_here_once() {
+    let gear_repo = json!({ "tenant": Uuid::nil(), "connection_id": "2aaca5b5-e283-45ec-8ce0-be6fcfcaf4e2",
+                            "repo": "constructorfabric/studio-web", "branch": "main" });
+    // Another repository: appended, marked.
+    let mut config = json!({ "sources": [
+        { "full_path": "AndrejK666/studio-web", "clone_url": "https://github.com/AndrejK666/studio-web.git",
+          "branch": "AndrejK666/studio-web-gdl" } ]});
+    assert!(fold_gear_repo(&mut config, &gear_repo, None));
+    let sources = parse(&config);
+    assert_eq!(sources.len(), 2);
+    assert!(!sources[0].gears_here);
+    assert!(sources[1].gears_here);
+    assert_eq!(
+        sources[1].clone_url,
+        "https://github.com/constructorfabric/studio-web.git"
+    );
+    assert_eq!(sources[1].branch.as_deref(), Some("main"));
+    assert_eq!(config["sources"][1]["folded_from"], "project_gear_repo");
+    // Again: nothing changes.
+    let before = config.clone();
+    assert!(!fold_gear_repo(&mut config, &gear_repo, None));
+    assert_eq!(config, before);
+
+    // The same repository as a source: that source takes the flag.
+    let mut same = json!({ "sources": [
+        { "full_path": "constructorfabric/studio-web", "clone_url": "https://github.com/constructorfabric/studio-web" } ]});
+    assert!(fold_gear_repo(
+        &mut same,
+        &gear_repo,
+        Some("https://github.com/")
+    ));
+    assert_eq!(same["sources"].as_array().unwrap().len(), 1);
+    assert_eq!(same["sources"][0]["gears_here"], true);
+    // No config at all: one source.
+    let mut none = json!(null);
+    assert!(fold_gear_repo(&mut none, &gear_repo, None));
+    assert_eq!(parse(&none).len(), 1);
+}
+
+#[test]
+fn a_flag_moves_to_one_source() {
+    let mut config = json!({ "sources": [
+        { "full_path": "a/x", "clone_url": "https://h/a/x.git", "gears_here": true },
+        { "full_path": "a/y", "clone_url": "https://h/a/y.git" } ]});
+    assert!(mark_only(&mut config, "gears_here", Some("https://h/a/y")));
+    let s = parse(&config);
+    assert!(!s[0].gears_here && s[1].gears_here);
+    assert!(!mark_only(&mut config, "gears_here", Some("https://h/a/z")));
+    let repo = json!({ "repo": "a/z", "branch": "dev" });
+    assert!(set_gears_here(
+        &mut config,
+        &repo,
+        "https://h/a/z.git",
+        Some("https://h")
+    ));
+    let s = parse(&config);
+    assert_eq!(s.len(), 3);
+    assert_eq!(s.iter().filter(|s| s.gears_here).count(), 1);
+    assert!(s[2].gears_here);
+}

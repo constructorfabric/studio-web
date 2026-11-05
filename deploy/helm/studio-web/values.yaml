@@ -97,7 +97,7 @@ backend:
   auth:
     existingSecret: "studio-web-idp"
   # Application secrets (keys: llm_api_key [required; mini-chat only], fs_signing_seed
-  # and fs_internal_token [both required only when fileStorage.enabled=false], credstore_key [strongly recommended: base64 of 32 bytes,
+  # and fs_finalize_secret [required only when fileStorage.enabled=false], credstore_key [strongly recommended: base64 of 32 bytes,
   # `openssl rand -base64 32`; without it user-typed secrets die with every
   # pod restart], s2s_client_secret [optional], idp_admin_secret [optional],
   # spec_quality_api_key [optional; enables the external detector wrapper],
@@ -193,13 +193,16 @@ backend:
   # refreshed in the background at most every `refreshSecs`. An `emptyDir`
   # unless `persistence` is on: then a restart fetches instead of re-cloning.
   # `corpusUrl` (the platform's gears, ADR-0042) is required once enabled;
-  # an empty `corpusRef` means `main`.
+  # an empty `corpusRef` means `main`. `corpusId` is the source id product
+  # descriptions name the corpus by; empty takes the corpus repository's
+  # name (`gears-rust` for `.../gears-rust.git`).
   gearbox:
     enabled: false
     sizeLimit: 2Gi
     mountPath: /var/lib/studio/gearbox
     corpusUrl: ""
     corpusRef: ""
+    corpusId: ""
     refreshSecs: ""
     # A claim instead of the emptyDir, like artifactClone's (#848). One
     # replica only (ReadWriteOnce): a rollout needs maxSurge 0. `sizeLimit`
@@ -209,6 +212,17 @@ backend:
       size: 4Gi
       # Empty leaves it to the cluster default.
       storageClass: ""
+  # Where a product's frontend starts (product/frontx.rs), served with the
+  # Gearbox status whether or not Gearbox is on. `shellTemplate` is
+  # `github:<owner>/<repo>//<dir>@<ref>`, `source` `<owner>/<repo>[@<ref>]`;
+  # empty is FrontX's own templates (constructorfabric/gears-frontx-templates).
+  frontx:
+    shellTemplate: ""
+    source: ""
+  # The kit catalogue (kit_registry/README.md): a JSON array of kits, each
+  # `slug`, `name`, `repository_url`, `default_version`. Empty is
+  # Constructor's own kits; a value that does not read stops the backend.
+  kitCatalogue: ""
   # OpenTelemetry push to the cluster's collector (deploy/observability).
   #
   # The instruments already exist in the binary — the api-gateway gear installs
@@ -243,6 +257,9 @@ backend:
       pathStyle: true
     secrets:
       s3ExistingSecret: "studio-web-file-storage-s3"
+      # Keys: signing_seed, sidecar_public_key, finalize_internal_secret (the
+      # sidecar's finalize-callback token, file-storage >= 0.4; deploy.yml
+      # derives it from the signing seed).
       signingExistingSecret: "studio-web-file-storage-signing"
     # Non-secret digest supplied by deploy.yml. A rotation rolls the Pod.
     secretRevision: ""
@@ -298,11 +315,16 @@ backend:
   # someone runs that on studio-dev, the guard stays — lifting it is then a
   # one-line change here.
   # A build in an organization's cluster (studio-environments, ADR-0048 §9)
-  # runs as a Job of three steps. `prepare` and `publish` run in this backend's
-  # own image (backend.image above, so a cluster that admits only its own
-  # registry's proxy gets the image through it); `build` runs rootless BuildKit
-  # from buildkitImage. Point that at the same proxy where such a policy holds.
+  # runs as a Job of three steps. `prepare` and `publish` run in the builder
+  # image, `studio-builder`, which CI publishes beside the backend and the
+  # deploy pins by digest (ADR-0062 §1): `…/studio-builder@sha256:…`. Never the
+  # backend's own image, so a project's build does not change with the Studio
+  # that runs it. Empty refuses every build (BUILDER_NOT_PINNED); an
+  # environment may name a mirror of its own. `build` runs rootless BuildKit
+  # from buildkitImage; point both at a proxy where the cluster admits only its
+  # own registry's images.
   builds:
+    builderImage: ""
     buildkitImage: "moby/buildkit:v0.20.0-rootless"
   sessions:
     enabled: false

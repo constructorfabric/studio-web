@@ -1,38 +1,20 @@
 #!/usr/bin/env bash
-# One-command local bring-up that survives a FRESH / empty Postgres volume.
+# One-command local bring-up; an empty Postgres volume needs nothing extra.
 #
-# Why this exists: on a brand-new database the LLM chain's `oagw` gear deadlocks
-# in its post_init — it resolves the ROOT tenant, but account-management only
-# seeds the root later, in its serve phase (after every gear's post_init). So a
-# clean first boot with the llm chain on dies before the root can be created.
-#
-# We break the cycle in two steps, no manual hacks:
-#   1) run a no-LLM backend (built --no-default-features, `bootstrap` profile) —
-#      it has NO oagw, reaches serve, and seeds the root tenant;
-#   2) stop it and start the normal stack (llm chain on), which now finds the
-#      root and boots cleanly.
-# Idempotent: on a warm volume the root already exists, so step 1 is a fast no-op
-# and step 2 works on its own too.
+# `backend-bootstrap` (a one-shot the backend waits for) creates and migrates
+# the gear databases; the backend then seeds the platform root tenant in its
+# serve phase. oagw >= 0.6 keeps its registry in a database and reconciles it
+# in the background once that root exists, so a fresh volume no longer needs
+# the no-LLM seeding run this script used to start first.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "==> infra: graph-postgres + keycloak"
-docker compose up -d graph-postgres keycloak
-
-echo "==> step 1/2: seeding root tenant via a no-LLM backend (bootstrap profile)"
-# --wait blocks until the bootstrap backend is healthy; healthy == it reached the
-# serve phase == account-management's bootstrap saga has seeded the root tenant.
-docker compose --profile bootstrap up -d --build --wait backend-bootstrap
-
-echo "==> root seeded — removing the bootstrap backend"
-docker compose --profile bootstrap rm -sf backend-bootstrap
-
-echo "==> step 2/2: full stack (backend + frontend, llm chain on)"
+echo "==> backend + frontend (the database bootstrap runs first, on its own)"
 # Built by name rather than with `up --build`: the backend now waits for the
 # session-image service, and `--build` would rebuild the Theia image — ten
 # minutes — on every single run. `up` still builds it when the tag is missing,
 # which is the first run and after `docker compose build session-image`.
-docker compose build backend frontend
+docker compose build backend backend-bootstrap frontend
 docker compose up -d backend frontend
 
 # The session image is the one thing `up` does not rebuild once it exists —

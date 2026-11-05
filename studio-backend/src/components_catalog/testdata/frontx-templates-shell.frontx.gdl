@@ -1,0 +1,62 @@
+# This shell's passport: everything a tool that assembles a product from FrontX
+# packages (Gearbox, Constructor Studio) needs to know about it, in one file.
+# It restates what package.json says, and those tools check that the two agree,
+# so keep them in step when either changes. See "Package passports: frontx.gdl"
+# in the repository README.
+gdl_version = "1.5"
+
+shell(
+    # Who it is: package.json's name, version and description.
+    name = "@gears-frontx/frontx-template-shell",
+    version = "0.1.0-alpha.7",
+    description = "Standard FrontX application template — target scaffold for template-side code relocation",
+
+    # How it is built: the Node.js this repository's engines asks for, npm with
+    # its package-lock.json, `npm run build` (its packages, each micro-frontend,
+    # the manifests, the site, the dist layout), writing the site to dist/.
+    node = ">=24.14.0",
+    package_manager = "npm",
+    build = "npm run build",
+    output = "dist",
+
+    # How it is served: vite's base is relative ("./"), so the build works under
+    # any path; a product serves it at the root. Its screens reach the backend
+    # through the API Gateway's own paths, `/cf/<gear>/v1/...`. (The stock
+    # shell's own demo accounts call, `/api/accounts`, has no gear behind it: its
+    # mock answers it (src-app/app/api/mocks.ts), and a fork replaces it.)
+    base = "/",
+    api_prefix = "/cf/",
+
+    # What it reads at start: nothing. Its backend addresses are fixed at build,
+    # and none comes from a build variable either: there is no public/env.js and
+    # no import.meta.env.VITE_* read in src-app/. A fork that reads them at
+    # start names the file ("public/env.js") and the keys it reads.
+    runtime_env = None,
+    env = {},
+    build_env = [],
+
+    # It mounts screens without signing anyone in: src-app/app/ has no auth
+    # module. A product whose backend signs users in (an OIDC authn plugin)
+    # needs a shell that does; a fork that adds sign-in sets this to True and
+    # names its redirect path in sign_in_redirect.
+    signs_in = False,
+    sign_in_redirect = None,
+
+    # The FrontX packages it gives every micro-frontend it mounts, whatever
+    # they pinned: its packages/*, its exact @gears-frontx/* dependencies, and
+    # itself.
+    carries = {
+        "@gears-frontx/api": "0.3.0-alpha.3",
+        "@gears-frontx/auth": "0.2.0-alpha.3",
+        "@gears-frontx/framework": "0.2.0-alpha.16",
+        "@gears-frontx/frontx-template-shell": "0.1.0-alpha.7",
+        "@gears-frontx/gts-plugin": "0.4.0",
+        "@gears-frontx/i18n": "0.2.0-alpha.2",
+        "@gears-frontx/mfes": "0.4.0",
+        "@gears-frontx/react": "0.2.0-alpha.15",
+        "@gears-frontx/routing": "0.4.0",
+        "@gears-frontx/state": "0.2.0-alpha.4",
+        "@gears-frontx/studio": "0.2.0-alpha.3",
+        "@gears-frontx/ui-kit": "0.4.1",
+    },
+)

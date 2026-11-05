@@ -229,17 +229,24 @@ address, and protects itself as it would on the internet.
 Research has no team or service account, so every application has a person as
 its owner. Studio says so instead of hiding it:
 
-- **Phase one: a member's own Research.** A Research environment is held by a
-  member through their personal connection, as ADR-0043 §5 allows a member's
-  own cluster. The deploy runs with the member's access key. Its record says "in X's Research". When the member
-  revokes the connection or leaves, the application stops being Studio's to
-  change; Research keeps or ends it by its own rules.
-- **Phase two: an organization's Research.** An environment held by the
-  organization, as ADR-0043 requires of shared environments. It needs Research
-  to own an application by its tenant, not a person, and a credential the
-  Research issues to an organization (a client of the identity
-  provider bound to one tenant, revocable from Research). Studio does not
-  accept the act-as-any-user path Research's own services use.
+- **Every member runs with their own sign-in.** A Research environment names
+  a Research project. Each build, deploy, status or test runs with the
+  connection of the member who asks: their personal sign-in, whose access key
+  is theirs alone. Nobody's run reads another member's sign-in. The connection
+  the environment was created with only lists the projects to pick from. A
+  member without a sign-in is told to sign in. One who is not in the project
+  is told its owner adds them in Research.
+- **The project is what is shared.** Research shares a project by adding its
+  members, and checks an application against the project, not against its
+  owner. So members of one Studio organization deploy to the same project,
+  each as themselves. An application still records the member who created it
+  as its owner. When that member leaves, Research keeps or ends it by its own
+  rules.
+- **No organization credential.** Studio does not ask Research for a
+  credential bound to a tenant, and it does not accept the act-as-any-user
+  path Research's own services use. A shared project and personal sign-ins
+  cover what an organization needs. (Decided 2026-11-03. This replaces the
+  "phase two: an organization's Research" this section used to plan.)
 
 ### 6. What Studio calls in Research
 
@@ -254,6 +261,7 @@ sees. Nothing answers with an event: Studio polls.
 |---|---|
 | `GET /auth/session` | the connection's test: the member's id, name and email |
 | `GET /projects` | the projects the member owns or collaborates on |
+| `GET`, `PATCH /projects/{p}` | `deployment_enabled`, turned on before a deploy |
 | `GET /projects/{p}/hardware-configurations` | the hardware a project's services may use, trial or not |
 | `GET`, `POST /projects/{p}/desks` | the desk a build uses |
 | `GET /desks/{d}`, `POST`/`DELETE /desks/{d}/filesystem` | start the desk, wait for `running`, stop it |
@@ -262,7 +270,7 @@ sees. Nothing answers with an event: Studio polls.
 | `GET /api/platform-keeper/image-builds/{i}/logs` | the last lines of a failed build |
 | `GET`, `POST /projects/{p}/applications`, `GET`, `DELETE /applications/{a}` | the environment's application: found by name, created, read, removed |
 | `POST /applications/{a}/services`, `PATCH /applications/{a}/services/{s}`, `DELETE /services/{s}` | its services, one call each |
-| `POST /services/{s}/start`, `/restart`, `GET /services/{s}` | run them; `status` and the public `link` |
+| `POST /services/{s}/start`, `/stop`, `GET /services/{s}` | run them; `status` and the public `link` |
 
 What Research's API cannot do today, and what Studio does instead:
 
@@ -273,11 +281,37 @@ What Research's API cannot do today, and what Studio does instead:
 - **an upload**: none; the desk's files;
 - **events**: none; polling;
 - **service logs**: a live stream only (`/api/platform-keeper/services/{s}/
-  logs`); Studio does not show them yet.
+  logs`), of the current container, with no history: Studio reads its last
+  lines when a deploy finds a service failed or not answering.
 
-Later, for phase two and for images from elsewhere: a service that names an
-image outside Research's registry with a pull credential; an application
-owned by a tenant, with a credential of the tenant's own; secret variables.
+How Research builds, as Research's own deployment MCP
+(`constructor-research-mcp`) found on live runs, and Studio does the same:
+
+- a Dockerfile is named `Dockerfile` or `<name>.dockerfile`; Studio writes
+  `studio-<app>.dockerfile`;
+- a build started right after its files were uploaded does not see them:
+  Studio waits 30 s after the upload;
+- `build_status` reads `error` for a moment while Research retries a build
+  itself: an error counts once seen twice for the same image, and a confirmed
+  one is built once more, as `<name>-r2`, before the build fails;
+- a project's deployments are off until `deployment_enabled` is turned on,
+  and Research's UI shows its applications only then: Studio turns it on;
+- Research starts only a stopped or failed service, and its restart of a
+  running one stops it and starts it at once, before it has stopped. Studio
+  changes a running service stopped: stop, wait, `PATCH`, start;
+- `running` is not ready: after a deploy Studio asks each public link for a
+  minute (any answer below 500 counts), and follows every service's log for
+  that minute. Research keeps no log of a replaced container, and each
+  connection replays the current one: a connection that begins with another
+  first line, or "Container is waiting to start" after the container's own
+  lines, is a restart. The deploy still succeeds; its result names each
+  service that restarted, with what the container before printed, and each
+  that did not answer, with its last lines or, when it printed nothing, the
+  usual reasons a container exits at once.
+
+Later, for images from elsewhere and for what a chart may hold: a service
+that names an image outside Research's registry with a pull credential;
+secret variables; a command, init containers and scheduled jobs.
 
 From the identity provider: a client `constructor-studio` with Studio's
 redirect URIs, a client secret and the scopes `openid profile user platform`.
@@ -300,8 +334,9 @@ token.
   whoever can open the service, until Research has secret variables.
 - Bad: what a chart mounts is baked into the image, so a change to it needs a
   new build, not only a new deploy.
-- Bad: phase one's environments belong to a person, against ADR-0043's rule
-  for shared environments; it is labelled, and lifted by phase two.
+- Bad: what an organization deploys to Research runs on its members' personal
+  sign-ins. A member who leaves keeps owning the applications they created,
+  and Research, not Studio, decides what happens to them.
 - Bad: the connector gets an OAuth flow, with a callback, state and PKCE kept
   between two requests.
 - Bad: a key outlives a disconnect until its `expires_at`, and a member signs
@@ -318,13 +353,10 @@ token.
    flow; the `research` plugin; a personal connection that lists the
    member's Research projects and hardware. *Needs: the client,
    `/auth/session`, `/projects`, `/hardware-configurations`.*
-2. **Deploy to a member's Research.** `kind: research` on an environment, a
-   personal one; build in a desk; deploy as an application; status,
-   rollback, uninstall. *Needs: desks and their files, images,
-   applications and services.*
-3. **An organization's Research.** Tenant-owned applications and a tenant
-   credential; images from the organization's registry. *Needs: Research to
-   model both.*
+2. **Deploy to a Research project.** `kind: research` on an environment; build
+   in a desk; deploy as an application; status, rollback and uninstall, each
+   with the requesting member's own sign-in (§5). *Needs: desks and their
+   files, images, applications and services.*
 
 **Open questions for the Research team:**
 
@@ -332,8 +364,6 @@ token.
   and files or a command of its own?
 - What owns an application when its owner leaves or their trial ends, and
   what happens to it?
-- Can an application belong to a tenant (phase two), and what would identify
-  the tenant's credential?
 - Which hardware does a trial user get, and how long does an application of
   theirs live?
 

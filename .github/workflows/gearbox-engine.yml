@@ -13,7 +13,9 @@ name: Gearbox engine extension
 # darwin-arm64), and never replaced: installed apps pin its SHA-256. A new
 # revision in the Dockerfile is a new release; a change to the packaging alone
 # needs that package.json's version raised. A platform added later goes into
-# the release that is already there, beside the VSIXs it holds.
+# the release that is already there, beside the VSIXs it holds. A platform
+# whose SHA-256 the Dockerfile leaves empty has no archive in that engine
+# release; it is skipped, not failed, and stays in the matrix for the next one.
 #
 # A pull request builds it and keeps the VSIXs as artifacts. A push publishes
 # what the version's release is missing -- on the upstream that is main; a
@@ -68,15 +70,25 @@ jobs:
         run: |
           set -euo pipefail
           # A Windows checkout may carry CRLF; a stray CR would end up in the ref.
-          pin() { tr -d '\r' < theia/Dockerfile | sed -n "s/^ARG $1=//p"; }
+          # Read once, then search the text: no pipe for `grep -q` to close early.
+          dockerfile=$(tr -d '\r' < theia/Dockerfile)
+          pin() { sed -n "s/^ARG $1=//p" <<< "$dockerfile"; }
           repo=$(pin STUDIO_GEARBOX_REPO)
           release=$(pin STUDIO_GEARBOX_RELEASE)
           engine_version=$(pin STUDIO_GEARBOX_VERSION)
           ref=$(pin STUDIO_GEARBOX_REF)
+          if ! grep -q "^ARG ${{ matrix.sha256 }}=" <<< "$dockerfile"; then
+            echo "::error::theia/Dockerfile no longer pins ${{ matrix.sha256 }}"
+            exit 1
+          fi
           sha256=$(pin ${{ matrix.sha256 }})
-          if [ -z "$repo" ] || [ -z "$release" ] || [ -z "$engine_version" ] || [ -z "$ref" ] || [ -z "$sha256" ]; then
+          if [ -z "$repo" ] || [ -z "$release" ] || [ -z "$engine_version" ] || [ -z "$ref" ]; then
             echo "::error::theia/Dockerfile no longer pins the gearbox engine the way this step reads it"
             exit 1
+          fi
+          if [ -z "$sha256" ]; then
+            echo "::notice::$release has no ${{ matrix.target }} archive (${{ matrix.sha256 }} is empty); no engine for it this time"
+            echo "SKIP=true" >> "$GITHUB_ENV"
           fi
           version="$(node -p "require('./theia/gearbox-engine/package.json').version")-${ref:0:7}"
           {
@@ -88,16 +100,22 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Already published?
         id: published
+        if: env.SKIP != 'true'
         shell: bash
         run: |
           vsix="constructorfabric.gearbox-engine-$ENGINE_VERSION-${{ matrix.target }}.vsix"
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] \
-            && gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$vsix"; then
+          # The asset list is read whole first: `shell: bash` runs with pipefail,
+          # and `grep -q` closing the pipe early would read as "not published".
+          assets=""
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            assets=$(gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)
+          fi
+          if [ -n "$assets" ] && grep -qx "$vsix" <<< "$assets"; then
             echo "$vsix is already published in $ENGINE_TAG; nothing to build"
             echo "done=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Download the engine
-        if: steps.published.outputs.done != 'true'
+        if: env.SKIP != 'true' && steps.published.outputs.done != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -111,11 +129,11 @@ jobs:
           esac
           ls -la gearbox-bin
       - name: Pack
-        if: steps.published.outputs.done != 'true'
+        if: env.SKIP != 'true' && steps.published.outputs.done != 'true'
         shell: bash
         run: python3 theia/gearbox-engine/build_vsix.py --engine gearbox-bin/${{ matrix.engine }} --ref "$GEARBOX_REF" --target ${{ matrix.target }} --out dist
       - uses: actions/upload-artifact@v6
-        if: steps.published.outputs.done != 'true'
+        if: env.SKIP != 'true' && steps.published.outputs.done != 'true'
         with:
           name: gearbox-engine-${{ env.ENGINE_VERSION }}-${{ matrix.target }}
           path: dist/*.vsix

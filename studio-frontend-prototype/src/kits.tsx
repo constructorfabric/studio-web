@@ -8,6 +8,7 @@ import {
   type ProductDescriptionConflict,
   type Candidate,
   type DeclaredCapability,
+  type EnvironmentBinding,
   type GearConfig,
   type GearboxStatus,
   type KitInstallation,
@@ -22,17 +23,28 @@ import {
   type StudioKit,
 } from "./api";
 import { DataTable, When, useConfirm } from "./data-table";
+import { EmptyState, InfoPopover, PageHeader, StatusChip, type Tone } from "./ui-standard";
+import { PRODUCT_COMMAND_EVENT, announceNext } from "./product-sections";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
 import { ProductConfigurator, useGearCatalogue, useKeptEntities, useRunning } from "./product-configurator-view";
 import {
   PRODUCT_PROFILES,
+  checkLanded,
+  checkOf,
+  currentDescription,
   defaultPicks,
+  environmentsRunning,
+  profileLabel,
+  profilesToCheck,
+  verdictOf,
+  verdictText,
   gearLabel,
   isPickable,
   productIdFrom,
   corpusErrors,
-  groupDiagnostics,
+  diagnosticsByCode,
+  productPathOf,
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
 import { ScaffoldModal } from "./documents";
@@ -63,12 +75,10 @@ import {
   productionFixes,
   nextStep,
   productSteps,
-  type ProductStep,
   plainText,
   rowShortlist,
   type Fix,
   type NextAction,
-  type NextStep,
 } from "./components-flow";
 
 export function ProjectKits({
@@ -92,7 +102,8 @@ export function ProjectKits({
   onOpenTab?: (tab: "builds") => void;
 }) {
   /** Which part of the journey is shown. */
-  const [pane, setPane] = useState<ProductPane>("needs");
+  /** Whether Specs coverage is open; `null` until the person toggles it. */
+  const [specsOpen, setSpecsOpen] = useState<boolean | null>(null);
   const [catalog, setCatalog] = useState<StudioKit[] | null>(null);
   const [installed, setInstalled] = useState<KitInstallation[]>([]);
   const [versions, setVersions] = useState<Record<string, string>>({});
@@ -300,6 +311,34 @@ export function ProjectKits({
     composing: product.composing,
   };
   const steps = productSteps(flowState);
+  const next = nextStep(flowState);
+
+  /** Take a next step, from the Product page's header. */
+  const act = (action: NextAction) => {
+    if (action === "add-recommended") {
+      product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
+    } else if (action === "builds") {
+      if (onOpenTab) onOpenTab("builds");
+      else setCommand({ kind: "build", at: Date.now() });
+    } else {
+      setCommand({ kind: action, at: Date.now() });
+    }
+  };
+  const actRef = useRef(act);
+  actRef.current = act;
+  const nextAction = section === "components" ? (next.action ?? null) : null;
+  useEffect(() => {
+    if (section === "components") announceNext(projectId, nextAction);
+  }, [section, projectId, nextAction]);
+  useEffect(() => {
+    if (section !== "components") return;
+    const take = (e: Event) => {
+      const d = (e as CustomEvent<{ projectId: string; action: NextAction }>).detail;
+      if (d?.projectId === projectId) actRef.current(d.action);
+    };
+    window.addEventListener(PRODUCT_COMMAND_EVENT, take);
+    return () => window.removeEventListener(PRODUCT_COMMAND_EVENT, take);
+  }, [section, projectId]);
 
   return (
     <section className="kits-view">
@@ -310,42 +349,33 @@ export function ProjectKits({
           button further down, which is the answer before the question. */}
       {section === "components" && (
         <>
-      <NextStepBar
-        step={nextStep(flowState)}
-        onAct={(action) => {
-          if (action === "add-recommended") {
-            product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
-          } else if (action === "builds") {
-            if (onOpenTab) onOpenTab("builds");
-            else setPane("build");
-          } else {
-            setPane(action === "build" || action === "open" ? "build" : "product");
-            setCommand({ kind: action, at: Date.now() });
-          }
-        }}
-      />
+      {/* No bar of its own: the Product page's header carries the next step
+          as its one action (announceNext), and asks for it back here. */}
       {product.gearbox && !product.gearbox.enabled && (
         <p className="hint" style={{ fontSize: 12 }}>
           Composing a product from gears needs the Gearbox engine, which is off in this deployment
           {product.gearbox.problem ? ` (${product.gearbox.problem})` : ""}.
         </p>
       )}
-      <ol className="psteps" aria-label="From the specs to a built product">
-        {steps.map((st, i) => (
-          <li key={st.id} className={`pstep ${st.state}${pane === st.id ? " on" : ""}`}>
-            <button type="button" aria-current={pane === st.id ? "step" : undefined} disabled={st.state === "off"} onClick={() => setPane(st.id)}>
-              <span className="pstep-n">{st.state === "done" ? "✓" : i + 1}</span>
-              <span>
-                <span className="pstep-title">{st.title}</span>
-                <span className="pstep-status">{st.status}</span>
-              </span>
-            </button>
-          </li>
-        ))}
-      </ol>
-      {/* Every pane stays mounted: each reads on arrival and keeps what the
-          person did in it while another is shown. */}
-      <div hidden={pane !== "needs"}>
+      {/* What the specs ask for is advice: it changes the product only by
+          what is added from it. Folded above the product once it has gears,
+          open while it has none -- that is where a product starts. Mounted
+          either way: it reads on arrival and keeps what was done in it. */}
+      <details
+        className="card"
+        open={specsOpen ?? product.picks.length === 0}
+        onToggle={(e) => {
+          // The browser also fires `toggle` for the state React rendered
+          // (on mount, and when the picks arrive); only a change is a choice.
+          const now = (e.target as HTMLDetailsElement).open;
+          if (now !== (specsOpen ?? product.picks.length === 0)) setSpecsOpen(now);
+        }}
+        data-specs-coverage
+        style={{ marginBottom: 12 }}
+      >
+        <summary style={{ cursor: "pointer" }}>
+          <b>Specs coverage</b> <span className="muted">· {steps[0].status}</span>
+        </summary>
         <SuggestedComponents
           token={token}
           projectId={projectId}
@@ -353,57 +383,9 @@ export function ProjectKits({
           code={code}
           onFlow={setFlow}
         />
-      </div>
-      <p className="hint" hidden={pane !== "needs"} style={{ fontSize: 12 }}>
-        The services and applications in the repositories that are not gears, and everything else the project has: Parts.
-      </p>
+      </details>
       {product.composing && (
-        <section className="card pstep-build" hidden={pane !== "build"}>
-          <h2>3 · Save and build</h2>
-          <p className="subtitle">
-            Studio keeps <code>product.gdl</code> as the project&apos;s revision, and every build takes it from there:
-            in Studio or Constructor Research from Builds, or in the desktop app.
-          </p>
-          {verdict.resolves !== true ? (
-            <p>
-              The product has to resolve first.{" "}
-              <button type="button" className="ghost" onClick={() => setPane("product")}>
-                Back to step 2
-              </button>
-            </p>
-          ) : (
-            <div className="dm-actions">
-              {onOpenTab && (
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={!product.record?.description}
-                  title={product.record?.description ? undefined : "Save the product first (step 2)"}
-                  onClick={() => onOpenTab("builds")}
-                >
-                  Build in Studio →
-                </button>
-              )}
-              <button
-                type="button"
-                className={onOpenTab ? "ghost" : "primary"}
-                onClick={() => setCommand({ kind: "build", at: Date.now() })}
-              >
-                Open in the desktop app →
-              </button>
-              {product.record?.description ? (
-                <span className="hint">Saved in Studio as revision {product.record.description.revision}.</span>
-              ) : product.record?.written ? (
-                <span className="hint">
-                  Built on <code>{product.record.written.branch}</code>.
-                </span>
-              ) : null}
-            </div>
-          )}
-        </section>
-      )}
-      {product.composing && (
-        <div hidden={pane !== "product"}>
+        <div>
         <ProductCard
           token={token}
           projectId={projectId}
@@ -420,22 +402,40 @@ export function ProjectKits({
       {section === "kits" && (
         <>
 
-      <div className="card-head">
-        <div>
-          <h2>Project kits</h2>
-          <p className="subtitle">
-            Reusable Studio workflows and conventions, pinned to a Git version for this project.
-          </p>
-        </div>
-        <button className="ghost" onClick={() => void reload()} disabled={busy !== null}>
-          Refresh
-        </button>
-      </div>
-
-      <div className="notice">
-        Open this project's IDE first. Install requests are sent through the authenticated backend
-        to its trusted <code>cfs</code> runner; the browser never executes repository scripts.
-      </div>
+      <PageHeader
+        title="Project kits"
+        info={
+          <>
+            <p>Reusable Studio workflows and conventions, pinned to a Git version for this project.</p>
+            <p>
+              <b>Experimental.</b> Kits work, and how they are installed and where they live may still change. A kit
+              requested when the project was created waits here until it is installed.
+            </p>
+            <p>
+              Open this project&apos;s IDE first. Install requests are sent through the authenticated backend to its
+              trusted <code>cfs</code> runner; the browser never executes repository scripts.
+            </p>
+          </>
+        }
+        status={
+          <>
+            <StatusChip tone="info" data-kits-experimental>
+              experimental
+            </StatusChip>
+            {catalog !== null && catalog.length > 0 && (
+              <StatusChip tone={installed.length > 0 ? "ok" : "neutral"}>
+                {installed.length} of {catalog.length} installed
+              </StatusChip>
+            )}
+            {installed.some((i) => i.status === "failed") && <StatusChip tone="danger">install failed</StatusChip>}
+          </>
+        }
+        actions={
+          <button className="ghost" onClick={() => void reload()} disabled={busy !== null}>
+            Refresh
+          </button>
+        }
+      />
       {repositoriesNote && (
         <div className="notice">
           The IDE has not reported its repositories yet, so a kit will be installed into the
@@ -445,12 +445,14 @@ export function ProjectKits({
       {error && <div className="error">{error}</div>}
 
       {catalog === null ? (
-        <p className="empty">Loading kit registry…</p>
+        <p className="hint">Loading kit registry…</p>
       ) : catalog.length === 0 ? (
-        <p className="empty">
-          No kits are published in this registry yet. Next: ask an organization admin to publish one; the project
-          works without kits meanwhile.
-        </p>
+        <div className="card">
+          <EmptyState
+            title="No kits are published in this registry yet."
+            body="Ask an organization admin to publish one; the project works without kits meanwhile."
+          />
+        </div>
       ) : (
         <div className="kit-grid">
           {catalog.map((kit) => {
@@ -460,11 +462,11 @@ export function ProjectKits({
               <article className="card kit-card" key={kit.slug}>
                 <div className="kit-card-head">
                   <div>
-                    <span className="badge info">{kit.publisher}</span>
+                    <StatusChip tone="neutral">{kit.publisher}</StatusChip>
                     <h3>{kit.name}</h3>
                   </div>
                   {installation && (
-                    <span className={`badge ${installation.status}`}>{installation.status}</span>
+                    <StatusChip tone={KIT_TONE[installation.status] ?? "neutral"}>{installation.status}</StatusChip>
                   )}
                 </div>
                 <p>{kit.description}</p>
@@ -536,7 +538,7 @@ export function ProjectKits({
                         {repositoryLabel(entry)} · <code>{entry.version}</code> ·{" "}
                         <When iso={entry.materialized_at} />
                         {entry.status === "failed" && (
-                          <span className="badge failed"> failed</span>
+                          <> <StatusChip tone="danger">failed</StatusChip></>
                         )}
                       </li>
                     ))}
@@ -566,6 +568,9 @@ export function ProjectKits({
     </section>
   );
 }
+
+/** An installation's state as a StatusChip's tone. */
+const KIT_TONE: Record<string, Tone> = { installed: "ok", failed: "danger", pending: "running", installing: "running" };
 
 /*
  * What this project could be built from, read off its own documents.
@@ -618,48 +623,6 @@ function useCodeReport(token: string, projectId: string, workspaceId: string, on
   }, [on, load]);
   return { report, busy, error, reload: () => void load() };
 }
-
-/** The page's one sentence: where the person is, and the button for the next
- *  step. It replaces three tiles that had to be read and combined. */
-function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextAction) => void }) {
-  const label: Record<NextAction, string> = {
-    "add-recommended": "Add the recommended gears",
-    "take-from-code": "Take the product from the code",
-    preview: "Check it",
-    fix: "Show the fixes",
-    save: "Save",
-    build: "Open in the desktop app →",
-    open: "Open in the desktop app",
-    builds: "Builds →",
-  };
-  return (
-    <div
-      className={`next-step ${step.tone}`}
-      role="status"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        flexWrap: "wrap",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: "8px 12px",
-        margin: "0 0 12px",
-        background: step.tone === "done" ? "var(--success-soft)" : step.tone === "warn" ? "var(--warning-soft)" : "var(--accent)",
-      }}
-    >
-      <b style={{ fontSize: 13 }}>Next:</b>
-      <span style={{ fontSize: 13 }}>{step.text}</span>
-      {step.action && (
-        <button className="primary" style={{ marginLeft: "auto" }} onClick={() => onAct(step.action as NextAction)}>
-          {label[step.action]}
-        </button>
-      )}
-    </div>
-  );
-}
-
-type ProductPane = ProductStep["id"];
 
 function SuggestedComponents({
   token,
@@ -779,14 +742,14 @@ function SuggestedComponents({
   return (
     <section className="card" style={{ marginBottom: 16 }}>
       <div className="card-head">
-        <div>
-          <h2>1 · What your specs ask for</h2>
-          <p className="subtitle">
+        <h2>
+          1 · What your specs ask for{" "}
+          <InfoPopover label="About what your specs ask for">
             The capabilities this project&apos;s documents declare, and the components in the
             catalogue that provide each. Built components come first.
             {composing && " + puts one into the product below; a name opens its page in the catalogue."}
-          </p>
-        </div>
+          </InfoPopover>
+        </h2>
         <span style={{ display: "flex", gap: 6 }}>
           {composing && recommended.length > 0 && (
             <button
@@ -809,11 +772,14 @@ function SuggestedComponents({
 
       {plan !== null &&
         (plan.length === 0 ? (
-          <p className="empty" style={{ fontSize: 13 }}>
-            {docCount === 0
-              ? "No specification says what the product needs yet. Next: connect a repository on Sources and type its documents on Specs; the functional requirements they hold are read here as written."
-              : "The documents declare no capabilities to match."}
-          </p>
+          docCount === 0 ? (
+            <EmptyState
+              title="No specification says what the product needs yet."
+              body="Connect a repository on Sources and type its documents on Specs; the functional requirements they hold are read here as written."
+            />
+          ) : (
+            <EmptyState title="The documents declare no capabilities to match." />
+          )
         ) : (
           <>
             <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
@@ -833,10 +799,10 @@ function SuggestedComponents({
                   The documents say where it runs: <code>{advice.profile}</code> ({advice.kind}) — “
                   {plainText(advice.because[0] ?? "")}”{advice.because.length > 1 && ` and ${advice.because.length - 1} more`}.
                 </span>
-                {composing && product.profile !== advice.profile && (
-                  <button className="ghost" onClick={() => product.setProfile(advice.profile)}>
-                    Use {advice.profile}
-                  </button>
+                {composing && advice.kind === "kubernetes" && (
+                  <span className="hint" data-advice-bind>
+                    the documents say it runs on kubernetes: bind it in Releases
+                  </span>
                 )}
               </p>
             )}
@@ -919,17 +885,17 @@ function SuggestedComponents({
                           if (row.nonfunctional) return <span className="sub">the deployment profile</span>;
                           const cover = rowCoverage(row, product.picks);
                           return cover.cover === "covered" ? (
-                            <span className="badge ok" title="A gear in the product provides its contract, declares it, or a member confirmed it">
+                            <StatusChip tone="ok" title="A gear in the product provides its contract, declares it, or a member confirmed it">
                               closed by {cover.strong.join(", ")}
-                            </span>
+                            </StatusChip>
                           ) : cover.cover === "weak" ? (
-                            <span className="badge warn" title="The product's gears only mention its words: they talk about the subject, which does not prove they do the job">
+                            <StatusChip tone="warn" title="The product's gears only mention its words: they talk about the subject, which does not prove they do the job">
                               only by words · {cover.weak.length} gear{cover.weak.length === 1 ? "" : "s"}
-                            </span>
+                            </StatusChip>
                           ) : (
-                            <span className="badge danger" title="No gear in the product fills it">
+                            <StatusChip tone="danger" title="No gear in the product fills it">
                               not closed
-                            </span>
+                            </StatusChip>
                           );
                         },
                       },
@@ -942,9 +908,9 @@ function SuggestedComponents({
                     const inCode = codeFor(report, row.capability);
                     if (!inCode || row.nonfunctional) return <span className="sub">—</span>;
                     return (
-                      <span className={`badge ${inCode.status === "implemented" ? "ok" : ""}`} title="What the project's code depends on, read from its Cargo.toml files">
+                      <StatusChip tone={inCode.status === "implemented" ? "ok" : "neutral"} title="What the project's code depends on, read from its Cargo.toml files">
                         {inCode.status === "implemented" ? inCode.by.map((b) => gearLabel(b.name)).join(", ") : "not in the code"}
-                      </span>
+                      </StatusChip>
                     );
                   },
                 },
@@ -953,7 +919,7 @@ function SuggestedComponents({
                   header: "Offered",
                   cell: (row) => {
                     if (row.nonfunctional) return <span className="sub">answered by where it runs, not by a gear</span>;
-                    if (row.gap) return <span className="badge danger">nothing in the catalogue</span>;
+                    if (row.gap) return <StatusChip tone="danger">nothing in the catalogue</StatusChip>;
                     const best = row.candidates[0];
                     return (
                       <span>
@@ -1258,8 +1224,6 @@ type ProductState = {
   config: GearConfig;
   /** Set one field of one gear; `undefined` removes it. */
   setField: (gear: string, field: string, value: unknown) => void;
-  profile: string;
-  setProfile: (profile: string) => void;
   /** Re-read the record, after a preview wrote its verdict into it. */
   refresh: () => Promise<void>;
   /** What completion last changed, with its reasons; empty when nothing did. */
@@ -1272,7 +1236,7 @@ type ProductState = {
 };
 
 /** The project's product as the server keeps it: read on mount, and written
- *  back as picks and profile change, so leaving the tab keeps what was chosen
+ *  back as picks and settings change, so leaving the tab keeps what was chosen
  *  and every screen that asks sees the same product. */
 function useProjectProduct(token: string, projectId: string, projectName: string): ProductState {
   const [gearbox, setGearbox] = useState<GearboxStatus | null>(null);
@@ -1280,7 +1244,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
   const [loaded, setLoaded] = useState(false);
   const [picks, setPicksState] = useState<string[]>([]);
   const [config, setConfigState] = useState<GearConfig>({});
-  const [profile, setProfileState] = useState("dev");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [adjustments, setAdjustments] = useState<ProductChange[]>([]);
   const [completedAt, setCompletedAt] = useState(0);
@@ -1300,7 +1263,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
       setRecord(saved);
       setPicksState(saved?.gears ?? []);
       setConfigState(saved?.config ?? {});
-      setProfileState(saved?.profile ?? "dev");
       setLoaded(true);
     });
     return () => {
@@ -1317,7 +1279,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
           product_id: productIdFrom(projectName),
           name: projectName,
           gears: picks,
-          profile,
           config,
         })
         .then((saved) => {
@@ -1327,7 +1288,7 @@ function useProjectProduct(token: string, projectId: string, projectName: string
         .catch((cause) => setSaveError(errText(cause)));
     }, 400);
     return () => clearTimeout(timer);
-  }, [picks, profile, config, loaded, token, projectId, projectName]);
+  }, [picks, config, loaded, token, projectId, projectName]);
 
   const setPicks = useCallback((update: (current: string[]) => string[]) => {
     dirty.current = true;
@@ -1381,11 +1342,6 @@ function useProjectProduct(token: string, projectId: string, projectName: string
         return next;
       });
     },
-    profile,
-    setProfile: (next) => {
-      dirty.current = true;
-      setProfileState(next);
-    },
     refresh: async () => {
       const saved = await api.projectProduct(token, projectId).catch(() => null);
       if (saved) setRecord(saved);
@@ -1435,10 +1391,117 @@ function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: stri
   );
 }
 
+/** The project's bindings and the names of its environments, read once;
+ *  `undefined` while they are read, `null` when they cannot be. */
+function useBindings(
+  token: string,
+  projectId: string,
+): { bindings: EnvironmentBinding[]; environments: { id: string; name: string }[] } | null | undefined {
+  const [targets, setTargets] = useState<
+    { bindings: EnvironmentBinding[]; environments: { id: string; name: string }[] } | null | undefined
+  >(undefined);
+  useEffect(() => {
+    let live = true;
+    setTargets(undefined);
+    api
+      .projectTargets(token, projectId)
+      .then(
+        (t) =>
+          live &&
+          setTargets({
+            bindings: t.bindings,
+            environments: t.environments.map((e) => ({ id: e.environment.id, name: e.environment.name })),
+          }),
+      )
+      .catch(() => live && setTargets(null));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+  return targets;
+}
+
+/** One chip per profile (ADR-0057): where it runs, what the engine last said
+ *  of it, and a Check. The chip picked is the profile the card shows. */
+function ProfileVerdicts({
+  record,
+  current,
+  bindings,
+  environments,
+  shown,
+  checking,
+  disabled,
+  onShow,
+  onCheck,
+}: {
+  record: ProjectProduct | null;
+  /** The hash of the description as it is now, when known. */
+  current: string | null;
+  bindings: EnvironmentBinding[];
+  environments: { id: string; name: string }[];
+  shown: string;
+  checking: string | null;
+  disabled: boolean;
+  onShow: (profile: string) => void;
+  onCheck: (profile: string) => void;
+}) {
+  const nameOf = (id: string) => environments.find((e) => e.id === id)?.name ?? id.slice(0, 8);
+  return (
+    <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }} role="group" aria-label="Profiles" data-profile-verdicts>
+      {PRODUCT_PROFILES.map((p) => {
+        const v = verdictOf(record, p.id, current);
+        const envs = environmentsRunning(bindings, p.id).map(nameOf);
+        const on = p.id === shown;
+        const tone: Tone =
+          checking === p.id ? "running" : v.state === "ok" ? "ok" : v.state === "failed" ? "danger" : v.state === "stale" ? "warn" : "neutral";
+        const check = checkOf(record, p.id);
+        return (
+          <span
+            key={p.id}
+            style={{ ...chipStyle(on), fontSize: 12, gap: 6, cursor: "pointer" }}
+            onClick={() => onShow(p.id)}
+            title={
+              check
+                ? `${check.errors} error(s), ${check.warnings} warning(s); ${check.applications.length} application(s)`
+                : "Not checked by the engine yet"
+            }
+            data-profile-chip={p.id}
+            aria-pressed={on}
+          >
+            <b>{p.label}</b>
+            <span className="muted">{envs.length > 0 ? `runs in ${envs.join(", ")}` : "not bound"}</span>
+            <StatusChip tone={tone} data-profile-verdict={v.state}>
+              {checking === p.id ? "checking…" : verdictText(v)}
+            </StatusChip>
+            <button
+              type="button"
+              className="link"
+              disabled={disabled}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCheck(p.id);
+              }}
+              style={{ border: "none", background: "transparent", color: "var(--primary)", cursor: "pointer", fontSize: 12, padding: 0 }}
+              data-profile-check={p.id}
+            >
+              Check
+            </button>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 /** The product this project is made of: the gears in it, each leading to its
  *  catalogue page; the engine's verdict on them; and the two ways onward — into
  *  the project's repository, and into the IDE where the language server keeps
  *  checking it. */
+
+/** How often, and how many times, the record is read again for a save's
+ *  check that was still running when the save answered: five minutes. */
+const BACKGROUND_CHECK_EVERY_MS = 5_000;
+const BACKGROUND_CHECK_READS = 60;
 
 function ProductCard({
   token,
@@ -1461,6 +1524,10 @@ function ProductCard({
   const cardRef = useRef<HTMLElement | null>(null);
   /** The engine's completion of a product that does not resolve, as fixes. */
   const [fixes, setFixes] = useState<Fix[] | null>(null);
+  /** The errors and their fixes, unfolded. Folded to one line on arrival:
+   *  every open checks the bound profiles again, and a product that does not
+   *  pass one would otherwise greet each visit with the whole list. */
+  const [fixesOpen, setFixesOpen] = useState(false);
   /** The ⋯ menu's "Old product branches", by the time it was asked. */
   const [showBranches, setShowBranches] = useState(0);
   /** A gear whose settings a fix asks for, opened on the map. */
@@ -1469,18 +1536,36 @@ function ProductCard({
   const [fromCode, setFromCode] = useState(false);
   /** A fix was applied: preview again once the product has changed. */
   const recheck = useRef(false);
-  const { gearbox, picks, profile, record } = product;
+  const { gearbox, picks, record } = product;
   const [busy, setBusy] = useState<"preview" | "save" | null>(null);
+  /** The profile a running check is for. */
+  const [checking, setChecking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<ProductPreview | null>(null);
+  // Which environment runs which profile (ADR-0057): the bound profiles are
+  // checked on every change, the others when asked. `undefined` while read.
+  const targets = useBindings(token, projectId);
+  const bindings = targets?.bindings ?? [];
+  const autoProfiles = profilesToCheck(bindings);
+  /** The profile whose diagnostics, fixes and map the card shows: picked on
+   *  its chip, else the first one checked by itself. */
+  const [viewing, setViewing] = useState<string | null>(null);
+  const shown = viewing ?? autoProfiles[0];
   // Where a save lands is the repository's: the backend follows its source's
   // share mode (Sources tab) -- straight onto the branch the desktop checks
   // out, or onto a `product/…` branch with a pull request.
-  // The picks and profile the shown preview answers. Anything else and the
-  // preview is about a different product, which the screen has to say.
-  const [asked, setAsked] = useState<string | null>(null);
-  const question = JSON.stringify([profile, [...picks].sort(), product.config]);
-  const stale = preview !== null && asked !== question;
+  // Each profile's last preview here, with the picks and settings it
+  // answers. Anything else and the preview is about a different product,
+  // which the screen has to say. The profile is not part of the question:
+  // the description is the same whichever is checked.
+  const [previews, setPreviews] = useState<Record<string, { preview: ProductPreview; asked: string }>>({});
+  const question = JSON.stringify([[...picks].sort(), product.config]);
+  const preview = previews[shown]?.preview ?? null;
+  const stale = preview !== null && previews[shown]?.asked !== question;
+  // The description as it is now: any preview of the current product says
+  // its hash; before one, the record's last check does.
+  const current =
+    Object.values(previews).find((p) => p.asked === question && p.preview.gdl_sha256)?.preview.gdl_sha256 ??
+    currentDescription(record);
   const productId = productIdFrom(projectName);
   // The crate behind an engine id, for linking a resolved gear to its page.
   const crateOf = (id: string) => preview?.gears.find((g) => g.id === id)?.crate_name ?? `cf-gears-${id}`;
@@ -1505,8 +1590,9 @@ function ProductCard({
    *  which Studio keeps (ADR-0053); `publish` also writes it to the
    *  repository. `base` overrides the revision the save is made against --
    *  "keep mine" after a conflict. */
-  const run = async (write: boolean, publish = false, base?: number): Promise<ProductPreview | null> => {
+  const run = async (write: boolean, publish = false, base?: number, profile = shown): Promise<ProductPreview | null> => {
     setBusy(write ? "save" : "preview");
+    setChecking(profile);
     setError(null);
     try {
       const baseRevision = base ?? record?.description?.revision;
@@ -1519,8 +1605,11 @@ function ProductCard({
         ...(write ? { write: true, ...(baseRevision !== undefined ? { base_revision: baseRevision } : {}) } : {}),
         ...(write && publish ? { publish: true } : {}),
       });
-      setPreview(result);
-      setAsked(question);
+      // A save answers before a long check is done: the check lands on the
+      // record, which is read again until it does. Its empty diagnostics are
+      // no verdict to show.
+      if (result.checking) setBackground({ profile, sha256: result.gdl_sha256 ?? "", tries: 0 });
+      else setPreviews((all) => ({ ...all, [profile]: { preview: result, asked: question } }));
       setConflict(null);
       if (write && result.description_revision) setKeptText(result.product_gdl);
       await product.refresh();
@@ -1532,6 +1621,35 @@ function ProductCard({
       return null;
     } finally {
       setBusy(null);
+      setChecking(null);
+    }
+  };
+
+  /** A save's check still running on the server, for its profile and the
+   *  description it is about: the record is read again until it lands. */
+  const [background, setBackground] = useState<{ profile: string; sha256: string; tries: number } | null>(null);
+  useEffect(() => {
+    if (!background) return;
+    if (checkLanded(record, background.profile, background.sha256) || background.tries >= BACKGROUND_CHECK_READS) {
+      setBackground(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      void product.refresh().finally(() => setBackground((b) => b && { ...b, tries: b.tries + 1 }));
+    }, BACKGROUND_CHECK_EVERY_MS);
+    return () => clearTimeout(t);
+    // `product` is a fresh object every render; the record is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [background, record]);
+
+  /** Check every profile an environment runs, one after another: the engine
+   *  takes one product at a time. A newer round makes an older one stop. */
+  const rounds = useRef(0);
+  const checkBound = async () => {
+    const mine = ++rounds.current;
+    for (const p of autoProfiles) {
+      if (rounds.current !== mine) return;
+      await run(false, false, undefined, p);
     }
   };
 
@@ -1542,7 +1660,7 @@ function ProductCard({
    *  A web session cannot take this on: Gearbox is the desktop's. A product
    *  already saved and unchanged is opened as it is. */
   const desktop = useDesktopLauncher();
-  const savedPath = record?.description?.path ?? record?.written?.path ?? "product.gdl";
+  const savedPath = productPathOf(record) ?? undefined;
   const isSaved = !!(record?.description || record?.written);
   const openOnDesktop = () => desktop.launch(desktopLink({ id: projectId, name: projectName, product: savedPath }));
   const buildInTheia = async () => {
@@ -1555,26 +1673,28 @@ function ProductCard({
 
   // Completion replaced the picks: show at once what the engine makes of them.
   useEffect(() => {
-    if (product.completedAt > 0 && picks.length > 0) void run(false);
+    if (product.completedAt > 0 && picks.length > 0) void checkBound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.completedAt]);
 
-  // Ask the engine on arrival, so the verdict and its fixes are on screen
-  // without a click; a product with nothing in it has nothing to ask.
+  // Ask the engine on arrival, so the verdicts and their fixes are on screen
+  // without a click; a product with nothing in it has nothing to ask. Once
+  // the bindings are read: they say which profiles to ask for.
   const asked0 = useRef(false);
   useEffect(() => {
-    if (!product.loaded || asked0.current || picks.length === 0) return;
+    if (!product.loaded || targets === undefined || asked0.current || picks.length === 0) return;
     asked0.current = true;
-    void run(false);
+    void checkBound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [product.loaded, picks.length]);
+  }, [product.loaded, targets, picks.length]);
 
-  // The product changed -- a pick, a setting, a fix, the profile: check it
-  // again. There is no button for it; the verdict is always the current one.
+  // The product changed -- a pick, a setting, a fix: check the profiles the
+  // environments run again. There is no button for it; their verdicts are
+  // always the current ones. Any other profile is checked on its chip.
   useEffect(() => {
     if (!product.loaded || !asked0.current || picks.length === 0) return;
     recheck.current = false;
-    const timer = setTimeout(() => void run(false), 600);
+    const timer = setTimeout(() => void checkBound(), 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [question]);
@@ -1621,7 +1741,10 @@ function ProductCard({
     if (!command) return;
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (command.kind === "preview") void run(false);
-    if (command.kind === "fix" && fixes && fixes.length > 0) document.getElementById("product-fixes")?.focus();
+    if (command.kind === "fix") {
+      setFixesOpen(true);
+      if (fixes && fixes.length > 0) setTimeout(() => document.getElementById("product-fixes")?.focus(), 0);
+    }
     if (command.kind === "save") void run(true);
     if (command.kind === "build") void buildInTheia();
     if (command.kind === "open") openOnDesktop();
@@ -1648,15 +1771,13 @@ function ProductCard({
   return (
     <section className="card" style={{ marginBottom: 16 }} ref={cardRef}>
       <div className="card-head">
-        <div>
-          <h2>
-            2 · Your product <code style={{ fontSize: 13, fontWeight: 500 }}>{productId}</code>
-          </h2>
-          <p className="subtitle">
+        <h2>
+          2 · Your product <code style={{ fontSize: 13, fontWeight: 500 }}>{productId}</code>{" "}
+          <InfoPopover label="About your product">
             The components this project ships as one product, composed and checked by the Gearbox
             engine, which checks it on every change. Save it, then open it in the desktop app to build it.
-          </p>
-        </div>
+          </InfoPopover>
+        </h2>
         <span className="hint" style={{ fontSize: 11 }}>
           {gearbox?.engine_version ?? "gearbox"} ·{" "}
           {gearbox?.sources?.length
@@ -1706,7 +1827,7 @@ function ProductCard({
           <GearConfigForm token={token} product={product} />
             {catalogue && "error" in catalogue && (
               <p className="hint" style={{ fontSize: 12 }}>
-                The product map needs the gear catalogue, which could not be read ({catalogue.error}).
+                The gears by group need the gear catalogue, which could not be read ({catalogue.error}).
               </p>
             )}
         </>
@@ -1745,41 +1866,47 @@ function ProductCard({
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-        <select value={profile} onChange={(e) => product.setProfile(e.target.value)} aria-label="Deployment profile">
-          {PRODUCT_PROFILES.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        <ProfileVerdicts
+          record={record}
+          current={current}
+          bindings={bindings}
+          environments={targets?.environments ?? []}
+          shown={shown}
+          checking={busy === "preview" ? checking : null}
+          disabled={busy !== null || picks.length === 0}
+          onShow={(p) => setViewing(p)}
+          onCheck={(p) => {
+            setViewing(p);
+            void run(false, false, undefined, p);
+          }}
+        />
         <span style={{ fontSize: 12 }} data-product-verdict>
-          {busy === "preview" ? (
-            <span className="badge">checking…</span>
+          {busy === "preview" && checking === shown ? (
+            <StatusChip tone="running">checking…</StatusChip>
+          ) : background?.profile === shown ? (
+            <StatusChip tone="running">saved · checking in the background…</StatusChip>
           ) : preview && !stale ? (
-            <span className={`badge ${preview.ok ? "ok" : "failed"}`}>
-              {preview.ok ? `resolves for ${preview.profile}` : `${errors} error${errors === 1 ? "" : "s"}`}
-            </span>
+            <StatusChip tone={preview.ok ? "ok" : "danger"}>
+              {preview.ok ? `resolves for ${profileLabel(preview.profile)}` : `${errors} error${errors === 1 ? "" : "s"}`}
+            </StatusChip>
           ) : null}
         </span>
+        {stale && preview && <StatusChip tone="warn">the product changed since — preview again</StatusChip>}
+        {/* Saving is the page's, step 2 of the strip above: it shows what
+            changes and keeps the revision. Here only whether there is
+            anything to save. */}
+        {picks.length > 0 && preview && !stale && (
+          <span className="hint" style={{ fontSize: 12 }} data-product-save-hint>
+            {changed
+              ? record?.description
+                ? `Changed since revision ${record.description.revision}: save it in step 2 above, Save to product.gdl.`
+                : "Not saved yet: save it in step 2 above, Save to product.gdl."
+              : record?.description
+                ? `Saved as revision ${record.description.revision}.`
+                : null}
+          </span>
+        )}
         <span style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            className={changed ? "primary" : "ghost"}
-            disabled={busy !== null || picks.length === 0 || !preview || stale || !changed}
-            title="Keep this product.gdl in Studio as the project's next revision: builds and the desktop take it from there. Nothing is written to the repository."
-            onClick={() => void run(true)}
-            data-product-save
-          >
-            {busy === "save" ? "Saving…" : changed ? "Save" : "Saved"}
-          </button>
-          <button
-            className={changed ? "ghost" : "primary"}
-            disabled={busy !== null || picks.length === 0}
-            title="Open the desktop Studio on this project, in its Gearbox view; an unsaved product is saved first"
-            onClick={() => void buildInTheia()}
-            data-product-open
-          >
-            Open in the desktop app →
-          </button>
           <details className="menu" style={{ position: "relative" }} data-product-more>
             <summary className="ghost" aria-label="More" style={{ listStyle: "none", cursor: "pointer", padding: "4px 8px" }}>
               ⋯
@@ -1788,6 +1915,15 @@ function ProductCard({
               className="card"
               style={{ position: "absolute", right: 0, zIndex: 5, padding: 6, minWidth: 220, display: "grid", gap: 4 }}
             >
+              <button
+                className="ghost"
+                disabled={busy !== null || picks.length === 0}
+                title="Open the desktop Studio on this project, in its Gearbox view; an unsaved product is saved first"
+                onClick={() => void buildInTheia()}
+                data-product-open
+              >
+                Open in the desktop app →
+              </button>
               <button
                 className="ghost"
                 disabled={busy !== null || !preview || stale}
@@ -1866,7 +2002,18 @@ function ProductCard({
         </div>
       )}
 
-      {preview && !preview.ok && !stale && (
+      {preview && !preview.ok && !stale && !fixesOpen && (
+        <div className="hint" style={{ fontSize: 12, marginTop: 10, display: "flex", alignItems: "center", gap: 8 }} data-product-errors-folded>
+          <StatusChip tone="danger">
+            {errors} error{errors === 1 ? "" : "s"} for {profileLabel(preview.profile)}
+          </StatusChip>
+          <span>the product as it is does not pass this profile's rules.</span>
+          <button className="ghost" onClick={() => setFixesOpen(true)} data-product-errors-show>
+            {fixes && fixes.length > 0 ? `Show ${fixes.length} fix${fixes.length === 1 ? "" : "es"}` : "Show the errors"}
+          </button>
+        </div>
+      )}
+      {preview && !preview.ok && !stale && fixesOpen && (
         <ul className="error" style={{ fontSize: 12, margin: "10px 0 0", paddingLeft: 18 }} data-product-errors>
           {preview.diagnostics
             .filter((d) => d.severity === "error")
@@ -1877,7 +2024,7 @@ function ProductCard({
             ))}
         </ul>
       )}
-      {fixes && fixes.length > 0 && (
+      {fixesOpen && fixes && fixes.length > 0 && (
         <div
           id="product-fixes"
           tabIndex={-1}
@@ -1898,6 +2045,9 @@ function ProductCard({
                 Apply all
               </button>
             )}
+            <button className="ghost" style={fixes.some((f) => f.kind !== "setup") ? undefined : { marginLeft: "auto" }} onClick={() => setFixesOpen(false)}>
+              Hide
+            </button>
           </div>
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {fixes.map((f) => (
@@ -1942,7 +2092,7 @@ function ProductCard({
           </ul>
         </div>
       )}
-      {preview && !preview.ok && !stale && fixes && fixes.length === 0 && (
+      {fixesOpen && preview && !preview.ok && !stale && fixes && fixes.length === 0 && (
         <p className="hint" style={{ fontSize: 12 }}>
           The engine offers no change that makes it resolve; the errors below say what it needs.
         </p>
@@ -1950,16 +2100,6 @@ function ProductCard({
 
       {preview && (
         <div style={{ marginTop: 10, opacity: stale ? 0.55 : 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span className={`badge ${preview.ok ? "ok" : "failed"}`}>
-              {preview.ok ? `resolves for ${preview.profile}` : `does not resolve for ${preview.profile}`}
-            </span>
-            <span style={{ fontSize: 12, opacity: 0.75 }}>
-              {errors} error{errors === 1 ? "" : "s"} · {warnings} warning{warnings === 1 ? "" : "s"}
-            </span>
-            {stale && <span className="badge warn">the product changed since — preview again</span>}
-          </div>
-
           <details open={!map} style={{ margin: "8px 0" }} data-engine-details>
             <summary style={{ fontSize: 12, cursor: "pointer" }}>
               Engine details: {errors} error{errors === 1 ? "" : "s"}, {warnings} warning{warnings === 1 ? "" : "s"},{" "}
@@ -2031,24 +2171,38 @@ function ProductCard({
             )}
 
             {preview.diagnostics.length > 0 && (
-              <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", fontSize: 12 }}>
-                {groupDiagnostics(preview.diagnostics).map((d, i) => (
-                  <li key={`${d.code}-${i}`} style={{ margin: "0 0 6px" }}>
-                    <span className={`badge ${d.severity === "error" ? "danger" : d.severity === "warning" ? "warn" : "info"}`}>
-                      {d.code}
-                    </span>{" "}
-                    {d.message}
-                    {d.profiles.length > 0 && <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>}
-                    {d.file && (
-                      <span style={{ opacity: 0.6 }}>
-                        {" "}
-                        — {d.file}
-                        {d.line ? `:${d.line}` : ""}
-                      </span>
-                    )}
-                    {d.help && <div style={{ opacity: 0.7, marginLeft: 8 }}>{d.help}</div>}
-                  </li>
-                ))}
+              <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", fontSize: 12 }} data-diagnostic-groups>
+                {/* One row per code: errors open, a code said once per gear
+                    folded to its count and first finding. */}
+                {diagnosticsByCode(preview.diagnostics).map((g) => {
+                  const tone: Tone = g.severity === "error" ? "danger" : g.severity === "warning" ? "warn" : "info";
+                  const row = (d: (typeof g.items)[number], i: number) => (
+                    <li key={`${d.code}-${i}`} style={{ margin: "0 0 6px" }}>
+                      {d.message}
+                      {d.profiles.length > 0 && <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>}
+                      {d.file && (
+                        <span style={{ opacity: 0.6 }}>
+                          {" "}
+                          — {d.file}
+                          {d.line ? `:${d.line}` : ""}
+                        </span>
+                      )}
+                      {d.help && <div style={{ opacity: 0.7, marginLeft: 8 }}>{d.help}</div>}
+                    </li>
+                  );
+                  return (
+                    <li key={`${g.code}-${g.severity}`} style={{ margin: "0 0 6px" }} data-diagnostic-group={g.code}>
+                      <details open={g.severity === "error"}>
+                        <summary style={{ cursor: "pointer" }}>
+                          <StatusChip tone={tone}>{g.code}</StatusChip>
+                          {g.items.length > 1 && <b> × {g.items.length}</b>} {g.items[0].message}
+                          {g.items.length > 1 && <span style={{ opacity: 0.6 }}> and {g.items.length - 1} more like it</span>}
+                        </summary>
+                        <ul style={{ listStyle: "none", padding: "4px 0 0 12px", margin: 0 }}>{g.items.map(row)}</ul>
+                      </details>
+                    </li>
+                  );
+                })}
               </ul>
             )}
 
@@ -2150,30 +2304,12 @@ function ProductCard({
           )}
         </p>
       )}
-      {!record?.description && record?.written && (
-        <p className="hint" style={{ fontSize: 12 }}>
-          {record.written.pr_url ? (
-            <>
-              product.gdl is in a pull request:{" "}
-              <a href={record.written.pr_url} target="_blank" rel="noreferrer">
-                {record.written.pr_url}
-              </a>
-            </>
-          ) : (
-            <>
-              product.gdl is committed on <code>{record.written.branch}</code> as{" "}
-              <code>{record.written.commit_sha.slice(0, 7)}</code>.
-            </>
-          )}
-        </p>
-      )}
       <DescriptionInRepository
         token={token}
         projectId={projectId}
         onTaken={() => void product.refresh()}
         showBranches={showBranches}
       />
-      <p className="hint" data-deploys-moved>Where the product runs and its deploys: the project's Deploys tab.</p>
     </section>
   );
 }
@@ -2301,6 +2437,3 @@ function DescriptionInRepository({
     </div>
   );
 }
-
-/** The product's kubernetes profiles: the ones an environment can take. */
-export const KUBERNETES_PROFILES: readonly string[] = PRODUCT_PROFILES.filter((p) => p.label.includes("Kubernetes")).map((p) => p.id);

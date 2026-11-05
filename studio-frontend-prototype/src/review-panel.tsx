@@ -21,13 +21,10 @@ import {
   type ReviewRequest,
   type ReviewSubject,
 } from "./review-requests";
+import { StatusChip, type Tone } from "./ui-standard";
 
-const TONE: Record<string, { bg: string; fg: string }> = {
-  ok: { bg: "var(--success-soft)", fg: "var(--success)" },
-  wait: { bg: "var(--info-soft)", fg: "var(--info)" },
-  late: { bg: "var(--warning-soft)", fg: "var(--warning)" },
-  muted: { bg: "var(--muted)", fg: "var(--muted-foreground)" },
-};
+/** A review state's tone as a StatusChip tone. */
+const TONE: Record<string, Tone> = { ok: "ok", wait: "info", late: "warn", muted: "neutral" };
 
 export function ReviewPanel({
   token,
@@ -152,14 +149,14 @@ export function ReviewPanel({
       <div className="rv-head">
         <span className="rv-title">Review</span>
         {current && state && (
-          <span className="ing-state" style={{ background: TONE[state.tone].bg, color: TONE[state.tone].fg }}>
+          <StatusChip className="ing-state" tone={TONE[state.tone] ?? "neutral"}>
             {state.label}
-          </span>
+          </StatusChip>
         )}
         {current && isStale(current, subject.version) && current.state !== "withdrawn" && (
-          <span className="rv-muted" title={`Asked about ${current.version}`}>
+          <StatusChip tone="warn" title={`Asked about ${current.version}`}>
             about an earlier version
-          </span>
+          </StatusChip>
         )}
       </div>
       {err && <div className="rv-err">{err}</div>}
@@ -178,15 +175,13 @@ export function ReviewPanel({
                 {r.name ?? r.person}
                 {r.stakeholder ? ` for ${r.stakeholder}` : ""}
                 {r.required ? "" : " (optional)"}:{" "}
-                <b>
-                  {r.verdict === "approved"
-                    ? "✓ approved"
-                    : r.verdict === "changes_requested"
-                      ? r.security
-                        ? "✗ changes (security)"
-                        : "✗ changes"
-                      : "—"}
-                </b>
+                {r.verdict === "approved" ? (
+                  <StatusChip tone="ok">✓ approved</StatusChip>
+                ) : r.verdict === "changes_requested" ? (
+                  <StatusChip tone="danger">{r.security ? "✗ changes (security)" : "✗ changes"}</StatusChip>
+                ) : (
+                  <b>—</b>
+                )}
               </li>
             ))}
           </ul>

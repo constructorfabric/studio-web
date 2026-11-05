@@ -1,5 +1,7 @@
 // A project's Tests tab: does what we built work, and is what the specs say
-// checked? Three cards -- the mainline's CI, the open pull requests', and
+// checked? A PageHeader with the mainline's state and what could not be read
+// (a chip; the server's text behind its "?"; Fix the connection opens
+// Sources). Three cards -- the mainline's CI, the open pull requests', and
 // Spec ↔ code, which only sums up what the Specs tab shows and opens it --
 // then the CI runs of the last two weeks and the open pull requests.
 //
@@ -9,7 +11,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type CiRun, type CiRunList, type Conformance, type OpenPullRequest } from "./api";
-import { ciReadFailures, repoPathsOf, statusTone } from "./builds";
+import { ciReadFailures, repoPathsOf, type BuildStatus } from "./builds";
 import { errText, relTime } from "./format";
 import type { PullRequestChecks } from "./project-checks";
 import {
@@ -21,10 +23,12 @@ import {
   passRate,
   pullRun,
   pullsCi,
+  readProblem,
   runSeconds,
   runStatus,
   specCode,
 } from "./tests-model";
+import { EmptyState, InfoPopover, PageHeader, StatusChip, type Tone } from "./ui-standard";
 
 const DAY_MS = 86_400_000;
 
@@ -35,17 +39,57 @@ interface Read {
   pulls: OpenPullRequest[] | null;
 }
 
+/** A build status as a StatusChip's tone. */
+const chipTone = (s: BuildStatus): Tone =>
+  s === "passed" ? "ok" : s === "failed" ? "danger" : s === "running" || s === "queued" ? "running" : "neutral";
+
+/** A read that failed: a chip in a few words, the server's text behind its
+ *  "?", and the way to fix it when it is the connection's. */
+function ReadProblem({
+  text,
+  onFix,
+  what,
+  align,
+}: {
+  text: string;
+  onFix?: () => void;
+  what?: string;
+  /** Which edge of the "?" the server's text lines up with. */
+  align?: "start" | "end";
+}) {
+  const p = readProblem(text);
+  return (
+    <span className="row" style={{ gap: 6, alignItems: "center", flexWrap: "wrap" }} data-read-problem>
+      <StatusChip tone="danger">
+        {what ? `${what}: ` : ""}
+        {p.short}
+      </StatusChip>
+      <InfoPopover label="What the server said" align={align}>
+        {text}
+      </InfoPopover>
+      {p.connection && onFix && (
+        <button type="button" className="linklike" onClick={onFix} data-fix-connection>
+          Fix the connection
+        </button>
+      )}
+    </span>
+  );
+}
+
 export function ProjectTests({
   token,
   projectId,
   workspaceId,
   onOpenSpecs,
+  onOpenSources,
 }: {
   token: string;
   projectId: string;
   workspaceId: string;
   /** Open the Specs tab, where spec ↔ code is shown in full. */
   onOpenSpecs?: () => void;
+  /** Open Sources, where the project's connections are managed. */
+  onOpenSources?: () => void;
 }) {
   const [read, setRead] = useState<Read | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,18 +157,39 @@ export function ProjectTests({
 
   return (
     <>
-      <h1>Tests</h1>
-      <p className="subtitle">
-        Whether what the project built works, and whether what its specs say is checked. A test here is a CI job: every
-        sync reads the jobs of the project&apos;s CI runs and the step a failed one failed at.
-      </p>
+      <PageHeader
+        title="Tests"
+        info={
+          <p>
+            Whether what the project built works, and whether what its specs say is checked. A test here is a CI job:
+            every sync reads the jobs of the project&apos;s CI runs and the step a failed one failed at.
+          </p>
+        }
+        status={
+          read && (
+            <>
+              {main ? (
+                <StatusChip tone={chipTone(main.status)} data-tests-status="mainline">
+                  mainline {main.status === "passed" ? "green" : main.status === "failed" ? "red" : main.status}
+                </StatusChip>
+              ) : (
+                <span>no CI run yet</span>
+              )}
+              {prCi && prCi.red > 0 && (
+                <StatusChip tone="danger" data-tests-status="pulls">
+                  {prCi.red} pull request{prCi.red === 1 ? "" : "s"} red
+                </StatusChip>
+              )}
+              {read.failures.map((f) => (
+                <span key={f.repo} data-tests-ci-error>
+                  <ReadProblem text={`Studio could not read the CI runs of ${f.repo}: ${f.error}`} what={f.repo} onFix={onOpenSources} />
+                </span>
+              ))}
+            </>
+          )
+        }
+      />
       {error && <div className="error">{error}</div>}
-      {read?.failures.map((f) => (
-        <div key={f.repo} className="error" data-tests-ci-error>
-          Studio could not read the CI runs of {f.repo}: {f.error}. The connection may lack read access to the
-          repository&apos;s Actions.
-        </div>
-      ))}
       {!error && !read && <div className="empty">Loading…</div>}
       {read && (
         <div className="dash-stats" data-tests-cards>
@@ -175,39 +240,44 @@ export function ProjectTests({
                       : "Document checks pass"}
             </span>
           </div>
-          <button
-            type="button"
-            className={`stat ${spec ? (spec.missing > 0 ? "warn" : "ok") : ""}`}
-            disabled={!onOpenSpecs}
-            onClick={onOpenSpecs}
-            title="Spec ↔ code is shown in full on Specs"
-            data-tests-spec-card
-          >
-            <span className="stat-k">Spec ↔ code</span>
-            <span className="stat-n">
-              {spec ? `${spec.implemented}/${spec.functional} covered` : conformance === null ? "…" : "—"}
-            </span>
-            <span className="stat-sub">
-              {spec
-                ? [spec.missing ? `${spec.missing} with no code` : "every capability has code", spec.nonfunctional ? `${spec.nonfunctional} non-functional` : null]
-                    .filter(Boolean)
-                    .join(" · ")
-                : conformance && "error" in conformance
-                  ? conformance.error
+          {conformance && "error" in conformance ? (
+            <div className="stat danger" data-tests-spec-card data-tests-spec-error>
+              <span className="stat-k">Spec ↔ code</span>
+              <span className="stat-n" style={{ fontSize: 14 }}>
+                <ReadProblem text={conformance.error} onFix={onOpenSources} align="end" />
+              </span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className={`stat ${spec ? (spec.missing > 0 ? "warn" : "ok") : ""}`}
+              disabled={!onOpenSpecs}
+              onClick={onOpenSpecs}
+              title="Spec ↔ code is shown in full on Specs"
+              data-tests-spec-card
+            >
+              <span className="stat-k">Spec ↔ code</span>
+              <span className="stat-n">{spec ? `${spec.implemented}/${spec.functional} covered` : "…"}</span>
+              <span className="stat-sub">
+                {spec
+                  ? [spec.missing ? `${spec.missing} with no code` : "every capability has code", spec.nonfunctional ? `${spec.nonfunctional} non-functional` : null]
+                      .filter(Boolean)
+                      .join(" · ")
                   : "Reading the specs against the code…"}
-            </span>
-            {onOpenSpecs && <span className="stat-sub">Open Specs →</span>}
-          </button>
+              </span>
+              {onOpenSpecs && <span className="stat-sub">Open Specs →</span>}
+            </button>
+          )}
         </div>
       )}
 
       {read && (
         <section className="card" data-tests-runs>
           <div className="card-head">
-            <div>
-              <h2>CI runs, last 14 days</h2>
-              <p className="subtitle">Newest first. A run opens to its jobs; a job links to its page in CI.</p>
-            </div>
+            <h2>
+              CI runs, last 14 days{" "}
+              <InfoPopover label="About the CI runs">Newest first. A run opens to its jobs; a job links to its page in CI.</InfoPopover>
+            </h2>
           </div>
           <div className="tt-strip" aria-label="Runs per day, green and red" data-tests-strip>
             {strip.map((d) => (
@@ -219,10 +289,10 @@ export function ProjectTests({
             ))}
           </div>
           {recent.length === 0 ? (
-            <div className="empty" data-tests-empty>
-              No CI run in the last 14 days. Runs arrive with a sync of the project&apos;s sources, if the connection can
-              read the repositories&apos; Actions.
-            </div>
+            <EmptyState
+              title="No CI run in the last 14 days."
+              body="Runs arrive with a sync of the project's sources, if the connection can read the repositories' Actions."
+            />
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table className="table" data-tests-runs-table>
@@ -251,13 +321,13 @@ export function ProjectTests({
       {read?.pulls && read.pulls.length > 0 && (
         <section className="card" data-tests-pulls>
           <div className="card-head">
-            <div>
-              <h2>Pull requests</h2>
-              <p className="subtitle">
+            <h2>
+              Pull requests{" "}
+              <InfoPopover label="About the pull requests">
                 Each open pull request&apos;s newest CI run on its branch, and what the document checks say about the
                 documents it changes.
-              </p>
-            </div>
+              </InfoPopover>
+            </h2>
           </div>
           <div style={{ overflowX: "auto" }}>
             <table className="table" data-tests-pulls-table>
@@ -290,7 +360,7 @@ export function ProjectTests({
                       <td>
                         {r && s ? (
                           <>
-                            <span className={`badge ${statusTone(s)}`}>{s}</span>
+                            <StatusChip tone={chipTone(s)}>{s}</StatusChip>
                             {failedJobs(r).map((j) => (
                               <div key={j.name} className="sub">
                                 ✗ {failedJobLabel(j)}
@@ -306,9 +376,9 @@ export function ProjectTests({
                           <span className="sub">…</span>
                         ) : doc ? (
                           <>
-                            <span className={`badge ${doc.state === "success" ? "ok" : "warn"}`}>
+                            <StatusChip tone={doc.state === "success" ? "ok" : "warn"}>
                               {doc.state === "success" ? "pass" : "fail"}
-                            </span>
+                            </StatusChip>
                             {doc.files
                               .filter((f) => !f.conforms)
                               .map((f) => (
@@ -348,9 +418,9 @@ function RunRow({ run, open, onToggle }: { run: CiRun; open: boolean; onToggle: 
     <Fragment>
       <tr data-tests-run={s} onClick={jobs.length ? onToggle : undefined} style={jobs.length ? { cursor: "pointer" } : undefined}>
         <td>
-          <span className={`badge ${statusTone(s)}`}>{s}</span>
+          <StatusChip tone={chipTone(s)}>{s}</StatusChip>
         </td>
-        <td>
+        <td style={{ whiteSpace: "nowrap" }}>
           {run.url ? (
             <a href={run.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
               {run.workflow}
@@ -360,13 +430,21 @@ function RunRow({ run, open, onToggle }: { run: CiRun; open: boolean; onToggle: 
           )}
           {jobs.length > 0 && <span className="sub"> · {open ? "▾" : "▸"} {jobs.length} jobs</span>}
         </td>
-        <td>{run.branch ?? "—"}</td>
-        <td style={{ minWidth: 200 }}>
+        <td>
+          {run.branch ? (
+            <StatusChip tone="neutral" className="chip-trunc" title={run.branch}>
+              {run.branch}
+            </StatusChip>
+          ) : (
+            "—"
+          )}
+        </td>
+        <td className="tt-commit" title={run.title ?? undefined}>
           <code>{run.sha.slice(0, 7)}</code> {run.title}
         </td>
         <td>{failed.length ? failed.map(failedJobLabel).join(", ") : "—"}</td>
-        <td>{relTime(run.created_at)}</td>
-        <td>{durationLabel(runSeconds(jobs)) ?? "—"}</td>
+        <td style={{ whiteSpace: "nowrap" }}>{relTime(run.created_at)}</td>
+        <td style={{ whiteSpace: "nowrap" }}>{durationLabel(runSeconds(jobs)) ?? "—"}</td>
       </tr>
       {open &&
         jobs.map((j) => {
@@ -374,7 +452,7 @@ function RunRow({ run, open, onToggle }: { run: CiRun; open: boolean; onToggle: 
           return (
             <tr key={`${run.id}:${j.name}`} className="tt-job" data-tests-job={js}>
               <td>
-                <span className={`badge ${statusTone(js)}`}>{js}</span>
+                <StatusChip tone={chipTone(js)}>{js}</StatusChip>
               </td>
               <td colSpan={3}>
                 {j.url ? (

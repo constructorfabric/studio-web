@@ -24,6 +24,12 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::gearbox::Gearbox;
+/// Where a product's description goes when nothing recorded another path:
+/// `products/<id>/product.gdl`.
+pub use super::gearbox::product_gdl_path;
+/// The commits a build takes for each source a description uses (ADR-0060
+/// §3): studio-environments resolves them before it queues a build.
+pub use super::sources_lock::{SourceRefs, build_refs};
 
 #[async_trait]
 pub trait ProjectProducts: Send + Sync + 'static {
@@ -70,12 +76,18 @@ pub trait ProjectProducts: Send + Sync + 'static {
 }
 
 /// [`ProjectProducts::latest_description`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DescriptionRevision {
     pub revision: i64,
     pub text: String,
     /// Where it goes in the repository, when the record says.
     pub path: Option<String>,
+    /// The commit of each source the text uses, pinned at save (ADR-0060
+    /// §3); `None` for a revision saved before locks were kept.
+    pub sources_lock: Option<super::sources_lock::SourcesLock>,
+    /// The project sources the text uses, each at its branch now: what a dev
+    /// build takes.
+    pub planned: Vec<super::sources_lock::LockedSource>,
 }
 
 /// [`ProjectProducts::saved_description`].
@@ -87,29 +99,22 @@ pub struct SavedDescription {
 
 /// The `written` of a product record, as a [`SavedDescription`]; for a
 /// record with only a Studio revision (ADR-0053), its path and no branch.
+/// The path is the recorded one, else the product's own
+/// `products/<product_id>/product.gdl` (`description_path`); `None` before
+/// anything was written or kept, or for a record that names no product.
 pub fn saved_of(record: &Value) -> Option<SavedDescription> {
-    let Some(written) = record.get("written") else {
-        let path = record
-            .pointer("/description/path")
-            .and_then(Value::as_str)
-            .filter(|p| !p.trim().is_empty())?;
-        return Some(SavedDescription {
-            path: path.to_owned(),
-            branch: None,
-        });
-    };
-    let text = |k: &str| {
-        written
-            .get(k)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-    };
-    Some(SavedDescription {
-        path: text("path").unwrap_or_else(|| "product.gdl".to_owned()),
-        branch: text("branch"),
-    })
+    let written = record.get("written");
+    if written.is_none() && record.get("description").is_none() {
+        return None;
+    }
+    let path = super::service::description_service::description_path(Some(record))?;
+    let branch = written
+        .and_then(|w| w.get("branch"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    Some(SavedDescription { path, branch })
 }
 
 /// The picks of a product record: its `gears`, trimmed, blanks dropped.
@@ -180,10 +185,23 @@ impl ProjectProducts for super::service::ProductService {
             .get_project_product(ctx, &project_id.to_string())
             .await?
             .map(|n| n.value);
+        let path = super::service::description_service::description_path(record.as_ref());
+        let sources = self.project_sources(ctx, &project_id.to_string()).await;
+        let planned = super::sources_lock::plan(
+            &super::sources_lock::sources(&latest.text),
+            path.as_deref().unwrap_or("product.gdl"),
+            &sources,
+            crate::project_sources::description_home(&sources),
+        )
+        .into_iter()
+        .map(|(l, _)| l)
+        .collect();
         Ok(Some(DescriptionRevision {
             revision: latest.revision,
             text: latest.text,
-            path: super::service::description_service::description_path(record.as_ref()),
+            path,
+            sources_lock: latest.sources_lock,
+            planned,
         }))
     }
 }
@@ -203,13 +221,23 @@ mod saved_tests {
                 branch: Some("product/shop-1a2b3c4d".into()),
             })
         );
-        let onto_base = serde_json::json!({ "written": { "branch": null, "commit_sha": "abc" } });
+        // Without a recorded path it is the product's own, never the root's.
+        let onto_base = serde_json::json!({ "product_id": "shop",
+            "written": { "branch": null, "commit_sha": "abc" } });
         assert_eq!(
             saved_of(&onto_base),
             Some(SavedDescription {
-                path: "product.gdl".into(),
+                path: "products/shop/product.gdl".into(),
                 branch: None
             })
+        );
+        let nameless = serde_json::json!({ "written": { "branch": null, "commit_sha": "abc" } });
+        assert_eq!(saved_of(&nameless), None);
+        let at_root =
+            serde_json::json!({ "product_id": "shop", "written": { "path": "product.gdl" } });
+        assert_eq!(
+            saved_of(&at_root).map(|s| s.path).as_deref(),
+            Some("product.gdl")
         );
         assert_eq!(saved_of(&serde_json::json!({ "gears": [] })), None);
     }

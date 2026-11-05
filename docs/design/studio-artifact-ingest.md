@@ -209,8 +209,13 @@ and `chart` (`{reference, version}`, an `oci://` chart). A pipeline's build has
 `studio-build` artifact (a zip, at most 1 MiB) through the provider's signed
 link, reads `studio-build.json` from it and records the build once; a report
 that says `ci` through REST is refused, so nobody records one in a pipeline's
-name. `port::BuildRecords` gives another gear a project's build by id, which
-is how studio-environments deploys one;
+name. A build Studio ran (`where: studio`) also says where it ran and with
+what (ADR-0059, `port::BuildPlace`): `environment_id`, `environment`,
+`namespace`, `git_ref`, `source_connection_id`, `source_connection`,
+`builder_image` and `gearbox_version`, kept from the start unless a later
+record says them again. `port::BuildRecords` gives another gear a project's
+build by id, with its failure and its place, which is how studio-environments
+deploys one and answers the log of a build that failed as it started;
 `repo`, `file`, `issue` and `pull_request` are listed by default and the rest
 only when asked for by type. Edge types
 `gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on,reviewed_by,assigned_to,closes,references,part_of}.v1~`.
@@ -225,7 +230,8 @@ deciding again replaces the decision; it is written for
 comment logs under `.studio/comments/` with the ordering rules of
 `theia/product-ext/src/browser/comment-log.js` mirrored; the repository node
 carries `open_document_threads` and, where the provider can say,
-`open_review_threads`. A count is kept, never a message.
+`open_review_threads`. A count is kept, never a message. Its images and chart become the project's image records in
+`studio-environments` too (`environments::images_sink`, ADR-0062 §4).
 
 A `pull_request` node carries, beside what the listing always gave, `draft`,
 `requested_reviewers` and `requested_teams` (still owed a review: GitHub drops

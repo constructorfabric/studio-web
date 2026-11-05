@@ -24,6 +24,12 @@ use super::model::{
 use super::service::{DeployRequest, EnvironmentService, PreviewAsk, Refusal};
 use crate::org_scope::OrgCtx;
 
+#[path = "rest_images.rs"]
+mod images_routes;
+
+#[path = "rest_infra.rs"]
+mod infra_routes;
+
 /// Errors attributable to an environment or a deployment as a resource.
 #[resource_error(gts_id!("cf.studio.environments.environment.v1~"))]
 pub struct StudioEnvironmentsError;
@@ -52,6 +58,9 @@ fn problem(r: Refusal) -> CanonicalError {
             .create(),
         Refusal::Precondition(kind, detail) => StudioEnvironmentsError::failed_precondition()
             .with_precondition_violation("environment", detail, kind)
+            .create(),
+        Refusal::Conflict(reason, detail) => StudioEnvironmentsError::aborted(detail)
+            .with_reason(reason)
             .create(),
         Refusal::Unavailable(detail) => CanonicalError::service_unavailable()
             .with_detail(detail)
@@ -92,6 +101,9 @@ pub struct EnvironmentDto {
     pub database_image: Option<String>,
     /// Whether a deploy waits for an organization administrator's approval.
     pub protected: bool,
+    /// How strictly a product is checked for it (ADR-0060 §5): `dev` or
+    /// `prod`, as set or as its protection makes it.
+    pub strictness: String,
     /// The environment a release must have succeeded in first; absent for
     /// none (ADR-0048 §5).
     #[schema(value_type = Option<String>)]
@@ -106,6 +118,26 @@ pub struct EnvironmentDto {
     /// Whether projects may preview a build here, and how (ADR-0055);
     /// absent: no previews.
     pub previews: Option<PreviewSettingsDto>,
+    /// The organization's mirror of the builder image, by digest; absent:
+    /// the platform's (ADR-0062 §1).
+    pub builder_image: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub builder_registry_connection_id: Option<Uuid>,
+    /// The read-only connection the cluster pulls with; absent: the
+    /// registry connection (ADR-0062 §2).
+    #[schema(value_type = Option<String>)]
+    pub registry_pull_connection_id: Option<Uuid>,
+    /// The build namespace pattern; absent: `{project}-build`.
+    pub build_namespace: Option<String>,
+    /// The namespaces the cluster gives when Studio may not make its own.
+    pub namespaces: Option<Vec<String>>,
+    pub allow_broad_registry_token: bool,
+    /// Where a product's infra services run here (ADR-0064 §3); absent:
+    /// with the product.
+    pub infra: Option<infra_routes::InfraPlacementDto>,
+    /// What should be fixed but does not stop a build or a deploy, e.g. "the
+    /// cluster gets a credential that can write".
+    pub warnings: Vec<String>,
     pub updated_by: String,
     pub updated_at: String,
 }
@@ -165,7 +197,18 @@ fn kind_str(k: EnvironmentKind) -> &'static str {
 }
 
 fn env_dto(e: Environment) -> EnvironmentDto {
+    let strictness = e.strictness().as_str().to_owned();
+    let warnings = e.warnings();
+    let b = e.boundaries;
     EnvironmentDto {
+        builder_image: b.builder_image,
+        builder_registry_connection_id: b.builder_registry_connection_id,
+        registry_pull_connection_id: b.registry_pull_connection_id,
+        build_namespace: b.build_namespace,
+        namespaces: b.namespaces,
+        allow_broad_registry_token: b.allow_broad_registry_token,
+        infra: infra_routes::placement_dto(b.infra),
+        warnings,
         id: e.id,
         name: e.name,
         description: e.description,
@@ -179,6 +222,7 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         database: database_str(e.database).to_owned(),
         database_image: e.database_image,
         protected: e.protected,
+        strictness,
         promote_from: e.promote_from,
         projects: e.projects,
         project_id: e.project_id,
@@ -337,6 +381,10 @@ pub struct EnvironmentRequest {
     pub database_image: Option<String>,
     #[serde(default)]
     pub protected: bool,
+    /// `dev` or `prod` (ADR-0060 §5); absent: `prod` when protected, else
+    /// `dev`.
+    #[serde(default)]
+    pub strictness: Option<String>,
     /// Another environment of the organization a release must have
     /// succeeded in first.
     #[schema(value_type = Option<String>)]
@@ -350,6 +398,37 @@ pub struct EnvironmentRequest {
     /// on a protected or a Research environment.
     #[serde(default)]
     pub previews: Option<PreviewSettingsDto>,
+    /// The image a build's `prepare` and `publish` run in, by digest: an
+    /// organization's mirror of the platform's builder (ADR-0062 §1).
+    /// Absent: the platform's.
+    #[serde(default)]
+    pub builder_image: Option<String>,
+    /// The `registry` connection that builder image is pulled with, when it
+    /// is on another registry than the environment's.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub builder_registry_connection_id: Option<Uuid>,
+    /// A read-only `registry` connection the cluster pulls with (ADR-0062
+    /// §2). Absent: the registry connection, which can write.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub registry_pull_connection_id: Option<Uuid>,
+    /// The pattern of the namespace builds run in; default `{project}-build`.
+    #[serde(default)]
+    pub build_namespace: Option<String>,
+    /// The namespaces the cluster gives Studio when it may not make its own
+    /// (namespace-limited); an administrator assigns them to projects.
+    #[serde(default)]
+    pub namespaces: Option<Vec<String>>,
+    /// Let a server build push with a registry token whose scopes reach past
+    /// pushing and pulling; default no (`REGISTRY_TOKEN_TOO_BROAD`).
+    #[serde(default)]
+    pub allow_broad_registry_token: bool,
+    /// Where a product's infra services run (ADR-0064 §3): with the product
+    /// (default; always in a dev environment), or the organization's shared
+    /// place.
+    #[serde(default)]
+    pub infra: Option<infra_routes::InfraPlacementDto>,
 }
 
 fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> {
@@ -374,6 +453,14 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
                 .create());
         }
     };
+    let strictness = match r.strictness.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(raw) => Some(super::model::Strictness::parse(raw).ok_or_else(|| {
+            StudioEnvironmentsError::invalid_argument()
+                .with_constraint(format!("strictness is dev or prod, not '{raw}'"))
+                .create()
+        })?),
+    };
     let research = r.research_project.map(|project| ResearchTarget {
         project,
         hardware: r.research_hardware,
@@ -393,6 +480,16 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
         promote_from: r.promote_from,
         projects: r.projects,
         previews: r.previews.map(preview_settings),
+        strictness,
+        boundaries: super::model::Boundaries {
+            builder_image: r.builder_image,
+            builder_registry_connection_id: r.builder_registry_connection_id,
+            registry_pull_connection_id: r.registry_pull_connection_id,
+            build_namespace: r.build_namespace,
+            namespaces: r.namespaces,
+            allow_broad_registry_token: r.allow_broad_registry_token,
+            infra: infra_routes::placement_of(r.infra)?,
+        },
     })
 }
 
@@ -439,7 +536,8 @@ pub struct StudioBuildRequest {
     /// The `kubernetes` profile it builds; default `prod`.
     #[serde(default)]
     pub profile: Option<String>,
-    /// The product's description in the repository; default `product.gdl`.
+    /// The product's description in the repository; default where the
+    /// project's product record says it is (`products/<id>/product.gdl`).
     #[serde(default)]
     pub product_file: Option<String>,
     /// A branch, tag or commit; the repository's branch when absent.
@@ -489,7 +587,8 @@ pub struct BuildWorkflowRequest {
     /// The `kubernetes` profile it builds; default `prod`.
     #[serde(default)]
     pub profile: Option<String>,
-    /// The product's description in the repository; default `product.gdl`.
+    /// The product's description in the repository; default where the
+    /// project's product record says it is (`products/<id>/product.gdl`).
     #[serde(default)]
     pub product_file: Option<String>,
 }
@@ -571,7 +670,7 @@ pub struct ProjectTargetsDto {
     pub project_name: String,
     /// The environments this project may deploy to.
     pub environments: Vec<TargetDto>,
-    /// Its product's profiles bound to them.
+    /// The product profile each of them runs: an environment at most once.
     pub bindings: Vec<BindingDto>,
     /// The secret keys of its configuration, per environment.
     pub secrets: Vec<ConfigSecretDto>,
@@ -1190,9 +1289,15 @@ async fn start_build(
             body.profile.as_deref().unwrap_or("prod"),
             body.product_file.as_deref(),
             body.git_ref,
+            false,
         )
         .await
         .map_err(problem)?;
+    let super::service::BuildAsked::Started(started) = started else {
+        return Err(problem(Refusal::Internal(
+            "a build was planned, not started".into(),
+        )));
+    };
     Ok((
         StatusCode::ACCEPTED,
         Json(StudioBuildDto {
@@ -1237,9 +1342,6 @@ async fn scaffold_build_workflow(
     Json(body): Json<BuildWorkflowRequest>,
 ) -> ApiResult<JsonBody<BuildWorkflowDto>> {
     let profile = body.profile.unwrap_or_else(|| "prod".to_owned());
-    let product_file = body
-        .product_file
-        .unwrap_or_else(|| "product.gdl".to_owned());
     let w = envs
         .0
         .propose_workflow(
@@ -1247,7 +1349,7 @@ async fn scaffold_build_workflow(
             q.project_id,
             body.environment_id,
             &profile,
-            &product_file,
+            body.product_file.as_deref(),
         )
         .await
         .map_err(problem)?;
@@ -1839,9 +1941,10 @@ pub fn register_routes(
         .operation_id("studio_environments.update_bindings")
         .summary("Bind a project's product profiles to environments")
         .description(
-            "For `?project_id=`: the whole list, each kubernetes profile at most once, each \
-             to an environment that takes the project's deploys. A binding grants nothing: \
-             every deploy is still checked against its environment.",
+            "For `?project_id=`: the whole list, each environment at most once with the \
+             kubernetes profile it runs (a profile may run in several), each one that takes \
+             the project's deploys. A binding grants nothing: every deploy is still checked \
+             against its environment.",
         )
         .tag(TAG)
         .authenticated()
@@ -1913,7 +2016,7 @@ pub fn register_routes(
         .description(
             "For `?project_id=`: a pull request to the project's repository adding \
              `.github/workflows/studio-build-<product>.yml` for `product_file` (default \
-             `product.gdl`; ADR-0048 §5). It generates the profile with \
+             the path the product record gives; ADR-0048 §5). It generates the profile with \
              the Gearbox engine this Studio runs, pushes the images and the chart under the \
              environment's registry prefix, and uploads `studio-build.json`, which the sync \
              records as the run's build. Answers with the pull request.",
@@ -2138,6 +2241,11 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    // A project's images, the organization's registries, readiness,
+    // namespace assignments and a build's plan (ADR-0062).
+    router = images_routes::register(router, openapi);
+    router = infra_routes::register(router, openapi);
 
     router.layer(Extension(Environments(service)))
 }

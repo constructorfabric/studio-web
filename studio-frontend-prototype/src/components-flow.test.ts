@@ -162,27 +162,24 @@ describe("the next step", () => {
   });
 });
 
-describe("the steps from the specs to a built product", () => {
+describe("the steps from the specs to a product that resolves", () => {
   const base: FlowState = { capabilities: 7, open: 5, picks: 0, inCode: 0, resolves: null, fixes: 0, written: false, composing: true };
   const states = (s: Partial<FlowState>) => productSteps({ ...base, ...s }).map((x) => x.state);
 
   it("starts on the specs", () => {
-    expect(states({})).toEqual(["current", "todo", "todo"]);
+    expect(states({})).toEqual(["current", "todo"]);
     expect(productSteps(base)[0].status).toBe("7 capabilities");
   });
-  it("moves on as gears are picked, the product resolves and is built", () => {
-    expect(states({ picks: 3 })).toEqual(["done", "current", "todo"]);
+  it("moves on as gears are picked and the product resolves", () => {
+    expect(states({ picks: 3 })).toEqual(["done", "current"]);
     expect(productSteps({ ...base, picks: 3, resolves: false, fixes: 1 })[1].status).toBe("does not resolve · 1 fix");
-    expect(states({ picks: 3, resolves: true })).toEqual(["done", "done", "current"]);
-    expect(states({ picks: 3, resolves: true, written: true })).toEqual(["done", "done", "done"]);
+    expect(states({ picks: 3, resolves: true })).toEqual(["done", "done"]);
   });
-  it("is not saved while it no longer resolves, and says how the capabilities are closed", () => {
-    expect(states({ picks: 3, resolves: false, written: true })).toEqual(["done", "current", "todo"]);
+  it("says how the capabilities are closed", () => {
     const s = productSteps({ ...base, picks: 3, covered: 2, weak: 5, open: 0, resolves: false, written: true });
     expect(s[0].status).toBe("7 capabilities · 2 closed, 5 only by words");
-    expect(s[2].status).toBe("saved earlier · save again once it resolves");
   });
   it("cannot compose without the engine", () => {
-    expect(states({ composing: false })).toEqual(["current", "off", "off"]);
+    expect(states({ composing: false })).toEqual(["current", "off"]);
   });
 });

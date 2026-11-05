@@ -18,6 +18,21 @@ import type {
 } from "./spec-model";
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
+
+/** One screen of a micro-frontend as a build of the shell rendered it. */
+export interface ScreenPreview {
+  component: string;
+  version: string | null;
+  commit: string;
+  route: string;
+  label: string | null;
+  order: number;
+  /** `data:image/webp;base64,...` */
+  image: string;
+  width: number | null;
+  height: number | null;
+  captured_at: string;
+}
 import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
 import { sectionBody, type MirrorSummary, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
@@ -930,6 +945,8 @@ export interface ProjectConfig {
   /** The key of the project type it was created as (`project-types.ts`);
    *  `kind` stays the recipe that created it. */
   type?: string;
+  /** Read by nothing since ADR-0058: the stages are a computed status. Kept
+   *  so a config that carries it round-trips unchanged. */
   stages?: string[];
   status?: ProjectStatus;
   /** Seed source: a git url, a brief, or an uploaded file id. */
@@ -945,6 +962,11 @@ export interface ProjectConfig {
    *  (`github:owner/repo//template-shell@ref`). Read when the product has
    *  none; the Frontend section writes the product's. */
   frontend?: { mfes?: string[]; shell?: string };
+  /** The icon somebody chose (`tenant-icon.ts`); absent: the kind's. */
+  icon?: import("./tenant-icon").TenantIcon;
+  /** What the product is, as a member confirmed it after Studio proposed it
+   *  from the specs (`product-kind.ts`); absent: not decided yet. */
+  product_kind?: import("./product-kind").ProductKindChoice;
 }
 
 /** Where a FrontX package is: `owner/name`, its directory there, the ref it is
@@ -1414,19 +1436,6 @@ export interface JourneyStage {
   owner_tenant_id?: string | null;
 }
 
-/** Normalise a stage selection against a catalogue: the required entries plus
- *  what was chosen, in catalogue order.
- *
- *  Takes the catalogue rather than closing over one, because there is no longer
- *  a single right answer — it depends on the workspace. */
-export function normalizeStages(
-  selected: readonly string[],
-  catalogue: readonly JourneyStage[],
-): string[] {
-  const chosen = new Set(selected);
-  return catalogue.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
-}
-
 export type RepoSource = "local" | "git" | "github" | "gitlab";
 
 /** One workspace source — mirrored into .cf-workspace.toml by the backend. */
@@ -1514,6 +1523,9 @@ export interface Connection {
   created_at_epoch_secs: number;
   /** The provider's options: a gear repository's `ref` and `source_id`. */
   options?: Record<string, string>;
+  /** Whether the caller created it: a person's own connections are listed on
+   *  their profile, a tenant's shared ones on the tenant. */
+  mine?: boolean;
 }
 
 /* ── studio-environments: where an organization's products run (ADR-0043) ── */
@@ -1649,6 +1661,9 @@ export interface DeployEnvironment {
   database_image?: string | null;
   /** A deploy waits for an organization administrator's approval. */
   protected: boolean;
+  /** How strictly a product is checked for it (ADR-0060): `dev` checks the
+   *  profile as a development one; absent from an older backend. */
+  strictness?: "dev" | "prod";
   /** The environment a release must have succeeded in first. */
   promote_from?: string | null;
   /** The projects that may deploy here; absent: all of them. */
@@ -1657,8 +1672,41 @@ export interface DeployEnvironment {
   project_id?: string | null;
   /** Whether projects may preview a build here (ADR-0055); absent: no. */
   previews?: PreviewSettings | null;
+  /** The build Job's image, from the organization's own mirror and pinned by
+   *  digest (`image@sha256:…`); absent: the one Studio ships with. */
+  builder_image?: string | null;
+  /** The registry connection the cluster pulls the builder image with. */
+  builder_registry_connection_id?: string | null;
+  /** A read-only registry identity the cluster pulls the product with; absent:
+   *  it gets the push connection's credential, which can write. */
+  registry_pull_connection_id?: string | null;
+  /** Where a build runs: a pattern, `{project}-build` by default. */
+  build_namespace?: string | null;
+  /** The namespaces the cluster gives, when Studio may not create its own. */
+  namespaces?: string[] | null;
+  /** The registry token a build gets may reach past the project's own path. */
+  allow_broad_registry_token?: boolean | null;
+  /** Where a product's infra services run here (ADR-0064); absent: with the product. */
+  infra?: InfraPlacement | null;
+  /** What the server thinks is risky about how it is set up, one sentence each. */
+  warnings?: string[];
   updated_by: string;
   updated_at: string;
+}
+
+/** Whether an environment's cluster is ready for Studio (`GET …/readiness`). */
+export type ReadinessLevel = "bootstrapped" | "namespace_limited" | "partial" | "unreachable";
+
+export interface EnvironmentReadiness {
+  level: ReadinessLevel;
+  /** What the bootstrap would have given and the cluster does not. */
+  missing: string[];
+  /** The namespaces Studio may use there. */
+  namespaces: string[];
+  bootstrap_version?: string | null;
+  /** The cluster enforces Studio's policy on what runs in its namespaces. */
+  policy_enforced: boolean;
+  detail?: string | null;
 }
 
 /** What an environment says of previews (ADR-0055). */
@@ -1720,6 +1768,232 @@ export interface DeployEnvironmentInput {
   promote_from?: string | null;
   projects?: string[] | null;
   previews?: PreviewSettings | null;
+  builder_image?: string | null;
+  builder_registry_connection_id?: string | null;
+  registry_pull_connection_id?: string | null;
+  build_namespace?: string | null;
+  namespaces?: string[] | null;
+  allow_broad_registry_token?: boolean | null;
+  /** Where a product's infra services run (ADR-0064); absent: with the product. */
+  infra?: InfraPlacement | null;
+  /** How strictly a product is checked for it (ADR-0060 §5); absent: `prod`
+   *  when protected, else `dev`. */
+  strictness?: "dev" | "prod" | null;
+}
+
+/** Where an environment runs a product's infra services (ADR-0064 §3). */
+export interface InfraPlacement {
+  /** `with_product`: in the product's namespace, one of each per environment
+   *  (always so in a dev environment). `shared`: the organization's place. */
+  placement: "with_product" | "shared";
+  shared: InfraSharedService[];
+}
+
+/** One service the organization runs for every product of an environment. */
+export interface InfraSharedService {
+  service: string;
+  namespace?: string | null;
+  /** Capability -> its value (`oidc.issuer` -> the issuer). Not secret. */
+  provides: Record<string, string>;
+}
+
+/** An infra service's passport, from its `service.gdl` (`kind = "infra"`). */
+export interface InfraPassport {
+  name: string;
+  version?: string | null;
+  description?: string | null;
+  /** The image as its publisher names it. */
+  image?: string | null;
+  ports: Record<string, number>;
+  health?: string | null;
+  args: string[];
+  config: Record<string, string>;
+  secrets: string[];
+  /** Capability -> template of its value. */
+  provides: Record<string, string>;
+  stateful: boolean;
+  storage?: string | null;
+  data_path?: string | null;
+  chart?: string | null;
+  chart_version?: string | null;
+}
+
+/** One infra service of a project's product (ADR-0064). */
+export interface InfraService {
+  passport: InfraPassport;
+  /** Imported into the project's path, by digest. */
+  image?: string | null;
+  /** A ready chart under the project's path; absent: generated from the passport. */
+  chart_ref?: string | null;
+  chart_version?: string | null;
+  chart_values?: Record<string, unknown> | null;
+  /** Where people reach it: `{public_url}`. */
+  public_url?: string | null;
+}
+
+/** What a deploy does with one infra service. */
+export interface InfraPlanItem {
+  service: string;
+  placement: "with_product" | "shared";
+  install: "database" | "chart" | "generated" | "shared";
+  image?: string | null;
+  chart?: string | null;
+  provides: { capability: string; variable: string }[];
+  refusal_code?: string | null;
+  refusal?: string | null;
+}
+
+/** What a deploy of the project to one environment does with its infra services. */
+export interface InfraPlan {
+  environment_id: string;
+  environment_name: string;
+  placement: "with_product" | "shared";
+  namespace: string;
+  items: InfraPlanItem[];
+}
+
+/** What a build would do, said before it is started (`POST /builds/plan`):
+ *  where it runs, with what, from which sources, into which repositories. */
+export interface BuildPlan {
+  environment_id: string;
+  environment: string;
+  profile: string;
+  product_file: string;
+  description_revision?: number | null;
+  strictness: "dev" | "prod";
+  /** Where the product is deployed. */
+  namespace: string;
+  /** Where the build's Job runs. */
+  build_namespace: string;
+  builder_image: string;
+  /** The builder image is named by digest. */
+  builder_pinned: boolean;
+  gearbox_version?: string | null;
+  registry_prefix: string;
+  image_repositories: string[];
+  chart_repository: string;
+  sources: BuildPlanSource[];
+  warnings: string[];
+  /** Why Studio would refuse to start it; absent: it would start. */
+  refusal?: { code: string; message: string } | null;
+}
+
+export interface BuildPlanSource {
+  id: string;
+  repository: string;
+  ref: string;
+  commit?: string | null;
+  connection_id?: string | null;
+  connection_label?: string | null;
+  connection_scope?: string | null;
+  connection_holder?: string | null;
+}
+
+/** Where a recorded image runs now. */
+export interface ImageRunning {
+  environment_id: string;
+  environment_name: string;
+  deployment_id: string;
+  namespace: string;
+  deployed_at: string;
+}
+
+export type ImageKind = "image" | "chart";
+export type ImageState = "present" | "missing" | "deleted" | "retained";
+
+/** An image or chart the project put in a registry, as Studio recorded it. */
+export interface ProjectImage {
+  id: string;
+  project_id: string;
+  registry_connection_id?: string | null;
+  registry_host: string;
+  repository: string;
+  /** What a deploy names it by: `host/repository@digest` or `:tag`. */
+  reference: string;
+  tags: string[];
+  digest: string;
+  media_type?: string | null;
+  size_bytes?: number | null;
+  platforms: string[];
+  build_id?: string | null;
+  app?: string | null;
+  commit?: string | null;
+  description_revision?: number | null;
+  lock_hash?: string | null;
+  pushed_by?: string | null;
+  pushed_at: string;
+  kind: ImageKind;
+  state: ImageState;
+  /** Kept whatever the retention says. */
+  pinned: boolean;
+  /** The image it was copied from, when it was promoted. */
+  promoted_from?: string | null;
+  /** The external reference it was imported from. */
+  source_ref?: string | null;
+  running_in: ImageRunning[];
+}
+
+/** How long a project's (or every project's) images are kept. */
+export interface ImageRetention {
+  scope: "project" | "organization";
+  keep_last?: number | null;
+  keep_days?: number | null;
+  /** The project has none of its own: the organization's applies. */
+  inherited: boolean;
+}
+
+/** The namespace a project was given in an environment (ADR-0062), and where
+ *  its builds run there. */
+export interface NamespaceAssignment {
+  project_id: string;
+  environment_id: string;
+  namespace: string;
+  /** Where its build Job runs; the answer says the namespace itself when the
+   *  assignment named none. */
+  build_namespace?: string | null;
+  /** Who assigned it: a member, or `studio` for a namespace a run made. */
+  assigned_by?: string | null;
+  assigned_at?: string | null;
+}
+
+/** One registry the organization's environments push to or pull from. */
+export interface OrgRegistry {
+  connection_id: string;
+  label: string;
+  host: string;
+  kind: "ghcr" | "harbor" | "oci";
+  prefixes: string[];
+  environments: { id: string; name: string }[];
+  role: "push" | "pull" | "push_pull";
+}
+
+export interface RegistryRepository {
+  name: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  /** How many of its versions Studio recorded. */
+  recorded: number;
+}
+
+export interface RegistryTag {
+  /** Absent where the registry's listing does not say it (`VersionDto`). */
+  digest?: string | null;
+  tags: string[];
+  size_bytes?: number | null;
+  pushed_at?: string | null;
+  image_id?: string | null;
+  project_id?: string | null;
+  running_in: ImageRunning[];
+}
+
+/** Something in a registry that nothing in Studio accounts for. */
+export interface RegistryOrphan {
+  repository: string;
+  digest?: string | null;
+  tags: string[];
+  reason: "unowned" | "unrecorded" | "undeployed" | "missing";
+  image_id?: string | null;
+  project_id?: string | null;
 }
 
 /** A Constructor Research project, as its integration service names it. */
@@ -1735,7 +2009,8 @@ export interface ResearchHardware {
   trial: boolean;
 }
 
-/** A project's product profile bound to an environment. */
+/** An environment of the project and the product profile it runs there
+ *  (ADR-0057): each environment bound at most once, a profile to any number. */
 export interface EnvironmentBinding {
   profile: string;
   environment_id: string;
@@ -2006,6 +2281,9 @@ export interface WrittenFile {
 export interface ConnectorIdentity {
   account: string;
   display_name?: string;
+  /** What else the test looked at: for a cluster, each right the bootstrap
+   *  manifest gives (ADR-0043). Reported only; the test passed regardless. */
+  checks?: { name: string; ok: boolean; detail: string }[];
 }
 
 export interface ConnectionTest extends ConnectorIdentity {
@@ -2151,6 +2429,62 @@ export interface GtsEntityPage {
   entities: GtsEntity[];
 }
 
+/** One platform source as an organization sees it, with its pin (ADR-0061). */
+export interface PlatformPinSource {
+  repo: string;
+  git_ref: string;
+  mode: string;
+  pinned_ref?: string | null;
+  note?: string | null;
+  pinned_by?: string | null;
+  pinned_by_name?: string | null;
+  pinned_at?: string | null;
+}
+
+export interface PlatformPins {
+  /** Every platform source, each with its pin when it has one. */
+  items: PlatformPinSource[];
+  total: number;
+  may_manage: boolean;
+}
+
+/** A project's request to put a component into the organization's catalogue
+ *  at one version (ADR-0061). */
+export interface CatalogPublication {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  project_name?: string | null;
+  type_id: string;
+  name: string;
+  kind?: string | null;
+  repo?: string | null;
+  path?: string | null;
+  git_ref: string;
+  commit?: string | null;
+  version?: string | null;
+  artifact?: { kind: string; reference: string } | null;
+  reason?: string | null;
+  requested_by: string;
+  requested_by_name?: string | null;
+  at: string;
+  state: "requested" | "approved" | "declined";
+  decided_by?: string | null;
+  decided_by_name?: string | null;
+  decided_at?: string | null;
+  decline_reason?: string | null;
+}
+
+export interface ComponentDoc {
+  name: string;
+  path: string;
+  repo: string;
+  git_ref: string;
+  url: string;
+  text: string;
+  truncated: boolean;
+}
+
 export interface CatalogNode {
   type_id: string;
   instance_id: string;
@@ -2278,6 +2612,16 @@ export interface ComponentPullRequestsRow {
   authors: number;
 }
 
+/** `POST /studio-insight/v1/query`: one read-only statement's answer, rows
+ *  keyed by column name exactly as Insight returned them (a count may arrive
+ *  as a string). `truncated`: the rows are a prefix. */
+export interface InsightQueryResult {
+  columns: { name: string; type: string }[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  truncated: boolean;
+}
+
 export interface ComponentPullRequests {
   repository: string;
   from: string;
@@ -2306,6 +2650,8 @@ export interface WorkspaceSettings {
   root_token_ref?: string;
   /** Workspace sources: multiple repositories/folders per workspace. */
   repos?: RepoEntry[];
+  /** The icon somebody chose (`tenant-icon.ts`); absent: a folder. */
+  icon?: import("./tenant-icon").TenantIcon;
 }
 
 /** A versioned capability bundle published in the Studio kit registry. */
@@ -2776,6 +3122,19 @@ export function orgScoped(path: string, org: string | undefined = currentOrganiz
 /** Fired on any 401 so the app can drop a dead session instead of looping. */
 export const UNAUTHENTICATED_EVENT = "studio:unauthenticated";
 
+/** Fired with the project's id after its product record was written: a save
+ *  of the picks, the frontend or the profile, and every preview, which
+ *  records what the engine said. The Product page's header and strip read
+ *  the record once; this tells them to read it again. */
+export const PRODUCT_CHANGED_EVENT = "studio:product-changed";
+
+function productChanged<T>(projectId: string, done: Promise<T>): Promise<T> {
+  return done.then((v) => {
+    window.dispatchEvent(new CustomEvent(PRODUCT_CHANGED_EVENT, { detail: projectId }));
+    return v;
+  });
+}
+
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   if (!token) {
     // Defensive: an empty token would reach the gateway as a missing bearer
@@ -2820,6 +3179,12 @@ export function idempotent(key: string = crypto.randomUUID()): Record<string, st
   return { "Idempotency-Key": key };
 }
 
+/** `project_id=` or `organization_id=`: whose setting is read or written.
+ *  The project wins when both are given, as its own setting is the narrower. */
+function ownerQuery(owner: { org?: string; project?: string }): URLSearchParams {
+  return new URLSearchParams(owner.project ? { project_id: owner.project } : { organization_id: owner.org ?? "" });
+}
+
 /** A file the server writes, as a blob: the same auth and errors as `request`. */
 async function requestBlob(path: string, token: string): Promise<Blob> {
   if (!token) {
@@ -2837,12 +3202,22 @@ async function requestBlob(path: string, token: string): Promise<Blob> {
 /** How many more times a product preview is asked after a gateway timeout. */
 const PREVIEW_RETRIES = 3;
 
-async function retryOnTimeout<T>(ask: () => Promise<T>, retries: number): Promise<T> {
+/** How many more times a product save is sent after the gateway lost its
+ *  answer. */
+const SAVE_RETRIES = 2;
+
+/** `ask`, asked again (at most `retries` more times) while it fails with one
+ *  of `statuses`: the gateway's answer for a request it gave up on. */
+async function retryOnTimeout<T>(
+  ask: () => Promise<T>,
+  retries: number,
+  statuses: readonly number[] = [504],
+): Promise<T> {
   for (let left = retries; ; left--) {
     try {
       return await ask();
     } catch (e) {
-      if (left === 0 || !(e instanceof ApiError) || e.status !== 504) throw e;
+      if (left === 0 || !(e instanceof ApiError) || !statuses.includes(e.status)) throw e;
     }
   }
 }
@@ -3130,6 +3505,9 @@ export interface GearboxStatus {
   /** The organization's repositories left out: a platform repository has
    *  the same source id. */
   shadowed?: string[];
+  /** Where a product's frontend starts in this deployment (`STUDIO_FRONTX_*`);
+   *  absent from a backend from before it said (`frontxDefaultsOf`). */
+  frontx?: { shell_template: string; source_repo: string; source_ref: string } | null;
 }
 
 /** One gear repository as the engine last read it. */
@@ -3232,27 +3610,42 @@ export interface ProjectProduct {
   name?: string;
   /** Catalogue names (`cf-gears-api-gateway`), in the order they were picked. */
   gears?: string[];
+  /** The profile the old single select checked; nothing reads it now. */
   profile?: string;
   updated_at?: string;
-  /** What the engine said the last time the product was previewed. */
-  last_preview?: {
-    profile: string;
-    ok: boolean;
-    errors: number;
-    warnings: number;
-    applications: string[];
-    /** Every gear the resolution contains, picked or pulled in, by crate. */
-    gears: string[];
-    corpus_commit?: string | null;
-    /** What the gears need running beside them; absent in a record from before. */
-    infrastructure?: ProductTechnology[];
-  };
+  /** What the engine said of the product, per profile id (ADR-0057). Absent
+   *  in a record from before; a check is about the description whose hash it
+   *  carries. */
+  checks?: Record<string, ProductCheck>;
+  /** The latest check, whichever profile it was: kept for older readers. */
+  last_preview?: ProductCheck & { profile: string };
   /** Where `product.gdl` was last committed; `path` is relative to the repository root. */
   written?: { branch: string; commit_sha: string; pr_url?: string | null; path?: string };
   /** The description revision Studio keeps (ADR-0053), and its path in the repository. */
-  description?: { revision: number; sha256?: string; path?: string | null };
+  description?: {
+    revision: number;
+    sha256?: string;
+    path?: string | null;
+    /** Each source the revision uses, pinned at save (ADR-0060). */
+    sources_lock?: { sources: import("./source-roles").LockedSource[] } | null;
+  };
   /** Where and which revision was last published to the repository (ADR-0053 §3). */
   published?: { revision: number; branch: string; commit_sha: string; pr_url?: string | null; path?: string; at?: string };
+}
+
+/** What the engine said of the product for one profile. */
+export interface ProductCheck {
+  ok: boolean;
+  errors: number;
+  warnings: number;
+  applications: string[];
+  /** Every gear the resolution contains, picked or pulled in, by crate. */
+  gears: string[];
+  corpus_commit?: string | null;
+  /** What the gears need running beside them; absent in a record from before. */
+  infrastructure?: ProductTechnology[];
+  /** The hash of the `product.gdl` it checked; absent in a record from before. */
+  gdl_sha256?: string;
 }
 
 /** One revision of a product's description, which Studio keeps (ADR-0053). */
@@ -3264,6 +3657,8 @@ export interface ProductDescriptionRevision {
   sha256: string;
   /** `studio`, `repository` (read back from the base branch) or `migrated`. */
   source: string;
+  /** Each source the text uses, pinned at save (ADR-0060); empty before locks were kept. */
+  sources_lock?: import("./source-roles").LockedSource[];
 }
 
 /** A project's product description as Studio keeps it. */
@@ -3294,6 +3689,8 @@ export function descriptionConflictOf(e: unknown): ProductDescriptionConflict | 
 /** What the Gearbox engine made of a set of picked gears. */
 export interface ProductPreview {
   product_gdl: string;
+  /** Hex SHA-256 of `product_gdl`; absent from an older backend. */
+  gdl_sha256?: string;
   profile: string;
   ok: boolean;
   diagnostics: GearboxDiagnostic[];
@@ -3309,6 +3706,11 @@ export interface ProductPreview {
   written?: { branch: string; commit_sha: string; pr_url?: string | null } | null;
   /** Set when `write` saved it as a revision Studio keeps (ADR-0053). */
   description_revision?: { revision: number; created: boolean; sha256: string } | null;
+  /** A save answered before the engine finished checking it: `ok`,
+   *  `diagnostics`, `applications` and `gears` are not known yet. The check
+   *  carries on and lands in the product's `checks[profile]`. Absent from an
+   *  older backend. */
+  checking?: boolean;
 }
 
 /** What `importDomainModel` loaded. */
@@ -3344,6 +3746,9 @@ export interface RollupRow {
   /** Projects: `new_gears` | `product` | `existing`, and the project's brief. */
   project_kind?: string | null;
   brief?: string | null;
+  /** The icon chosen for it, both halves or neither; null: none chosen. */
+  icon_glyph?: string | null;
+  icon_color?: string | null;
   /** Findings still to fix (`high`, `gate-failed`, `some`); `findings` counts every verdict. */
   open_findings?: number | null;
   /** Unresolved threads the repositories report. */
@@ -3398,6 +3803,62 @@ export interface OrgOverview {
   money: OrgMoney[] | null;
   waiting_on: OrgQueue[] | null;
   decisions: { undecided: number; candidates: number; registered: number; published: number } | null;
+}
+
+/** The scope a metrics board is about: the organization, or one of its
+ *  workspaces or projects (its own repositories, spend and deployments). */
+export type MetricsScope = { kind: "organization" } | { kind: "workspace"; id: string } | { kind: "project"; id: string };
+
+export type MetricsRange = "7d" | "30d" | "90d";
+
+export interface MetricsCell {
+  total: number;
+  median: number | null;
+  /** Observations. */
+  count: number;
+  /** Distinct entities. */
+  people: number;
+}
+
+/** `GET /studio-organizations/v1/metrics`: the leaders' board -- Studio's
+ *  spend and Insight's repository figures, composed on the server. */
+export interface OrgMetrics {
+  organization_id: string;
+  scope: "organization" | "workspace" | "project";
+  scope_id: string;
+  range: MetricsRange;
+  days: number;
+  bucket: "day" | "week";
+  /** `[current_from, to]` and `[previous_from, previous_to]`, UTC days, ends included. */
+  current_from: string;
+  to: string;
+  previous_from: string;
+  previous_to: string;
+  /** Every bucket's first day, oldest first. */
+  buckets: string[];
+  repositories: string[];
+  projects: number;
+  /** The projects in scope. */
+  project_ids: string[];
+  insight: {
+    state: "ok" | "unconfigured" | "unreachable" | "failed" | "absent" | "no_repositories";
+    detail: string | null;
+    truncated: boolean;
+    /** Keyed `domain.measure`; a measure absent had no observation. */
+    measures: { key: string; current: MetricsCell | null; previous: MetricsCell | null; series: ({ bucket: string } & MetricsCell)[] }[];
+    reviews: { period: "cur" | "prev"; reviewers: number; reviews: number; half: number; top: number[] }[];
+    /** Rows Insight's AI connectors wrote; 0 is "never ingested". */
+    ai_rows: number | null;
+  };
+  costs: "shown" | "hidden" | "unreadable";
+  spend: {
+    currency: string;
+    current: number;
+    previous: number;
+    series: { bucket: string; cost: number }[];
+    by_workspace: { id: string; name: string; cost: number; previous: number }[];
+    unpriced: string[];
+  } | null;
 }
 
 /** One thing that waits on the leaders; `kind` says which fields are set. */
@@ -3556,55 +4017,22 @@ export const api = {
       token,
     ),
 
+  /** The leaders' metrics board for an organization, or a workspace or
+   *  project in it, over `range` against the days before
+   *  (`organizations/metrics.rs`). */
+  orgMetrics: (token: string, org: string, range: MetricsRange, scope: MetricsScope = { kind: "organization" }) => {
+    const q = new URLSearchParams({ organization_id: org, range });
+    if (scope.kind === "workspace") q.set("workspace_id", scope.id);
+    if (scope.kind === "project") q.set("project_id", scope.id);
+    return request<OrgMetrics>(`/studio-organizations/v1/metrics?${q.toString()}`, token);
+  },
+
   /* ── studio-documents gear (types + templates + validation) ── */
 
-  /** Define, replace or hide a journey stage in this workspace.
-   *
-   *  `hidden: true` is a tombstone: it removes the inherited entry from the
-   *  effective catalogue instead of replacing it. Reverting is `deleteStage`. */
-  upsertStage: (
-    token: string,
-    workspaceId: string,
-    body: {
-      key: string;
-      label: string;
-      required?: boolean;
-      position?: number;
-      requires?: string[];
-      gates?: string[];
-      hidden?: boolean;
-    },
-  ) =>
-    request<JourneyStage>(`/studio-documents/v1/workspaces/${workspaceId}/stages`, token, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  /** Drop this workspace's own entry for `key`, so what it inherits shows
-   *  through again. Idempotent. */
-  deleteStage: (token: string, workspaceId: string, key: string) =>
-    request<void>(
-      `/studio-documents/v1/workspaces/${workspaceId}/stages/${encodeURIComponent(key)}`,
-      token,
-      { method: "DELETE" },
-    ),
-
-  upsertCapability: (
-    token: string,
-    workspaceId: string,
-    body: { key: string; label: string; terms?: string[]; contracts?: string[]; nonfunctional?: boolean; hidden?: boolean },
-  ) =>
-    request<Capability>(`/studio-documents/v1/workspaces/${workspaceId}/capabilities`, token, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  deleteCapability: (token: string, workspaceId: string, key: string) =>
-    request<void>(
-      `/studio-documents/v1/workspaces/${workspaceId}/capabilities/${encodeURIComponent(key)}`,
-      token,
-      { method: "DELETE" },
-    ),
+  /* No upsertStage / deleteStage / upsertCapability / deleteCapability: the
+     workspace's Process catalogue was their only caller, and ADR-0058 retired
+     it. Stages are a computed status, the capability vocabulary is the
+     platform's; the server keeps the endpoints for data that already exists. */
 
   /** Every spec a project has, in one list, with each queue counted.
    *
@@ -4287,6 +4715,21 @@ export const api = {
   deleteOrganizationLogo: (token: string, orgId: string) =>
     request<void>(`/studio-organizations/v1/logo?organization_id=${encodeURIComponent(orgId)}`, token, { method: "DELETE" }),
 
+  /** A workspace's or a project's uploaded icon (the organization logo's
+   *  endpoint, by `tenant_id`); 404 when it has none. */
+  tenantIcon: (token: string, tenantId: string) =>
+    request<OrganizationLogo>(`/studio-organizations/v1/logo?tenant_id=${encodeURIComponent(tenantId)}`, token),
+  /** Upload one: PNG, JPEG, WebP or GIF, at most 256 KiB. Whoever
+   *  administers access there may. */
+  setTenantIcon: (token: string, tenantId: string, contentType: string, base64: string) =>
+    request<OrganizationLogo>(`/studio-organizations/v1/logo?tenant_id=${encodeURIComponent(tenantId)}`, token, {
+      method: "PUT",
+      body: JSON.stringify({ content_type: contentType, data: base64 }),
+    }),
+  /** Remove it: the chosen glyph shows again. */
+  deleteTenantIcon: (token: string, tenantId: string) =>
+    request<void>(`/studio-organizations/v1/logo?tenant_id=${encodeURIComponent(tenantId)}`, token, { method: "DELETE" }),
+
   /** Store the caller's photo: PNG, JPEG, WebP or GIF, at most 1 MiB. */
   uploadMyAvatar: (token: string, contentType: string, base64: string) =>
     request<StudioProfile>("/studio-user/v1/me/avatar", token, {
@@ -4729,6 +5172,169 @@ export const api = {
       token,
     ),
 
+  /** Whether the environment's cluster is ready for Studio, read from it now:
+   *  an organization's environment by `org`, a project's own by `project`. */
+  environmentReadiness: (token: string, id: string, owner: { org?: string; project?: string }) => {
+    const qs = new URLSearchParams();
+    if (owner.project) qs.set("project_id", owner.project);
+    else if (owner.org) qs.set("organization_id", owner.org);
+    return request<EnvironmentReadiness>(
+      `/studio-environments/v1/environments/${encodeURIComponent(id)}/readiness?${qs}`,
+      token,
+    );
+  },
+  /** What a build with this body would do, and whether Studio would refuse
+   *  it; nothing is started. */
+  planBuild: (
+    token: string,
+    projectId: string,
+    body: { environment_id: string; profile?: string; product_file?: string; ref?: string },
+  ) =>
+    request<BuildPlan>(`/studio-environments/v1/builds/plan?project_id=${encodeURIComponent(projectId)}`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** The images and charts the project put in registries, newest first. An
+   *  omitted filter is not sent. */
+  projectImages: (
+    token: string,
+    projectId: string,
+    filter: {
+      environment_id?: string;
+      app?: string;
+      kind?: ImageKind;
+      state?: ImageState;
+      build_id?: string;
+      /** Paged by `?offset=&limit=` (api-conventions B2). */
+      offset?: number;
+      limit?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams({ project_id: projectId });
+    for (const [k, v] of Object.entries(filter)) if (v !== undefined && v !== "") qs.set(k, String(v));
+    return request<{ items: ProjectImage[]; total: number }>(
+      `/studio-environments/v1/images?${qs}`,
+      token,
+    );
+  },
+  projectImage: (token: string, projectId: string, imageId: string) =>
+    request<ProjectImage>(
+      `/studio-environments/v1/images/${encodeURIComponent(imageId)}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** Keep an image whatever the retention says, or let it go again. */
+  pinImage: (token: string, projectId: string, imageId: string, pinned: boolean) =>
+    request<ProjectImage>(
+      `/studio-environments/v1/images/${encodeURIComponent(imageId)}/pin?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: pinned ? "PUT" : "DELETE" },
+    ),
+  /** Delete an image from its registry: 202 with the run that does it; 409
+   *  `IMAGE_RUNNING` or `IMAGE_PINNED` when it may not go. */
+  deleteImage: (token: string, projectId: string, imageId: string) =>
+    request<{ run_id: string; image_id: string }>(
+      `/studio-environments/v1/images/${encodeURIComponent(imageId)}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "DELETE", headers: idempotent() },
+    ),
+  /** Copy an image into another environment's registry. */
+  promoteImage: (token: string, projectId: string, imageId: string, environmentId: string) =>
+    request<{ run_id: string; image_id: string }>(
+      `/studio-environments/v1/images/${encodeURIComponent(imageId)}/promotions?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify({ environment_id: environmentId }), headers: idempotent() },
+    ),
+  /** Copy an external image (`docker.io/library/postgres:16`) into the
+   *  project's own path of an environment's registry, under `mirror/<name>`. */
+  /** The infra services the project's product runs beside its gears (ADR-0064). */
+  infraServices: (token: string, projectId: string) =>
+    request<{ items: InfraService[]; total: number }>(
+      `/studio-environments/v1/infra-services?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** Replace the project's infra services. */
+  putInfraServices: (token: string, projectId: string, items: InfraService[]) =>
+    request<{ items: InfraService[]; total: number }>(
+      `/studio-environments/v1/infra-services?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "PUT", body: JSON.stringify({ items }) },
+    ),
+  /** What a deploy to an environment does with the project's infra services. */
+  infraPlan: (token: string, projectId: string, environmentId: string) =>
+    request<InfraPlan>(
+      `/studio-environments/v1/environments/${encodeURIComponent(environmentId)}/infra-plan?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  importImage: (
+    token: string,
+    projectId: string,
+    body: { environment_id: string; source: string; name?: string; kind?: "image" | "chart" },
+  ) =>
+    request<{ run_id: string; image_id: string }>(
+      `/studio-environments/v1/images/imports?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body), headers: idempotent() },
+    ),
+  /** How long images are kept: a project's, or the organization's default. */
+  imageRetention: (token: string, owner: { org?: string; project?: string }) =>
+    request<ImageRetention>(`/studio-environments/v1/image-retention?${ownerQuery(owner)}`, token),
+  saveImageRetention: (
+    token: string,
+    owner: { org?: string; project?: string },
+    body: { keep_last?: number | null; keep_days?: number | null },
+  ) =>
+    request<ImageRetention>(`/studio-environments/v1/image-retention?${ownerQuery(owner)}`, token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  /** The namespace each project was given in each environment. */
+  namespaceAssignments: (token: string, org: string) =>
+    request<{ items: NamespaceAssignment[]; total: number }>(
+      `/studio-environments/v1/namespace-assignments?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+  /** Give a project a namespace in an environment (an organization administrator). */
+  saveNamespaceAssignment: (
+    token: string,
+    org: string,
+    body: { project_id: string; environment_id: string; namespace: string; build_namespace?: string | null },
+  ) =>
+    request<NamespaceAssignment>(
+      `/studio-environments/v1/namespace-assignments?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+
+  /** The registries the organization's environments use (`environment.manage`). */
+  orgRegistries: (token: string, org: string) =>
+    request<{ items: OrgRegistry[] }>(`/studio-environments/v1/registries?organization_id=${encodeURIComponent(org)}`, token),
+  registryRepositories: (token: string, org: string, connectionId: string) =>
+    request<{ items: RegistryRepository[] }>(
+      `/studio-environments/v1/registries/${encodeURIComponent(connectionId)}/repositories?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+  /** A repository's versions; its name has slashes, so it is encoded whole. */
+  registryTags: (token: string, org: string, connectionId: string, repository: string) =>
+    request<{ items: RegistryTag[] }>(
+      `/studio-environments/v1/registries/${encodeURIComponent(connectionId)}/repositories/${encodeURIComponent(repository)}/tags?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+  /** Delete one version from the registry: 202; 409 `IMAGE_RUNNING`. */
+  deleteRegistryVersion: (token: string, org: string, connectionId: string, repository: string, digest: string) =>
+    request<{ run_id: string }>(
+      `/studio-environments/v1/registries/${encodeURIComponent(connectionId)}/repositories/${encodeURIComponent(repository)}/versions/${encodeURIComponent(digest)}?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "DELETE", headers: idempotent() },
+    ),
+  /** What is in the registry that nothing in Studio accounts for, and why. */
+  registryOrphans: (token: string, org: string, connectionId: string) =>
+    request<{ items: RegistryOrphan[] }>(
+      `/studio-environments/v1/registries/${encodeURIComponent(connectionId)}/orphans?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+
   /* ── studio-connector ── */
 
   connectorProviders: (token: string) =>
@@ -5116,7 +5722,7 @@ export const api = {
     }
   },
 
-  putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTypesDoc) =>
+  putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTemplatesDoc) =>
     request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
       method: "PUT",
       body: JSON.stringify(value),
@@ -5797,9 +6403,14 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => ({ ...r, target: "organization" as const })),
   /** Poll a background catalog sync. The task id is a studio-tasks run id,
-   * read through `taskRun`; the counts are the run's `result`. */
-  componentsCatalogTask: async (token: string, taskId: string) => {
-    const run = await api.taskRun(token, taskId);
+   * read through `taskRun`; the counts are the run's `result`.
+   *
+   * The sync is queued in the organization on screen (`orgScoped` names it),
+   * so the poll reads that organization's runs too: read from the caller's
+   * home tenant it answered 404 "Run not found" while the run went through.
+   * `null` reads the home tenant -- the platform's own sync is queued there. */
+  componentsCatalogTask: async (token: string, taskId: string, tenant: string | null = currentOrganization ?? null) => {
+    const run = await api.taskRun(token, taskId, tenant ?? undefined);
     const n = runCount(run);
     return {
       task_id: run.id,
@@ -5927,15 +6538,78 @@ export const api = {
       token,
     ),
 
-  /** Read back the ingested gear crates. */
-  listComponents: (token: string) =>
-    request<{ nodes: CatalogNode[]; truncated?: boolean; shadowed?: string[] }>(
-      "/studio-components-catalog/v1/components",
+  /** The pictures builds took of one micro-frontend's screens, the newest
+   *  build first (`components_catalog/screen_previews.rs`). Each carries its
+   *  picture as a `data:` URL. */
+  screenPreviews: (token: string, component: string) =>
+    request<{ items: ScreenPreview[]; total: number }>(
+      `/studio-components-catalog/v1/screen-previews?component=${encodeURIComponent(component)}`,
       token,
     ),
-  /** Read Studio-managed delivery metadata for catalogued Gears. */
-  listComponentProfiles: (token: string) =>
-    request<{ nodes: CatalogNode[] }>("/studio-components-catalog/v1/profiles", token),
+
+  /** Read back the catalogue: the organization's, or with `projectId` the
+   *  project's -- the organization's components and the project's own
+   *  (`tier: "project"`, ADR-0061). */
+  listComponents: (token: string, projectId?: string) =>
+    request<{ nodes: CatalogNode[]; truncated?: boolean; shadowed?: string[] }>(
+      `/studio-components-catalog/v1/components${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      token,
+    ),
+  /** Read Studio-managed delivery metadata for catalogued Gears; with
+   *  `projectId`, the project's own components' over the organization's. */
+  listComponentProfiles: (token: string, projectId?: string) =>
+    request<{ nodes: CatalogNode[] }>(
+      `/studio-components-catalog/v1/profiles${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      token,
+    ),
+  /** The organization's platform release (ADR-0061): every platform source it
+   *  sees and the version it holds each at. */
+  platformPins: (token: string) => request<PlatformPins>("/studio-components-catalog/v1/platform/pins", token),
+  /** Replace the pins; a source left out follows the platform. */
+  setPlatformPins: (token: string, items: { repo: string; git_ref: string; note?: string | null }[]) =>
+    request<PlatformPins>("/studio-components-catalog/v1/platform/pins", token, {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    }),
+  /** Read a project's repositories into its own catalogue now. */
+  syncProjectCatalogue: (token: string, projectId: string) =>
+    request<{ run_id: string; status: string }>(
+      `/studio-components-catalog/v1/project-catalogue/sync?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST" },
+    ),
+  /** Projects' requests to publish a component into the organization's catalogue. */
+  catalogPublications: (token: string, projectId?: string) =>
+    request<{ items: CatalogPublication[]; total: number; may_decide: boolean }>(
+      `/studio-components-catalog/v1/publications${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      token,
+    ),
+  /** A project proposes one of its components at a version. */
+  requestCatalogPublication: (
+    token: string,
+    projectId: string,
+    body: { name: string; type_id?: string; git_ref?: string; commit?: string; reason?: string },
+  ) =>
+    request<CatalogPublication>(
+      `/studio-components-catalog/v1/publications?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** An organization administrator approves or declines a publication. */
+  decideCatalogPublication: (token: string, id: string, action: "approve" | "decline", reason?: string) =>
+    request<CatalogPublication>(
+      `/studio-components-catalog/v1/publications/${encodeURIComponent(id)}/decisions`,
+      token,
+      { method: "POST", body: JSON.stringify({ action, reason }) },
+    ),
+  /** One of a component's documents, as its passport names it. */
+  componentDoc: (token: string, name: string, path: string, projectId?: string) =>
+    request<ComponentDoc>(
+      `/studio-components-catalog/v1/components/${encodeURIComponent(name)}/docs?path=${encodeURIComponent(path)}${
+        projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""
+      }`,
+      token,
+    ),
   /** Replace Studio-managed delivery metadata for one Gear. */
   saveComponentProfile: (token: string, name: string, profile: Record<string, unknown>) =>
     request<CatalogNode>(`/studio-components-catalog/v1/components/${encodeURIComponent(name)}/profile`, token, {
@@ -5954,6 +6628,13 @@ export const api = {
     request<ComponentPullRequests>("/studio-insight/v1/components/pull-requests", token, {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  /** One read-only `SELECT` against Insight's warehouse (studio-insight). The
+   *  caller builds the statement and escapes what it interpolates. */
+  insightQuery: (token: string, sql: string) =>
+    request<InsightQueryResult>("/studio-insight/v1/query", token, {
+      method: "POST",
+      body: JSON.stringify({ sql }),
     }),
   /** Delivery metrics for one repository, sliced by component (studio-insight). */
   insightComponentMetrics: (token: string, body: ComponentMetricsQuery) =>
@@ -6038,6 +6719,18 @@ export const api = {
   /** The project's product description as Studio keeps it (ADR-0053). */
   productDescription: (token: string, projectId: string) =>
     request<ProductDescription>(`/studio-product/v1/product-description?project_id=${encodeURIComponent(projectId)}`, token),
+  /** The description's revisions, newest first, without their text (at most 200). */
+  productDescriptionRevisions: (token: string, projectId: string) =>
+    request<{ items: Omit<ProductDescriptionRevision, "text">[]; total: number }>(
+      `/studio-product/v1/product-description-revisions?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** One revision, with its text. */
+  productDescriptionRevision: (token: string, projectId: string, revision: number) =>
+    request<ProductDescriptionRevision>(
+      `/studio-product/v1/product-description-revisions/${revision}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
   /** Save a new revision against `base_revision`; a 409 (`descriptionConflictOf`) when it is not the latest. */
   saveProductDescription: (
     token: string,
@@ -6076,10 +6769,13 @@ export const api = {
       frontend?: FrontendPick | null;
     },
   ) =>
-    request<{ value: ProjectProduct }>(
-      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product`,
-      token,
-      { method: "PUT", body: JSON.stringify(body) },
+    productChanged(
+      projectId,
+      request<{ value: ProjectProduct }>(
+        `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product`,
+        token,
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
     ),
   /** Complete picks into a set the engine can resolve: what the catalogue
    *  proves cannot run is taken out, a missing plugin or REST host is put in,
@@ -6159,7 +6855,9 @@ export const api = {
   /** Compose a product.gdl from picked gears and resolve it with the Gearbox
    *  engine. `write` also saves it as the project's next description revision,
    *  which Studio keeps (ADR-0053); a 409 (`descriptionConflictOf`) when
-   *  `base_revision` is no longer the latest. `publish` also writes it to the
+   *  `base_revision` is no longer the latest and the text is not the latest's.
+   *  A save answers within the gateway's limit: a check still running then
+   *  comes back as `checking`, and is kept on the product record. `publish` also writes it to the
    *  repository -- onto `product/<id>` with one pull request, or onto the base
    *  branch as its source's share mode says -- unless `open_pr` / `onto_base`
    *  say otherwise. */
@@ -6179,6 +6877,8 @@ export const api = {
       config?: GearConfig;
       /** Commit onto the base branch, whatever the share mode. */
       onto_base?: boolean;
+      /** `dev`: check the profile as a development one (ADR-0060). */
+      strictness?: "dev" | "prod";
     },
   ) => {
     const ask = () =>
@@ -6188,10 +6888,17 @@ export const api = {
         { method: "POST", body: JSON.stringify(body) },
       );
     // A large product resolves past the gateway's 30 s; the backend finishes
-    // the run and keeps its answer, so asking again (a read only -- a write
-    // is never repeated) picks it up instead of reporting a timeout.
-    if (body.write) return ask();
-    return retryOnTimeout(ask, PREVIEW_RETRIES);
+    // the run and keeps its answer, so asking again picks it up instead of
+    // reporting a timeout. A save is sent again too, when the gateway lost
+    // its answer (502/504): the same text against the same base is the
+    // revision the first attempt made (`created: false`), never a conflict
+    // or a second revision (ADR-0053, amendment 2026-11-04). Not a
+    // publish: that also commits to the repository, not repeated blind.
+    if (body.write) {
+      const publishes = !!(body.publish || body.open_pr || body.onto_base);
+      return productChanged(projectId, publishes ? ask() : retryOnTimeout(ask, SAVE_RETRIES, [502, 504]));
+    }
+    return productChanged(projectId, retryOnTimeout(ask, PREVIEW_RETRIES));
   },
   /** Create a new repository via the connector and set it as the project's gear repo. */
   createProjectRepo: (

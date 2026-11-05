@@ -357,12 +357,24 @@ key can reach. The three chat drivers share rendering in `notify.rs`. The Kubern
 (`kubernetes.rs`) is a cluster an organization's environments deploy into
 (ADR-0043): its credential is a service-account token or a kubeconfig with
 inline data only, and `ClusterAccess` is what `studio-environments` reaches the
-cluster with. The registry driver (`registry.rs`, category `registry`) is an
+cluster with. Its test also asks the cluster, with one SelfSubjectAccessReview
+each, whether the connection holds the rights the cluster's bootstrap manifest
+gives (`BOOTSTRAP_RIGHTS`), and reports them in the answer's `checks` without
+failing (ADR-0059). `cluster_readiness` tells a bootstrapped cluster from a
+namespace-limited and a partial one: those rights, a dry-run namespace without
+Studio's label that the admission policy must refuse, and the bootstrap
+version label on the manifest's ClusterRole (ADR-0062 §6). The registry driver (`registry.rs`, category `registry`) is an
 OCI registry a product's images and chart are published to (ADR-0048): its
 credential is `username:token` (a token alone logs in as `studio`), its test
 logs in to `/v2/` and follows the registry's bearer challenge, its token
 service passing the same URL guard, and `RegistryAccess` gives
 `studio-environments` the namespace's pull secret and helm's registry login.
+Its test also reports the token's scopes (GHCR: GitHub's `X-OAuth-Scopes`),
+marking those that reach past pushing and pulling, which a server build
+refuses. `RegistryCatalog` (`registry_oci.rs`) reads what a registry holds --
+GHCR through the GitHub Packages API, Harbor through `/api/v2.0`, any other
+through the distribution API -- and `Oci` copies an image by digest between
+registries without Docker (ADR-0062 §4, §5).
 
 ##### Responsibility boundaries
 

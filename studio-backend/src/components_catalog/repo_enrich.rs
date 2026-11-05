@@ -27,6 +27,7 @@ use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use super::frontx_gdl::{self, FrontxDescription};
 use super::project_gears;
 use super::repo_facts::{self, CommitFacts, SpecStats, Version};
 use crate::connectors::sdk::ConnectorService;
@@ -261,11 +262,55 @@ impl RepoEnricher {
             }
         };
         let paths: Vec<&str> = listing.iter().map(String::as_str).collect();
-        match self.mode {
+        let mut found = match self.mode {
             RepoMode::Gears => self.discover_gears(&src, &paths).await,
             RepoMode::Frontx => self.discover_frontx(&src, &paths).await,
             RepoMode::Kits => self.discover_kits(&src, &paths).await,
+        }?;
+        // Whatever the mode, a repository's own services and kits are found
+        // by their passports (ADR-0061): a `service.gdl` or `kit.gdl` is one
+        // component wherever it sits. A kit both a manifest and a passport
+        // describe is one kit, the passport's.
+        let passports = self.discover_passports(&src, &paths).await;
+        found.retain(|c| {
+            c.payload.is_none()
+                || !passports
+                    .iter()
+                    .any(|p| p.crate_name == c.crate_name && p.kind == c.kind)
+        });
+        found.extend(passports);
+        Ok(found)
+    }
+
+    /// Own services and kits, one per `service.gdl` or `kit.gdl` (ADR-0061).
+    /// A passport that does not read is skipped with its reason in the log:
+    /// one bad file must not cost the catalogue the rest.
+    async fn discover_passports(&self, src: &Repository, paths: &[&str]) -> Vec<RepoGear> {
+        let mut out: Vec<RepoGear> = Vec::new();
+        for path in passport_paths(paths) {
+            let Some(body) = self.read_file(src, path).await else {
+                warn!(repo = %self.repo, path, "studio-gears-catalog: a passport is listed but unreadable, skipped");
+                continue;
+            };
+            let dir = parent_dir(path);
+            match passport_component(&self.repo, &self.git_ref, path, &dir, &body, paths) {
+                Ok(gear) => {
+                    if !out
+                        .iter()
+                        .any(|g| g.crate_name == gear.crate_name && g.kind == gear.kind)
+                    {
+                        out.push(gear);
+                    }
+                }
+                Err(e) => {
+                    warn!(repo = %self.repo, path, error = %e, "studio-gears-catalog: a passport does not read, skipped");
+                }
+            }
         }
+        if !out.is_empty() {
+            info!(components = out.len(), repo = %self.repo, git_ref = %self.git_ref, "studio-gears-catalog: services and kits found by their passports");
+        }
+        out
     }
 
     /// Kits: one component per `.cf-studio-kit.toml`.
@@ -409,6 +454,13 @@ impl RepoEnricher {
                 Some("yes") => Some("plugin".to_string()),
                 _ => None,
             };
+            let mut fields = fields;
+            let docs = docs_of(dir, &[], paths);
+            if !docs.is_empty()
+                && let Some(o) = fields.as_object_mut()
+            {
+                o.insert("docs".into(), json!(docs));
+            }
             out.push(RepoGear {
                 crate_name,
                 description,
@@ -526,6 +578,23 @@ impl RepoEnricher {
             };
             if dir.is_empty() || is_workspace_container(&body) {
                 containers += 1;
+                // A workspace container that describes itself as a shell
+                // (`shell(...)` in its frontx.gdl) is a shell all the same:
+                // catalogued under where it is, since a fork of a FrontX
+                // template keeps the template's npm name (Studio's portal is
+                // `@gears-frontx/frontx-template-shell`), and two shells under
+                // one name would overwrite each other. Not claimed: its
+                // micro-frontends and libraries stay components of their own.
+                if !dir.is_empty() && paths.contains(&format!("{dir}/{FRONTX_GDL}").as_str()) {
+                    let described = self.read_file(src, &format!("{dir}/{FRONTX_GDL}")).await;
+                    if described.as_deref().is_some_and(|b| {
+                        matches!(frontx_gdl::read(b), Ok(FrontxDescription::Shell(_)))
+                    }) {
+                        let mut shell = self.frontx_component(src, &dir, &body, paths).await;
+                        shell.crate_name = shell_key(&self.repo, &dir);
+                        out.push(shell);
+                    }
+                }
                 continue;
             }
             // A template's manifest is not a package: `template-mfe` ships a
@@ -585,6 +654,19 @@ impl RepoEnricher {
         if let Some(c) = &category {
             f.insert("category".into(), text(c, None, None));
         }
+        // The package's own description, when it has one: what it says
+        // replaces the guesses below (`apply_frontx_description`).
+        let described: Option<Result<FrontxDescription, String>> = if rel.contains(&FRONTX_GDL) {
+            Some(
+                match self.read_file(src, &format!("{dir}/{FRONTX_GDL}")).await {
+                    Some(body) => frontx_gdl::read(&body),
+                    None => Err(format!("{FRONTX_GDL} is listed but could not be read")),
+                },
+            )
+        } else {
+            None
+        };
+        let declared = described.as_ref().and_then(|d| d.as_ref().ok());
         let dep_keys = package_json_dep_keys(pkg);
         if !dep_keys.is_empty() {
             f.insert("deps".into(), metric(dep_keys.len(), None));
@@ -607,7 +689,8 @@ impl RepoEnricher {
             .copied()
             .filter(|q| is_carried_package(q))
             .collect();
-        if !carried.is_empty() {
+        let declared_shell = matches!(declared, Some(FrontxDescription::Shell(_)));
+        if !carried.is_empty() || declared_shell {
             let mut carries = serde_json::Map::new();
             for q in carried {
                 if let Some(body) = self.read_file(src, &format!("{dir}/{q}")).await
@@ -695,10 +778,13 @@ impl RepoEnricher {
                 f.insert("mfe_extensions".into(), Value::Array(extensions));
             }
         }
+        // A micro-frontend that declares what it requires is not searched for
+        // `/cf/<gear>` spellings: the declaration replaces them.
+        let declared_mfe = matches!(declared, Some(FrontxDescription::Mfe(_)));
         let mut called = BTreeSet::new();
         for q in rel
             .iter()
-            .filter(|q| is_api_source(q))
+            .filter(|q| !declared_mfe && is_api_source(q))
             .take(MAX_API_SOURCES)
         {
             if let Some(body) = self.read_file(src, &format!("{dir}/{q}")).await {
@@ -710,6 +796,17 @@ impl RepoEnricher {
                 "mfe_calls".into(),
                 Value::Array(called.into_iter().map(Value::String).collect()),
             );
+        }
+        apply_frontx_description(&mut f, described.as_ref(), rel.contains(&"mfe.json"), pkg);
+        let docs = docs_of(
+            dir,
+            declared
+                .map(|d| d.identity().docs.as_slice())
+                .unwrap_or(&[]),
+            paths,
+        );
+        if !docs.is_empty() {
+            f.insert("docs".into(), json!(docs));
         }
 
         RepoGear {
@@ -784,7 +881,7 @@ impl RepoEnricher {
         // in it say whether any of them changed since the last read. A
         // checkout is read from disk and costs no requests, so it is read as
         // it is rather than trusted to match the API's tree.
-        let key = self.repo_key();
+        let key = self.cache_key();
         let print = cargo_fingerprint(&manifests);
         if self.checkout.is_none()
             && let Some(found) = CARGO_DEPS.get(&key, &print)
@@ -863,16 +960,18 @@ impl RepoEnricher {
         }
     }
 
-    /// Where this reader reads: the tenant, the connection, the repository and
-    /// the ref, as one key.
+    /// What this reader reads, by address: the repository and the ref, as one
+    /// key (issue 11). Not the connection: re-pointing a source to another
+    /// connection is the same repository, and keying a registry read on the
+    /// connection made such a move drop every component found there.
     pub fn repo_key(&self) -> String {
-        format!(
-            "{}/{:?}/{}@{}",
-            self.tenant,
-            self.connection_id,
-            self.repo.to_ascii_lowercase(),
-            self.git_ref
-        )
+        address_key(&self.repo, &self.git_ref)
+    }
+
+    /// [`Self::repo_key`] scoped to the tenant that reads it, for the
+    /// in-memory caches: no tenant is answered from another's read.
+    fn cache_key(&self) -> String {
+        format!("{}/{}", self.tenant, self.repo_key())
     }
 
     /// The ref this reader reads.
@@ -925,7 +1024,7 @@ impl RepoEnricher {
         if project_gears::unchanged(known, &print) {
             return Ok(ProjectGearsRead::Unchanged);
         }
-        let key = self.repo_key();
+        let key = self.cache_key();
         if let Some((gears, candidates)) = cache.get_found(&key, &print, with_candidates) {
             return Ok(ProjectGearsRead::Read {
                 fingerprint: print,
@@ -2072,6 +2171,13 @@ fn skip_path(path: &str) -> bool {
     })
 }
 
+/// The catalogue key of a shell that is a workspace container: where it is,
+/// `owner/repo//dir`, the form the frontend constructor names shells in
+/// (`github:owner/repo//dir@ref`).
+fn shell_key(repo: &str, dir: &str) -> String {
+    format!("{repo}//{dir}")
+}
+
 /// True when a `package.json` is an npm/pnpm/yarn **workspace container** — it
 /// groups packages rather than being one. Its children are the components.
 fn is_workspace_container(body: &str) -> bool {
@@ -2720,6 +2826,438 @@ fn is_carried_package(rel: &str) -> bool {
     rel.strip_prefix("packages/")
         .and_then(|r| r.strip_suffix("/package.json"))
         .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+}
+
+/// A FrontX package's own description, at its root beside `package.json`.
+const FRONTX_GDL: &str = "frontx.gdl";
+
+/// A repository read's key by its address: `owner/name@ref`, the name
+/// lower-cased (GitHub's are case-insensitive), the ref as the reader
+/// normalises it.
+pub(crate) fn address_key(repo: &str, git_ref: &str) -> String {
+    format!(
+        "{}@{}",
+        repo.trim().trim_start_matches('/').to_ascii_lowercase(),
+        normalize_ref(git_ref)
+    )
+}
+
+/// A stored read key in the address form [`address_key`] writes. Keys
+/// written before it led with the tenant and the connection,
+/// `<tenant>/<Some(uuid)|None>/owner/name@ref`: those two parts are dropped,
+/// so a read stored under the old form is the same read after the upgrade.
+pub(crate) fn canonical_repo_key(key: &str) -> String {
+    let mut parts = key.splitn(3, '/');
+    let (Some(tenant), Some(connection), Some(rest)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return key.to_string();
+    };
+    let old_form = Uuid::parse_str(tenant).is_ok()
+        && (connection == "None" || connection.starts_with("Some("));
+    if !old_form {
+        return key.to_string();
+    }
+    match rest.rsplit_once('@') {
+        Some((repo, git_ref)) => address_key(repo, git_ref),
+        None => rest.to_ascii_lowercase(),
+    }
+}
+
+/// Every `service.gdl` and `kit.gdl` in the tree, outside vendored and built
+/// output, shallowest first.
+fn passport_paths<'a>(paths: &[&'a str]) -> Vec<&'a str> {
+    let mut out: Vec<&str> = paths
+        .iter()
+        .copied()
+        .filter(|p| {
+            let name = p.rsplit('/').next().unwrap_or(p);
+            (name == super::service_gdl::FILE || name == super::kit_gdl::FILE) && !skip_path(p)
+        })
+        .collect();
+    out.sort_by_key(|p| (p.matches('/').count(), *p));
+    out
+}
+
+/// One own service or kit from its passport at `path` (in directory `dir`)
+/// of `repo` at `git_ref`: its node payload, as the catalogue stores it.
+fn passport_component(
+    repo: &str,
+    git_ref: &str,
+    path: &str,
+    dir: &str,
+    body: &str,
+    paths: &[&str],
+) -> std::result::Result<RepoGear, String> {
+    let resolve = |p: &str| super::gdl_literal::resolve(dir, p);
+    let tree = format!("https://github.com/{repo}/tree/{git_ref}/{dir}");
+    let (name, description, kind, payload) = if path.ends_with(super::service_gdl::FILE) {
+        let s = super::service_gdl::read(body)?;
+        let docs = docs_of(dir, &s.docs, paths);
+        let mut payload = json!({
+            "title": s.name,
+            "name": s.name,
+            "kind": "service",
+            "service_kind": if s.infra.is_some() { "infra" } else { "own" },
+            "version": s.version,
+            "description": s.description,
+            "image": s.image,
+            "dockerfile": s.dockerfile.as_deref().and_then(resolve),
+            "context": s
+                .context
+                .as_deref()
+                .and_then(resolve)
+                .map(|c| if c.is_empty() { ".".to_string() } else { c }),
+            "ports": s.ports,
+            "health": s.health,
+            "env": s.env,
+            "requires": s.requires,
+            "provides": s.provides,
+            "docs": docs,
+            "source": "github",
+            "repository": format!("https://github.com/{repo}"),
+            "repository_path": tree,
+            "git_ref": git_ref,
+            "passport_path": path,
+        });
+        // An infra service's facts (ADR-0064 §1): what a project adds to
+        // its product and deploys with it.
+        if let (Some(i), Some(obj)) = (&s.infra, payload.as_object_mut()) {
+            obj.insert(
+                "infra".into(),
+                json!({
+                    "args": i.args,
+                    "config": i.config,
+                    "secrets": i.secrets,
+                    "provides": i.provides,
+                    "stateful": i.stateful,
+                    "storage": i.storage,
+                    "data_path": i.data_path,
+                    "chart": i.chart,
+                    "chart_version": i.chart_version,
+                }),
+            );
+        }
+        (s.name, s.description, "service", payload)
+    } else {
+        let k = super::kit_gdl::read(body)?;
+        let docs = docs_of(dir, &k.docs, paths);
+        let manifest = k.manifest.as_deref().and_then(resolve).or_else(|| {
+            let beside = if dir.is_empty() {
+                KIT_MANIFEST.to_string()
+            } else {
+                format!("{dir}/{KIT_MANIFEST}")
+            };
+            paths.contains(&beside.as_str()).then_some(beside)
+        });
+        let payload = json!({
+            "title": k.title.clone().unwrap_or_else(|| k.name.clone()),
+            "name": k.name,
+            "slug": k.name,
+            "kind": "kit",
+            "description": k.description,
+            "publisher": k.publisher,
+            "visibility": k.visibility,
+            "version": k.version,
+            "kinds": k.kinds,
+            "docs": docs,
+            "source": "github",
+            "repository": format!("https://github.com/{repo}"),
+            "repository_path": tree,
+            "git_ref": git_ref,
+            "manifest_path": manifest,
+            "passport_path": path,
+        });
+        (k.name, k.description, "kit", payload)
+    };
+    Ok(RepoGear {
+        crate_name: name,
+        description,
+        source_repo: repo.to_string(),
+        fields: Value::Null,
+        uml: Vec::new(),
+        kind: Some(kind.to_string()),
+        category: Some(kind.to_string()),
+        payload: Some(payload),
+        dir: (!dir.is_empty()).then(|| dir.to_string()),
+        crates: Vec::new(),
+    })
+}
+
+/// A component's documents as paths from the repository root: what its
+/// passport lists (relative to its directory `dir`, each kept inside the
+/// repository), or, when it lists none, the README beside it.
+pub(crate) fn docs_of(dir: &str, declared: &[String], paths: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = declared
+        .iter()
+        .filter_map(|d| super::gdl_literal::resolve(dir, d))
+        .filter(|d| !d.is_empty())
+        .collect();
+    if out.is_empty() {
+        let prefix = if dir.is_empty() {
+            String::new()
+        } else {
+            format!("{dir}/")
+        };
+        if let Some(readme) = paths.iter().find(|p| {
+            p.strip_prefix(prefix.as_str())
+                .is_some_and(|rest| rest.eq_ignore_ascii_case("README.md"))
+        }) {
+            out.push((*readme).to_string());
+        }
+    }
+    out.dedup();
+    out
+}
+
+/// Lay what a package's `frontx.gdl` — its passport — declares over what the
+/// scan guessed.
+///
+/// `frontx_described` says which the profile holds: `true` when the file read
+/// and its facts replaced the guesses, `false` when it is missing or did not
+/// read (then `frontx_gdl_error` says why) and the guesses stand unchanged.
+/// A declared kind that contradicts the package's `mfe.json` is recorded as
+/// `frontx_problem`; the declaration still wins, since the author wrote it.
+/// A restated fact that disagrees with the manifest it restates (`pkg`, the
+/// package's `package.json`, and the `mfe_extensions` read from its
+/// `mfe.json`) is recorded as `frontx_passport_drift`, a warning: the passport
+/// still reads, as Gearbox's GBX0722/GBX0723 report it at generation.
+fn apply_frontx_description(
+    f: &mut serde_json::Map<String, Value>,
+    described: Option<&Result<FrontxDescription, String>>,
+    has_mfe_json: bool,
+    pkg: &str,
+) {
+    let d = match described {
+        None => {
+            f.insert("frontx_described".into(), Value::Bool(false));
+            return;
+        }
+        Some(Err(e)) => {
+            f.insert("frontx_described".into(), Value::Bool(false));
+            f.insert(
+                "frontx_gdl_error".into(),
+                text(&format!("{FRONTX_GDL}: {e}"), None, None),
+            );
+            return;
+        }
+        Some(Ok(d)) => d,
+    };
+    f.insert("frontx_described".into(), Value::Bool(true));
+    f.insert("frontx_kind".into(), text(d.kind(), None, None));
+    let strings =
+        |items: &[String]| Value::Array(items.iter().cloned().map(Value::String).collect());
+    let mut drift = passport_drift(d, f, pkg);
+    match d {
+        FrontxDescription::Shell(shell) => {
+            f.insert("shell_signin".into(), Value::Bool(shell.signs_in));
+            f.insert(
+                "shell_runtime_env".into(),
+                Value::Bool(shell.runtime_env.is_some()),
+            );
+            match &shell.runtime_env {
+                Some(path) => {
+                    f.insert("shell_runtime_env_path".into(), Value::String(path.clone()));
+                }
+                None => {
+                    f.remove("shell_runtime_env_path");
+                }
+            }
+            // How it is built and served, and what it reads: only what the
+            // passport says; a fact it leaves out is not guessed here.
+            for (key, value) in [
+                ("shell_api_prefix", &shell.api_prefix),
+                ("shell_base", &shell.base),
+                ("shell_build", &shell.build),
+                ("shell_output", &shell.output),
+                ("shell_node", &shell.node),
+                ("shell_package_manager", &shell.package_manager),
+            ] {
+                if let Some(v) = value {
+                    f.insert(key.into(), Value::String(v.clone()));
+                }
+            }
+            if !shell.env.is_empty() {
+                f.insert(
+                    "shell_env".into(),
+                    Value::Object(
+                        shell
+                            .env
+                            .iter()
+                            .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                            .collect(),
+                    ),
+                );
+            }
+            if !shell.build_env.is_empty() {
+                f.insert("shell_build_env".into(), strings(&shell.build_env));
+            }
+            if !shell.sign_in_redirect.is_empty() {
+                f.insert(
+                    "shell_sign_in_redirect".into(),
+                    strings(&shell.sign_in_redirect),
+                );
+            }
+            // What it carries, as the passport lists it: its own dependencies
+            // and itself too, which the scan's `packages/*` reading does not
+            // see. A version that disagrees is already in `drift`.
+            if let Some(carries) = &shell.carries {
+                let mut merged = f
+                    .get("carries")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                for (k, v) in carries {
+                    merged.insert(k.clone(), Value::String(v.clone()));
+                }
+                f.insert("carries".into(), Value::Object(merged));
+            }
+        }
+        FrontxDescription::Mfe(mfe) => {
+            // Empty is a statement too: it calls none.
+            f.insert("mfe_calls".into(), strings(&mfe.requires));
+            if let Some(roles) = &mfe.roles {
+                f.insert("mfe_roles".into(), strings(roles));
+            }
+            if let Some(frontx) = &mfe.frontx {
+                f.insert("mfe_frontx".into(), Value::String(frontx.clone()));
+            }
+            if !mfe.preview.is_empty() {
+                f.insert("mfe_preview".into(), strings(&mfe.preview));
+            }
+            if let Some(fixtures) = &mfe.fixtures {
+                f.insert("mfe_fixtures".into(), Value::String(fixtures.clone()));
+            }
+        }
+        FrontxDescription::Library(_) => {}
+    }
+    let problem = match d {
+        FrontxDescription::Mfe(_) if !has_mfe_json => Some(
+            "frontx.gdl declares `mfe(...)` but the package has no mfe.json, so it brings no screens",
+        ),
+        FrontxDescription::Library(_) if has_mfe_json => Some(
+            "frontx.gdl declares `library()` but the package has an mfe.json; a library is not mounted",
+        ),
+        FrontxDescription::Shell(_) if has_mfe_json => Some(
+            "frontx.gdl declares `shell(...)` but the package has an mfe.json; a shell mounts micro-frontends, it is not one",
+        ),
+        _ => None,
+    };
+    if let Some(p) = problem {
+        f.insert("frontx_problem".into(), status(p, "bad"));
+    }
+    if drift.is_empty() {
+        f.remove("frontx_passport_drift");
+    } else {
+        drift.sort();
+        let mut v = status(&drift.join("; "), "watch");
+        if let Some(o) = v.as_object_mut() {
+            o.insert(
+                "b".into(),
+                Value::String(format!(
+                    "frontx.gdl disagrees with its manifests on {} fact{}",
+                    drift.len(),
+                    if drift.len() == 1 { "" } else { "s" }
+                )),
+            );
+            o.insert("items".into(), strings(&drift));
+        }
+        f.insert("frontx_passport_drift".into(), v);
+    }
+}
+
+/// Where a passport restates a manifest and the two disagree, one line each.
+/// The same facts Gearbox checks at generation, as far as the scan has read
+/// them: name, version and description against `package.json`; a shell's
+/// `node` against `engines.node`, and its `carries` against the packages its
+/// workspace carries; a micro-frontend's `frontx` against its
+/// `@gears-frontx/react` pin, and its `screens` and `mounts` against its
+/// `mfe.json`.
+fn passport_drift(
+    d: &FrontxDescription,
+    f: &serde_json::Map<String, Value>,
+    pkg: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let manifest: Value = serde_json::from_str(pkg).unwrap_or(Value::Null);
+    let id = d.identity();
+    for (field, declared) in [
+        ("name", &id.name),
+        ("version", &id.version),
+        ("description", &id.description),
+    ] {
+        if let (Some(declared), Some(written)) = (declared, manifest[field].as_str())
+            && declared != written
+        {
+            out.push(format!(
+                "{field}: frontx.gdl says \"{declared}\", package.json \"{written}\""
+            ));
+        }
+    }
+    match d {
+        FrontxDescription::Shell(shell) => {
+            if let (Some(node), Some(engines)) = (&shell.node, manifest["engines"]["node"].as_str())
+                && node != engines
+            {
+                out.push(format!(
+                    "node: frontx.gdl says \"{node}\", package.json engines \"{engines}\""
+                ));
+            }
+            if let (Some(declared), Some(scanned)) =
+                (&shell.carries, f.get("carries").and_then(Value::as_object))
+            {
+                for (package, has) in scanned {
+                    let Some(has) = has.as_str() else { continue };
+                    match declared.get(package) {
+                        Some(at) if at == has => {}
+                        Some(at) => out.push(format!(
+                            "carries: frontx.gdl says {package} {at}, its workspace has {has}"
+                        )),
+                        None => out.push(format!(
+                            "carries: its workspace has {package} {has}, which frontx.gdl does not list"
+                        )),
+                    }
+                }
+            }
+        }
+        FrontxDescription::Mfe(mfe) => {
+            if let Some(frontx) = &mfe.frontx {
+                let pin = ["dependencies", "devDependencies"]
+                    .iter()
+                    .find_map(|s| manifest[*s]["@gears-frontx/react"].as_str());
+                if pin != Some(frontx.as_str()) {
+                    out.push(format!(
+                        "frontx: frontx.gdl says \"{frontx}\", package.json pins @gears-frontx/react {}",
+                        pin.map_or_else(|| "nowhere".to_string(), |p| format!("\"{p}\""))
+                    ));
+                }
+            }
+            let extensions = f
+                .get("mfe_extensions")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let of = |key: &str| -> Vec<String> {
+                extensions
+                    .iter()
+                    .filter_map(|e| e.get(key).and_then(Value::as_str).map(str::to_string))
+                    .collect()
+            };
+            for (field, declared, written) in [
+                ("screens", &mfe.screens, of("label")),
+                ("mounts", &mfe.mounts, of("route")),
+            ] {
+                if let Some(declared) = declared
+                    && declared != &written
+                {
+                    out.push(format!(
+                        "{field}: frontx.gdl says {declared:?}, mfe.json {written:?}"
+                    ));
+                }
+            }
+        }
+        FrontxDescription::Library(_) => {}
+    }
+    out
 }
 
 /// Whether a shell signs its users in: it has an `auth` module in its app
@@ -3551,6 +4089,307 @@ has_extension_point = true
         assert!(!shell_signs_in(&["src-app/app/main.tsx"]));
     }
 
+    /// What the scan guessed for a package before its `frontx.gdl` is read:
+    /// a shell found by its `src-app/app/auth/` and no `public/env.js`, and the
+    /// gears its API services spell.
+    fn guessed() -> serde_json::Map<String, Value> {
+        serde_json::from_value(json!({
+            "shell_signin": true,
+            "shell_runtime_env": false,
+            "mfe_calls": ["studio-tasks"],
+        }))
+        .unwrap()
+    }
+
+    fn described(src: &str) -> Result<FrontxDescription, String> {
+        frontx_gdl::read(src)
+    }
+
+    #[test]
+    fn a_package_with_no_frontx_gdl_keeps_the_guesses_and_says_so() {
+        let mut f = guessed();
+        apply_frontx_description(&mut f, None, true, "{}");
+        assert_eq!(f.get("frontx_described"), Some(&json!(false)));
+        assert!(!f.contains_key("frontx_gdl_error"));
+        assert!(!f.contains_key("frontx_kind"));
+        assert_eq!(f["shell_signin"], json!(true));
+        assert_eq!(f["mfe_calls"], json!(["studio-tasks"]));
+    }
+
+    #[test]
+    fn a_frontx_gdl_that_does_not_read_keeps_the_guesses_and_says_why() {
+        let mut f = guessed();
+        let d = described(
+            "gdl_version = \"1.6\"
+shell(signs_in = maybe)",
+        );
+        apply_frontx_description(&mut f, Some(&d), false, "{}");
+        assert_eq!(f["frontx_described"], json!(false));
+        let why = f["frontx_gdl_error"]["v"].as_str().unwrap();
+        assert!(why.starts_with("frontx.gdl: line 2"), "{why}");
+        assert_eq!(f["shell_signin"], json!(true));
+        assert_eq!(f["mfe_calls"], json!(["studio-tasks"]));
+        assert!(!f.contains_key("frontx_kind"));
+    }
+
+    #[test]
+    fn a_declared_shell_replaces_the_sign_in_and_runtime_env_guesses() {
+        let mut f = guessed();
+        let d = described(
+            "gdl_version = \"1.6\"
+shell(signs_in = False, runtime_env = \"public/env.js\")",
+        );
+        apply_frontx_description(&mut f, Some(&d), false, "{}");
+        assert_eq!(f["frontx_described"], json!(true));
+        assert_eq!(f["frontx_kind"]["v"], json!("shell"));
+        assert_eq!(f["shell_signin"], json!(false));
+        assert_eq!(f["shell_runtime_env"], json!(true));
+        assert_eq!(f["shell_runtime_env_path"], json!("public/env.js"));
+        assert!(!f.contains_key("frontx_problem"));
+
+        // A shell that takes its addresses at build names no file.
+        let mut f = guessed();
+        let d = described(
+            "gdl_version = \"1.6\"
+shell(signs_in = True)",
+        );
+        apply_frontx_description(&mut f, Some(&d), false, "{}");
+        assert_eq!(f["shell_runtime_env"], json!(false));
+        assert!(!f.contains_key("shell_runtime_env_path"));
+    }
+
+    #[test]
+    fn a_declared_micro_frontend_calls_what_it_requires_and_nothing_guessed() {
+        let mut f = guessed();
+        let d = described(
+            "gdl_version = \"1.6\"
+mfe(requires = [\"studio-user\", \"account-management\"])",
+        );
+        apply_frontx_description(&mut f, Some(&d), true, "{}");
+        assert_eq!(f["frontx_kind"]["v"], json!("mfe"));
+        assert_eq!(f["mfe_calls"], json!(["account-management", "studio-user"]));
+        assert!(!f.contains_key("frontx_problem"));
+
+        // `[]` says it calls none, where the guess had found one.
+        let mut f = guessed();
+        apply_frontx_description(
+            &mut f,
+            Some(&described(
+                "gdl_version = \"1.6\"
+mfe(requires = [])",
+            )),
+            true,
+            "{}",
+        );
+        assert_eq!(f["mfe_calls"], json!([]));
+    }
+
+    #[test]
+    fn a_declared_library_is_marked_one_and_keeps_its_own_calls() {
+        // A library's calls are still read from its services: a micro-frontend
+        // that has no frontx.gdl reaches them through it (`deps_names`).
+        let mut f = guessed();
+        apply_frontx_description(
+            &mut f,
+            Some(&described(
+                "gdl_version = \"1.6\"
+library()",
+            )),
+            false,
+            "{}",
+        );
+        assert_eq!(f["frontx_described"], json!(true));
+        assert_eq!(f["frontx_kind"]["v"], json!("library"));
+        assert_eq!(f["mfe_calls"], json!(["studio-tasks"]));
+        assert!(!f.contains_key("frontx_problem"));
+    }
+
+    #[test]
+    fn a_declared_kind_that_contradicts_mfe_json_is_a_problem_not_a_failure() {
+        for (src, has_mfe_json, says) in [
+            ("library()", true, "library()"),
+            ("shell(signs_in = True)", true, "shell(...)"),
+            ("mfe(requires = [])", false, "no mfe.json"),
+        ] {
+            let mut f = guessed();
+            let d = described(&format!(
+                "gdl_version = \"1.6\"
+{src}"
+            ));
+            apply_frontx_description(&mut f, Some(&d), has_mfe_json, "{}");
+            assert_eq!(f["frontx_described"], json!(true), "{src}");
+            let problem = f["frontx_problem"]["v"].as_str().unwrap();
+            assert!(problem.contains(says), "{src}: {problem}");
+            assert_eq!(f["frontx_problem"]["s"], json!("bad"));
+        }
+    }
+
+    #[test]
+    fn a_shells_passport_reaches_the_profile() {
+        let mut f = guessed();
+        f.insert(
+            "carries".into(),
+            json!({"@gears-frontx/react": "0.2.0-alpha.15"}),
+        );
+        let d = described(
+            r#"gdl_version = "1.5"
+shell(
+    name = "@acme/shell", version = "1.2.0",
+    signs_in = True, sign_in_redirect = "/callback",
+    runtime_env = "public/env.js",
+    env = {"apiBase": "gateway.url", "oidcIssuer": "oidc.issuer"},
+    node = ">=24", package_manager = "npm",
+    build = "npm run build", output = "dist", base = "/", api_prefix = "/cf/",
+    carries = {"@gears-frontx/react": "0.2.0-alpha.15", "@acme/shell": "1.2.0"},
+)"#,
+        );
+        let pkg = r#"{"name": "@acme/shell", "version": "1.2.0", "engines": {"node": ">=24"}}"#;
+        apply_frontx_description(&mut f, Some(&d), false, pkg);
+        assert_eq!(f["shell_api_prefix"], json!("/cf/"));
+        assert_eq!(f["shell_build"], json!("npm run build"));
+        assert_eq!(f["shell_output"], json!("dist"));
+        assert_eq!(f["shell_node"], json!(">=24"));
+        assert_eq!(
+            f["shell_env"],
+            json!({"apiBase": "gateway.url", "oidcIssuer": "oidc.issuer"})
+        );
+        assert_eq!(f["shell_sign_in_redirect"], json!(["/callback"]));
+        assert_eq!(f["carries"]["@acme/shell"], json!("1.2.0"));
+        assert!(!f.contains_key("frontx_passport_drift"), "{f:?}");
+    }
+
+    #[test]
+    fn a_passport_that_disagrees_with_its_manifests_is_a_warning_not_a_refusal() {
+        let mut f = guessed();
+        f.insert(
+            "carries".into(),
+            json!({"@gears-frontx/react": "0.2.0-alpha.15"}),
+        );
+        let d = described(
+            r#"gdl_version = "1.5"
+shell(name = "@acme/shell", version = "1.1.0", signs_in = True,
+      carries = {"@gears-frontx/react": "0.2.0-alpha.14"})"#,
+        );
+        let pkg = r#"{"name": "@acme/shell", "version": "1.2.0"}"#;
+        apply_frontx_description(&mut f, Some(&d), false, pkg);
+        assert_eq!(f["frontx_described"], json!(true));
+        let drift = &f["frontx_passport_drift"];
+        assert_eq!(drift["s"], json!("watch"));
+        let items: Vec<&str> = drift["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert!(items.iter().any(|i| i.starts_with("version:")), "{items:?}");
+        assert!(
+            items.iter().any(|i| i.contains("0.2.0-alpha.14")),
+            "{items:?}"
+        );
+
+        // A micro-frontend: its pin and its mfe.json.
+        let mut f = guessed();
+        f.insert(
+            "mfe_extensions".into(),
+            json!([{"id": "a", "label": "People", "route": "/people"}]),
+        );
+        let d = described(
+            r#"gdl_version = "1.5"
+mfe(frontx = "0.2.0-alpha.15", screens = ["Persons"], mounts = ["/people"], roles = ["people.read"])"#,
+        );
+        let pkg = r#"{"name": "@acme/people-mfe", "dependencies": {"@gears-frontx/react": "0.2.0-alpha.0"}}"#;
+        apply_frontx_description(&mut f, Some(&d), true, pkg);
+        assert_eq!(f["mfe_roles"], json!(["people.read"]));
+        let items = f["frontx_passport_drift"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert!(
+            items[0].as_str().unwrap().starts_with("frontx:"),
+            "{items:?}"
+        );
+        assert!(
+            items[1].as_str().unwrap().starts_with("screens:"),
+            "{items:?}"
+        );
+    }
+
+    /// The descriptions this repository's own frontend carries read, each as
+    /// the kind its directory says it is. Read from the checkout rather than
+    /// copied into `testdata`, so a copy cannot drift; skipped when the crate
+    /// is built without the rest of the repository beside it.
+    #[test]
+    fn this_repositorys_frontx_descriptions_read() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio-frontend");
+        let Ok(shell) = std::fs::read_to_string(root.join("frontx.gdl")) else {
+            return;
+        };
+        assert_eq!(
+            frontx_gdl::read(&shell).unwrap(),
+            FrontxDescription::Shell(Box::new(frontx_gdl::ShellPassport {
+                identity: frontx_gdl::Identity {
+                    name: Some("@gears-frontx/frontx-template-shell".into()),
+                    version: Some("0.1.0-alpha.2".into()),
+                    description: Some(
+                        "Standard FrontX application template — target scaffold for template-side code relocation".into(),
+                    ),
+                    docs: Vec::new(),
+                },
+                signs_in: true,
+                sign_in_redirect: vec!["/".into()],
+                runtime_env: Some("public/env.js".into()),
+                env: std::collections::BTreeMap::from([
+                    ("DISCORD_URL".to_string(), "discord.url".to_string()),
+                    ("OIDC_CLIENT_ID".to_string(), "oidc.client_id".to_string()),
+                    ("OIDC_ISSUER".to_string(), "oidc.issuer".to_string()),
+                ]),
+                build_env: vec![
+                    "VITE_DISCORD_URL".into(),
+                    "VITE_OIDC_CLIENT_ID".into(),
+                    "VITE_OIDC_ISSUER".into(),
+                ],
+                node: Some("24".into()),
+                package_manager: Some("npm".into()),
+                build: Some("npm run build".into()),
+                output: Some("dist".into()),
+                base: Some("/".into()),
+                api_prefix: Some("/cf/".into()),
+                carries: Some(std::collections::BTreeMap::from([
+                    ("@gears-frontx/api".to_string(), "0.3.0".to_string()),
+                    ("@gears-frontx/auth".to_string(), "0.2.0-alpha.3".to_string()),
+                    ("@gears-frontx/framework".to_string(), "0.2.0-alpha.16".to_string()),
+                    ("@gears-frontx/frontx-template-shell".to_string(), "0.1.0-alpha.2".to_string()),
+                    ("@gears-frontx/gts-plugin".to_string(), "0.4.0".to_string()),
+                    ("@gears-frontx/i18n".to_string(), "0.2.0-alpha.2".to_string()),
+                    ("@gears-frontx/mfes".to_string(), "0.4.0".to_string()),
+                    ("@gears-frontx/react".to_string(), "0.2.0-alpha.15".to_string()),
+                    ("@gears-frontx/routing".to_string(), "0.4.0".to_string()),
+                    ("@gears-frontx/state".to_string(), "0.2.0-alpha.4".to_string()),
+                    ("@gears-frontx/studio".to_string(), "0.2.0-alpha.3".to_string()),
+                    ("@gears-frontx/ui-kit".to_string(), "0.4.10".to_string()),
+                ])),
+            }))
+        );
+        let packages = root.join("src-app/mfe_packages");
+        let mut read = 0;
+        for entry in std::fs::read_dir(&packages).unwrap() {
+            let dir = entry.unwrap().path();
+            if !dir.join("package.json").exists() {
+                continue;
+            }
+            let body = std::fs::read_to_string(dir.join("frontx.gdl"))
+                .unwrap_or_else(|_| panic!("{} has no frontx.gdl", dir.display()));
+            let d = frontx_gdl::read(&body).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+            let has_mfe_json = dir.join("mfe.json").exists();
+            match d {
+                FrontxDescription::Mfe(_) => assert!(has_mfe_json, "{}", dir.display()),
+                FrontxDescription::Library(_) => assert!(!has_mfe_json, "{}", dir.display()),
+                FrontxDescription::Shell(_) => panic!("{} is not a shell", dir.display()),
+            }
+            read += 1;
+        }
+        assert!(read >= 2, "{read}");
+    }
+
     /// Every `package.json` in `constructorfabric/gears-frontx` at `develop`,
     /// as the git trees API returns it (verbatim, minus `node_modules`), plus a
     /// couple of build-output and vendored paths to prove they are dropped.
@@ -4272,6 +5111,77 @@ gear(
         assert_eq!(merged.maturity.as_deref(), Some("experimental"));
         // The gdl implements nothing, and the gdl is the description.
         assert_eq!(merged.is_plugin, Some(false));
+    }
+
+    #[test]
+    fn a_read_is_keyed_by_its_address_and_old_keys_become_the_same_key() {
+        let new = address_key("Constructorfabric/Studio-Web", "main");
+        assert_eq!(new, "constructorfabric/studio-web@main");
+        for old in [
+            "a9e9f2c4-b9c7-4023-8ab0-69d3c1d46362/Some(2aaca5b5-0000-4000-8000-000000000001)/constructorfabric/studio-web@main",
+            "a9e9f2c4-b9c7-4023-8ab0-69d3c1d46362/Some(a8bf6f82-c3ea-4641-8ec5-ff5d815abded)/constructorfabric/studio-web@main",
+            "a9e9f2c4-b9c7-4023-8ab0-69d3c1d46362/None/constructorfabric/studio-web@main",
+        ] {
+            assert_eq!(canonical_repo_key(old), new, "{old}");
+        }
+        assert_eq!(canonical_repo_key(&new), new);
+        assert_eq!(canonical_repo_key("k"), "k");
+    }
+
+    #[test]
+    fn a_service_passport_is_a_component_with_its_paths_from_the_root() {
+        let tree = ["theia/service.gdl", "theia/Dockerfile", "theia/README.md"];
+        let body = "gdl_version = \"1.6\"\nservice(name = \"studio-theia\", dockerfile = \"Dockerfile\", context = \"..\", ports = {\"http\": 3000})\n";
+        let g =
+            passport_component("o/r", "main", "theia/service.gdl", "theia", body, &tree).unwrap();
+        assert_eq!(g.crate_name, "studio-theia");
+        assert_eq!(g.kind.as_deref(), Some("service"));
+        let p = g.payload.unwrap();
+        assert_eq!(p["dockerfile"], "theia/Dockerfile");
+        assert_eq!(p["context"], ".");
+        assert_eq!(p["ports"]["http"], 3000);
+        assert_eq!(p["docs"], json!(["theia/README.md"]));
+        assert_eq!(p["passport_path"], "theia/service.gdl");
+    }
+
+    #[test]
+    fn a_kit_passport_finds_the_manifest_beside_it() {
+        let tree = ["kits/sdlc/kit.gdl", "kits/sdlc/.cf-studio-kit.toml"];
+        let body = "gdl_version = \"1.6\"\nkit(name = \"sdlc\", version = \"1.0.0\", docs = [\"../../README.md\"])\n";
+        let g = passport_component("o/r", "main", "kits/sdlc/kit.gdl", "kits/sdlc", body, &tree)
+            .unwrap();
+        let p = g.payload.unwrap();
+        assert_eq!(p["slug"], "sdlc");
+        assert_eq!(p["manifest_path"], "kits/sdlc/.cf-studio-kit.toml");
+        assert_eq!(p["docs"], json!(["README.md"]));
+        assert_eq!(p["version"], "1.0.0");
+    }
+
+    #[test]
+    fn passports_are_found_anywhere_but_in_vendored_trees() {
+        let tree = [
+            "a/b/service.gdl",
+            "kit.gdl",
+            "node_modules/x/service.gdl",
+            "a/service.gdl.bak",
+        ];
+        assert_eq!(passport_paths(&tree), vec!["kit.gdl", "a/b/service.gdl"]);
+    }
+
+    #[test]
+    fn documents_fall_back_to_the_readme_beside_the_component() {
+        let tree = ["pkg/README.md", "pkg/docs/x.md", "README.md"];
+        assert_eq!(docs_of("pkg", &[], &tree), vec!["pkg/README.md"]);
+        assert_eq!(docs_of("", &[], &tree), vec!["README.md"]);
+        assert_eq!(
+            docs_of(
+                "pkg",
+                &["docs/x.md".into(), "../../escape.md".into()],
+                &tree
+            ),
+            vec!["pkg/docs/x.md"]
+        );
+        assert!(docs_of("other", &[], &tree).is_empty());
     }
 
     #[test]

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CatalogNode, CatalogRepoSource } from "./api";
 import {
   FRONTX_NODE_TYPE,
+  FRONTX_SHELL_TEMPLATE,
   SUGGESTED_FRONTX_SOURCE,
   assemblySteps,
   chosenShell,
@@ -10,6 +11,7 @@ import {
   coverage,
   fitOf,
   frontendPick,
+  frontxDefaultsOf,
   frontxSuggestion,
   gearKey,
   librariesFrom,
@@ -101,6 +103,93 @@ describe("calls through a shared package", () => {
     );
     expect(m.calls).toEqual(["studio-organizations", "studio-tasks"]);
     expect(m.via).toEqual({ "studio-tasks": "@cs/mfe-shared" });
+  });
+});
+
+describe("what a package's frontx.gdl declares", () => {
+  const described = (kind: string, more: Record<string, unknown> = {}) => ({
+    auto: { frontx_described: true, frontx_kind: { v: kind, b: kind }, ...more },
+  });
+
+  it("does not offer a declared library as a screen, though the scan filed it as one", () => {
+    // Studio's `shared` sits in `mfe_packages`, which reads as a micro-frontend.
+    const nodes = [
+      node("@cs/mfe-shared", { component_kind: "micro-frontend" }),
+      node("@cs/org-mfe", { component_kind: "micro-frontend" }),
+    ];
+    const profiles = {
+      "@cs/mfe-shared": described("library", { mfe_calls: ["studio-tasks"] }),
+      "@cs/org-mfe": { auto: { mfe_extensions: [] } },
+    };
+    expect(mfesFrom(nodes, profiles).map((m) => m.name)).toEqual(["@cs/org-mfe"]);
+    expect(librariesFrom(nodes, profiles).map((l) => l.name)).toEqual(["@cs/mfe-shared"]);
+  });
+
+  it("takes a declared requires as the whole list, and adds up only a guess", () => {
+    const nodes = [
+      node("@cs/org-mfe", { component_kind: "micro-frontend" }),
+      node("@cs/legacy-mfe", { component_kind: "micro-frontend" }),
+      node("@cs/mfe-shared", { component_kind: "frontend-library" }),
+    ];
+    const deps = ["@cs/mfe-shared"];
+    const [legacy, org] = mfesFrom(nodes, {
+      "@cs/org-mfe": described("mfe", { mfe_calls: ["account-management"], deps_names: deps }),
+      "@cs/legacy-mfe": { auto: { frontx_described: false, mfe_calls: ["studio-documents"], deps_names: deps } },
+      "@cs/mfe-shared": described("library", { mfe_calls: ["studio-tasks"] }),
+    });
+    expect(org).toMatchObject({ calls: ["account-management"], via: {}, described: true });
+    expect(legacy).toMatchObject({
+      calls: ["studio-documents", "studio-tasks"],
+      via: { "studio-tasks": "@cs/mfe-shared" },
+      described: false,
+    });
+  });
+
+  it("makes a declared shell one even when its workspace carries nothing, and says it was declared", () => {
+    const [shell] = shellsFrom([node("@cs/portal")], {
+      "@cs/portal": described("shell", { shell_signin: true, shell_runtime_env: true }),
+    });
+    expect(shell).toMatchObject({ name: "@cs/portal", signsIn: true, runtimeEnv: true, described: true });
+    // A file that did not read is a guess, like no file.
+    expect(shellsFrom([node("@cs/portal")], { "@cs/portal": { auto: { frontx_described: false, frontx_kind: "shell" } } })).toEqual([]);
+  });
+
+  it("reads a shell's passport: where its screens call, what it reads at start, how it is built", () => {
+    const [shell] = shellsFrom([node("@cs/portal")], {
+      "@cs/portal": described("shell", {
+        shell_signin: true,
+        shell_runtime_env: true,
+        shell_api_prefix: "/cf/",
+        shell_build: "npm run build",
+        shell_output: "dist",
+        shell_node: ">=24",
+        shell_env: { apiBase: "gateway.url", oidcIssuer: "oidc.issuer" },
+        frontx_passport_drift: { v: "x", b: "x", s: "watch", items: ["version: frontx.gdl says \"1.1.0\", package.json \"1.2.0\""] },
+      }),
+    });
+    expect(shell.passport).toMatchObject({
+      apiPrefix: "/cf/",
+      build: "npm run build",
+      output: "dist",
+      node: ">=24",
+      env: { apiBase: "gateway.url", oidcIssuer: "oidc.issuer" },
+      buildEnv: [],
+    });
+    expect(shell.drift).toHaveLength(1);
+    // A minimal frontx.gdl says nothing more, and a guessed shell has no passport.
+    const [minimal] = shellsFrom([node("@cs/portal")], { "@cs/portal": described("shell", { shell_signin: false }) });
+    expect(minimal.passport).toBeNull();
+    expect(minimal.drift).toEqual([]);
+  });
+
+  it("reads the roles a micro-frontend's passport names, and none when it does not say", () => {
+    const nodes = [node("@cs/org-mfe", { component_kind: "micro-frontend" }), node("@cs/old-mfe", { component_kind: "micro-frontend" })];
+    const [old, org] = mfesFrom(nodes, {
+      "@cs/org-mfe": described("mfe", { mfe_calls: ["studio-organizations"], mfe_roles: ["organizations.read"] }),
+      "@cs/old-mfe": { auto: { mfe_extensions: [] } },
+    });
+    expect(org.roles).toEqual(["organizations.read"]);
+    expect(old.roles).toBeNull();
   });
 });
 
@@ -442,5 +531,39 @@ describe("what the product keeps of its frontend", () => {
     // One saved without its npm name is found by where it is.
     const { package: _, ...anonymous } = pick!.mfes[0];
     expect(picksOf({ ...pick!, mfes: [anonymous] }, [org]).picks).toEqual(["@cs/org-mfe"]);
+  });
+});
+
+describe("the deployment's FrontX starting points", () => {
+  it("are what the Gearbox status says, else FrontX's own templates", () => {
+    const own = frontxDefaultsOf({
+      frontx: { shell_template: "github:acme/ui//shell@v2", source_repo: "acme/ui", source_ref: "v2" },
+    });
+    expect(own).toEqual({ shellTemplate: "github:acme/ui//shell@v2", source: { repo: "acme/ui", git_ref: "v2" } });
+    const builtIn = { shellTemplate: FRONTX_SHELL_TEMPLATE, source: { repo: SUGGESTED_FRONTX_SOURCE.repo, git_ref: "main" } };
+    expect(frontxDefaultsOf(null)).toEqual(builtIn);
+    expect(frontxDefaultsOf({})).toEqual(builtIn);
+    // A shell that does not read is not offered.
+    expect(
+      frontxDefaultsOf({ frontx: { shell_template: "acme/ui", source_repo: "", source_ref: "" } }),
+    ).toEqual(builtIn);
+  });
+
+  it("make the deployment's template repository the templates, and suggest it", () => {
+    const mfe = (repo: string) => ({ name: "x", repo, kind: "mfe" }) as unknown as Parameters<typeof splitTemplates>[0][number];
+    const { templates, addable } = splitTemplates([mfe("acme/ui"), mfe("acme/shop")], "acme/ui");
+    expect(templates.map((m) => m.repo)).toEqual(["acme/ui"]);
+    expect(addable.map((m) => m.repo)).toEqual(["acme/shop"]);
+    expect(withSuggestedFrontx([], { repo: "acme/ui", git_ref: "v2" })?.[0]).toMatchObject({ repo: "acme/ui", git_ref: "v2" });
+  });
+
+  it("take only the template repository itself, not one whose name starts with it", () => {
+    const mfe = (repo: string) => ({ name: "x", repo, kind: "mfe" }) as unknown as Parameters<typeof splitTemplates>[0][number];
+    const { templates, addable } = splitTemplates(
+      [mfe("acme/ui"), mfe("acme/ui-shop"), mfe("https://github.com/acme/ui.git"), mfe("git@github.com:acme/ui")],
+      "acme/ui",
+    );
+    expect(templates.map((m) => m.repo)).toEqual(["acme/ui", "https://github.com/acme/ui.git", "git@github.com:acme/ui"]);
+    expect(addable.map((m) => m.repo)).toEqual(["acme/ui-shop"]);
   });
 });

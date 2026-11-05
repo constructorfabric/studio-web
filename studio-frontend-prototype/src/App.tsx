@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PageHeader, StatusChip } from "./ui-standard";
 import { useDismiss } from "./use-dismiss";
 import { LevelBadge, LevelMark, LogoControl, OrgMark } from "./level-marks";
+import { HeaderIcon, TenantMark } from "./tenant-icon-view";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent } from "react";
@@ -20,11 +22,10 @@ import {
   IdentityDirectory,
   LazyScreens,
   ObjectTypes,
-  ProcessCatalogTab,
   ProjectKits,
   SpecQuality,
 } from "./lazy-screens";
-import { ProjectsPortfolio } from "./projects";
+import { ProjectsPortfolio, WorkspaceStatusLine } from "./projects";
 import { ConnectorLogo } from "./connector-logos";
 import { portfolioRollups, rollupText, type ProjectRollup } from "./rollups";
 import {
@@ -58,11 +59,11 @@ import {
   type ProjectSource,
   type ShareMode,
 } from "./project-sources";
+import { sourceRoleColumns, useSourceRoles } from "./source-roles-view";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { ProjectComponentsInventory } from "./project-components-view";
 import { makeZip } from "./zip";
 import { SpecModelTab } from "./spec-model-tab";
-import { ProjectBuilds } from "./builds-tab";
 import { ProjectTests } from "./tests-tab";
 import { ProjectTabHowto } from "./project-path-view";
 import { ProjectDocuments, ProjectOutputs } from "./artifacts-tab";
@@ -90,10 +91,10 @@ import {
   type RepoActivity,
   ApiError,
   PLATFORM_ROOT_TENANT_ID,
+  PRODUCT_CHANGED_EVENT,
   UNAUTHENTICATED_EVENT,
   shortTypeName,
   TENANT_TYPES,
-  normalizeStages,
   type Connection,
   type ConnectorProvider,
   type Me,
@@ -103,7 +104,6 @@ import {
   type StudioProfile,
   type StudioSession,
   type Tenant,
-  type WorkspaceSettings,
   sessionOrigin,
   setCurrentOrganization,
   waitForStudioSessionReady,
@@ -130,11 +130,12 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
-import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
-import { OrgEnvironments } from "./environments-screen";
-import { ProjectDeploys } from "./project-deploys-tab";
+import { OrgInfrastructure } from "./environments-screen";
+import { ProjectReleases } from "./releases-tab";
+import { currentProjectTab } from "./product-sections";
+import { sourcesByConnector } from "./project-sources";
 import { KubeconfigField } from "./kubeconfig-field";
 import { kubeconfigServer } from "./kubeconfig";
 import { environmentsByConnection } from "./environments";
@@ -145,7 +146,6 @@ import { PlatformSources } from "./platform-sources";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
-import { WaitingOnYou } from "./waiting-on-me-view";
 import {
   BookIcon,
   CheckIcon,
@@ -164,14 +164,25 @@ import { isPinned, loadPins, pinKey, savePins, togglePin, type Pin } from "./pin
 import {
   clampStep,
   createFormLayout,
+  createMode,
   createSteps,
   pluginBlocker,
   stepBlocker,
-  type RepoMode,
+  type RepoRoad,
 } from "./project-form";
 import { ProjectTypesTab } from "./project-types-editor";
+import { productAttention, type TabAttention } from "./product-flow";
 import { ProductPage } from "./product-sections-view";
-import { BUILTIN_TYPES, landingTab, parseTypes, typeOfProject, visibleTabs, type ProjectType } from "./project-types";
+import {
+  BUILTIN_TEMPLATES,
+  landingTab,
+  parseTemplates,
+  templateDefaults,
+  templateFills,
+  templateOfProject,
+  visibleTabs,
+  type ProjectTemplate,
+} from "./project-types";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -783,8 +794,11 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "people", icon: "users", label: "People" },
     // Owned by the organization and inherited by every project in it.
     { id: "connectors", icon: "plug", label: "Connections" },
-    // Where its products run: clusters, registries, approvals (ADR-0043).
-    { id: "environments", icon: "layers", label: "Environments" },
+    // Where its products run (ADR-0056 §2): the places it holds, the
+    // environments it defines on them, what runs where. It was Environments;
+    // the id stays, so stored places and pins still open it, and so does the
+    // old address (place-url.ts).
+    { id: "environments", icon: "layers", label: "Infrastructure" },
     // What its model calls and IDE sessions cost, and the prices (issue #781).
     { id: "costs", icon: "coins", label: "Costs" },
     // What its projects build: the registry, the catalogue, and the gear
@@ -979,12 +993,19 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const [projectLabel, setProjectLabel] = useState<string | undefined>(restoredPlace.projectLabel);
   // The open project's active tab. Lifted here so the sidebar is the project's
   // nav (see the PROJECT section below); opening a different project resets it.
-  const [projectTab, setProjectTab] = useState<ProjTab>(restoredPlace.projectTab ?? "overview");
+  // A tab stored before it moved (Builds, Deploys) opens where it is now.
+  const [projectTab, setProjectTab] = useState<ProjTab>(
+    restoredPlace.projectTab ? (currentProjectTab(restoredPlace.projectTab) as ProjTab) : "overview",
+  );
   /** The open workspace's section. Lives here beside projectTab and for the
    *  same reason: the band that switches it is chrome above the work area, not
    *  part of the screen it switches. */
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(
-    restoredPlace.workspaceTab ?? "projects",
+    // A tab remembered from before a section was retired (Process, ADR-0058)
+    // opens on the default one rather than on nothing.
+    WORKSPACE_TABS.some((t) => t.id === restoredPlace.workspaceTab)
+      ? (restoredPlace.workspaceTab as WorkspaceTab)
+      : "projects",
   );
   // Opening a different project starts on its Overview — but a reload is not
   // "opening a different project", and resetting there would undo the restore
@@ -1260,7 +1281,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       tabbedProject.current = place.crumb?.nestedId;
       tabbedWorkspace.current = place.crumb?.projectId;
       if (place.view) setView(place.view);
-      if (place.crumb) setCrumb(place.crumb);
+      if (place.crumb) {
+        // The label may name the project left: the bar reads the one gone
+        // back to from the workspace's projects.
+        setProjectLabel(undefined);
+        setCrumb(place.crumb);
+      }
       if (place.projectTab) setProjectTab(place.projectTab);
       if (place.workspaceTab) setWorkspaceTab(place.workspaceTab);
       if (place.adminOpen !== undefined) setAdminOpen(place.adminOpen);
@@ -1752,11 +1778,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // When a project is open, the sidebar gains its tab nav (Overview / Artifacts
   // / Spec Quality / Team) so the tabs live on the panel rather than the page.
   const projectOpen = !adminOpen && !activeSpace && view === "projects" && !!crumb.nestedId;
-  // The open project's type (project-types.ts) decides which of its tabs show.
-  // Read on the project itself: the types are inherited metadata, so the
-  // project resolves its workspace's or its organization's. Until it is known,
-  // and when it cannot be read, every tab shows — hiding is never the fallback.
-  const [projectType, setProjectType] = useState<ProjectType | null>(null);
+  // The template the open project was created from (project-types.ts) decides
+  // which of its tabs show. Read on the project itself: the templates are
+  // inherited metadata, so the project resolves its workspace's or its
+  // organization's. Until it is known, when it cannot be read, and for a
+  // project created without one, every tab shows -- hiding is never the fallback.
+  const [projectType, setProjectType] = useState<ProjectTemplate | null>(null);
   useEffect(() => {
     setProjectType(null);
     const id = crumb.nestedId;
@@ -1764,14 +1791,42 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     let alive = true;
     Promise.all([api.projectConfig(token, id), api.projectTypes(token, id)])
       .then(([cfg, raw]) => {
-        if (alive) setProjectType(typeOfProject(cfg, parseTypes(raw, PROJECT_TABS.map((t) => t.id))));
+        if (alive) setProjectType(templateOfProject(cfg, parseTemplates(raw, PROJECT_TABS.map((t) => t.id))));
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
   }, [crumb.nestedId, token]);
-  const projectTabs = visibleTabs(PROJECT_TABS, projectType);
+  // What the open project's tabs flag: read with the product, again whenever
+  // a section writes it (PRODUCT_CHANGED_EVENT).
+  const [attention, setAttention] = useState<Partial<Record<ProjTab, TabAttention>>>({});
+  useEffect(() => {
+    setAttention({});
+    const id = crumb.nestedId;
+    if (!id) return;
+    let alive = true;
+    const read = () =>
+      Promise.all([api.projectProduct(token, id).catch(() => null), api.projectConfig(token, id).catch(() => null)]).then(
+        ([product, cfg]) => {
+          if (!alive) return;
+          const p = productAttention(product, cfg);
+          setAttention(p ? { components: p } : {});
+        },
+      );
+    void read();
+    const changed = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === id) void read();
+    };
+    window.addEventListener(PRODUCT_CHANGED_EVENT, changed);
+    return () => {
+      alive = false;
+      window.removeEventListener(PRODUCT_CHANGED_EVENT, changed);
+    };
+  }, [crumb.nestedId, token]);
+  const projectTabs = visibleTabs(PROJECT_TABS, projectType).map((t) =>
+    attention[t.id] ? { ...t, attention: attention[t.id] } : t,
+  );
   useEffect(() => {
     if (!projectType) return;
     const fresh = landOnType.current;
@@ -1935,6 +1990,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       cancelled = true;
     };
   }, [token, crumb.projectId]);
+  // The open project's name, for the path bar and the IDE launch: from the
+  // workspace's projects once read. `projectLabel` alone is set only by a
+  // click (the bar, a pin, the project list) and kept in the tab's storage,
+  // and an address carries ids only: a project opened from a link, in a new
+  // tab, read "All projects" there -- or the name of the one opened before.
+  const openProjectName =
+    (crumb.nestedId ? nestedProjects.find((p) => p.id === crumb.nestedId)?.name : undefined) ?? projectLabel;
 
   if (accessState !== "ready") {
     return (
@@ -2078,7 +2140,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               }}
               projects={nestedProjects}
               currentProjectId={crumb.nestedId}
-              currentProjectName={projectLabel}
+              currentProjectName={crumb.nestedId ? openProjectName : undefined}
               onPickProject={(p) => {
                 if (p) {
                   setProjectLabel(p.name);
@@ -2353,6 +2415,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     the band above the work area, so the rail is theirs to
                     fill -- or to hide, in the profile. */}
                 <PinnedSection
+                  token={token}
                   pins={pins}
                   setPins={setPinned}
                   picker={pinPicker}
@@ -2370,7 +2433,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     setActiveSpace(null);
                     setProjectLabel(pin.name);
                     setCrumb({ projectId: pin.workspaceId, nestedId: pin.projectId });
-                    setProjectTab(pin.tab as ProjTab);
+                    setProjectTab(currentProjectTab(pin.tab) as ProjTab);
                     setView("projects");
                   }}
                 />
@@ -2536,7 +2599,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               kind: "project",
               projectId: crumb.nestedId ?? "",
               workspaceId: crumb.projectId ?? "",
-              name: projectLabel ?? "Project",
+              name: openProjectName ?? "Project",
               tab: projectTab,
             };
             const already = isPinned(pins, pin);
@@ -2829,7 +2892,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "environments" && orgAsSpace && (
-          <OrgEnvironments
+          <OrgInfrastructure
             key={orgAsSpace.id}
             token={token}
             org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
@@ -2837,33 +2900,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "org" && orgAsSpace && (
-          <>
-          {/* What waits on this person across the organization's workspaces:
-              the first thing to see on its overview, not a page of its own. */}
-          <WaitingOnYou
+          <OrgDashboard
+            key={orgAsSpace.id}
             token={token}
+            org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
+            // What waits on you is read across these, inside its "Needs attention".
             workspaces={workspaces.filter((w) => w.orgId === orgAsSpace.id)}
             onOpenWorkspace={(ws) => {
               setCrumb({ projectId: ws.id });
               setView("projects");
             }}
-          />
-          <OrgDashboard
-            key={orgAsSpace.id}
-            token={token}
-            org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
             onOpen={(target) => {
               setCrumb({});
               setView(target);
             }}
-            onOpenProject={(workspaceId, projectId, name) => {
-              setProjectLabel(name);
-              setCrumb({ projectId: workspaceId, nestedId: projectId });
-              setProjectTab("overview");
-              setView("projects");
-            }}
           />
-          </>
         )}
         {view === "connectors" &&
           (orgAsSpace ? (
@@ -3466,7 +3517,6 @@ export function PathBar({
   const barRef = useRef<HTMLDivElement | null>(null);
   const closeMenu = useCallback(() => setOpen(null), []);
   useDismiss(barRef, open !== null, closeMenu);
-  const initial = (s: string) => (s || "?").slice(0, 1).toUpperCase();
   const currentWs = workspaces.find((w) => w.id === currentWorkspaceId) ?? null;
 
   return (
@@ -3550,7 +3600,7 @@ export function PathBar({
           title={currentWs?.name ?? "All workspaces"}
           onClick={() => setOpen((o) => (o === "ws" ? null : "ws"))}
         >
-          <LevelMark level="workspace" name={currentWs ? currentWs.name : "▤"} />
+          <TenantMark token={token} level="workspace" id={currentWs?.id} name={currentWs ? currentWs.name : "▤"} />
           <span className="path-text">
             <span className="path-level">Workspace</span>
             <span className="org-select-name">{currentWs?.name ?? "All workspaces"}</span>
@@ -3580,7 +3630,7 @@ export function PathBar({
                   setOpen(null);
                 }}
               >
-                <span className="account-avatar small">{initial(w.name)}</span>
+                <TenantMark token={token} level="workspace" id={w.id} name={w.name} />
                 {w.name}
               </button>
             ))}
@@ -3599,7 +3649,7 @@ export function PathBar({
               title={currentProjectName ?? "All projects"}
               onClick={() => setOpen((o) => (o === "proj" ? null : "proj"))}
             >
-              <LevelMark level="project" name={currentProjectName ?? "▦"} />
+              <TenantMark token={token} level="project" id={currentProjectId} name={currentProjectName ?? "▦"} />
               <span className="path-text">
                 <span className="path-level">Project</span>
                 <span className="org-select-name">{currentProjectName ?? "All projects"}</span>
@@ -3629,7 +3679,7 @@ export function PathBar({
                       setOpen(null);
                     }}
                   >
-                    <span className="account-avatar small">{initial(p.name)}</span>
+                    <TenantMark token={token} level="project" id={p.id} name={p.name} />
                     {p.name}
                   </button>
                 ))}
@@ -3753,7 +3803,7 @@ function ProjectsView({
         />
       ) : (
         <>
-          <WorkspaceHeader workspace={root} />
+          <WorkspaceHeader token={token} workspace={root} />
           <WorkspaceCatalogue
             token={token}
             workspace={root}
@@ -3784,7 +3834,11 @@ function ProjectsView({
    had produced zero rows against one project-level document, which is what a
    section with no reader looks like. Authoring moved to the project's Documents
    section, where the writing actually happens. */
-type WorkspaceTab = "projects" | "ptypes" | "types" | "process";
+/* No "process" either: the workspace's Process catalogue, which hand-edited the
+   journey stages and the capability vocabulary, was retired by ADR-0058. The
+   stages are a computed status and the vocabulary is the platform's; an old
+   address to that section opens the workspace's default one (place-url.ts). */
+type WorkspaceTab = "projects" | "ptypes" | "types";
 
 /** The workspace's page header, shown above EVERY one of its sections — the
  *  project screen does exactly this with its own name, and the level above
@@ -3792,9 +3846,11 @@ type WorkspaceTab = "projects" | "ptypes" | "types" | "process";
  *  itself as soon as you change section. Only the actions differ: creating a
  *  project belongs to the Projects section and nowhere else. */
 function WorkspaceHeader({
+  token,
   workspace,
   actions,
 }: {
+  token: string;
   workspace: Workspace;
   actions?: React.ReactNode;
 }) {
@@ -3802,11 +3858,12 @@ function WorkspaceHeader({
     <div className="topbar">
       <div>
         <div className="level-head">
+          <HeaderIcon token={token} level="workspace" id={workspace.id} name={workspace.name} />
           <LevelBadge level="workspace" />
           <h1>{workspace.name}</h1>
         </div>
         <p className="subtitle" style={{ margin: 0 }}>
-          <code>{workspace.id.slice(0, 8)}…</code>
+          <WorkspaceStatusLine token={token} workspaceId={workspace.id} selfManaged={workspace.self_managed} />
         </p>
       </div>
       {actions}
@@ -3816,9 +3873,8 @@ function WorkspaceHeader({
 
 const WORKSPACE_TABS: { id: WorkspaceTab; icon: string; label: string; hint: string }[] = [
   { id: "projects", icon: "grid", label: "Projects", hint: "The projects in this workspace" },
-  { id: "ptypes", icon: "layers", label: "Project types", hint: "What New project offers and which tabs each kind shows" },
+  { id: "ptypes", icon: "layers", label: "Project templates", hint: "What a new project may start from: its sources, a brief, kits and tabs" },
   { id: "types", icon: "file", label: "Document types", hint: "Templates, section checklists and rules" },
-  { id: "process", icon: "activity", label: "Process", hint: "The journey's stages and the capability vocabulary" },
 ];
 
 function WorkspaceCatalogue({
@@ -3840,7 +3896,6 @@ function WorkspaceCatalogue({
     <div>
       {tab === "ptypes" && <ProjectTypesTab token={token} workspace={workspace} tabs={PROJECT_TABS} />}
       {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
-      {tab === "process" && <ProcessCatalogTab token={token} workspaceId={workspaceId} />}
     </div>
   );
 }
@@ -3885,25 +3940,23 @@ function WorkspaceProjects({
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState("");
-  // The types this workspace offers (project-types.ts), read when the card
-  // opens; until then, and when nobody set any, the built-in three.
-  const [offeredTypes, setOfferedTypes] = useState<ProjectType[]>(BUILTIN_TYPES);
-  const [newTypeKey, setNewTypeKey] = useState<string | null>(null);
-  const newType = offeredTypes.find((t) => t.key === newTypeKey) ?? offeredTypes[0];
-  // What creating it provisions: the type's recipe. Everything below the
-  // picker still branches on this, so a type only chooses among the roads the
-  // card already knows.
-  const newKind = newType.recipe;
+  // The templates this workspace offers (project-types.ts), read when the card
+  // opens; until then, and when nobody set any, the built-in ones. Optional:
+  // none is picked until somebody picks one, and a template only fills in the
+  // fields below -- what the product is comes from its specs (product-kind.ts).
+  const [offeredTemplates, setOfferedTemplates] = useState<ProjectTemplate[]>(BUILTIN_TEMPLATES);
+  const [templateKey, setTemplateKey] = useState<string | null>(null);
+  const template = offeredTemplates.find((t) => t.key === templateKey) ?? null;
   // What the new project takes from the shared catalogue. A kit is a component
   // like any other, and a project acquires one the same way it acquires
   // anything else: by picking it from the list, not by naming a repository.
   const [kitCatalog, setKitCatalog] = useState<import("./api").StudioKit[]>([]);
   const [kitSel, setKitSel] = useState<Set<string>>(new Set());
-  // Where a new gear's repository comes from. The `new_gears` radio has always
-  // promised two roads in its own subtitle -- "Create a new repo, or use an
-  // existing gear store" -- and the form asked for neither, so every gear
-  // project was created with nowhere to put a gear.
-  const [repoMode, setRepoMode] = useState<RepoMode>("new");
+  // Where the project's code starts: a repository created now, one attached
+  // now, or none yet (Sources adds them later); and whether a starter gear is
+  // written into it.
+  const [repoMode, setRepoMode] = useState<RepoRoad>("none");
+  const [starterGear, setStarterGear] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
   // "" means "let the backend take the first GitHub connection", which it does.
   const [connId, setConnId] = useState("");
@@ -3937,21 +3990,11 @@ function WorkspaceProjects({
   // owner, and a PR against an empty repo is ceremony.
   const [openPr, setOpenPr] = useState(false);
   // Journey framing captured at creation (previously dead in the UI): a free-text
-  // brief and the opt-in journey stages (Intent is always applied).
+  // brief. Stages are not asked for: they are a computed status (ADR-0058).
   const [brief, setBrief] = useState("");
   // Which page of the card is showing. An index rather than a key, because the
   // pages are a list whose length depends on the answers -- see `clampStep`.
   const [step, setStep] = useState(0);
-  // The workspace's effective stage catalogue: names, order, and which are
-  // required. It was a constant in api.ts until ADR-0014 s7 moved it to the
-  // server, because the journey is a thing an organization configures.
-  // Read for `normalizeStages`, which has to know which entries are required.
-  // Nothing picks from it here any more: a project's `stages` is not a gate --
-  // no backend code reads it, `stage_status` computes against the workspace's
-  // whole catalogue -- it only filtered the chips on the project's Overview.
-  // Asking for a display filter before the project exists put the question at
-  // the one moment nobody can answer it.
-  const [stageCatalogue, setStageCatalogue] = useState<import("./api").JourneyStage[]>([]);
   // Resumable provisioning: the live checklist and the context that accumulates
   // ids across steps, kept in a ref so Retry reuses the same run.
   const [prov, setProv] = useState<StepState[] | null>(null);
@@ -4027,31 +4070,18 @@ function WorkspaceProjects({
       .catch(() => setKitCatalog([]));
   }, [creating, token]);
 
-  // ...and its journey-stage catalogue, for the same reason and at the same
-  // moment. An empty catalogue simply renders no chips: a project can still be
-  // created, and its stages can be set later.
+  // A repository created or attached starts at a connection.
   useEffect(() => {
-    if (!creating) return;
-    api
-      .stages(token, workspace.id)
-      .then((r) => setStageCatalogue(r.items ?? []))
-      .catch(() => setStageCatalogue([]));
-  }, [creating, token, workspace.id]);
-
-  // Both kinds that create or attach a repository start at a connection. Not
-  // loaded for `existing`, which attaches its repository afterwards rather than
-  // at creation.
-  useEffect(() => {
-    if (!creating || (newKind !== "new_gears" && newKind !== "product")) return;
+    if (!creating || repoMode === "none") return;
     api
       .connections(token, workspace.id)
       .then((r) => setConnections(r.items ?? []))
       .catch(() => setConnections([]));
-  }, [creating, newKind, token, workspace.id]);
+  }, [creating, repoMode, token, workspace.id]);
 
   // The hosts a plugin can fill, only once somebody asks for a plugin.
   useEffect(() => {
-    if (!creating || newKind !== "new_gears" || gearKind !== "plugin") return;
+    if (!creating || !starterGear || repoMode === "none" || gearKind !== "plugin") return;
     let alive = true;
     api
       .gearboxExtensionPoints(token)
@@ -4072,13 +4102,13 @@ function WorkspaceProjects({
     return () => {
       alive = false;
     };
-  }, [creating, newKind, gearKind, token]);
+  }, [creating, starterGear, repoMode, gearKind, token]);
 
-  // The gear stores to choose from. A connection is required here (unlike
+  // The repositories to choose from. A connection is required here (unlike
   // creating a repository, where the backend picks the first GitHub one) --
   // there is no listing without one to list through.
   useEffect(() => {
-    if (!creating || newKind !== "new_gears" || repoMode !== "existing" || !connId) {
+    if (!creating || repoMode !== "existing" || !connId) {
       setRemoteRepos(null);
       return;
     }
@@ -4100,7 +4130,7 @@ function WorkspaceProjects({
       alive = false;
       clearTimeout(t);
     };
-  }, [creating, newKind, repoMode, connId, repoSearch, token, workspace.id]);
+  }, [creating, repoMode, connId, repoSearch, token, workspace.id]);
 
   useEffect(() => {
     if (!creating) return;
@@ -4109,12 +4139,11 @@ function WorkspaceProjects({
       .projectTypes(token, workspace.id)
       .then((raw) => {
         if (!alive) return;
-        const types = parseTypes(raw, PROJECT_TABS.map((t) => t.id));
-        setOfferedTypes(types);
-        setNewTypeKey((k) => (k && types.some((t) => t.key === k) ? k : types[0].key));
-        setKitSel(new Set(types[0].kits ?? []));
+        const templates = parseTemplates(raw, PROJECT_TABS.map((t) => t.id));
+        setOfferedTemplates(templates);
+        setTemplateKey((k) => (k && templates.some((t) => t.key === k) ? k : null));
       })
-      // The built-in types stay offered: a card that cannot read the
+      // The built-in templates stay offered: a card that cannot read the
       // workspace's own list must still create a project.
       .catch(() => {});
     return () => {
@@ -4122,9 +4151,17 @@ function WorkspaceProjects({
     };
   }, [creating, token, workspace.id]);
 
-  const pickType = (t: ProjectType) => {
-    setNewTypeKey(t.key);
-    setKitSel(new Set(t.kits ?? []));
+  /** Fill the card in from a template, or empty it again for none. */
+  const pickTemplate = (t: ProjectTemplate | null) => {
+    const d = templateDefaults(t);
+    setTemplateKey(t?.key ?? null);
+    setRepoMode(d.road);
+    setStarterGear(d.starterGear);
+    setBrief(d.brief);
+    setKitSel(new Set(d.kits));
+    // A gear store belongs to whoever already keeps gears in it.
+    setOpenPr(d.road === "existing" && d.starterGear);
+    setExistingRepo(null);
   };
 
   const toggleKit = (slug: string) =>
@@ -4138,7 +4175,7 @@ function WorkspaceProjects({
   // The gear project's derived names. Both fields follow the project name until
   // somebody types in one: in a shared gear store the gear is not the project,
   // and neither is the repository.
-  const isGearProject = newKind === "new_gears";
+  const isGearProject = starterGear && repoMode !== "none";
   // GitHub only, and not as a shortcut: creating a repository resolves "the
   // first GitHub connection" server-side, and the scaffold writer speaks
   // GitHub's git API directly (product/scaffold.rs). Offering a
@@ -4147,14 +4184,15 @@ function WorkspaceProjects({
   const gearSlugValue = gearSlug(gearName.trim() || newName.trim() || "gear");
   const gearDirValue = gearParentDir(gearDir);
   const repoNameValue = gearSlug(repoName.trim() || newName.trim() || "project");
-  // Which sections this project kind is actually asked about, and what it still
-  // needs before it can be created — both decided in project-form.ts, where the
-  // branches can be read without the JSX around them.
-  const layout = createFormLayout(newKind, repoMode);
+  // Which sections the card asks, and what it still needs before it can be
+  // created -- both decided in project-form.ts, where the branches can be read
+  // without the JSX around them.
+  const choices = { road: repoMode, starterGear };
+  const layout = createFormLayout(choices);
   // The card's pages, and which one is showing. The list changes length when
-  // the type or the repository road changes, so the index is clamped on every
-  // render rather than corrected in the handlers that could change it.
-  const steps = createSteps(newKind, repoMode);
+  // the repository road changes, so the index is clamped on every render
+  // rather than corrected in the handlers that could change it.
+  const steps = createSteps(choices);
   const stepIndex = clampStep(step, steps);
   const current = steps[stepIndex];
   const pluginProblem = pluginBlocker({
@@ -4165,10 +4203,9 @@ function WorkspaceProjects({
   });
   const formState = {
     name: newName,
-    kind: newKind,
-    repoMode,
+    ...choices,
     connectionId: connId,
-    storePicked: existingRepo !== null,
+    repoPicked: existingRepo !== null,
     pluginProblem: gearKind === "plugin" ? pluginProblem : null,
   };
   const pageBlocker = stepBlocker(current.key, formState);
@@ -4180,7 +4217,7 @@ function WorkspaceProjects({
    *  probes real backend state in `check` so a retry resumes cleanly instead of
    *  duplicating writes (ADR-0010: creation is several non-atomic requests). */
   const buildCreatePlan = (name: string): ProvisionStep<CreateCtx>[] => {
-    const mode: ProjectMode = newKind === "existing" ? "modernize" : "greenfield";
+    const mode: ProjectMode = createMode(choices);
     const steps: ProvisionStep<CreateCtx>[] = [];
 
     // 1) Project tenant — find-or-create. Reusing a same-named sibling heals a
@@ -4209,8 +4246,11 @@ function WorkspaceProjects({
       },
     });
 
-    // 3) Project config — mode/kind/stages/brief. Idempotent overwriting PUT,
-    //    so it always runs (cheap) and re-running is safe.
+    // 3) Project config — mode/template/brief. Idempotent overwriting PUT, so
+    //    it always runs (cheap) and re-running is safe. No `stages`: a project
+    //    does not pick its stages, they are a computed status (ADR-0058). No
+    //    `kind` either: what the product is gets proposed from its specs and
+    //    confirmed on the Product page (product-kind.ts).
     steps.push({
       key: "config",
       label: "Project config",
@@ -4219,9 +4259,7 @@ function WorkspaceProjects({
         await api.putProjectConfig(token, ctx.tenantId, {
           ...cfg,
           mode,
-          kind: newKind,
-          type: newType.key,
-          stages: normalizeStages(cfg.stages ?? [], stageCatalogue),
+          ...(template ? { type: template.key } : {}),
           status: cfg.status ?? "draft",
           brief: brief.trim() || cfg.brief,
           source_git_url: ctx.cloneUrl || cfg.source_git_url,
@@ -4248,7 +4286,7 @@ function WorkspaceProjects({
         const cfg = (await api.projectConfig(token, ctx.tenantId).catch(() => null)) ?? {};
         const cloneUrl = cloneUrlOf(ctx);
         if (hasRepository(cfg.sources, cloneUrl)) return;
-        await api.putProjectConfig(token, ctx.tenantId, {
+        await saveSources(token, ctx.tenantId, {
           ...cfg,
           source_git_url: cfg.source_git_url || cloneUrl,
           sources: [
@@ -4258,18 +4296,20 @@ function WorkspaceProjects({
               full_path: ctx.repoFull,
               clone_url: cloneUrl,
               ...(ctx.branch ? { branch: ctx.branch } : {}),
+              // The starter gear goes here, and so does the next one Create a
+              // gear makes (ADR-0060).
+              ...(isGearProject ? { gears_here: true } : {}),
             },
           ],
         });
       },
     };
 
-    // 4) The gear's repository, and the gear.
+    // 4) The repository a starter gear goes into, and the gear.
     //
-    //    Only a `new_gears` project has these: it is the one kind whose whole
-    //    purpose is a gear, and a gear needs a directory in a repository before
-    //    it is anything at all. The two roads end in the same place -- the
-    //    project's gear repo -- so only the `run` differs.
+    //    A gear needs a directory in a repository before it is anything at
+    //    all. The two roads end in the same place -- the project's gear repo
+    //    -- so only the `run` differs.
     if (isGearProject) {
       steps.push({
         key: "repo",
@@ -4343,23 +4383,13 @@ function WorkspaceProjects({
       });
     }
 
-    // 5) A product's repository, and the one document the assembly reads.
+    // 5) A repository without a starter gear: created, or attached.
     //
-    //    The type's own subtitle promises both -- "Assemble a product from
-    //    gears. A new repository is created." -- and until now it did neither:
-    //    `product` differed from `existing` in `mode` and in that sentence, and
-    //    in nothing else.
-    //
-    //    The order is the only order that works. Components cannot be chosen
-    //    before the product says what it needs, so creation ends at the App
-    //    Spec rather than at a list of gears: its questionnaire is what turns
-    //    prose into capabilities, and the capabilities are what the matcher
-    //    reads (`compose.ts`). The brief is already the answer to that
-    //    questionnaire's FIRST question, word for word -- "What are we
-    //    building? Describe the product and its core domain." -- so the card
-    //    stops filing it under `brief` and never asking again, and hands it
-    //    over as the answer it is.
-    if (newKind === "product") {
+    //    No product.gdl is written here any more: what the product is -- and
+    //    so whether it has a product.gdl at all -- is decided once its specs
+    //    are read (product-kind.ts), and the Product page's Save writes the
+    //    first revision.
+    if (!isGearProject && repoMode === "new") {
       steps.push({
         key: "repo",
         label: `Repository · ${repoNameValue}`,
@@ -4391,28 +4421,30 @@ function WorkspaceProjects({
         },
       });
       steps.push(sourcesStep);
-
-      // The product's description, from the first minute. It names no gears
-      // yet; picking them on the Components tab rewrites this same file on
-      // this same branch, so the project has one `product.gdl` from creation
-      // on, rather than none until somebody presses Save.
+    }
+    if (!isGearProject && repoMode === "existing") {
       steps.push({
-        key: "product",
-        label: "product.gdl",
-        check: async (ctx) =>
-          !!(await api.projectProduct(token, ctx.tenantId).catch(() => null))?.written,
+        key: "repo",
+        label: `Repository · ${existingRepo?.full_path ?? "?"}`,
         run: async (ctx) => {
-          await api.previewProduct(token, ctx.tenantId, {
-            product_id: productIdFrom(name),
-            name,
-            gears: [],
-            write: true,
-            onto_base: true,
-          });
+          if (!existingRepo) throw new Error("No repository selected");
+          ctx.repoFull = existingRepo.full_path;
+          ctx.branch = existingRepo.default_branch || "main";
+          ctx.cloneUrl = existingRepo.clone_url;
         },
       });
+      steps.push(sourcesStep);
+    }
 
-      if (brief.trim()) {
+    // 6) The PRD, from the brief.
+    //
+    //    The brief is the answer to the PRD questionnaire's FIRST question,
+    //    word for word -- "What are we building? Describe the product and its
+    //    core domain." -- so the card hands it over as the answer it is. It
+    //    is also what Studio first reads to propose what the product is. A
+    //    starter gear writes its own PRD from the same brief.
+    {
+      if (brief.trim() && !isGearProject) {
         steps.push({
           key: "spec",
           label: "PRD",
@@ -4443,7 +4475,7 @@ function WorkspaceProjects({
       }
     }
 
-    // 6) Kits the project asked for, as DESIRED state.
+    // 7) Kits the project asked for, as DESIRED state.
     //
     //    Requesting is idempotent by slug, and materialization is somebody
     //    else's job: the registry records `pending`, and a trusted `cfs` runner
@@ -4518,8 +4550,9 @@ function WorkspaceProjects({
     setBrief("");
     setStep(0);
     setKitSel(new Set());
-    setNewTypeKey(null);
-    setRepoMode("new");
+    setTemplateKey(null);
+    setRepoMode("none");
+    setStarterGear(false);
     setConnId("");
     setRepoOwner("");
     setRepoIsOrg(false);
@@ -4579,7 +4612,7 @@ function WorkspaceProjects({
 
   return (
     <>
-      <WorkspaceHeader workspace={workspace} />
+      <WorkspaceHeader token={token} workspace={workspace} />
       {err && <div className="error">{err}</div>}
       {creating && (
         <div className="card">
@@ -4635,12 +4668,18 @@ function WorkspaceProjects({
                 onChange={(e) => setNewName(e.target.value)}
               />
 
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Project type</div>
+              <div data-project-templates>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                  Start from a template <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
+                </div>
+                <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+                  A template only fills in the next pages: the sources, a brief, the kits. What the product is,
+                  Studio proposes once its specs are read, on the Product page.
+                </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {offeredTypes.map((t) => (
+                  {[null, ...offeredTemplates].map((t) => (
                     <label
-                      key={t.key}
+                      key={t?.key ?? "none"}
                       style={{
                         display: "flex",
                         gap: 8,
@@ -4648,20 +4687,23 @@ function WorkspaceProjects({
                         padding: "8px 10px",
                         border: "1px solid var(--border)",
                         borderRadius: 8,
-                        background: newType.key === t.key ? "var(--accent)" : "transparent",
+                        background: templateKey === (t?.key ?? null) ? "var(--accent)" : "transparent",
                         cursor: "pointer",
                       }}
                     >
                       <input
                         type="radio"
-                        name="pkind"
-                        checked={newType.key === t.key}
-                        onChange={() => pickType(t)}
+                        name="ptemplate"
+                        checked={templateKey === (t?.key ?? null)}
+                        onChange={() => pickTemplate(t)}
                         style={{ marginTop: 2 }}
+                        data-project-template={t?.key ?? "none"}
                       />
                       <span>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.title}</div>
-                        <div style={{ fontSize: 11, opacity: 0.7 }}>{t.description}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t ? t.title : "No template"}</div>
+                        <div style={{ fontSize: 11, opacity: 0.7 }}>
+                          {t ? `${t.description}${t.description ? " " : ""}${templateFills(t)}` : "Start empty and add the sources later."}
+                        </div>
                       </span>
                     </label>
                   ))}
@@ -4670,25 +4712,26 @@ function WorkspaceProjects({
               </>
             )}
 
-            {current.key === "repository" && layout.gearRepository && (
-              <div>
+            {current.key === "repository" && (
+              <div data-create-sources>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                  Gear repository
+                  Sources
                 </div>
                 <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
-                  Where the gear is written. Either road ends the same way — a skeleton on
-                  branch <code>scaffold/{gearSlugValue}</code>, never on the base branch.
+                  Where the project&apos;s code lives. More repositories are added in Sources; Studio finds the
+                  components in each by their passports.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {(
                     [
-                      ["new", "New repository", "Created now; the gear is its first commit."],
+                      ["none", "No repository yet", "Write the specs first; attach or create a repository in Sources later."],
+                      ["new", "New repository", "Created now, as the project's first source."],
                       [
                         "existing",
-                        "Existing gear store",
-                        "A repository that already holds gears. The skeleton arrives as a branch.",
+                        "Existing repository",
+                        "One the project already has: an application, or a store that holds gears.",
                       ],
-                    ] as ["new" | "existing", string, string][]
+                    ] as [RepoRoad, string, string][]
                   ).map(([m, title, desc]) => (
                     <label
                       key={m}
@@ -4710,11 +4753,13 @@ function WorkspaceProjects({
                         disabled={prov !== null}
                         onChange={() => {
                           setRepoMode(m);
+                          setExistingRepo(null);
                           // A gear store belongs to whoever already keeps gears
                           // in it; a repository created a moment ago does not.
-                          setOpenPr(m === "existing");
+                          setOpenPr(m === "existing" && starterGear);
                         }}
                         style={{ marginTop: 2 }}
+                        data-create-road={m}
                       />
                       <span>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
@@ -4724,6 +4769,7 @@ function WorkspaceProjects({
                   ))}
                 </div>
 
+                {layout.repository && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
                   <ConnectionField
                     connections={gitConnections}
@@ -4797,7 +4843,7 @@ function WorkspaceProjects({
                               >
                                 <input
                                   type="radio"
-                                  name="gstore"
+                                  name="grepo-existing"
                                   checked={existingRepo?.id === r.id}
                                   disabled={prov !== null}
                                   onChange={() => setExistingRepo(r)}
@@ -4817,6 +4863,25 @@ function WorkspaceProjects({
                     </label>
                   )}
 
+                  <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={starterGear}
+                      disabled={prov !== null}
+                      onChange={(e) => {
+                        setStarterGear(e.target.checked);
+                        setOpenPr(repoMode === "existing" && e.target.checked);
+                      }}
+                      data-create-starter-gear
+                    />
+                    Write a starter gear into it
+                    <span style={{ opacity: 0.6 }}>
+                      · on branch <code>scaffold/{gearSlugValue}</code>, never on the base branch
+                    </span>
+                  </label>
+
+                  {layout.starterGear && (
+                  <>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <span style={{ fontSize: 11, opacity: 0.8 }}>Gear name</span>
                     <input
@@ -4909,7 +4974,10 @@ function WorkspaceProjects({
                     />
                     Open a pull request
                   </label>
+                  </>
+                  )}
                 </div>
+                )}
               </div>
             )}
 
@@ -4975,40 +5043,6 @@ function WorkspaceProjects({
               </div>
             )}
 
-            {current.key === "repository" && layout.productRepository && (
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                  Repository
-                </div>
-                <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
-                  A product gets its own, new — the gears it is assembled from stay where
-                  they are and are depended on. This is also where a gear scaffolded for a
-                  capability nothing in the catalogue covers will be written.
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <ConnectionField
-                    connections={gitConnections}
-                    value={connId}
-                    disabled={prov !== null}
-                    onChange={setConnId}
-                    emptyLabel="Default — the first GitHub connection"
-                  />
-                  <NewRepoFields
-                    owner={repoOwner}
-                    setOwner={setRepoOwner}
-                    isOrg={repoIsOrg}
-                    setIsOrg={setRepoIsOrg}
-                    name={repoName}
-                    setName={setRepoName}
-                    namePlaceholder={repoNameValue}
-                    isPrivate={repoPrivate}
-                    setPrivate={setRepoPrivate}
-                    disabled={prov !== null}
-                  />
-                </div>
-              </div>
-            )}
-
             {current.key === "repository" && layout.componentsNote && (
               <p style={{ fontSize: 11, opacity: 0.7, margin: 0, lineHeight: 1.5 }}>
                 No components are offered for a shared gear store. A kit installs with
@@ -5025,11 +5059,11 @@ function WorkspaceProjects({
                 </div>
                 <textarea
                   placeholder={
-                    newKind === "existing"
-                      ? "What is this app, and what are we modernizing?"
-                      : isGearProject
-                        ? "What is this gear for? Becomes ## Problem in its docs/PRD.md."
-                        : "What are we building, and why?"
+                    isGearProject
+                      ? "What is this gear for? Becomes ## Problem in its docs/PRD.md."
+                      : repoMode === "existing"
+                        ? "What is this app, and what are we changing in it?"
+                        : "What are we building, and why? Studio reads what the product is from this, and from the specs."
                   }
                   value={brief}
                   onChange={(e) => setBrief(e.target.value)}
@@ -5194,9 +5228,7 @@ function WorkspaceProjects({
               compare: projectComparator<ProjectListRow>("name"),
               cell: (p) => (
                 <div className="pcell">
-                  <span className={`pkind pkind-${p.row?.project_kind ?? "none"}`} aria-hidden>
-                    {p.row?.project_kind === "product" ? "◈" : p.row?.project_kind === "existing" ? "⌘" : "▦"}
-                  </span>
+                  <TenantMark token={token} level="project" id={p.id} name={p.name} kind={p.row?.project_kind} className="pico ticon-mark" />
                   <div style={{ minWidth: 0 }}>
                     {editingId === p.id ? (
                       <input
@@ -5356,33 +5388,17 @@ function WorkspaceProjects({
 /** One row of a workspace's project table: the project and what is counted for it. */
 type ProjectListRow = { id: string; name: string; row?: import("./api").RollupRow };
 
-/** A section the product's navigation lists but this prototype has no screen
- *  for. Named honestly on the page, with what it would show and what is
- *  actually missing, so it cannot be mistaken for a working screen with no
- *  data in it. */
-function NotBuiltYet({ title, what, why }: { title: string; what: string; why: string }) {
-  return (
-    <div className="card">
-      <h2>{title}</h2>
-      <p className="empty">
-        Not built yet. This section would show {what}.
-      </p>
-      <p className="hint">Why it is empty: {why}.</p>
-    </div>
-  );
-}
-
 /** The sections of an open project — the type is defined next to the Overview
  *  that links to them; this is the shell rail's rendering of the list (the
  *  active tab is stored on the shell, not inside ProjectScreen). */
-const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
+const PROJECT_TABS: { id: ProjTab; icon: string; label: string; experimental?: boolean }[] = [
   // In the order the work happens, which is not the order the sections were
   // added. Icons are the lucide names the shipped project-sidebar picks.
   { id: "overview", icon: "home", label: "Overview" },
   // Everything to decide about the project in one place: what stops a build,
   // what to look at, how the documentation could be better. A question about
   // the whole project, so a tab of the project, not of one of its sections.
-  { id: "issues", icon: "alert", label: "Issues" },
+  { id: "issues", icon: "alert", label: "Issues", experimental: true },
   // Specs first, because everything after it is downstream of a document: the
   // components a product is composed from are matched against what its specs
   // declare, and the artifacts are what came out. Reading the row left to right
@@ -5415,33 +5431,33 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // Kits are how the project works (workflows, conventions pinned to a Git
   // version), not what it is made of, so they stopped sharing a page with the
   // specs-to-product journey.
-  // What the product was built into, where, and how it went (ADR-0045): after
-  // the tab that says what it is made of, before where it runs. The portal
-  // does not build; CI and the IDE do.
-  { id: "builds", icon: "activity", label: "Builds" },
+  // How the product goes out (ADR-0056 §4): the ladder of the environments it
+  // may deploy to, dev to prod, with what runs in each; then its builds
+  // (ADR-0045) and its deploys (ADR-0043). It was two tabs, Builds and
+  // Deploys, with nothing leading from one to the next; their old ids open
+  // it (MOVED_PROJECT_TABS).
+  { id: "releases", icon: "activity", label: "Releases" },
   // Whether what was built works, and whether what the specs say is checked:
   // the CI jobs of the mainline and of the open pull requests, and a summary
-  // of spec against code that opens Specs. After Builds, which it reads, and
-  // before Deploys, which should take only what passed.
-  { id: "tests", icon: "check", label: "Tests" },
-  // Where the product runs (ADR-0043): the organization's environments this
-  // project may deploy to, its namespace in each, its bindings and deploys.
-  // After Builds, because a deploy takes what a build made. It was a block at
-  // the bottom of the Product card, under the configuration.
-  { id: "deploys", icon: "layers", label: "Deploys" },
-  { id: "kits", icon: "grid", label: "Kits" },
-  { id: "artifacts", icon: "file", label: "Artifacts" },
+  // of spec against code that opens Specs. After Releases, which builds what
+  // it reads.
+  { id: "tests", icon: "check", label: "Tests", experimental: true },
+  // Experimental: a kit installs through the IDE's runner and adds check
+  // methods to Domain model › Hypotheses; the flow works, its place does not
+  // settle yet (ADR-0056 may move it beside the repositories).
+  { id: "kits", icon: "grid", label: "Kits", experimental: true },
+  { id: "artifacts", icon: "file", label: "Artifacts", experimental: true },
   // Sources sits after them because it is where they come from: a sync run
   // here is what puts anything in Artifacts at all. It was a card near the
   // bottom of Overview, which buried the project's only long-running action
   // under six panels people read and then leave. The shipped sidebar has since
   // grown the same section, in the same place.
   { id: "sources", icon: "plug", label: "Sources" },
-  { id: "activity", icon: "activity", label: "Activity" },
-  { id: "timeline", icon: "clock", label: "Timeline" },
+  // The project's connections are managed from Sources, where they are used:
+  // a tab of their own was the organization's page again (MOVED_PROJECT_TABS).
+  { id: "activity", icon: "activity", label: "Activity", experimental: true },
   { id: "people", icon: "users", label: "Team" },
   // Ours, kept after the product's list rather than interleaved with it.
-  { id: "automation", icon: "shield", label: "Automation" },
 ];
 
 
@@ -5456,6 +5472,7 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
  *  rather than dropped: losing somebody's row to a rename they never saw is
  *  worse than one row that says something unfamiliar. */
 function PinnedSection({
+  token,
   pins,
   setPins,
   picker,
@@ -5467,6 +5484,7 @@ function PinnedSection({
   onOpenView,
   onOpenProject,
 }: {
+  token: string;
   pins: Pin[];
   setPins: (next: Pin[]) => void;
   picker: boolean;
@@ -5513,7 +5531,11 @@ function PinnedSection({
               onClick={() => (pin.kind === "view" ? onOpenView(pin.id as View) : onOpenProject(pin))}
             >
               <span className="ico">
-                <NavIcon name={icon} />
+                {pin.kind === "project" ? (
+                  <TenantMark token={token} level="project" id={pin.projectId} name={pin.name} />
+                ) : (
+                  <NavIcon name={icon} />
+                )}
               </span>
               <span className="nav-pin-name">{label}</span>
               {pin.kind === "project" && <span className="nav-pin-tab">{pin.tab}</span>}
@@ -5758,7 +5780,6 @@ function ProjectScreen({
           <ProjectOverview
             token={token}
             project={proj}
-            parentWorkspaceId={workspace.id}
             onOpenTab={setTab}
             onOpenStudio={() => onOpenStudio(proj)}
           />
@@ -5770,13 +5791,15 @@ function ProjectScreen({
           <ProductPage
             token={token}
             projectId={proj.id}
+            onOpenTab={setTab}
             backend={
               <ProjectKits
                 token={token}
                 projectId={proj.id}
                 projectName={proj.name}
                 workspaceId={workspace.id}
-                onOpenTab={setTab}
+                // The kit's Builds step: Builds is a part of Releases now.
+                onOpenTab={() => setTab("releases")}
               />
             }
             parts={(openBackend) => (
@@ -5787,14 +5810,17 @@ function ProjectScreen({
         {tab === "parts" && (
           <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={() => setTab("components")} />
         )}
-        {tab === "builds" && (
-          <ProjectBuilds token={token} projectId={proj.id} projectName={proj.name} onOpenTab={setTab} />
+        {tab === "releases" && (
+          <ProjectReleases token={token} projectId={proj.id} projectName={proj.name} onOpenTab={setTab} />
         )}
         {tab === "tests" && (
-          <ProjectTests token={token} projectId={proj.id} workspaceId={workspace.id} onOpenSpecs={() => setTab("specs")} />
-        )}
-        {tab === "deploys" && (
-          <ProjectDeploys token={token} projectId={proj.id} onOpenTab={setTab} />
+          <ProjectTests
+            token={token}
+            projectId={proj.id}
+            workspaceId={workspace.id}
+            onOpenSpecs={() => setTab("specs")}
+            onOpenSources={() => setTab("sources")}
+          />
         )}
         {tab === "kits" && (
           <ProjectKits
@@ -5806,20 +5832,7 @@ function ProjectScreen({
           />
         )}
         {tab === "sources" && (
-          <>
-            <h1>Sources</h1>
-            <p className="subtitle">
-              The repositories this project is built from. A session clones them when you open it;
-              a sync pulls their issues, pull requests and files into the artifact graph — which is
-              where every artifact number in this project comes from.
-            </p>
-            <ProjectSources
-              token={token}
-              workspace={proj}
-              parentWorkspaceId={workspace.id}
-              onOpenStudio={onOpenStudio}
-            />
-          </>
+          <ProjectSources token={token} workspace={proj} parentWorkspaceId={workspace.id} onOpenStudio={onOpenStudio} />
         )}
         {tab === "issues" && (
           <SpecModelTab
@@ -5868,14 +5881,6 @@ function ProjectScreen({
         {tab === "activity" && (
           <ActivityView token={token} projectTenantId={proj.id} workspaceId={workspace.id} />
         )}
-        {tab === "timeline" && (
-          <NotBuiltYet
-            title="Timeline"
-            what="the project's milestones and journey stages on a time axis"
-            why="the stage catalogue is already read on Overview; the time axis is the part that does not exist"
-          />
-        )}
-        {tab === "automation" && <AutomationSettings token={token} ws={proj} />}
         {tab === "people" && (
           <PeopleView
             token={token}
@@ -6021,7 +6026,6 @@ function WorkspacesView({
 
 /* ── Workspace Dashboard (vision journey J2: onboard a project) ── */
 
-const WORKER_CATEGORIES = ["documenting", "coding", "review", "analysis"];
 
 
 // Repository credentials are workspace-scoped (tenant sharing), so the
@@ -6038,103 +6042,6 @@ const PAT_SECRET_TYPE = "gts.cf.core.credstore.secret.v1~cf.core.credstore.api_k
 // under the same reference.
 const PERSONAL_SECRET_TYPE =
   "gts.cf.core.credstore.secret.v1~cf.core.credstore.personal_token.v1~";
-
-/** Automation trust ramp for a project — moved out of the overview into its own
- *  sidebar tab. Loads/saves the workspace settings (automation_level + approved
- *  worker categories) as GTS-validated tenant metadata. */
-function AutomationSettings({ token, ws }: { token: string; ws: Workspace }) {
-  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const s = await api.workspaceSettings(token, ws.id);
-      setSettings(s ?? { automation_level: "recommendations", approved_worker_categories: [] });
-    } catch (e) {
-      setError(errText(e));
-    }
-  }, [token, ws.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (!settings) return;
-    setError(null);
-    setSaved(false);
-    try {
-      await api.putWorkspaceSettings(token, ws.id, settings);
-      setSaved(true);
-    } catch (err) {
-      setError(errText(err));
-    }
-  }
-
-  return (
-    <div className="card">
-      <h2>Automation — trust ramp</h2>
-      <p className="hint">
-        The domain model's trust ramp, per project: <b>manual</b> = read-only insight,{" "}
-        <b>recommendations</b> = prepared actions awaiting approval, <b>autonomous</b> = approved
-        automation for the categories below. Stored as tenant metadata (GTS-validated).
-      </p>
-      {error && <div className="error">{error}</div>}
-      {!settings ? (
-        <p className="empty">Loading…</p>
-      ) : (
-        <form onSubmit={save}>
-          <label className="field" style={{ maxWidth: 320 }}>
-            Automation level
-            <select
-              style={{ display: "block", width: "100%", marginTop: 6 }}
-              value={settings.automation_level ?? "recommendations"}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  automation_level: e.target.value as WorkspaceSettings["automation_level"],
-                })
-              }
-            >
-              <option value="manual">manual — humans do everything</option>
-              <option value="recommendations">recommendations — workers suggest, humans approve</option>
-              <option value="autonomous">autonomous — approved workers act on their own</option>
-            </select>
-          </label>
-          <div className="field">
-            Approved worker categories
-            <div style={{ display: "flex", gap: 14, marginTop: 6, flexWrap: "wrap" }}>
-              {WORKER_CATEGORIES.map((c) => (
-                <label key={c} style={{ fontWeight: 400 }}>
-                  <input
-                    type="checkbox"
-                    checked={settings.approved_worker_categories?.includes(c) ?? false}
-                    onChange={(e) => {
-                      const cur = new Set(settings.approved_worker_categories ?? []);
-                      if (e.target.checked) cur.add(c);
-                      else cur.delete(c);
-                      setSettings({ ...settings, approved_worker_categories: [...cur] });
-                    }}
-                  />{" "}
-                  {c}
-                </label>
-              ))}
-            </div>
-          </div>
-          <button className="primary">Save settings</button>
-          {saved && (
-            <span className="hint" style={{ marginLeft: 10 }}>
-              saved ✓
-            </span>
-          )}
-        </form>
-      )}
-    </div>
-  );
-}
 
 /* ── System (observability across platform gears) ── */
 
@@ -6743,10 +6650,25 @@ const CATEGORIES: { key: string; title: string; blurb: string }[] = [
   },
 ];
 
+/** A provider whose connections only the organization holds: a cluster or a
+ *  registry, which only the server uses. */
+const ORG_ONLY_PROVIDER = (p: { provider: string; category?: string }) =>
+  p.category === "cluster" || p.category === "registry" || p.provider === "kubernetes" || p.provider === "registry";
+
 /** Where a connection is attached, and how widely its token is readable.
  *  One choice sets both: the tenant holding the catalogue row (its reach) and
  *  the credstore sharing mode of the token (who may read it). */
 type Reach = "organization" | "workspace" | "personal";
+
+/** Write a project's configuration whose sources changed, then have the
+ *  project's catalogue read them now (ADR-0061 §6): a repository attached is
+ *  where its components are found, one detached takes them with it. The sync
+ *  is asked for and not waited on -- the hourly walk would come to it anyway,
+ *  and a sync that cannot be queued must not undo the save. */
+export async function saveSources(token: string, projectId: string, cfg: import("./api").ProjectConfig): Promise<void> {
+  await api.putProjectConfig(token, projectId, cfg);
+  void api.syncProjectCatalogue(token, projectId).catch(() => undefined);
+}
 
 /** The project's current sources (workspace repos) with detach + Open in IDE, so
  *  the Sources tab shows the RESULT of attaching, not only the connectors. */
@@ -6765,7 +6687,7 @@ async function attachReposToWorkspace(
 ): Promise<number> {
   const current = (await api.projectConfig(token, ws.id)) ?? {};
   const { sources, added } = withPicked(current.sources, connection, picks, shareMode);
-  if (added > 0) await api.putProjectConfig(token, ws.id, { ...current, sources });
+  if (added > 0) await saveSources(token, ws.id, { ...current, sources });
   return added;
 }
 
@@ -6793,13 +6715,47 @@ function ArtifactsView({
   /** What the project produced, or what it holds. Outputs first: they are
    *  what nobody can see anywhere else in the portal. */
   const [view, setView] = useState<"outputs" | "documents">("outputs");
+  const [counts, setCounts] = useState<{ versions: number; releases: number } | null>(null);
   return (
     <>
-      <h1>Artifacts</h1>
-      <p className="subtitle">
-        What the project produced — the files its builds kept and its releases — and the documents and files it
-        holds. Its issues, pull requests and commits are on Issues and Activity.
-      </p>
+      <PageHeader
+        title="Artifacts"
+        info={
+          <>
+            <p>
+              What the project produced -- the files its CI builds kept, by the version built, and its releases -- and
+              the documents and files it holds. A download is a link the provider signs for a minute.
+            </p>
+            <p>
+              The CI runs are on Tests and Releases, the container images the builds published are deployed from
+              Releases, and the issues, pull requests and commits are on Issues and Activity.
+            </p>
+          </>
+        }
+        status={
+          counts && (
+            <>
+              <StatusChip tone={counts.versions > 0 ? "ok" : "neutral"} data-artifacts-versions>
+                {counts.versions} version{counts.versions === 1 ? "" : "s"} passed with files
+              </StatusChip>
+              <StatusChip tone="neutral" data-artifacts-releases>
+                {counts.releases} release{counts.releases === 1 ? "" : "s"}
+              </StatusChip>
+            </>
+          )
+        }
+        actions={
+          <button
+            className="ghost"
+            onClick={() => void studio?.openGraph(workspace)}
+            disabled={!studio || studio.opening === workspace.id}
+            title="Every node the syncs keep, in the Workspace Graph of the Studio IDE"
+            data-raw-graph
+          >
+            {studio?.opening === workspace.id ? "Opening Studio…" : "Open graph in Studio"}
+          </button>
+        }
+      />
       {/* It used to be the artifact graph as six tables: ~9,000 issues, pull
           requests, commits, comments, files and authors, each already shown
           where it means something. The raw graph is one click away in the IDE
@@ -6823,7 +6779,7 @@ function ArtifactsView({
         </button>
       </div>
       {view === "outputs" ? (
-        <ProjectOutputs token={token} projectId={workspace.id} onOpenTab={onOpenTab} />
+        <ProjectOutputs token={token} projectId={workspace.id} onOpenTab={onOpenTab} onCounts={setCounts} />
       ) : (
         <>
           <ProjectDocuments
@@ -6836,18 +6792,6 @@ function ArtifactsView({
           <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
         </>
       )}
-      <p className="hint" data-raw-graph>
-        Every node the syncs keep is in the IDE&apos;s graph:{" "}
-        <button
-          className="linklike"
-          onClick={() => void studio?.openGraph(workspace)}
-          disabled={!studio || studio.opening === workspace.id}
-          title="Open the Workspace Graph in the Studio IDE"
-        >
-          {studio?.opening === workspace.id ? "opening Studio…" : "open graph in Studio"}
-        </button>
-        .
-      </p>
     </>
   );
 }
@@ -7132,6 +7076,10 @@ function ProjectSources({
   const [err, setErr] = useState<string | null>(null);
   // Per-repo artifact-sync progress, keyed by repo name.
   const [sync, setSync] = useState<Record<string, SyncProgress>>({});
+  /** The project's connections, opened from the header. */
+  const [managing, setManaging] = useState(false);
+  /** What each source is for (ADR-0060): read again with the rows. */
+  const roles = useSourceRoles(token, ws.id, repos);
 
   const syncRepo = async (r: RepoEntry) => {
     // Nodes land in the graph as the sync runs, so refresh the ingested list
@@ -7215,7 +7163,7 @@ function ProjectSources({
   const detach = async (name: string) => {
     setErr(null);
     const config = (await api.projectConfig(token, ws.id)) ?? {};
-    await api.putProjectConfig(token, ws.id, { ...config, sources: without(config.sources, name) });
+    await saveSources(token, ws.id, { ...config, sources: without(config.sources, name) });
     const remaining = (repos ?? []).filter((r) => r.name !== name);
     await pruneDetached(token, remaining, {
       workspaceId: parentWorkspaceId ?? ws.id,
@@ -7252,13 +7200,73 @@ function ProjectSources({
     return live?.running ? "…" : graphRepo(r) ? "Re-sync" : "Sync";
   };
   const repoUrl = (r: RepoEntry) => (r.url && /^https?:\/\//.test(r.url) ? r.url.replace(/\.git$/, "") : undefined);
+  /** The repositories by the connector they were picked from. */
+  const byConnector = sourcesByConnector(repos ?? []);
+  const unsynced = (repos ?? []).filter((r) => !graphRepo(r)).length;
 
   return (
+    <>
+      <PageHeader
+        title="Sources"
+        info={
+          <>
+            <p>
+              The repositories this project is built from: one list, no hidden main repository. A session clones them
+              when you open it; a sync pulls their issues, pull requests and files into the artifact graph, which is
+              where every artifact number in this project comes from. Add one by picking it from a connector; the
+              connections it is picked from are under Manage connections.
+            </p>
+            <p>
+              <b>Gears here</b>: Create a gear puts new gears in this source. <b>Publish product.gdl here</b>: a
+              published description goes to this source; with none marked, Studio keeps the revisions only. Neither
+              decides what a build clones: a build takes every source the product uses, at its branch for a dev
+              environment and at the commit the revision pinned for a protected one.
+            </p>
+          </>
+        }
+        status={
+          <>
+            {repos === null ? (
+              <span>Reading the sources…</span>
+            ) : repos.length === 0 ? (
+              <span>no repository yet</span>
+            ) : (
+              <>
+                {byConnector.map((c) => (
+                  <StatusChip key={c.source} tone="neutral" data-sources-connector={c.source}>
+                    from connector {c.label} · {c.count}
+                  </StatusChip>
+                ))}
+                <StatusChip tone={unsynced === 0 ? "ok" : "warn"} data-sources-synced>
+                  {unsynced === 0 ? "all synced" : `${unsynced} never synced`}
+                </StatusChip>
+              </>
+            )}
+            <button
+              type="button"
+              className="linklike"
+              aria-expanded={managing}
+              onClick={() => setManaging((m) => !m)}
+              data-manage-connections
+            >
+              {managing ? "Hide connections" : "Manage connections"}
+            </button>
+          </>
+        }
+        actions={
+          (repos?.length ?? 0) > 0 && onOpenStudio ? (
+            <button className="primary" onClick={() => onOpenStudio(ws)}>
+              Open in Web IDE
+            </button>
+          ) : null
+        }
+      />
+      {managing && (
+        <div className="card" data-project-connections>
+          <ConnectorsView token={token} workspace={ws} owner="project" embedded />
+        </div>
+      )}
     <div className="card">
-      <p className="hint">
-        Repositories cloned into the workspace when a session launches. Add one by picking it from a
-        connector — connectors are set up in Connections.
-      </p>
       <DataTable<RepoEntry>
         list="sources"
         title="Repositories"
@@ -7269,16 +7277,8 @@ function ProjectSources({
         rowLabel={(r) => r.name}
         onOpen={(r) => window.open(repoUrl(r), "_blank", "noreferrer")}
         canOpen={(r) => !!repoUrl(r)}
-        primary={
-          (repos?.length ?? 0) > 0 && onOpenStudio ? (
-            <button className="primary" onClick={() => onOpenStudio(ws)}>
-              Open in Web IDE
-            </button>
-          ) : null
-        }
         empty={{
-          title: "No repositories attached yet.",
-          body: "Pick one from a connector below. It is the project's first step: its sync brings in the documents to type.",
+          title: "No repositories attached yet: pick one from a connector below.",
         }}
         columns={[
           {
@@ -7298,6 +7298,7 @@ function ProjectSources({
               </>
             ),
           },
+          ...sourceRoleColumns(roles),
           {
             id: "share",
             header: "Changes",
@@ -7437,6 +7438,7 @@ function ProjectSources({
 
       <SourceAttachPicker token={token} workspace={ws} onAttached={() => void reload()} />
     </div>
+    </>
   );
 }
 
@@ -7610,13 +7612,25 @@ function SourceAttachPicker({
   );
 }
 
+/** Whose connections a Connections page lists. The organization's page and a
+ *  project's list the ones shared there -- the organization's, or the
+ *  project's with what it inherits; a person's profile lists their own,
+ *  personal ones. A personal connection is not on the shared pages: it is
+ *  nobody else's to use. */
+type ConnectionOwner = "organization" | "project" | "personal";
+
 function ConnectorsView({
   token,
   workspace: ws,
+  owner = "organization",
+  embedded = false,
 }: {
   token: string;
   /** From the account switcher — this page no longer asks again. */
   workspace: Workspace;
+  owner?: ConnectionOwner;
+  /** Inside another screen (a project's Sources): no heading of its own. */
+  embedded?: boolean;
   /** The side panel's filters. Not read: the connection list searches itself. */
   filters?: Filters;
 }) {
@@ -7675,15 +7689,65 @@ function ConnectorsView({
     void reload();
   }, [reload]);
 
+  /** A project's: only its own connections, or the organization's it
+   *  inherits as well. */
+  const [ownOnly, setOwnOnly] = useState(true);
+  const listed = useMemo(
+    () =>
+      connections === null
+        ? null
+        : connections.filter((c) => (owner === "personal" ? c.scope === "personal" && c.mine : c.scope !== "personal")),
+    [connections, owner],
+  );
+  const own = listed?.filter((c) => c.owner_tenant_id === ws.id) ?? null;
+  const shown = owner === "project" && ownOnly ? own : listed;
+  // A cluster or a registry is the organization's, never a person's (see
+  // CATEGORIES): a profile neither offers nor asks for one.
+  const offered = useMemo(
+    () => (owner === "personal" ? (providers ?? []).filter((p) => !ORG_ONLY_PROVIDER(p)) : (providers ?? [])),
+    [providers, owner],
+  );
+
   return (
     <>
-      <h1>Connections</h1>
-      <p className="subtitle">
-        How repositories and model credentials enter <b>{ws.name}</b>: its own connections plus
-        those shared with every project. Configure one once, then pick
-        repositories from a list instead of pasting clone URLs. Tokens go to credstore — after you
-        submit one the browser never sees it again.
-      </p>
+      {owner === "project" && listed && (
+        <div className="doc-views" role="tablist" aria-label="Which connections" data-connections-filter>
+          <button role="tab" aria-selected={ownOnly} className={ownOnly ? "doc-view on" : "doc-view"} onClick={() => setOwnOnly(true)}>
+            This project&apos;s own · {own?.length ?? 0}
+          </button>
+          <button role="tab" aria-selected={!ownOnly} className={!ownOnly ? "doc-view on" : "doc-view"} onClick={() => setOwnOnly(false)}>
+            With the organization&apos;s · {listed.length}
+          </button>
+        </div>
+      )}
+      {embedded ? null : owner === "personal" ? (
+        <>
+          <h2>My connections</h2>
+          <p className="subtitle">
+            Your own sign-ins, kept in <b>{ws.name}</b> and readable only by you: Studio acts with them for you and for
+            nobody else -- a Constructor Research sign-in, a personal access token. The organization&apos;s and a
+            project&apos;s shared connections are on their own pages.
+          </p>
+        </>
+      ) : (
+        <>
+          <h1>Connections</h1>
+          <p className="subtitle">
+            {owner === "project" ? (
+              <>
+                What <b>{ws.name}</b> connects to: its own connections, and the organization&apos;s it inherits.
+              </>
+            ) : (
+              <>
+                What <b>{ws.name}</b> connects to and shares with its projects.
+              </>
+            )}{" "}
+            Configure one once, then pick repositories from a list instead of pasting clone URLs. Tokens go to
+            credstore — after you submit one the browser never sees it again. Your personal connections are on your
+            profile.
+          </p>
+        </>
+      )}
 
       {err && <p className="error">{err}</p>}
       {note && <p className="hint">{note}</p>}
@@ -7700,8 +7764,9 @@ function ConnectorsView({
         <AddConnector
           token={token}
           workspace={ws}
-          providers={providers ?? []}
+          providers={offered}
           category={adding || undefined}
+          only={owner === "personal" ? "personal" : undefined}
           onClose={() => setAdding(null)}
           onAdded={(t) => {
             setNote(`Connected as ${t.account}${t.display_name ? ` (${t.display_name})` : ""}.`);
@@ -7715,9 +7780,9 @@ function ConnectorsView({
         <ConnectionList
           token={token}
           workspace={ws}
-          providers={providers ?? []}
-          connections={connections ?? []}
-          loading={connections === null}
+          providers={offered}
+          connections={shown ?? []}
+          loading={shown === null}
           sourcesTick={sourcesTick}
           envUses={envUses}
           onSourcesChanged={bumpSources}
@@ -7744,6 +7809,7 @@ function AddConnector({
   workspace,
   providers,
   category,
+  only,
   onClose,
   onAdded,
 }: {
@@ -7752,6 +7818,8 @@ function AddConnector({
   providers: ConnectorProvider[];
   /** Open on one kind, from the "Not connected yet" line. */
   category?: string;
+  /** Who it is for, when the page decides (a profile: the person). */
+  only?: Reach;
   onClose: () => void;
   onAdded: (t: { account: string; display_name?: string }) => void;
 }) {
@@ -7769,8 +7837,11 @@ function AddConnector({
   // On the organization's own page there is no project to keep it to: the
   // choice is the organization or yourself, and the organization is the default.
   const atOrg = workspace.id === workspace.orgId;
-  const defaultReach: Reach = atOrg ? "organization" : "workspace";
-  const [reach, setReach] = useState<Reach>(defaultReach);
+  const defaultReach: Reach = only ?? (atOrg ? "organization" : "workspace");
+  const [reachChoice, setReach] = useState<Reach>(defaultReach);
+  // When the page decides who it is for, nothing chosen below overrides it:
+  // a profile never sends an organization-wide connection.
+  const reach: Reach = only ?? reachChoice;
   const [busy, setBusy] = useState<"probe" | "save" | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -7970,6 +8041,8 @@ function AddConnector({
         </li>
       </ul>
 
+      {!only && (
+      <>
       <label>Available to</label>
       <select value={reach} onChange={(e) => setReach(e.target.value as Reach)}>
         {!atOrg && <option value="workspace">{workspace.name} — this project only</option>}
@@ -7985,6 +8058,8 @@ function AddConnector({
             ? "Stored on this project; everyone in it can use the token."
             : "Stored on this project, but the token stays readable only by you."}
       </p>
+      </>
+      )}
 
       <label>Label</label>
       <input
@@ -8006,11 +8081,14 @@ function AddConnector({
           <label>Instance URL</label>
           <input
             placeholder={
-              picked.category === "ai"
-                ? `Leave empty for ${picked.default_base_url} — or any compatible endpoint`
-                : picked.category === "notification"
-                  ? `Leave empty for ${picked.default_base_url} — or your own installation`
-                  : `Leave empty for ${picked.default_base_url} — or your self-hosted installation`
+              // A provider without a default (a gear repository) needs one.
+              !picked.default_base_url
+                ? "Required: e.g. https://github.com/<owner>/<repo>"
+                : picked.category === "ai"
+                  ? `Leave empty for ${picked.default_base_url} — or any compatible endpoint`
+                  : picked.category === "notification"
+                    ? `Leave empty for ${picked.default_base_url} — or your own installation`
+                    : `Leave empty for ${picked.default_base_url} — or your self-hosted installation`
             }
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
@@ -9649,6 +9727,14 @@ function ProfileView({
       <MyPersonCard token={token} orgs={orgs} onChanged={onPerson} />
 
       <MyIdentitiesCard token={token} sessionSubject={me.subject_id} />
+
+      {/* A person's own connections, in each organization they are in: the
+          organization's and a project's shared ones are on their pages. */}
+      {orgs.map((o) => (
+        <section className="card" key={o.id} data-my-connections={o.id}>
+          <ConnectorsView token={token} workspace={{ ...o, orgId: o.id, orgName: o.name }} owner="personal" />
+        </section>
+      ))}
 
       {/* For support and debugging: what the token says. Folded, because
           nothing in it is something a person acts on. */}

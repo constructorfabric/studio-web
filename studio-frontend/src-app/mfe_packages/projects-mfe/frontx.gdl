@@ -1,0 +1,78 @@
+# This micro-frontend's passport: everything a tool that assembles a product
+# from FrontX packages (Gearbox, Constructor Studio) needs to know about it, in
+# one file. It restates what package.json and mfe.json say, and those tools
+# check that they agree, so keep them in step when either changes.
+gdl_version = "1.5"
+
+mfe(
+    # Who it is: package.json's name and version (it has no description).
+    name = "@constructor-studio/projects-mfe",
+    version = "0.2.0-alpha.0",
+
+    # The backend gears its screens call, by gear id (the `<gear>` of a
+    # `/cf/<gear>/v1` base URL). Its own services: ArtifactIngestApiService,
+    # DocumentsApiService, SpecQualityApiService. Through
+    # @constructor-studio/mfe-shared: AccountsApiService (project config),
+    # ConnectorsApiService, StudioEventsApiService and StudioTasksApiService.
+    requires = [
+        "account-management",
+        "studio-artifact-ingest",
+        "studio-connector",
+        "studio-documents",
+        "studio-events",
+        "studio-spec-quality",
+        "studio-tasks",
+    ],
+
+    # What it brings, as mfe.json says: the labels of its screens and
+    # overlays, then the route of each extension (presentation.route), in
+    # mfe.json's order.
+    screens = [
+        "Projects",
+        "New project",
+        "New workspace",
+        "Connect source",
+        "Overview",
+        "Artifacts",
+        "Specs",
+        "Sources",
+        "Activity",
+        "Timeline",
+        "Team",
+        "Settings",
+    ],
+    mounts = [
+        "/projects",
+        "/projects/new",
+        "/workspaces/new",
+        "/projects/sources/connect",
+        "/projects/overview",
+        "/projects/artifacts",
+        "/projects/specs",
+        "/projects/sources",
+        "/projects/activity",
+        "/projects/timeline",
+        "/projects/team",
+        "/projects/settings",
+    ],
+
+    # The FrontX it is written against: its @gears-frontx/react pin. A shell
+    # mounting it gives it the shell's own version, whatever this says.
+    frontx = "0.2.0-alpha.15",
+
+    # No `roles`: the permissions the gears it calls check are not written
+    # down on this side yet.
+
+    # Routes worth a screenshot: its screens; the overlays open over them.
+    preview = [
+        "/projects",
+        "/projects/overview",
+        "/projects/artifacts",
+        "/projects/specs",
+        "/projects/sources",
+        "/projects/activity",
+        "/projects/timeline",
+        "/projects/team",
+        "/projects/settings",
+    ],
+)

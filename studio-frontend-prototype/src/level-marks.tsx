@@ -7,6 +7,8 @@ import { useRef, useState } from "react";
 import { api } from "./api";
 import { errText } from "./format";
 import { logoFileProblem, logoSrc, rememberLogo, useOrgLogo } from "./org-logo";
+import { TenantGlyph } from "./tenant-glyphs";
+import type { TenantIcon } from "./tenant-icon";
 
 export type Level = "platform" | "organization" | "workspace" | "project";
 
@@ -23,9 +25,26 @@ export function LevelBadge({ level }: { level: Level }) {
 }
 
 /** A level's mark: its initial in the level's colour and shape, or an
- *  organization's logo. */
-export function LevelMark({ level, name, logo }: { level: Level; name: string; logo?: string | null }) {
+ *  uploaded image (an organization's logo, a workspace's or a project's
+ *  icon), or the glyph and colour chosen for it (tenant-icon.ts). */
+export function LevelMark({
+  level,
+  name,
+  logo,
+  icon,
+}: {
+  level: Level;
+  name: string;
+  logo?: string | null;
+  icon?: TenantIcon | null;
+}) {
   if (logo) return <img className={`level-mark level-${level} has-logo`} src={logo} alt="" />;
+  if (icon)
+    return (
+      <span className={`level-mark level-${level} has-icon ticon-${icon.color}`} aria-hidden="true">
+        <TenantGlyph glyph={icon.glyph} size={14} />
+      </span>
+    );
   // The platform is one shared layer, not a thing with a name: layers, not an initial.
   if (level === "platform")
     return (

@@ -11,7 +11,7 @@
  * Pure, so it is tested without a backend.
  */
 
-import type { CatalogNode, CatalogRepoSource, FrontendPick, FrontxPlace } from "./api";
+import type { CatalogNode, CatalogRepoSource, FrontendPick, FrontxPlace, GearboxStatus } from "./api";
 
 export const FRONTX_NODE_TYPE = "gts.cf.studio.catalog.frontx.v1~";
 
@@ -27,6 +27,33 @@ export const SUGGESTED_FRONTX_SOURCE = {
   mode: "frontx",
 } as const;
 
+/** The FrontX template a new frontend's shell comes from, spelled as FrontX's
+ *  provenance spells a source. The same repository the constructor suggests
+ *  as the catalogue's first micro-frontend source. */
+export const FRONTX_SHELL_TEMPLATE = "github:constructorfabric/gears-frontx-templates//template-shell@main";
+
+/** Where a product's frontend starts in this deployment: the shell template
+ *  and the suggested micro-frontend source. */
+export interface FrontxDefaults {
+  shellTemplate: string;
+  source: { repo: string; git_ref: string };
+}
+
+/** What the deployment says (`frontx` of `GET /studio-product/v1/gearbox`,
+ *  `STUDIO_FRONTX_*`), else the built-in FrontX templates -- for a backend
+ *  from before it said, or a value that does not read. */
+export function frontxDefaultsOf(status: Pick<GearboxStatus, "frontx"> | null | undefined): FrontxDefaults {
+  const f = status?.frontx;
+  const shell = f?.shell_template?.trim();
+  const repo = f?.source_repo?.trim();
+  return {
+    shellTemplate: shell && parseShellRef(shell) ? shell : FRONTX_SHELL_TEMPLATE,
+    source: repo
+      ? { repo, git_ref: f?.source_ref?.trim() || "main" }
+      : { repo: SUGGESTED_FRONTX_SOURCE.repo, git_ref: SUGGESTED_FRONTX_SOURCE.git_ref },
+  };
+}
+
 /** The nil tenant: in an organization's source it stands for the
  *  organization itself, whose GitHub connection the sync reads through. */
 const ORG_TENANT = "00000000-0000-0000-0000-000000000000";
@@ -40,8 +67,11 @@ const repoKey = (repo: string) =>
 /** The organization's catalogue sources with the suggested FrontX one added
  *  at the end, or `null` when it already reads that repository as FrontX
  *  (at any ref): then there is nothing to add, only to sync. */
-export function withSuggestedFrontx(items: readonly CatalogRepoSource[]): CatalogRepoSource[] | null {
-  return withFrontxSource(items, SUGGESTED_FRONTX_SOURCE.repo, SUGGESTED_FRONTX_SOURCE.git_ref);
+export function withSuggestedFrontx(
+  items: readonly CatalogRepoSource[],
+  source: FrontxDefaults["source"] = SUGGESTED_FRONTX_SOURCE,
+): CatalogRepoSource[] | null {
+  return withFrontxSource(items, source.repo, source.git_ref);
 }
 
 /** The organization's catalogue sources with `repo` added as a FrontX source
@@ -106,15 +136,25 @@ export function projectRepos(of: {
 const TEMPLATE_KINDS = new Set(["template", "example"]);
 
 /** A template or example micro-frontend: where a new one starts, not a screen
- *  to add. */
-export function isTemplateMfe(m: Pick<Mfe, "kind" | "repo">): boolean {
-  return TEMPLATE_KINDS.has(m.kind ?? "") || repoKey(m.repo ?? "").includes(repoKey(SUGGESTED_FRONTX_SOURCE.repo));
+ *  to add. Everything in the deployment's template repository is one. */
+export function isTemplateMfe(
+  m: Pick<Mfe, "kind" | "repo">,
+  templateRepo: string = SUGGESTED_FRONTX_SOURCE.repo,
+): boolean {
+  // The same repository, not one whose name merely contains it: `acme/ui`
+  // is not `acme/ui-shop`.
+  const key = (r: string) => repoKey(ownerRepo(r) ?? r);
+  return TEMPLATE_KINDS.has(m.kind ?? "") || (!!m.repo && key(m.repo) === key(templateRepo));
 }
 
 /** The micro-frontends a product can add, and the templates to start a new
  *  one from. */
-export function splitTemplates(mfes: readonly Mfe[]): { addable: Mfe[]; templates: Mfe[] } {
-  return { addable: mfes.filter((m) => !isTemplateMfe(m)), templates: mfes.filter(isTemplateMfe) };
+export function splitTemplates(
+  mfes: readonly Mfe[],
+  templateRepo: string = SUGGESTED_FRONTX_SOURCE.repo,
+): { addable: Mfe[]; templates: Mfe[] } {
+  const template = (m: Mfe) => isTemplateMfe(m, templateRepo);
+  return { addable: mfes.filter((m) => !template(m)), templates: mfes.filter(template) };
 }
 
 /** One place a micro-frontend takes in the shell. */
@@ -152,6 +192,64 @@ export interface Mfe {
   path?: string | null;
   /** The packages it depends on, by name: the libraries it shares among them. */
   deps?: string[];
+  /** Whether `calls` is what its `frontx.gdl` declares (`mfe(requires = …)`)
+   *  rather than what the scan guessed from its API services. */
+  described?: boolean;
+  /** The permissions its screens need, as its passport says; `null` when it
+   *  does not say. */
+  roles?: string[] | null;
+  /** Where its passport disagrees with its package.json or mfe.json. */
+  drift?: string[];
+}
+
+/** What a FrontX package's passport (`frontx.gdl`) says beyond its kind;
+ *  each `null` when it does not say. */
+export interface ShellPassport {
+  /** The path its screens call the backend under, proxied to the API Gateway. */
+  apiPrefix: string | null;
+  base: string | null;
+  build: string | null;
+  output: string | null;
+  node: string | null;
+  packageManager: string | null;
+  /** The keys it reads at start, each to what fills it. */
+  env: Record<string, string>;
+  /** The variables it needs at build. */
+  buildEnv: string[];
+  signInRedirect: string[];
+}
+
+/** A shell passport's facts out of a catalogue profile, `null` when it states none. */
+export function shellPassportOf(auto: Record<string, unknown>): ShellPassport | null {
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  const env: Record<string, string> = {};
+  if (auto.shell_env && typeof auto.shell_env === "object")
+    for (const [k, v] of Object.entries(auto.shell_env as Record<string, unknown>)) if (typeof v === "string") env[k] = v;
+  const p: ShellPassport = {
+    apiPrefix: str(auto.shell_api_prefix),
+    base: str(auto.shell_base),
+    build: str(auto.shell_build),
+    output: str(auto.shell_output),
+    node: str(auto.shell_node),
+    packageManager: str(auto.shell_package_manager),
+    env,
+    buildEnv: strings(auto.shell_build_env),
+    signInRedirect: strings(auto.shell_sign_in_redirect),
+  };
+  const says =
+    Object.values(p).some((v) => typeof v === "string") ||
+    Object.keys(env).length > 0 ||
+    p.buildEnv.length > 0 ||
+    p.signInRedirect.length > 0;
+  return says ? p : null;
+}
+
+/** Where a package's passport disagrees with its manifests, one line each. */
+export function passportDriftOf(auto: Record<string, unknown>): string[] {
+  const d = auto.frontx_passport_drift;
+  if (!d || typeof d !== "object") return [];
+  const items = (d as Record<string, unknown>).items;
+  return Array.isArray(items) ? items.filter((x): x is string => typeof x === "string") : [];
 }
 
 /** A FrontX package that is neither a micro-frontend nor a shell: a library
@@ -189,8 +287,15 @@ function placementOf(raw: unknown): Placement | null {
   };
 }
 
+/** What a package's own `frontx.gdl` says it is (`shell`, `mfe`, `library`),
+ *  or `null` when it has none that reads. */
+export function frontxKindOf(auto: Record<string, unknown>): string | null {
+  return auto.frontx_described === true ? textOf(auto.frontx_kind) : null;
+}
+
 /** The micro-frontends in the catalogue, with what their profiles say. A
- *  package the scan did not find to be a micro-frontend is not one here. */
+ *  package the scan did not find to be a micro-frontend is not one here, nor
+ *  is one whose `frontx.gdl` says it is a library or a shell. */
 export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<string, unknown>>): Mfe[] {
   const out: Mfe[] = [];
   const autoOf = (name: string) => (profiles[name]?.auto ?? {}) as Record<string, unknown>;
@@ -209,9 +314,12 @@ export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<s
     const name = str(v.name) ?? n.instance_id;
     const auto = (profiles[name]?.auto ?? {}) as Record<string, unknown>;
     const kind = str(v.component_kind);
+    const declared = frontxKindOf(auto);
+    if (declared === "library" || declared === "shell") continue;
     // A template or example counts when it is a micro-frontend's template:
     // it declares extensions, or names itself one (`_blank-mfe`).
     const isMfe =
+      declared === "mfe" ||
       kind === "micro-frontend" ||
       Array.isArray(auto.mfe_extensions) ||
       (TEMPLATE_KINDS.has(kind ?? "") && /mfe/i.test(name));
@@ -221,7 +329,10 @@ export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<s
       .filter((p): p is Placement => p !== null);
     const calls = new Set(strings(auto.mfe_calls));
     const via: Record<string, string> = {};
-    for (const dep of strings(auto.deps_names)) {
+    // A declared `requires` is the whole list, the gears it reaches through a
+    // shared package included; only a guess is added up through its deps.
+    const described = declared === "mfe";
+    for (const dep of described ? [] : strings(auto.deps_names)) {
       for (const c of own.get(dep) ?? []) {
         if (!calls.has(c)) {
           calls.add(c);
@@ -241,6 +352,9 @@ export function mfesFrom(nodes: CatalogNode[], profiles: Record<string, Record<s
       wants: frontxPins(auto.deps_versions),
       path: textOf(auto.path),
       deps: strings(auto.deps_names),
+      described,
+      roles: Array.isArray(auto.mfe_roles) ? strings(auto.mfe_roles) : null,
+      drift: passportDriftOf(auto),
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -257,7 +371,13 @@ export function librariesFrom(nodes: CatalogNode[], profiles: Record<string, Rec
     const auto = (profiles[name]?.auto ?? {}) as Record<string, unknown>;
     const kind = str(v.component_kind);
     const carries = auto.carries && typeof auto.carries === "object" && Object.keys(auto.carries).length > 0;
+    const declared = frontxKindOf(auto);
+    if (declared === "library") {
+      out.push({ name, repo: str(v.repository) ?? str(v.synced_from), path: textOf(auto.path) });
+      continue;
+    }
     if (
+      declared !== null ||
       kind === "micro-frontend" ||
       TEMPLATE_KINDS.has(kind ?? "") ||
       Array.isArray(auto.mfe_extensions) ||
@@ -373,6 +493,14 @@ export interface Shell {
   signsIn: boolean | null;
   /** Whether it reads the product's addresses at start (`/env.js`). */
   runtimeEnv: boolean | null;
+  /** Whether `signsIn` and `runtimeEnv` are what its `frontx.gdl` declares
+   *  rather than what the scan guessed from its files. */
+  described?: boolean;
+  /** How it is built and served and what it reads, as its passport says;
+   *  `null` when it has no passport that says. */
+  passport?: ShellPassport | null;
+  /** Where its passport disagrees with its package.json or workspace. */
+  drift?: string[];
 }
 
 const FRONTX_SCOPE = "@gears-frontx/";
@@ -401,10 +529,12 @@ export function shellsFrom(nodes: CatalogNode[], profiles: Record<string, Record
     const name = str(v.name) ?? n.instance_id;
     const auto = (profiles[name]?.auto ?? {}) as Record<string, unknown>;
     const own = auto.carries && typeof auto.carries === "object" ? (auto.carries as Record<string, unknown>) : null;
-    if (!own || Object.keys(own).length === 0) continue;
+    // A package whose frontx.gdl says `shell(...)` is one, carried packages or not.
+    const described = frontxKindOf(auto) === "shell";
+    if (!described && (!own || Object.keys(own).length === 0)) continue;
     const version = str(v.max_version) ?? str(v.newest_version) ?? textOf(auto.version);
     const carries: Record<string, string> = { ...frontxPins(auto.deps_versions) };
-    for (const [k, ver] of Object.entries(own)) if (typeof ver === "string") carries[k] = ver;
+    for (const [k, ver] of Object.entries(own ?? {})) if (typeof ver === "string") carries[k] = ver;
     if (version) carries[name] = version;
     out.push({
       name,
@@ -414,6 +544,9 @@ export function shellsFrom(nodes: CatalogNode[], profiles: Record<string, Record
       carries,
       signsIn: typeof auto.shell_signin === "boolean" ? auto.shell_signin : null,
       runtimeEnv: typeof auto.shell_runtime_env === "boolean" ? auto.shell_runtime_env : null,
+      described,
+      passport: described ? shellPassportOf(auto) : null,
+      drift: passportDriftOf(auto),
     });
   }
   return out.sort(

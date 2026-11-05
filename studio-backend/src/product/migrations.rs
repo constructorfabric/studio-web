@@ -10,7 +10,7 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001::Migration)]
+        vec![Box::new(m0001::Migration), Box::new(m0002::Migration)]
     }
 }
 
@@ -71,6 +71,50 @@ CREATE TABLE IF NOT EXISTS studio_product_descriptions (
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_product_descriptions;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Each revision's lock: the commit of every source its text uses, taken at
+/// save (ADR-0060 §3).
+mod m0002 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0002_studio_product_descriptions_sources_lock"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(
+                    "studio-product migrations: only PostgreSQL is supported".to_owned(),
+                ));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_product_descriptions ADD COLUMN IF NOT EXISTS sources_lock TEXT NULL;",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_product_descriptions DROP COLUMN IF EXISTS sources_lock;",
+                )
                 .await?;
             Ok(())
         }

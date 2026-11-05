@@ -33,6 +33,10 @@ import {
   type Hypothesis,
 } from "./need-view";
 import type { SpecModelFact, SpecRequirement } from "./spec-model";
+import { EmptyState, InfoPopover, KpiTile, StatusChip, type Tone } from "./ui-standard";
+
+/** How an evidence state reads as a StatusChip. */
+const EVIDENCE_TONE: Record<EvidenceState, Tone> = { unchecked: "neutral", supports: "ok", contradicts: "danger", insufficient: "warn" };
 
 type OpenFile = ((path: string) => void) | undefined;
 
@@ -209,18 +213,17 @@ export function NeedsScreen({
     return (
       <div className="nd">
         {intake}
-        <div className="empty">
-          No problems, goals or ideas read yet. They come from the project&apos;s materials — interviews, requests, a
-          PRD&apos;s problem statement — once a build reads them with the current extractor.
-        </div>
+        <EmptyState
+          title="No problems, goals or ideas read yet."
+          body={<>They come from the project&apos;s materials — interviews, requests, a PRD&apos;s problem statement — once a build reads them with the current extractor.</>}
+        />
       </div>
     );
   return (
     <div className="nd">
       <p className="dm-howto">
-        <b>What the need is.</b> Who has which problem, what they want to reach and what the materials propose, each with
-        the passage it comes from. Accept or reject each reading; a link nobody stated is shown as a gap, never filled in.
-        What you accept becomes the need, proposed as a document.
+        <b>What the need is.</b>{" "}
+        <InfoPopover label="How to read this">Who has which problem, what they want to reach and what the materials propose, each with the passage it comes from. Accept or reject each reading; a link nobody stated is shown as a gap, never filled in. What you accept becomes the need, proposed as a document.</InfoPopover>
       </p>
       {intake}
       {gaps.length > 0 && (
@@ -230,9 +233,9 @@ export function NeedsScreen({
           </summary>
           {gaps.map((g, i) => (
             <div key={i} className="dm-rproblem">
-              <span className="dm-pill dm-warn">
+              <StatusChip tone="warn">
                 {g.kind === "problem-without-idea" ? "No solution" : g.kind === "idea-without-problem" ? "No problem" : "No need"}
-              </span>
+              </StatusChip>
               <div>
                 <b>{g.title}.</b>
                 {g.fact && (
@@ -276,7 +279,7 @@ export function NeedsScreen({
           ]}
           empty={{ title: "Nothing matches." }}
           columns={[
-            { id: "kind", header: "Kind", cell: (r) => <span className="dm-pill dm-warn">{r.kind}</span> },
+            { id: "kind", header: "Kind", cell: (r) => <StatusChip tone="warn">{r.kind}</StatusChip> },
             {
               id: "what",
               header: "What",
@@ -352,10 +355,10 @@ export function HypothesesScreen({
   const edit = (i: number, h: Hypothesis, patch: Partial<Check>) => setDraft((d) => ({ ...d, [i]: { ...checkAt(i, h), ...patch } }));
   if (list.length === 0)
     return (
-      <div className="empty">
-        No expected benefits read yet. A hypothesis comes from what someone expects a solution to do for someone — “the search
-        will let operators find a request in seconds” — once a build reads it with the current extractor.
-      </div>
+      <EmptyState
+        title="No expected benefits read yet."
+        body={<>A hypothesis comes from what someone expects a solution to do for someone — “the search will let operators find a request in seconds” — once a build reads it with the current extractor.</>}
+      />
     );
   const counts = list.reduce<Record<EvidenceState, number>>(
     (c, h) => ({ ...c, [stateOf(h.fact)]: c[stateOf(h.fact)] + 1 }),
@@ -364,9 +367,8 @@ export function HypothesesScreen({
   return (
     <div className="nd">
       <p className="dm-howto">
-        <b>Check what is expected, not what is written.</b> Each benefit someone expects is a hypothesis: which solution,
-        for whom, with what effect. Studio proposes how to check it; what the check found is yours to record. Accepting the
-        wording is not validating it, and an unchecked hypothesis stops nothing.
+        <b>Check what is expected, not what is written.</b>{" "}
+        <InfoPopover label="How to read this">Each benefit someone expects is a hypothesis: which solution, for whom, with what effect. Studio proposes how to check it; what the check found is yours to record. Accepting the wording is not validating it, and an unchecked hypothesis stops nothing.</InfoPopover>
       </p>
       {(onPropose || kitNote) && (
         <div className="dm-actions">
@@ -425,7 +427,7 @@ export function HypothesesScreen({
           ]}
           empty={{ title: "Nothing matches." }}
           columns={[
-            { id: "state", header: "State", cell: (r) => <span className={`dm-pill dm-warn nd-ev-${r.state}`}>{EVIDENCE_LABEL[r.state]}</span> },
+            { id: "state", header: "State", cell: (r) => <StatusChip tone={EVIDENCE_TONE[r.state]} data-evidence={r.state}>{EVIDENCE_LABEL[r.state]}</StatusChip> },
             { id: "solution", header: "Solution", compare: (a, b) => a.h.solution.localeCompare(b.h.solution), cell: (r) => <b>{r.h.solution || <i>not named</i>}</b> },
             { id: "role", header: "For whom", cell: (r) => r.h.role || <i className="sub">not named</i> },
             { id: "effect", header: "Expected", cell: (r) => r.h.effect || <i className="sub">not stated</i> },
@@ -589,7 +591,7 @@ export function BehaviourScreen({
       </summary>
       {blocked.map((b, i) => (
         <div key={i} className="dm-rproblem">
-          <span className="dm-pill dm-bad">Cannot happen</span>
+          <StatusChip tone="danger">Cannot happen</StatusChip>
           <div>
             <b>{b.witness}.</b>
             <FactRow fact={b.fact} onOpenFile={onOpenFile} />
@@ -603,10 +605,10 @@ export function BehaviourScreen({
     return (
       <div className="nd">
         {cannot}
-        <div className="empty">
-          No behaviour questions yet. They come from an entity&apos;s states (a lifecycle that lists them) and the actions roles
-          take on it, once a build reads them with the current extractor.
-        </div>
+        <EmptyState
+          title="No behaviour questions yet."
+          body={<>They come from an entity&apos;s states (a lifecycle that lists them) and the actions roles take on it, once a build reads them with the current extractor.</>}
+        />
       </div>
     );
   const excluded = list.filter((o) => decisionOf(o.key)?.state === "excluded");
@@ -650,10 +652,8 @@ export function BehaviourScreen({
   return (
     <div className="nd">
       <p className="dm-howto">
-        <b>What the specification must say about behaviour.</b> For each action roles take on a thing and each state it goes
-        through: may it happen then? A question is answered only where one passage names both; otherwise answer it in the
-        documents, or exclude it with a reason. What a rule you accepted forbids is shown first. None of this blocks a
-        build.
+        <b>What the specification must say about behaviour.</b>{" "}
+        <InfoPopover label="How to read this">For each action roles take on a thing and each state it goes through: may it happen then? A question is answered only where one passage names both; otherwise answer it in the documents, or exclude it with a reason. What a rule you accepted forbids is shown first. None of this blocks a build.</InfoPopover>
       </p>
       {cannot}
       <div className="card">
@@ -691,7 +691,7 @@ export function BehaviourScreen({
             {
               id: "status",
               header: "Status",
-              cell: (o) => <span className={`dm-pill ${statusOf(o) === "open" ? "dm-warn" : "dm-ok"}`}>{statusOf(o) === "open" ? "not answered" : statusOf(o)}</span>,
+              cell: (o) => <StatusChip tone={statusOf(o) === "open" ? "warn" : "ok"}>{statusOf(o) === "open" ? "not answered" : statusOf(o)}</StatusChip>,
             },
             {
               id: "question",
@@ -735,32 +735,21 @@ export function RulesScreen({
   return (
     <div className="nd">
       <p className="dm-howto">
-        <b>Check the rules against each other.</b> Only rules a member accepted are checked. Each is read into a precise
-        form — who may do what, a number that bounds something — shown so you can say it is what the rule means. Two that
-        cannot both hold are a conflict, shown with both passages.
+        <b>Check the rules against each other.</b>{" "}
+        <InfoPopover label="How to read this">Only rules a member accepted are checked. Each is read into a precise form — who may do what, a number that bounds something — shown so you can say it is what the rule means. Two that cannot both hold are a conflict, shown with both passages.</InfoPopover>
       </p>
-      <div className="dm-filters">
-        <span className={`chip${found.length ? " nd-ev-contradicts" : ""}`}>
-          Conflicts <span className="chip-n">{found.length}</span>
-        </span>
-        <span className="chip">
-          Read <span className="chip-n">{read.length}</span>
-        </span>
-        <span className="chip">
-          Incomplete <span className="chip-n">{incomplete.length}</span>
-        </span>
-        <span className="chip">
-          Unsupported <span className="chip-n">{unsupported.length}</span>
-        </span>
-        <span className="chip">
-          Not accepted yet <span className="chip-n">{pending}</span>
-        </span>
+      <div className="dash-stats" data-rule-counts>
+        <KpiTile label="Conflicts" value={found.length} tone={found.length ? "danger" : "ok"} />
+        <KpiTile label="Read" value={read.length} />
+        <KpiTile label="Incomplete" value={incomplete.length} tone={incomplete.length ? "warn" : undefined} />
+        <KpiTile label="Unsupported" value={unsupported.length} tone={unsupported.length ? "warn" : undefined} />
+        <KpiTile label="Not accepted yet" value={pending} />
       </div>
       {confirmed.length === 0 && (
-        <div className="empty">
-          No rule is accepted yet. Accept the constraints you agree with on an entity&apos;s card; only those are checked, so
-          an unconfirmed reading never becomes a verdict.
-        </div>
+        <EmptyState
+          title="No rule is accepted yet."
+          body="Accept the constraints you agree with on an entity's card; only those are checked, so an unconfirmed reading never becomes a verdict."
+        />
       )}
       {confirmed.length > 0 && (
         <div className="card">
@@ -794,9 +783,9 @@ export function RulesScreen({
                 header: "Outcome",
                 cell: (x) =>
                   x.conflict ? (
-                    <span className="dm-pill dm-bad">conflict</span>
+                    <StatusChip tone="danger">conflict</StatusChip>
                   ) : (
-                    <span className={`dm-pill ${x.r.outcome === "read" ? "dm-ok" : "dm-warn"}`}>{x.r.outcome}</span>
+                    <StatusChip tone={x.r.outcome === "read" ? "ok" : "warn"}>{x.r.outcome}</StatusChip>
                   ),
               },
               { id: "subject", header: "About", compare: (a, b) => a.r.fact.subject.localeCompare(b.r.fact.subject), cell: (x) => <b>{x.r.fact.subject}</b> },
