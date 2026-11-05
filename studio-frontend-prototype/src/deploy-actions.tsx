@@ -124,12 +124,15 @@ export function EnvironmentActions({
   deployments,
   builds,
   envName,
+  organizationId,
   onChanged,
 }: {
   token: string;
   projectId: string;
   env: DeployEnvironment;
   latest: Deployment | undefined;
+  /** The project's organization: an administrator decides its deploys here. */
+  organizationId?: string;
   deployments: Deployment[];
   builds: IdeBuild[];
   envName: (id: string) => string;
@@ -144,6 +147,9 @@ export function EnvironmentActions({
   const candidates = deployableBuilds(builds, env);
   const back = rollbackTarget(deployments, env.id);
   const previews = env.kind !== "research" && !!env.previews;
+  // A deploy that waits for a decision is decided before another is asked:
+  // a second request would only wait beside it.
+  const waiting = deployments.filter((d) => d.environment_id === env.id && d.state === "awaiting_approval");
   const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string) => {
     if (await request.ask(body, what)) {
       setPicking(false);
@@ -152,8 +158,17 @@ export function EnvironmentActions({
   };
   return (
     <div className="deploy-actions" data-environment-actions={env.name}>
+      {waiting.length > 0 && (
+        <PendingDecisions token={token} organizationId={organizationId} waiting={waiting} onChanged={onChanged} />
+      )}
       <div className="row">
-        <button type="button" className="primary" disabled={busy} onClick={() => setPicking((v) => !v)}>
+        <button
+          type="button"
+          className="primary"
+          disabled={busy || waiting.length > 0}
+          title={waiting.length > 0 ? "A deploy here waits for a decision: approve or decline it first" : undefined}
+          onClick={() => setPicking((v) => !v)}
+        >
           Deploy a build…
         </button>
         {back && (
@@ -247,6 +262,94 @@ export function EnvironmentActions({
         </div>
       )}
       {env.kind !== "research" && <InfraPlanView token={token} projectId={projectId} environmentId={env.id} />}
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+
+/** The deploys to one environment that wait for an administrator, decided
+ *  where they were asked. Whoever may not decide sees who does. */
+function PendingDecisions({
+  token,
+  organizationId,
+  waiting,
+  onChanged,
+}: {
+  token: string;
+  organizationId?: string;
+  waiting: Deployment[];
+  onChanged: (message: string) => void;
+}) {
+  const [mayDecide, setMayDecide] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [declining, setDeclining] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  useEffect(() => {
+    if (!organizationId) return;
+    let live = true;
+    api
+      .environments(token, organizationId)
+      .then((r) => live && setMayDecide(r.may_manage))
+      .catch(() => live && setMayDecide(false));
+    return () => {
+      live = false;
+    };
+  }, [token, organizationId]);
+  const decide = async (d: Deployment, action: "approve" | "decline") => {
+    if (!organizationId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.decideDeployment(token, organizationId, d.id, action, action === "decline" ? reason.trim() : undefined);
+      setDeclining(null);
+      setReason("");
+      onChanged(
+        action === "approve"
+          ? `Approved: ${d.chart_version ?? d.build ?? d.product} goes to ${d.environment_name}.`
+          : `Declined the deploy of ${d.chart_version ?? d.build ?? d.product} to ${d.environment_name}.`,
+      );
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="deploy-pick" data-deploys-waiting>
+      <ul className="rows">
+        {waiting.map((d) => (
+          <li key={d.id} style={{ flexWrap: "wrap" }}>
+            <div className="grow">
+              <StatusChip tone="warn">waits for a decision</StatusChip> <b>{d.chart_version ?? d.build ?? d.product}</b>{" "}
+              {d.commit && <code>{shortCommit(d.commit)}</code>}{" "}
+              <span className="sub">
+                asked by {d.requested_by_name || d.requested_by} {relTime(d.requested_at)}
+              </span>
+            </div>
+            {mayDecide ? (
+              <>
+                <button type="button" className="primary" disabled={busy} data-deploy-approve onClick={() => void decide(d, "approve")}>
+                  Approve
+                </button>
+                <button type="button" disabled={busy} onClick={() => setDeclining(declining === d.id ? null : d.id)}>
+                  Decline…
+                </button>
+                {declining === d.id && (
+                  <>
+                    <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="required: why not" aria-label="Reason" />
+                    <button type="button" disabled={busy || !reason.trim()} onClick={() => void decide(d, "decline")}>
+                      Decline
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <span className="hint">An organization administrator decides.</span>
+            )}
+          </li>
+        ))}
+      </ul>
       {error && <div className="error">{error}</div>}
     </div>
   );

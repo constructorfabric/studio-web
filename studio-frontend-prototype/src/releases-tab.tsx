@@ -307,6 +307,7 @@ export function ProjectReleases({
             deployments={deployments}
             builds={builds}
             envName={envName}
+            organizationId={targets.organization_id}
             onChanged={changed}
           />
           <EnvironmentPreviews
