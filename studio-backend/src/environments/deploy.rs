@@ -28,7 +28,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::database;
-use super::model::{ChartRef, DatabaseMode, DeploymentAction};
+use super::model::{ChartRef, DatabaseMode, DeployImage, DeploymentAction};
 use super::preflight;
 use crate::connectors::sdk::{ClusterAccess, Connectors, RegistryAccess, same_registry};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
@@ -101,6 +101,11 @@ pub struct DeployPayload {
     pub connections_from: Option<Uuid>,
     /// Values given to the chart: the images under the environment's registry.
     pub values: serde_json::Value,
+    /// The images the release is to run, under the environment's registry:
+    /// what the rendered chart must name (`CHART_IGNORES_BUILT_IMAGES`).
+    /// Absent from a payload queued before it was carried.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<DeployImage>,
     /// A deploy to a Constructor Research environment (ADR-0049 §4): what it
     /// prepares and where it puts the application. `None` for a cluster.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -344,10 +349,21 @@ impl TaskHandler for DeployTask {
             Ok(s) => s,
             Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
         };
-        let prepared = match prepare(&scratch, &access, registry.as_ref(), &payload) {
+        let mut prepared = match prepare(&scratch, &access, registry.as_ref(), &payload) {
             Ok(p) => p,
             Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
         };
+        // A build's chart is installed as the build pushed it: pulled by its
+        // version, its digest checked, then installed from the pulled file,
+        // so a version pushed over since installs nothing.
+        if let Some(digest) = payload.chart_ref.as_ref().and_then(|r| r.digest.clone()) {
+            ctx.progress(format!("pulling the chart, pinned to {digest}"))
+                .await;
+            match pull_pinned(&scratch, &payload, &prepared, &digest, &ctx.cancel).await {
+                Ok(path) => prepared.chart = path,
+                Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+            }
+        }
         ctx.progress("reading what the chart needs").await;
         let rendered = match helm(
             &scratch,
@@ -359,6 +375,21 @@ impl TaskHandler for DeployTask {
             Ok(out) => out,
             Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
         };
+        // The release runs what was built, or nothing: a chart that reads its
+        // images from other values would install its own defaults.
+        if let Some(apps) = images_ignored(&rendered, &payload.images) {
+            return TaskOutcome::Failed(format!(
+                "CHART_IGNORES_BUILT_IMAGES: the rendered chart names none of the images built \
+                 for {}: set where the chart reads each image (the build's values paths) or \
+                 the chart's values",
+                apps.join(", ")
+            ));
+        }
+        let mut notes = Vec::new();
+        if let Some(why) = secret_unread(&rendered, &payload) {
+            ctx.progress(format!("warning: {why}")).await;
+            notes.push(why);
+        }
         let needs = match database::needs(&rendered) {
             Ok(n) => n,
             // Without a database of Studio's to prepare, a configuration it
@@ -454,6 +485,9 @@ impl TaskHandler for DeployTask {
             "studio-environments: release installed"
         );
         let mut summary = format!("{} installed into {}", payload.release, payload.namespace);
+        for note in notes {
+            summary = format!("{summary}; warning: {note}");
+        }
         if let Some(route) = &payload.preview {
             ctx.progress("routing the preview's address").await;
             match super::preview::apply_route(&client, &payload.namespace, &payload.release, route)
@@ -882,7 +916,11 @@ pub fn helm_template_args(p: &DeployPayload, c: &Prepared) -> Vec<String> {
 }
 
 fn chart_source_args(p: &DeployPayload, c: &Prepared, args: &mut Vec<String>) {
-    if let Some(r) = &p.chart_ref {
+    // A chart pulled by its digest is a file by now; only a reference has a
+    // version to name.
+    if let Some(r) = &p.chart_ref
+        && c.chart.starts_with("oci://")
+    {
         args.push("--version".into());
         args.push(r.version.clone());
     }
@@ -890,6 +928,99 @@ fn chart_source_args(p: &DeployPayload, c: &Prepared, args: &mut Vec<String>) {
         args.push("--registry-config".into());
         args.push(config.display().to_string());
     }
+}
+
+/// The arguments that pull a published chart into `dest`, by its version.
+pub fn helm_pull_args(p: &DeployPayload, c: &Prepared, dest: &Path) -> Vec<String> {
+    let mut args: Vec<String> = vec!["pull".into(), c.chart.clone()];
+    if let Some(r) = &p.chart_ref {
+        args.push("--version".into());
+        args.push(r.version.clone());
+    }
+    args.push("--destination".into());
+    args.push(dest.display().to_string());
+    if let Some(config) = &c.registry_config {
+        args.push("--registry-config".into());
+        args.push(config.display().to_string());
+    }
+    args
+}
+
+/// Whether what `helm pull` said it pulled is the digest the build recorded.
+pub fn check_pulled_digest(output: &str, expected: &str) -> anyhow::Result<()> {
+    match super::build::pushed_digest(output) {
+        Some(d) if d == expected => Ok(()),
+        Some(d) => Err(anyhow!(
+            "CHART_DIGEST_MISMATCH: the registry holds {d} under the chart's version, not the \
+             {expected} the build pushed -- the version was pushed over since"
+        )),
+        None => Err(anyhow!(
+            "helm pull said no digest for the chart, so it cannot be checked against the \
+             build's {expected}"
+        )),
+    }
+}
+
+/// The chart pulled, its digest checked, and the pulled file's path.
+async fn pull_pinned(
+    scratch: &Scratch,
+    p: &DeployPayload,
+    c: &Prepared,
+    digest: &str,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<String> {
+    let dest = scratch.path().join("pulled");
+    std::fs::create_dir_all(&dest).context("cannot create the chart's folder")?;
+    let out = helm(scratch, helm_pull_args(p, c, &dest), cancel).await?;
+    check_pulled_digest(&out, digest)?;
+    let mut tgz = std::fs::read_dir(&dest)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "tgz"));
+    let path = tgz
+        .next()
+        .ok_or_else(|| anyhow!("helm pull left no chart"))?;
+    Ok(path.display().to_string())
+}
+
+/// The applications whose built images the rendered chart names nowhere,
+/// when it names none of them: each image is looked for by its digest and
+/// by `repository:tag`. `None` when one appears, or there is nothing to
+/// look for.
+pub fn images_ignored(rendered: &str, images: &[DeployImage]) -> Option<Vec<String>> {
+    let mut apps = Vec::new();
+    for i in images {
+        let (name, digest) = match i.image.split_once('@') {
+            Some((name, digest)) => (name, Some(digest)),
+            None => (i.image.as_str(), None),
+        };
+        let (repository, tag) = super::model::split_image(name);
+        let marks: Vec<String> = digest
+            .map(str::to_owned)
+            .into_iter()
+            .chain(tag.map(|t| format!("{repository}:{t}")))
+            .collect();
+        if marks.is_empty() {
+            continue;
+        }
+        if marks.iter().any(|m| rendered.contains(m.as_str())) {
+            return None;
+        }
+        apps.push(i.app.clone());
+    }
+    (!apps.is_empty()).then_some(apps)
+}
+
+/// Why the release's configuration secret reaches no application: it has
+/// keys, and the rendered chart never names it.
+pub fn secret_unread(rendered: &str, p: &DeployPayload) -> Option<String> {
+    let name = super::model::config_secret_name(&p.release);
+    (!p.secret_keys.is_empty() && !rendered.contains(&name)).then(|| {
+        format!(
+            "the chart reads no configuration secret {name}, so {} reach(es) no application: \
+             set where the chart reads it (the build's values paths)",
+            p.secret_keys.join(", ")
+        )
+    })
 }
 
 /// Run helm with `args`, its homes under the scratch directory: the
@@ -1388,6 +1519,7 @@ mod tests {
             build_namespace: None,
             preview: None,
             infra: Vec::new(),
+            images: Vec::new(),
         }
     }
 
@@ -1398,6 +1530,72 @@ mod tests {
             kubeconfig: "/s/kubeconfig".into(),
             registry_config: registry.then(|| "/s/registry.json".into()),
         }
+    }
+
+    const DIGEST: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+
+    #[test]
+    fn a_builds_chart_is_pulled_by_its_version_checked_and_installed_from_the_file() {
+        let mut p = payload();
+        p.chart = None;
+        p.chart_ref = Some(ChartRef {
+            reference: "oci://ghcr.io/acme/charts/shop".into(),
+            version: "0.1.0-sha.abc.r4".into(),
+            digest: Some(DIGEST.into()),
+        });
+        let c = prepared("oci://ghcr.io/acme/charts/shop", true);
+        let pull = helm_pull_args(&p, &c, Path::new("/s/pulled")).join(" ");
+        assert!(pull.starts_with("pull oci://ghcr.io/acme/charts/shop --version 0.1.0-sha.abc.r4"));
+        assert!(pull.contains("--destination /s/pulled"));
+        assert!(pull.contains("--registry-config /s/registry.json"));
+        let said = format!("Pulled: ghcr.io/acme/charts/shop:0.1.0-sha.abc.r4\nDigest: {DIGEST}\n");
+        assert!(check_pulled_digest(&said, DIGEST).is_ok());
+        let other = said.replace("sha256:1111", "sha256:2222");
+        let why = check_pulled_digest(&other, DIGEST).unwrap_err().to_string();
+        assert!(why.starts_with("CHART_DIGEST_MISMATCH"), "{why}");
+        assert!(check_pulled_digest("Pulled: x\n", DIGEST).is_err());
+        // Pulled, it installs from the file: no version to name.
+        let line = helm_args(&p, &prepared("/s/pulled/shop-0.1.0.tgz", true)).join(" ");
+        assert!(line.starts_with("upgrade --install studio-web /s/pulled/shop-0.1.0.tgz"));
+        assert!(!line.contains("--version"));
+    }
+
+    #[test]
+    fn a_chart_that_names_none_of_the_built_images_is_refused() {
+        let images = [
+            DeployImage {
+                app: "api".into(),
+                image: format!("ghcr.io/acme/shop/api:sha-abc@{DIGEST}"),
+            },
+            DeployImage {
+                app: "web".into(),
+                image: "ghcr.io/acme/shop/web:sha-abc".into(),
+            },
+        ];
+        let defaults = "image: \"nginx:1.27\"\n---\nimage: \"ghcr.io/acme/shop/api:latest\"\n";
+        assert_eq!(
+            images_ignored(defaults, &images),
+            Some(vec!["api".to_owned(), "web".to_owned()])
+        );
+        let by_digest = format!("image: \"ghcr.io/acme/shop/api:sha-abc@{DIGEST}\"\n");
+        assert_eq!(images_ignored(&by_digest, &images), None);
+        let by_tag = "image: ghcr.io/acme/shop/web:sha-abc\n";
+        assert_eq!(images_ignored(by_tag, &images), None);
+        // Nothing built, nothing to look for.
+        assert_eq!(images_ignored(defaults, &[]), None);
+    }
+
+    #[test]
+    fn a_configuration_secret_the_chart_never_names_is_said() {
+        let mut p = payload();
+        assert_eq!(secret_unread("kind: Deployment\n", &p), None, "no keys");
+        p.secret_keys = vec!["SMTP_PASSWORD".into()];
+        let why = secret_unread("kind: Deployment\n", &p).unwrap();
+        assert!(why.contains("studio-web-config") && why.contains("SMTP_PASSWORD"));
+        assert_eq!(
+            secret_unread("secretRef:\n  name: studio-web-config\n", &p),
+            None
+        );
     }
 
     #[test]
@@ -1420,6 +1618,7 @@ mod tests {
         p.chart_ref = Some(ChartRef {
             reference: "oci://ghcr.io/acme/charts/shop".into(),
             version: "0.1.0".into(),
+            digest: None,
         });
         let line =
             helm_template_args(&p, &prepared("oci://ghcr.io/acme/charts/shop", true)).join(" ");
@@ -1524,6 +1723,7 @@ mod tests {
         p.chart_ref = Some(ChartRef {
             reference: "oci://ghcr.io/acme/charts/shop".into(),
             version: "0.1.0".into(),
+            digest: None,
         });
         let line = helm_args(&p, &prepared("oci://ghcr.io/acme/charts/shop", true)).join(" ");
         assert!(line.starts_with("upgrade --install studio-web oci://ghcr.io/acme/charts/shop"));

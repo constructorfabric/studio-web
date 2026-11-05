@@ -273,7 +273,8 @@ pub struct ProjectBuildDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request, response)]
 pub struct OwnImageDto {
-    /// The chart's values key: a deploy sets `<app>.image.repository` and `.tag`.
+    /// The application: by default a deploy sets `<app>.image.repository`
+    /// and `.tag`, `<app>.existingSecret` and `.secretKeys`.
     pub app: String,
     /// The image's name under the environment's registry.
     pub name: String,
@@ -282,6 +283,25 @@ pub struct OwnImageDto {
     /// From the repository's root; `.` by default.
     #[serde(default)]
     pub context: Option<String>,
+    /// The values path the chart reads the image's repository at
+    /// (`backend.image.repository`); default `<app>.image.repository`.
+    #[serde(default)]
+    pub repository_path: Option<String>,
+    /// The values path of its tag; default `<app>.image.tag`.
+    #[serde(default)]
+    pub tag_path: Option<String>,
+    /// For a chart that reads the image as one string: its values path, in
+    /// place of `repository_path` and `tag_path`.
+    #[serde(default)]
+    pub image_path: Option<String>,
+    /// The values path of the configuration secret's name; default
+    /// `<app>.existingSecret`.
+    #[serde(default)]
+    pub secret_name_path: Option<String>,
+    /// The values path of the configuration secret's keys; default
+    /// `<app>.secretKeys`.
+    #[serde(default)]
+    pub secret_keys_path: Option<String>,
 }
 
 fn build_dto(b: Option<super::model::OwnBuild>) -> ProjectBuildDto {
@@ -301,6 +321,11 @@ fn build_dto(b: Option<super::model::OwnBuild>) -> ProjectBuildDto {
                     name: i.name,
                     dockerfile: i.dockerfile,
                     context: Some(i.context),
+                    repository_path: i.values.repository,
+                    tag_path: i.values.tag,
+                    image_path: i.values.image,
+                    secret_name_path: i.values.secret_name,
+                    secret_keys_path: i.values.secret_keys,
                 })
                 .collect(),
             chart: Some(b.chart),
@@ -320,6 +345,13 @@ fn own_build(r: ProjectBuildDto) -> Result<Option<super::model::OwnBuild>, Canon
                     name: i.name,
                     dockerfile: i.dockerfile,
                     context: i.context.unwrap_or_else(|| ".".into()),
+                    values: super::model::ValuesPaths {
+                        repository: i.repository_path,
+                        tag: i.tag_path,
+                        image: i.image_path,
+                        secret_name: i.secret_name_path,
+                        secret_keys: i.secret_keys_path,
+                    },
                 })
                 .collect(),
             chart: r.chart.unwrap_or_default(),

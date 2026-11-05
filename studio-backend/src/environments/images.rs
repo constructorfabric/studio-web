@@ -587,6 +587,20 @@ pub fn runs(r: &ImageRecord, d: &super::model::Deployment) -> bool {
     }
 }
 
+/// The digest `chart` was pushed as, from a build's records: the chart
+/// record at its reference and version.
+pub fn chart_digest(records: &[ImageRecord], chart: &super::model::ChartRef) -> Option<String> {
+    records
+        .iter()
+        .find(|r| {
+            r.kind == ImageKind::Chart
+                && r.chart_ref() == chart.reference
+                && r.tags.contains(&chart.version)
+                && is_digest(&r.digest)
+        })
+        .map(|r| r.digest.clone())
+}
+
 #[cfg(test)]
 #[path = "images_tests.rs"]
 mod tests;

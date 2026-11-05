@@ -211,6 +211,9 @@ struct Config {
     build_namespace: Option<String>,
     /// The product's infra services, as the run brings them (ADR-0064).
     infra: Vec<super::infra::InfraInstall>,
+    /// The repository's own build (ADR-0054 §7): where its chart reads the
+    /// images and the configuration secret.
+    own: Option<model::OwnBuild>,
 }
 
 pub struct EnvironmentService {
@@ -248,6 +251,17 @@ fn check_hash(field: &'static str, v: Option<String>) -> Result<Option<String>> 
     } else {
         Err(Refusal::Invalid(format!("{field} '{v}' is not a hex hash")))
     }
+}
+
+/// A deploy refused for repeating one that waits for a decision.
+fn already_waiting(waiting: Uuid) -> Refusal {
+    Refusal::Conflict(
+        "DEPLOY_ALREADY_WAITING",
+        format!(
+            "deployment {waiting} of this release already waits for a decision in this \
+             environment: approve or decline it rather than asking again"
+        ),
+    )
 }
 
 /// A build id as the IDE makes one: 8 to 64 letters, digits and hyphens.
@@ -1482,6 +1496,7 @@ impl EnvironmentService {
                 .and_then(|b| b.values),
             secret_keys,
             build_namespace: None,
+            own: list.build,
         })
     }
 
@@ -1520,13 +1535,47 @@ impl EnvironmentService {
                 config.values.as_ref(),
                 &config.secret_keys,
                 &d.product,
+                config.own.as_ref(),
             ),
+            images: d
+                .images
+                .iter()
+                .map(|i| DeployImage {
+                    app: i.app.clone(),
+                    image: env.image(&i.image),
+                })
+                .collect(),
             research: d.research.clone(),
             preview: d.preview.as_ref().map(|p| PreviewRoute {
                 expires_at: p.expires_at.clone(),
                 host: p.host.clone(),
                 ingress_class: env.previews.as_ref().and_then(|s| s.ingress_class.clone()),
             }),
+        }
+    }
+
+    /// The digest build `build` pushed `chart` as, from the project's image
+    /// records (ADR-0062 §4); `None` without records, or a build that
+    /// recorded none.
+    async fn chart_digest(
+        &self,
+        org: Uuid,
+        project: Uuid,
+        build: &str,
+        chart: &model::ChartRef,
+    ) -> Option<String> {
+        let records = self.records()?;
+        let filter = super::records::ImageFilter {
+            kind: Some(super::images::ImageKind::Chart),
+            build_id: Some(build.to_owned()),
+            ..Default::default()
+        };
+        match records.images(org, project, &filter, 0, 50).await {
+            Ok((found, _)) => super::images::chart_digest(&found, chart),
+            Err(e) => {
+                tracing::warn!(error = ?e, %build, "studio-environments: the build's chart digest could not be read; the chart installs by its version");
+                None
+            }
         }
     }
 
@@ -1704,6 +1753,18 @@ impl EnvironmentService {
             d.commit = check_hash("commit", req.commit)?;
             d.lock_hash = check_hash("lock_hash", req.lock_hash)?;
             d.build = check_build(req.build)?;
+            // A build's chart is installed by the digest it was pushed as,
+            // which the record keeps as its sha256: the version alone may
+            // since name another chart.
+            if let (Some(build), Some(chart)) = (d.build.clone(), d.chart_ref.clone())
+                && let Some(digest) = self.chart_digest(org, project, &build, &chart).await
+            {
+                d.chart_sha256 = digest.trim_start_matches("sha256:").to_owned();
+                d.chart_ref = Some(model::ChartRef {
+                    digest: Some(digest),
+                    ..chart
+                });
+            }
             // Only images under the project's own path (ADR-0062 §4).
             d.images = req
                 .images
@@ -2979,7 +3040,23 @@ impl EnvironmentService {
             // A published chart is named on the record; only an uploaded one
             // has to be kept until the decision.
             d.pending_chart = chart;
-            self.record(org, d.clone()).await?;
+            // One request waits for a decision; a second of the same release
+            // would be a second install once both are approved.
+            let svc = self.service(org)?;
+            self.store
+                .update::<DeploymentList, (), Refusal>(
+                    &svc,
+                    org,
+                    DEPLOYMENTS_METADATA_TYPE,
+                    |list| {
+                        if let Some(waiting) = list.waiting_like(&d) {
+                            return Err(already_waiting(waiting));
+                        }
+                        list.record(d.clone());
+                        Ok(())
+                    },
+                )
+                .await??;
         } else {
             // Recorded before it is queued, so the run never finishes before
             // the record of it exists.
