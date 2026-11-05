@@ -665,6 +665,21 @@ gears:
       platform_admins:
         - "00000000-0000-0000-0000-00000000a001"
 
+  # ── studio-environments (slugs, namespace assignments, image records, ADR-0062) ──
+  # PostgreSQL like every other profile; without a database the gear stands
+  # down and serves nothing. The database is `studio_environments` on the
+  # compose server, created by `backend-bootstrap` from docker.yaml, as for
+  # studio-user above. One connection: a few rows per build and deploy.
+  studio-environments:
+    database:
+      server: "pg_main"
+      dbname: "studio_environments"
+      pool:
+        max_conns: 1
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+
   graph-storage:
     database:
       server: "pg_main"
