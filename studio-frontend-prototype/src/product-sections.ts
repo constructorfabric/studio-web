@@ -35,7 +35,7 @@ export type ProductSectionId = "map" | "parts" | "infrastructure" | "backend" | 
 
 export const PRODUCT_SECTIONS: readonly { id: ProductSectionId; title: string; hint: string }[] = [
   { id: "parts", title: "Parts", hint: "What the project has to make it from, and what it lacks" },
-  { id: "infrastructure", title: "Infrastructure", hint: "Where it runs: its environments, their profiles and databases" },
+  { id: "infrastructure", title: "Infrastructure", hint: "What its gears need beside them, the services that meet it, and where it runs" },
   { id: "backend", title: "Backend", hint: "The gears it is composed from" },
   { id: "frontend", title: "Frontend", hint: "A FrontX shell with micro-frontends, if it has one" },
 ];

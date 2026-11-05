@@ -2,24 +2,40 @@
  *  - InfraLane: the product map's Infrastructure tab, each need of the gears
  *    bound to a deployable service, its image or chart source, and import;
  *  - InfraPlacementField: the environment form's placement setting;
- *  - InfraPlanView: what a deploy to an environment installs. */
+ *  - InfraPlanView: what a deploy to an environment installs;
+ *  - ProductInfraServices: Product › Infrastructure, the editor -- needs and
+ *    what meets them per environment, the services (add, image, ready chart,
+ *    public address, remove), and the links to the gears' config fields. */
 
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
   type DeployEnvironment,
   type DeployEnvironmentInput,
+  type GearConfig,
   type InfraPassport,
   type InfraPlan,
   type InfraService,
   type ProductTechnology,
+  type ProjectImage,
 } from "./api";
+import { DataTable, useConfirm } from "./data-table";
+import { gearKey } from "./frontend-constructor";
 import {
   bindNeeds,
+  configLines,
   deployable,
   importedFrom,
+  infraRows,
+  linkedConfig,
+  linkRows,
+  mirrorIn,
+  needRows,
   offeredInfra,
+  offersFor,
+  parseConfigLines,
   parseShared,
+  patchPassport,
   placementText,
   planItemText,
   planRefusals,
@@ -27,9 +43,20 @@ import {
   sharedAllowed,
   sharedText,
   sourceText,
+  unmetNeeds,
+  unmetWithout,
   variableOf,
+  withoutService,
+  withService,
+  type InfraRow,
+  type LinkRow,
 } from "./infra-services";
+import type { PipelineTab } from "./pipeline";
+import { INFRA_SOURCE_TEXT, infraStore, type InfraLoaded } from "./infra-store";
 import { errText } from "./problem";
+import { gearLabel } from "./product";
+import { describedConfigs, gearConfigOf } from "./product-map";
+import { InfoPopover, StatusChip } from "./ui-standard";
 
 /** The Infrastructure tab of the product map's palette. */
 export function InfraLane({
@@ -54,7 +81,9 @@ export function InfraLane({
   useEffect(() => {
     let live = true;
     Promise.all([
-      api.infraServices(token, projectId).catch(() => ({ items: [] as InfraService[] })),
+      infraStore(token, projectId)
+        .load()
+        .catch(() => ({ items: [] as InfraService[] })),
       api.listComponents(token, projectId).catch(() => ({ nodes: [] })),
     ]).then(([s, c]) => {
       if (!live) return;
@@ -71,7 +100,7 @@ export function InfraLane({
       setBusy(what);
       setError(null);
       try {
-        const saved = await api.putInfraServices(token, projectId, next);
+        const saved = await infraStore(token, projectId).save(next, null);
         setServices(saved.items);
         setNote(what);
       } catch (e) {
@@ -317,5 +346,602 @@ export function InfraPlanView({ token, projectId, environmentId }: { token: stri
         </ul>
       )}
     </details>
+  );
+}
+
+/* ── Product › Infrastructure ─────────────────────────────────────────────── */
+
+/** One place the product runs in, as `infrastructureOf`'s `runsIn` says it. */
+export interface InfraPlace {
+  environment: string;
+  database: string;
+  missing: string[];
+}
+
+/** What the product decides about a service: the publisher image (its
+ *  version) and the passport's literal config. The rest is an environment's. */
+type Editing = { service: string; what: "image" | "config" };
+
+/** The product's infra services as one table, one row per thing that runs
+ *  beside the gears: the environment's own Postgres while no service gives
+ *  the database, then each service. A row opens to its image, its settings,
+ *  its links to gear fields (Link writes `${VARIABLE}` into the product's
+ *  gear config) and each environment. What an environment does -- placement,
+ *  public address, chart, secrets, its mirror copy -- is shown, not edited:
+ *  Releases has it. Every save writes the whole list through the store
+ *  (infra-store.ts). */
+export function ProductInfraServices({
+  token,
+  projectId,
+  needs,
+  places,
+  environments,
+  onOpenTab,
+}: {
+  token: string;
+  projectId: string;
+  /** The engine's needs for the profile shown; null before a check says. */
+  needs: ProductTechnology[] | null;
+  places: readonly InfraPlace[];
+  environments: readonly DeployEnvironment[];
+  /** Opens Releases, where an environment imports its copies. */
+  onOpenTab?: (tab: PipelineTab) => void;
+}) {
+  const [services, setServices] = useState<InfraService[] | null>(null);
+  const [kept, setKept] = useState<Omit<InfraLoaded, "items"> | null>(null);
+  const [offered, setOffered] = useState<InfraPassport[]>([]);
+  const [plans, setPlans] = useState<InfraPlan[]>([]);
+  const [images, setImages] = useState<ProjectImage[]>([]);
+  const [configs, setConfigs] = useState<{ record: GearConfig | undefined; described: Map<string, Record<string, unknown>> }>(
+    () => ({ record: undefined, described: new Map() }),
+  );
+  const [readErr, setReadErr] = useState<string | null>(null);
+  const [round, setRound] = useState(0);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [adding, setAdding] = useState("");
+  const [ask, confirmDialog] = useConfirm();
+  const runs = environments.filter((e) => e.kind !== "research");
+  const envIds = runs.map((e) => e.id).join(",");
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([
+      infraStore(token, projectId).load(),
+      api.listComponents(token, projectId).catch(() => ({ nodes: [] })),
+      api.projectImages(token, projectId, { limit: 200 }).catch(() => ({ items: [] as ProjectImage[], total: 0 })),
+      api.projectProduct(token, projectId).catch(() => null),
+      api.productDescription(token, projectId).catch(() => null),
+      Promise.all(
+        envIds
+          .split(",")
+          .filter(Boolean)
+          .map((id) => api.infraPlan(token, projectId, id).catch(() => null)),
+      ),
+    ])
+      .then(([s, c, im, product, description, ps]) => {
+        if (!live) return;
+        setServices(s.items);
+        setKept({ source: s.source, revision: s.revision });
+        setOffered(offeredInfra(c.nodes ?? []));
+        setImages(im.items);
+        setConfigs({ record: product?.config, described: describedConfigs(description?.latest?.text ?? "") });
+        setPlans(ps.filter((p): p is InfraPlan => !!p));
+        setReadErr(null);
+      })
+      .catch((e) => live && setReadErr(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, envIds, round]);
+
+  /** Write the whole list; the plans are read again, since they follow it. */
+  const save = async (next: InfraService[], what: string): Promise<boolean> => {
+    setBusy(what);
+    setError(null);
+    try {
+      const saved = await infraStore(token, projectId).save(next, kept?.revision ?? null);
+      setServices(saved.items);
+      setKept({ source: saved.source, revision: saved.revision });
+      setNote(what);
+      setRound((r) => r + 1);
+      return true;
+    } catch (e) {
+      setError(errText(e));
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (readErr) return <p className="error">The infra services could not be read: {readErr}</p>;
+  if (services === null) return <p className="muted">Reading the infra services…</p>;
+
+  // A passport the catalogue does not list (any more) still counts: the
+  // project's service can be chosen again after it was swapped out.
+  const known = [...offered, ...services.map((s) => s.passport).filter((p) => !offered.some((o) => o.name === p.name))];
+  const unmet = unmetNeeds(needRows(needs ?? [], services, known, plans, places));
+  const offers = offersFor(known, services, needs);
+  const links = linkRows(
+    needs ?? [],
+    services,
+    (key) => gearConfigOf(key, configs.record, configs.described).values,
+    gearKey,
+  );
+  const rows = infraRows(
+    needs ?? [],
+    services,
+    plans,
+    runs.map((e) => {
+      const place = places.find((p) => p.environment === e.name);
+      return { id: e.id, name: e.name, registry: e.registry, database: place?.database ?? "", missing: place?.missing ?? [] };
+    }),
+    links,
+  );
+  const releases = onOpenTab ? () => onOpenTab("releases") : undefined;
+  const addOffer = offers.find((o) => o.passport.name === adding) ?? null;
+
+  /** Add a catalogue service; one that gives what another gives takes its
+   *  place, since two may not provide the same capability. */
+  const add = (p: InfraPassport) => {
+    const run = () => {
+      const { next, dropped } = withService(services, p);
+      return save(next, dropped.length ? `${p.name} added in place of ${dropped.join(", ")}` : `${p.name} added`);
+    };
+    const { dropped } = withService(services, p);
+    if (dropped.length === 0) return run();
+    ask(
+      {
+        title: `Use ${p.name} in place of ${dropped.join(", ")}?`,
+        body: <p>Two services may not give the same capability, so {dropped.join(", ")} leaves the product with its settings.</p>,
+        confirmLabel: `Use ${p.name}`,
+      },
+      run,
+    );
+    return Promise.resolve(false);
+  };
+
+  /** Link a gear field to a capability: the field reads `${VARIABLE}` in
+   *  the product's configuration of the gear (product.gdl at the next save). */
+  const link = async (l: LinkRow) => {
+    if (!l.gear || !l.field) return;
+    const key = gearKey(l.gear);
+    setBusy(`link ${l.field}`);
+    setError(null);
+    try {
+      const fresh = await api.projectProduct(token, projectId);
+      const record = { ...(fresh?.config ?? {}) };
+      const own = Object.keys(record).find((g) => gearKey(g) === key) ?? key;
+      // The gear's whole config as the product has it, so a field only the
+      // saved product.gdl held is not lost when the record takes it over.
+      const current = gearConfigOf(key, record, configs.described).values;
+      record[own] = linkedConfig(current, l.field, l.variable);
+      await api.saveProjectProduct(token, projectId, { config: record });
+      setNote(`${gearLabel(l.gear)} reads ${l.field} from ${l.capability}: save the product to put it in product.gdl.`);
+      setRound((r) => r + 1);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 8 }} data-infra-editor>
+      {unmet.length > 0 && (
+        <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }} data-infra-unmet>
+          {unmet.map(({ need, offer }) => (
+            <span key={need.id} className="row" style={{ gap: 6, alignItems: "center" }} data-infra-unmet-need={need.id}>
+              <StatusChip tone="warn">{need.name} has no provider</StatusChip>
+              {offer ? (
+                <button type="button" disabled={!!busy} onClick={() => void add(offer)} data-infra-add-offer={offer.name}>
+                  Add {offer.name}
+                </button>
+              ) : (
+                <span className="muted">the catalogue has none</span>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      <DataTable<InfraRow>
+        list="infra-services"
+        urlPrefix="infra."
+        title={
+          <span>
+            Runs beside the gears{" "}
+            <InfoPopover label="About the product's infra services">
+              <p>
+                What the gears need running beside them -- a database, a sign-in provider -- and the service that gives
+                it. A gear field reads what a service gives by name: Link makes the field read{" "}
+                <code>{"${OIDC_ISSUER}"}</code> in the product&apos;s configuration.
+              </p>
+              <p>
+                The product chooses the services, their image and settings. Each environment places them, gives them a
+                public address and secrets, and keeps its own copy of the image: that is in Releases.
+              </p>
+              {kept && <p data-infra-source={kept.source}>{INFRA_SOURCE_TEXT[kept.source]}</p>}
+            </InfoPopover>
+          </span>
+        }
+        rows={rows}
+        rowKey={(r) => r.id}
+        rowLabel={(r) => r.name}
+        expandOnClick
+        primary={
+          offers.length > 0 && (
+            <span className="row" style={{ gap: 6, alignItems: "center" }} data-infra-add>
+              <select
+                aria-label="A service from the catalogue"
+                value={adding}
+                onChange={(e) => setAdding(e.target.value)}
+                disabled={!!busy}
+              >
+                <option value="">Add a service…</option>
+                {offers.map((o) => (
+                  <option key={o.passport.name} value={o.passport.name}>
+                    {o.passport.name}
+                    {o.passport.version ? ` ${o.passport.version}` : ""}
+                    {o.meets.length ? ` — ${o.meets.join(", ")}` : ""}
+                    {o.replaces.length ? ` (in place of ${o.replaces.join(", ")})` : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="primary"
+                disabled={!addOffer || !!busy}
+                onClick={() => {
+                  if (addOffer) void add(addOffer.passport).then((ok) => ok && setAdding(""));
+                }}
+              >
+                Add
+              </button>
+            </span>
+          )
+        }
+        empty={{
+          title: needs === null ? "What the gears need is not known yet." : "Nothing runs beside the gears.",
+          body:
+            needs === null
+              ? "It shows once the product is checked for the profile an environment runs: open Backend."
+              : undefined,
+        }}
+        columns={[
+          {
+            id: "service",
+            header: "Service",
+            cell: (r) => (
+              <span data-infra-row={r.id}>
+                <b>{r.name}</b>
+                {r.version ? ` ${r.version}` : ""}
+                {r.description && (
+                  <div className="sub" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 320 }} title={r.description}>
+                    {r.description}
+                  </div>
+                )}
+              </span>
+            ),
+          },
+          {
+            id: "gives",
+            header: "Gives the gears",
+            cell: (r) => (
+              <span className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                {r.gives.map((g) => (
+                  <StatusChip key={g} tone="neutral">
+                    {g}
+                  </StatusChip>
+                ))}
+              </span>
+            ),
+          },
+          {
+            id: "used",
+            header: "Used by",
+            cell: (r) =>
+              r.usedBy.length === 0 ? (
+                <span className="muted">no gear</span>
+              ) : r.usedBy.length > 3 ? (
+                <StatusChip tone="neutral" title={r.usedBy.map(gearLabel).join(", ")}>
+                  {r.usedBy.length} gears
+                </StatusChip>
+              ) : (
+                <span className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                  {r.usedBy.map((g) => (
+                    <StatusChip key={g} tone="neutral">
+                      {gearLabel(g)}
+                    </StatusChip>
+                  ))}
+                </span>
+              ),
+          },
+          {
+            id: "environments",
+            header: "Environments",
+            cell: (r) =>
+              r.envs.length === 0 ? (
+                <span className="muted">none yet</span>
+              ) : (
+                <span className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                  {r.envs.map((e) => (
+                    <StatusChip key={e.environment} tone={e.tone} title={e.detail} data-infra-env={e.environment} data-infra-env-tone={e.tone}>
+                      {e.text}
+                    </StatusChip>
+                  ))}
+                </span>
+              ),
+          },
+        ]}
+        actions={(r) => {
+          const s = r.service;
+          if (!s) return [];
+          const gone = unmetWithout(needs, services, s.passport.name);
+          return [
+            { label: "Change image…", onSelect: () => setEditing({ service: s.passport.name, what: "image" }) },
+            { label: "Settings…", onSelect: () => setEditing({ service: s.passport.name, what: "config" }) },
+            {
+              label: "Remove",
+              disabled: !!busy,
+              onSelect: async () => {
+                if (!(await save(withoutService(services, s.passport.name), `${s.passport.name} removed`)))
+                  throw new Error(`${s.passport.name} could not be removed`);
+              },
+              danger: {
+                title: `Remove ${s.passport.name} from the product?`,
+                body: (
+                  <p>
+                    {gone.length === 0
+                      ? "No need of the gears depends on it."
+                      : `${gone.map((n) => n.name).join(", ")} then ${gone.length === 1 ? "has" : "have"} no provider${
+                          gone.some((n) => n.id === "postgres") ? " (the database falls back to the environment's own Postgres)" : ""
+                        }.`}{" "}
+                    What already runs in an environment stays there until it is uninstalled.
+                  </p>
+                ),
+                confirmLabel: "Remove",
+              },
+            },
+          ];
+        }}
+        expand={(r) => (
+          <RowDetail
+            row={r}
+            images={images}
+            environments={runs}
+            busy={!!busy}
+            onLink={(l) => void link(l)}
+            onReleases={releases}
+          />
+        )}
+        detail={(r) =>
+          r.service && editing?.service === r.id ? (
+            <ServiceEditor
+              key={`${r.id}:${editing.what}`}
+              service={r.service}
+              catalogue={offered.find((o) => o.name === r.id) ?? null}
+              what={editing.what}
+              busy={!!busy}
+              onSave={async (patch, what) => {
+                if (await save(patchPassport(services, r.id, patch), what)) setEditing(null);
+              }}
+              onClose={() => setEditing(null)}
+            />
+          ) : null
+        }
+      />
+      {note && <p className="hint">{note}</p>}
+      {error && <p className="error">{error}</p>}
+      {confirmDialog}
+    </div>
+  );
+}
+
+const LINK_STATE: Record<LinkRow["state"], string> = {
+  reference: "linked ✓",
+  literal: "set by hand",
+  unset: "not set",
+  database: "wired by the database step ✓",
+  unknown: "which field reads it is not known",
+};
+
+/** A row opened: its image and settings, its links to gear fields, and
+ *  each environment in a line. */
+function RowDetail({
+  row: r,
+  images,
+  environments,
+  busy,
+  onLink,
+  onReleases,
+}: {
+  row: InfraRow;
+  images: readonly ProjectImage[];
+  environments: readonly DeployEnvironment[];
+  busy: boolean;
+  onLink: (l: LinkRow) => void;
+  onReleases?: () => void;
+}) {
+  const s = r.service;
+  const config = Object.entries(s?.passport.config ?? {});
+  return (
+    <div style={{ display: "grid", gap: 6, fontSize: 13 }} data-infra-detail={r.id}>
+      {s && (
+        <div>
+          <b>Image</b> <code style={{ overflowWrap: "anywhere" }}>{s.passport.image ?? "none"}</code>
+          <div className="sub">not locked yet: the product lock pins its digest</div>
+        </div>
+      )}
+      {s && (
+        <div>
+          <b>Settings</b>{" "}
+          {config.length === 0 ? (
+            <span className="muted">none</span>
+          ) : (
+            <span className="sub">{config.map(([k, v]) => `${k}=${v}`).join(" · ")}</span>
+          )}
+        </div>
+      )}
+      {r.links.length > 0 && (
+        <div>
+          <b>Links</b>
+          <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+            {r.links.map((l) => (
+              <li key={`${l.capability}:${l.field ?? ""}`} data-infra-link={`${l.capability}:${l.field ?? ""}`} data-infra-link-state={l.state}>
+                {l.gears.length > 3 ? `${l.gears.length} gears` : l.gears.map(gearLabel).join(", ")}
+                {l.field && (
+                  <>
+                    {" · "}
+                    <code>{l.field}</code>
+                  </>
+                )}{" "}
+                ← <code>{l.capability}</code>{" "}
+                <span className={l.state === "reference" || l.state === "database" ? undefined : "muted"}>
+                  [{LINK_STATE[l.state]}
+                  {l.state === "literal" && l.value ? `: ${l.value}` : ""}]
+                </span>
+                {l.field && (l.state === "literal" || l.state === "unset") && (
+                  <>
+                    {" "}
+                    <button type="button" className="ghost" disabled={busy} onClick={() => onLink(l)}>
+                      Link
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {environments.map((e) => {
+        const pill = r.envs.find((p) => p.environment === e.name);
+        const copy = s ? mirrorIn([...images], s.passport.image, e.registry) : null;
+        return (
+          <div key={e.id} className="sub" data-infra-detail-env={e.name}>
+            <b>{e.name}</b>: {pill?.detail ?? "—"}
+            {s && (e.registry ? (copy ? " · its copy is in the registry" : " · no copy of this image in its registry") : "")}
+            {s?.public_url && ` · public at ${s.public_url}`}
+            {s?.chart_ref && ` · ready chart ${s.chart_ref}`}
+            {onReleases && (
+              <>
+                {" "}
+                <button type="button" className="linklike" onClick={onReleases}>
+                  Releases →
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One service's product-level settings, under its row: which publisher
+ *  image (and so version) it runs, and its passport's literal config. */
+function ServiceEditor({
+  service: s,
+  catalogue,
+  what,
+  busy,
+  onSave,
+  onClose,
+}: {
+  service: InfraService;
+  /** The catalogue's passport of the same name: what the publisher names. */
+  catalogue: InfraPassport | null;
+  what: Editing["what"];
+  busy: boolean;
+  onSave: (patch: Partial<InfraPassport>, what: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const p = s.passport;
+  const [image, setImage] = useState(p.image ?? "");
+  const [text, setText] = useState(() => configLines(p.config));
+  const parsed = parseConfigLines(text, p.secrets);
+  const cancel = (
+    <button type="button" className="ghost" onClick={onClose}>
+      Cancel
+    </button>
+  );
+  const tag = (ref: string) => ref.match(/:([^/:@]+)(@|$)/)?.[1] ?? null;
+  return (
+    <div style={{ display: "grid", gap: 8, padding: "8px 0" }} data-infra-editor-panel={`${p.name}:${what}`}>
+      {what === "image" ? (
+        <>
+          <label className="field">
+            {p.name}&apos;s image, as its publisher names it
+            <input
+              value={image}
+              onChange={(e) => setImage(e.target.value)}
+              placeholder={catalogue?.image ?? "quay.io/keycloak/keycloak:26.0.7"}
+              aria-label="Publisher image"
+            />
+            <span className="hint">
+              {catalogue?.image && catalogue.image !== image.trim() ? `The catalogue names ${catalogue.image}. ` : ""}
+              Another tag is another version; each environment then needs its own copy of it (Releases › Images).
+            </span>
+          </label>
+          <span className="row" style={{ gap: 6 }}>
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || !image.trim() || image.trim() === (p.image ?? "")}
+              onClick={() => {
+                const v = tag(image.trim());
+                void onSave({ image: image.trim(), ...(v ? { version: v } : {}) }, `${p.name} is ${image.trim()}`);
+              }}
+            >
+              Save
+            </button>
+            {catalogue?.image && catalogue.image !== (p.image ?? "") && (
+              <button type="button" className="ghost" onClick={() => setImage(catalogue.image ?? "")}>
+                The catalogue&apos;s
+              </button>
+            )}
+            {cancel}
+          </span>
+        </>
+      ) : (
+        <>
+          <label className="field">
+            {p.name}&apos;s settings
+            <textarea
+              rows={Math.max(3, Object.keys(p.config).length + 1)}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              aria-label="Service settings"
+            />
+            <span className="hint">
+              One <code>KEY=value</code> per line, given to its container as is. Secrets (
+              {p.secrets.join(", ") || "none"}) are each environment&apos;s.
+            </span>
+          </label>
+          {parsed.problems.map((m) => (
+            <span key={m} className="env-field-error">
+              {m}
+            </span>
+          ))}
+          <span className="row" style={{ gap: 6 }}>
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || parsed.problems.length > 0 || text === configLines(p.config)}
+              onClick={() => void onSave({ config: parsed.config }, `${p.name}'s settings saved`)}
+            >
+              Save
+            </button>
+            {catalogue && configLines(catalogue.config) !== text && (
+              <button type="button" className="ghost" onClick={() => setText(configLines(catalogue.config))}>
+                The catalogue&apos;s
+              </button>
+            )}
+            {cancel}
+          </span>
+        </>
+      )}
+    </div>
   );
 }

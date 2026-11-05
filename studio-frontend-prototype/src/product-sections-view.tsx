@@ -6,8 +6,9 @@
  * part is drawn below them:
  *
  *   Map              the whole product in one picture (the default)
- *   Infrastructure   what it needs; the environments it runs in, as chips
- *                    that open Releases (ADR-0056 §3)
+ *   Infrastructure   what the gears need and the infra services that meet it,
+ *                    editable (ADR-0064); the environments it runs in, as
+ *                    chips that open Releases (ADR-0056 §3)
  *   Backend          the gears (the existing `ProjectKits` journey, passed in
  *                    by the shell, kept mounted so its panes keep their state)
  *   Frontend         the frontend constructor, or "Add a frontend"
@@ -16,8 +17,17 @@
 import { ProductSources } from "./source-roles-view";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { PRODUCT_CHANGED_EVENT, api, type FrontendPick, type ProjectConfig, type ProjectProduct, type ProjectTargets } from "./api";
+import {
+  PRODUCT_CHANGED_EVENT,
+  api,
+  type DeployEnvironment,
+  type FrontendPick,
+  type ProjectConfig,
+  type ProjectProduct,
+  type ProjectTargets,
+} from "./api";
 import { FrontendConstructor, useFrontxDefaults } from "./frontend-constructor-view";
+import { ProductInfraServices } from "./infra-services-view";
 import type { PipelineTab } from "./pipeline";
 import type { FlowState, FlowStep } from "./product-flow";
 import { ProductFlow } from "./product-flow-view";
@@ -30,7 +40,6 @@ import {
   PRODUCT_SECTIONS,
   announcedNext,
   hasFrontend,
-  comesWith,
   productHeader,
   type ProductAction,
   infrastructureOf,
@@ -44,7 +53,7 @@ import {
   type ProductSummary,
 } from "./product-sections";
 import { errText } from "./problem";
-import { gearLabel, verdictText } from "./product";
+import { verdictText } from "./product";
 import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
 
 /** The section an old address asked for (`/…/frontend`), read once when the
@@ -310,13 +319,18 @@ function ProductInfrastructure({
   onOpenTab?: (tab: PipelineTab) => void;
 }) {
   const [infra, setInfra] = useState<Infrastructure | null>(null);
+  const [environments, setEnvironments] = useState<DeployEnvironment[]>([]);
 
   useEffect(() => {
     let alive = true;
     Promise.all([
       api.projectProduct(token, projectId).catch(() => null),
       api.projectTargets(token, projectId).catch((): ProjectTargets | null => null),
-    ]).then(([product, targets]) => alive && setInfra(infrastructureOf(product, targets)));
+    ]).then(([product, targets]) => {
+      if (!alive) return;
+      setInfra(infrastructureOf(product, targets));
+      setEnvironments((targets?.environments ?? []).map((e) => e.environment));
+    });
     return () => {
       alive = false;
     };
@@ -329,7 +343,16 @@ function ProductInfrastructure({
         <p className="muted">Reading what the product needs…</p>
       ) : (
         <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
-          <ProductNeeds infra={infra} />
+          {/* ADR-0064: the needs, the services deployed with the product and
+              their links to the gears, editable. */}
+          <ProductInfraServices
+            token={token}
+            projectId={projectId}
+            needs={infra.needs}
+            places={infra.runsIn}
+            environments={environments}
+            onOpenTab={onOpenTab}
+          />
           {infra.runsIn.length === 0 ? (
             <EmptyState
               title="No environment to run in yet."
@@ -381,67 +404,6 @@ function ProductInfrastructure({
         </div>
       )}
     </section>
-  );
-}
-
-/** What the product runs on besides its own applications: the technologies
- *  its gears need, each with the gears that need it. */
-function ProductNeeds({ infra }: { infra: Infrastructure }) {
-  if (infra.needs === null) {
-    return (
-      <p className="muted" style={{ margin: 0 }}>
-        What the gears need running beside them shows once the product is checked for the profile an environment runs:
-        open Backend.
-      </p>
-    );
-  }
-  return (
-    <table className="ptable" aria-label="What the product runs on" data-product-needs>
-      <thead>
-        <tr>
-          <th>Runs on</th>
-          <th>For</th>
-          <th>Gears</th>
-          <th>Comes</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>
-            <b>{infra.profileLabel ?? "Its profile"}</b>
-          </td>
-          <td>
-            {infra.applications.length === 0
-              ? "the product's applications"
-              : `${infra.applications.length} application${infra.applications.length === 1 ? "" : "s"}: ${infra.applications.join(", ")}`}
-          </td>
-          <td className="muted">all</td>
-          <td>
-            <span className="badge ok">with every deploy</span>
-          </td>
-        </tr>
-        {infra.needs.map((t) => (
-          <tr key={t.id} data-technology={t.id}>
-            <td>
-              <b>{t.name}</b>
-            </td>
-            <td>{t.why}</td>
-            <td title={t.gears.map(gearLabel).join(", ")}>
-              {t.gears.length <= 3 ? t.gears.map(gearLabel).join(", ") : `${t.gears.length} gears`}
-            </td>
-            <td title={comesWith(t.id).words}>
-              {comesWith(t.id).deployed ? (
-                <span className="badge ok">with every deploy</span>
-              ) : (
-                <span className="badge" data-outside>
-                  outside Studio
-                </span>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
   );
 }
 
