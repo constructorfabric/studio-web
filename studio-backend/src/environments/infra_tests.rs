@@ -428,3 +428,27 @@ fn a_project_keeps_the_newest_builds_infra_first_and_a_bounded_few() {
     assert_eq!(kept[0].build, "b3");
     assert_eq!(kept.iter().filter(|b| b.build == "b3").count(), 1);
 }
+
+#[test]
+fn a_copy_without_the_locked_digest_is_no_copy() {
+    let locked = locked_services(&resolved("quay.io/keycloak/keycloak:26.0.7@sha256:abc")).unwrap();
+    let mut record = keycloak();
+    record.image = Some("registry.example/acme/shop/mirror/keycloak:26.0.7".into());
+    assert_eq!(from_lock(&locked, &[record])[0].image, None);
+}
+
+#[test]
+fn without_a_digest_the_lock_is_copied_by_its_tag() {
+    let locked = locked_services(&resolved("quay.io/keycloak/keycloak:26.0.8")).unwrap();
+    let mut record = keycloak();
+    record.image = Some("registry.example:5000/acme/shop/mirror/keycloak:26.0.7@sha256:abc".into());
+    assert_eq!(
+        from_lock(&locked, std::slice::from_ref(&record))[0].image,
+        None
+    );
+    record.image = Some("registry.example:5000/acme/shop/mirror/keycloak:26.0.8@sha256:abc".into());
+    assert_eq!(
+        from_lock(&locked, std::slice::from_ref(&record))[0].image,
+        record.image
+    );
+}

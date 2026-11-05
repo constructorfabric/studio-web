@@ -1433,11 +1433,25 @@ impl EnvironmentService {
             .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
             .await?;
         // The services the build's lock resolved, placed by the project's
-        // records (ADR-0065 §3); a build without them runs the records as
-        // they are (ADR-0064).
-        let services = match build.and_then(|b| list.built_infra.iter().find(|x| x.build == b)) {
-            Some(built) => super::infra::from_lock(&built.services, &list.infra),
-            None => list.infra.clone(),
+        // records (ADR-0065 §3). A build from before the project kept them
+        // runs the records as they are (ADR-0064); one whose services are no
+        // longer kept is refused rather than run with today's.
+        let built = build.and_then(|b| list.built_infra.iter().find(|x| x.build == b));
+        let services = match (built, build) {
+            (Some(built), _) if built.services.is_empty() => list.infra.clone(),
+            (Some(built), _) => super::infra::from_lock(&built.services, &list.infra),
+            (None, Some(b))
+                if !list.built_infra.is_empty() && env.kind == EnvironmentKind::Kubernetes =>
+            {
+                return Err(Refusal::Precondition(
+                    "BUILD_INFRA_NOT_KEPT",
+                    format!(
+                        "the project keeps no infra services for build {b}: it is older than the                          {} it keeps, or from before it kept them; build the product again to                          deploy it",
+                        super::infra::MAX_LOCKED_BUILDS
+                    ),
+                ));
+            }
+            (None, _) => list.infra.clone(),
         };
         // Infra services run on a cluster (ADR-0064); a Research
         // environment brings its own services.

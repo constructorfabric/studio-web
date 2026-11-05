@@ -848,8 +848,10 @@ pub fn generated_chart(
 
 /* ── what a build's lock says (ADR-0065) ── */
 
-/// How many builds' infra a project keeps: a deploy names a recent build.
-pub const MAX_LOCKED_BUILDS: usize = 20;
+/// How many builds' infra a project keeps: a deploy names a recent build,
+/// and a rollback one a little older. A deploy of a build no longer kept is
+/// refused rather than run with other services.
+pub const MAX_LOCKED_BUILDS: usize = 50;
 
 /// An image as the product chose it, and its digest when the reference
 /// names one.
@@ -925,13 +927,36 @@ fn digest_in(reference: &str) -> Option<&str> {
         .filter(|d| d.starts_with("sha256:"))
 }
 
+/// The tag an image reference names (`…/keycloak:26.0.7@sha256:…` is
+/// `26.0.7`); a registry's port is not one.
+fn tag_in(reference: &str) -> Option<&str> {
+    let name = reference.split('@').next().unwrap_or(reference);
+    let last = name.rsplit('/').next().unwrap_or(name);
+    last.split_once(':')
+        .map(|(_, t)| t)
+        .filter(|t| !t.is_empty())
+}
+
+/// Is `copy` a copy of the image the lock chose? By its digest when the
+/// lock names one; else by its tag, which an import keeps (ADR-0064 §4).
+fn copies(copy: &str, locked: &LockedImage) -> bool {
+    match locked.digest.as_deref() {
+        Some(wanted) => digest_in(copy) == Some(wanted),
+        None => match tag_in(&locked.reference) {
+            Some(wanted) => tag_in(copy) == Some(wanted),
+            None => true,
+        },
+    }
+}
+
 /// The services a deploy of a build runs (ADR-0065 §3): each one the lock
 /// names, with its passport and configuration, joined by name with the
 /// environment's side kept on the project (`records`): the copy of its
 /// image, a ready chart's copy and values, its public address.
 ///
-/// A copy whose digest is not the one the lock names is no copy of it: the
-/// service is left without an image, which the plan refuses as
+/// A copy of another image than the lock names -- another digest, or
+/// another tag when the lock has no digest -- is no copy of it: the service
+/// is left without an image, which the plan refuses as
 /// `INFRA_IMAGE_NOT_IMPORTED` naming the lock's reference.
 pub fn from_lock(locked: &[LockedService], records: &[InfraService]) -> Vec<InfraService> {
     locked
@@ -948,13 +973,9 @@ pub fn from_lock(locked: &[LockedService], records: &[InfraService]) -> Vec<Infr
                 passport.chart = l.chart.clone();
                 passport.chart_version = l.chart_version.clone();
             }
-            let wanted = l.image.as_ref().and_then(|i| i.digest.as_deref());
-            let image = record.and_then(|r| r.image.clone()).filter(|copy| {
-                match (wanted, digest_in(copy)) {
-                    (Some(w), Some(have)) => w == have,
-                    _ => true,
-                }
-            });
+            let image = record
+                .and_then(|r| r.image.clone())
+                .filter(|copy| l.image.as_ref().is_none_or(|i| copies(copy, i)));
             InfraService {
                 passport,
                 image,

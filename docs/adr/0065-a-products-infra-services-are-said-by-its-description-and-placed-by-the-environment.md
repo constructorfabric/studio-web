@@ -119,8 +119,8 @@ only for a build without `infra` (§3). A record for a service the description
 does not choose does nothing.
 
 The import is checked against the description. The copy must be of the image
-the build's lock names: the same digest, or the same reference when the lock
-has no digest. Otherwise the deploy is refused with `INFRA_IMAGE_NOT_IMPORTED`,
+the build's lock names: the same digest, or, when the lock has no digest, the
+same tag, which an import keeps. Otherwise the deploy is refused with `INFRA_IMAGE_NOT_IMPORTED`,
 which names the reference to import.
 
 ### 3. A deploy takes the services its build was resolved with
@@ -131,14 +131,21 @@ the build's profile, with its passport, its passport hash, the chosen image
 configuration.
 
 - `build-prepare` reads that section, and `build-publish` puts it in the
-  manifest it leaves for Studio (`Manifest.infra`). The build's record keeps it.
+  manifest it leaves for Studio (`Manifest.infra`).
+- Studio keeps it on the project for every passed build, an empty list for a
+  build that chose none, before the build is recorded as passed. When it
+  cannot be kept, the build fails at `publish`. The project keeps the newest
+  50 builds' services.
 - A deploy of the build installs those services. It uses the lock's passport
   and configuration, joined by name with the environment's side (§2).
 - A service the lock names without an environment record is refused, as
   ADR-0064 §4 says.
-- A build made before this ADR, or from a description without `infra`, has
-  none. Its deploy uses the project's records as ADR-0064 did, so the switch
-  breaks nothing already deployed.
+- A build from a description without `infra` deploys the project's records
+  as ADR-0064 did. So does any build of a project that has no kept services
+  yet, so the switch breaks nothing already deployed.
+- A deploy of a build whose services are not kept, on a project that keeps
+  some, is refused with `BUILD_INFRA_NOT_KEPT`. It is not run with today's
+  services.
 
 The manifest reaches Studio as the publish container's termination message,
 which the kubelet caps at 4 KiB. The infra section is written without fields

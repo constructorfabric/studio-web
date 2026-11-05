@@ -1564,6 +1564,29 @@ impl WatchTask {
             ),
         };
         record_of.description_revision = p.description_revision;
+        // The build's infra services are kept before it counts as passed, so
+        // a passed build always has what its deploys run (ADR-0065 §3). Every
+        // passed build is kept, one without infra too: a deploy can then tell
+        // a build that chose none from one whose services are no longer kept.
+        if record_of.status == "passed"
+            && let Err(e) = keep_infra(
+                &self.hub,
+                p.organization_id,
+                p.project_id,
+                &p.build_id,
+                std::mem::take(&mut infra),
+            )
+            .await
+        {
+            record_of = BuildOutcome::failed(
+                &p.build_id,
+                &p.repository,
+                &p.profile,
+                &format!("the build's infra services could not be kept: {e:#}"),
+                "publish",
+            );
+            record_of.description_revision = p.description_revision;
+        }
         // Each image and the chart becomes a record of the project
         // (ADR-0062 §4), from the manifest, before the build's own.
         if record_of.status == "passed"
@@ -1592,7 +1615,6 @@ impl WatchTask {
                 }
             }
         }
-        let passed = record_of.status == "passed";
         record(
             &self.hub,
             &ctx.security,
@@ -1601,19 +1623,6 @@ impl WatchTask {
             record_of,
         )
         .await?;
-        if passed
-            && !infra.is_empty()
-            && let Err(e) = keep_infra(
-                &self.hub,
-                p.organization_id,
-                p.project_id,
-                &p.build_id,
-                infra,
-            )
-            .await
-        {
-            warn!(build = %p.build_id, "studio-environments: the build's infra services could not be kept ({e:#})");
-        }
         // The repository's and the registry's tokens go with the build.
         let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), &p.namespace);
         for name in [
