@@ -1043,10 +1043,40 @@ async fn watch_start(client: kube::Client, namespace: &str) -> String {
         };
         let now: Vec<_> = list.items.iter().flat_map(preflight::waiting).collect();
         if let Some(why) = watch.look(&now) {
-            return why;
+            // The release is taken back after this, and its pods with it: what
+            // a crashing container said is kept in the reason, or it is lost.
+            let mut said = Vec::new();
+            for w in now.iter().filter(|w| w.restarts > 0) {
+                let params = LogParams {
+                    container: Some(w.container.clone()),
+                    previous: true,
+                    tail_lines: Some(CRASH_LOG_LINES),
+                    limit_bytes: Some(CRASH_LOG_BYTES),
+                    ..LogParams::default()
+                };
+                if let Ok(Ok(text)) =
+                    tokio::time::timeout(Duration::from_secs(10), pods.logs(&w.pod, &params)).await
+                    && !text.trim().is_empty()
+                {
+                    said.push(format!(
+                        "--- {} said before it stopped:\n{}",
+                        w.container,
+                        text.trim_end()
+                    ));
+                }
+            }
+            if said.is_empty() {
+                return why;
+            }
+            return format!("{why}\n{}", said.join("\n"));
         }
     }
 }
+
+/// How much of a crashing container's last run is kept in a failed deploy's
+/// reason: enough for the error a server prints before it exits.
+const CRASH_LOG_LINES: i64 = 30;
+const CRASH_LOG_BYTES: i64 = 8 * 1024;
 
 /// One workload of a release as the cluster reports it.
 #[derive(Debug, Clone, Serialize)]
