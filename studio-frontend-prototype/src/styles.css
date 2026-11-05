@@ -2910,7 +2910,7 @@ div.dm-block { padding-left: 0; }
 .fc-nav-item { display: flex; align-items: center; gap: 7px; border: 0; background: none; color: inherit; font: inherit; font-size: 12.5px; padding: 5px 6px; border-radius: 6px; text-align: left; cursor: pointer; }
 .fc-nav-item:hover { background: var(--muted); }
 .fc-nav-item.on { background: var(--accent); color: var(--primary); font-weight: 600; }
-.fc-page { padding: 12px; display: flex; min-width: 0; }
+.fc-page { padding: 12px; display: flex; min-width: 0; max-width: none; margin: 0; }
 .fc-side { display: flex; flex-direction: column; gap: 4px; padding: 8px; border-left: 1px solid var(--border); background: var(--card); }
 .fc-strips { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); border-top: 1px solid var(--border); }
 .fc-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px; min-height: 36px; }
@@ -2927,6 +2927,20 @@ div.dm-block { padding-left: 0; }
 .fc-pagecard-h code { font-size: 11.5px; color: var(--muted-foreground); }
 .fc-skeleton { display: grid; gap: 8px; }
 .fc-skeleton i { display: block; height: 10px; border-radius: 4px; background: color-mix(in srgb, var(--foreground) 10%, transparent); }
+/* The picture a build took of the screen, in place of the lines when there is one. */
+.fc-shot { display: block; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--background); cursor: zoom-in; }
+.fc-shot:hover { border-color: var(--primary); }
+.fc-shot img { display: block; width: 100%; height: auto; aspect-ratio: 8 / 5; object-fit: cover; object-position: top left; }
+.fc-shot-tag { margin-left: auto; font-size: 10.5px; padding: 0 6px; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); }
+.fc-noshot { font-size: 11px; color: var(--muted-foreground); font-style: italic; }
+.fc-place { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.fc-thumb { flex: none; width: 48px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: var(--muted); cursor: zoom-in; }
+.fc-thumb:hover { border-color: var(--primary); }
+.fc-thumb.none { cursor: default; background: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--foreground) 6%, transparent) 4px 5px), var(--muted); }
+.fc-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.fc-shot-modal-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.fc-shot-modal-h code { font-size: 11.5px; }
+.fc-shot-big { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; }
 .fc-calls { display: flex; flex-wrap: wrap; gap: 4px; }
 .fc-call { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent); color: var(--success, #16a34a); }
 .fc-call.missing { background: color-mix(in srgb, var(--destructive) 14%, transparent); color: var(--destructive); }

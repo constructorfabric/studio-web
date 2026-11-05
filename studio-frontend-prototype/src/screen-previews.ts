@@ -27,3 +27,15 @@ export function previewBuild(items: readonly ScreenPreview[], version: string | 
 export function shortCommit(commit: string): string {
   return /^[0-9a-f]{8,}$/i.test(commit) ? commit.slice(0, 7) : commit;
 }
+
+/**
+ * The picture of one place a micro-frontend shows, out of a build's: by its
+ * route, or by its label when it has no route. A place the build did not
+ * open (an overlay, a popup, a screen added since) has none.
+ */
+export function pictureOf(build: PreviewBuild | null, place: { route: string | null; label: string | null }): ScreenPreview | null {
+  if (!build) return null;
+  if (place.route) return build.screens.find((s) => s.route === place.route) ?? null;
+  const label = place.label?.trim().toLowerCase();
+  return (label && build.screens.find((s) => s.label?.trim().toLowerCase() === label)) || null;
+}

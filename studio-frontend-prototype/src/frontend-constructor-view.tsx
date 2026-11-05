@@ -18,7 +18,7 @@
 
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 
-import { api } from "./api";
+import { api, type ScreenPreview } from "./api";
 import { repoPathsOf } from "./builds";
 import {
   FRONTX_SHELL_TEMPLATE,
@@ -48,7 +48,9 @@ import {
   type ShellPassport,
   type Step,
 } from "./frontend-constructor";
+import { Modal } from "./modal";
 import { errText } from "./problem";
+import { pictureOf, previewBuild, shortCommit, type PreviewBuild } from "./screen-previews";
 import { StatusChip, StepFlow, type FlowStep, type StepState } from "./ui-standard";
 
 type Loaded = {
@@ -74,6 +76,66 @@ function Glyph({ icon, label }: { icon: string | null; label: string }) {
     <span className="fc-glyph" aria-hidden="true">
       {letter}
     </span>
+  );
+}
+
+/** Each package's pictures, read once per page: a build adds them, and a
+ *  reload is when a reader expects to see a new one. */
+const pictures = new Map<string, Promise<ScreenPreview[]>>();
+
+/** The build whose pictures each of `mfes` shows, by package name, as the
+ *  product map picks it (`previewBuild`): `null` while reading and for a
+ *  package no build pictured at its catalogue version. */
+function usePictureBuilds(token: string, mfes: readonly Mfe[]): Map<string, PreviewBuild | null> {
+  const ask = mfes.map((m) => m.name).join(",");
+  const [items, setItems] = useState<Map<string, ScreenPreview[]>>(() => new Map());
+  useEffect(() => {
+    if (!ask) return;
+    let live = true;
+    for (const name of ask.split(",")) {
+      let read = pictures.get(name);
+      if (!read) {
+        read = api.screenPreviews(token, name).then(
+          (r) => r.items ?? [],
+          (): ScreenPreview[] => [],
+        );
+        pictures.set(name, read);
+      }
+      void read.then((r) => {
+        if (live) setItems((m) => (m.get(name) === r ? m : new Map(m).set(name, r)));
+      });
+    }
+    return () => {
+      live = false;
+    };
+  }, [token, ask]);
+  return useMemo(() => {
+    const out = new Map<string, PreviewBuild | null>();
+    for (const m of mfes) {
+      const got = items.get(m.name);
+      out.set(m.name, got ? previewBuild(got, m.version) : null);
+    }
+    return out;
+  }, [items, mfes]);
+}
+
+/** A screen's picture, larger, over the page. */
+function ShotModal({ shot, build, onClose }: { shot: ScreenPreview; build: PreviewBuild; onClose: () => void }) {
+  return (
+    <Modal label={`${shot.label ?? shot.route}, as a build drew it`} onClose={onClose} cardStyle={{ width: "min(1000px, 100%)" }}>
+      <div className="fc-shot-modal-h">
+        <b>{shot.label ?? shot.route}</b>
+        <code>{shot.route}</code>
+        <span className="muted">
+          {shot.component}
+          {build.version ? `@${build.version}` : ""} · built at {shortCommit(build.commit)}
+        </span>
+        <button type="button" onClick={onClose} style={{ marginLeft: "auto" }}>
+          Close
+        </button>
+      </div>
+      <img className="fc-shot-big" src={shot.image} alt={shot.label ?? shot.route} />
+    </Modal>
   );
 }
 
@@ -227,6 +289,15 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     () => assemblySteps({ shellRef, shell, picked, productGears: data?.gears ?? [] }),
     [shellRef, shell, picked, data],
   );
+  /** The packages whose pictures the page shows: the picked ones, and the
+   *  one the inspector is about. */
+  const pictured = useMemo(() => {
+    const sel = selected ? data?.mfes.find((m) => m.name === selected) : undefined;
+    return sel && !picked.includes(sel) ? [...picked, sel] : picked;
+  }, [data, picked, selected]);
+  const builds = usePictureBuilds(token, pictured);
+  /** The picture open large; `null` when none is. */
+  const [enlarged, setEnlarged] = useState<{ shot: ScreenPreview; build: PreviewBuild } | null>(null);
 
   if (err) return <div className="error">{err}</div>;
   if (!data) return <p className="muted">Reading the micro-frontends in the catalogue…</p>;
@@ -527,7 +598,9 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
                     mfe={shown.mfe}
                     placement={shown.placement}
                     missing={cover.missing.get(shown.mfe.name) ?? []}
+                    build={builds.get(shown.mfe.name) ?? null}
                     onOpen={() => setSelected(shown.mfe.name)}
+                    onEnlarge={setEnlarged}
                   />
                 ) : (
                   <div className="fc-empty big">Drag a micro-frontend here, or press Add.</div>
@@ -555,10 +628,13 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           gears={data.gears}
           missing={selectedMfe ? (cover.missing.get(selectedMfe.name) ?? []) : []}
           picked={selectedMfe ? picks.includes(selectedMfe.name) : false}
+          build={selectedMfe ? (builds.get(selectedMfe.name) ?? null) : null}
           onRemove={remove}
           onAdd={add}
+          onEnlarge={setEnlarged}
         />
       </div>
+      {enlarged && <ShotModal shot={enlarged.shot} build={enlarged.build} onClose={() => setEnlarged(null)} />}
     </div>
   );
 }
@@ -587,30 +663,61 @@ function ZoneItems({
   );
 }
 
+/** The page the selected screen fills: the picture a build took of it when
+ *  the catalogue keeps one for its version (scripts/mfe-screen-previews.mjs),
+ *  otherwise drawn as lines. The card selects its package; the picture opens
+ *  larger. */
 function PageCard({
   mfe,
   placement,
   missing,
+  build,
   onOpen,
+  onEnlarge,
 }: {
   mfe: Mfe;
   placement: Placement;
   missing: string[];
+  build: PreviewBuild | null;
   onOpen: () => void;
+  onEnlarge: (x: { shot: ScreenPreview; build: PreviewBuild }) => void;
 }) {
+  const shot = pictureOf(build, placement);
   return (
-    <button type="button" className="fc-pagecard" onClick={onOpen}>
+    <div className="fc-pagecard" onClick={onOpen} data-screen-shot={shot ? "built" : "none"}>
       <div className="fc-pagecard-h">
         <Glyph icon={placement.icon} label={placementLabel(placement)} />
         <b>{placementLabel(placement)}</b>
         {placement.route && <code>{placement.route}</code>}
+        {shot && build && (
+          <span className="fc-shot-tag" title={`Captured ${shot.captured_at}`}>
+            built at {shortCommit(build.commit)}
+          </span>
+        )}
       </div>
-      <div className="fc-skeleton" aria-hidden="true">
-        <i style={{ width: "60%" }} />
-        <i style={{ width: "90%" }} />
-        <i style={{ width: "75%" }} />
-        <i style={{ width: "40%" }} />
-      </div>
+      {shot && build ? (
+        <button
+          type="button"
+          className="fc-shot"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEnlarge({ shot, build });
+          }}
+          title="Open the picture larger"
+        >
+          <img src={shot.image} alt={`${placementLabel(placement)}, as a build drew it`} />
+        </button>
+      ) : (
+        <>
+          <div className="fc-skeleton" aria-hidden="true">
+            <i style={{ width: "60%" }} />
+            <i style={{ width: "90%" }} />
+            <i style={{ width: "75%" }} />
+            <i style={{ width: "40%" }} />
+          </div>
+          <span className="fc-noshot">No screenshot of this screen yet</span>
+        </>
+      )}
       <small>
         from <code>{mfe.name}</code>
       </small>
@@ -622,7 +729,7 @@ function PageCard({
           </span>
         ))}
       </span>
-    </button>
+    </div>
   );
 }
 
@@ -686,16 +793,20 @@ function Inspector({
   gears,
   missing,
   picked,
+  build,
   onRemove,
   onAdd,
+  onEnlarge,
 }: {
   mfe: Mfe | undefined;
   shell: Shell | null;
   gears: string[];
   missing: string[];
   picked: boolean;
+  build: PreviewBuild | null;
   onRemove: (name: string) => void;
   onAdd: (name: string) => void;
+  onEnlarge: (x: { shot: ScreenPreview; build: PreviewBuild }) => void;
 }) {
   if (!mfe) {
     return (
@@ -714,18 +825,35 @@ function Inspector({
       <section>
         <div className="pm-h">Where it shows</div>
         {mfe.placements.length === 0 && <span className="muted">Its mfe.json declares no extension.</span>}
-        {mfe.placements.map((p) => (
-          <div key={p.id} style={{ fontSize: 12.5 }}>
-            <b>{placementLabel(p)}</b> · {p.domain}
-            {p.route && (
-              <>
-                {" "}
-                · <code>{p.route}</code>
-              </>
-            )}
-            {p.level && <span className="muted"> · {p.level} level</span>}
-          </div>
-        ))}
+        {mfe.placements.map((p) => {
+          const shot = pictureOf(build, p);
+          return (
+            <div key={p.id} className="fc-place">
+              {shot && build ? (
+                <button
+                  type="button"
+                  className="fc-thumb"
+                  onClick={() => onEnlarge({ shot, build })}
+                  title={`Open the picture of ${placementLabel(p)}`}
+                >
+                  <img src={shot.image} alt="" />
+                </button>
+              ) : (
+                <span className="fc-thumb none" title="No screenshot yet" />
+              )}
+              <span>
+                <b>{placementLabel(p)}</b> · {p.domain}
+                {p.route && (
+                  <>
+                    {" "}
+                    · <code>{p.route}</code>
+                  </>
+                )}
+                {p.level && <span className="muted"> · {p.level} level</span>}
+              </span>
+            </div>
+          );
+        })}
       </section>
       <section>
         <div className="pm-h">
