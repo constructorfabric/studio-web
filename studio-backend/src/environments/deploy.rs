@@ -1056,27 +1056,105 @@ async fn watch_start(client: kube::Client, namespace: &str) -> String {
                 };
                 if let Ok(Ok(text)) =
                     tokio::time::timeout(Duration::from_secs(10), pods.logs(&w.pod, &params)).await
-                    && !text.trim().is_empty()
+                    && let Some(last) = last_words(&text)
                 {
-                    said.push(format!(
-                        "--- {} said before it stopped:\n{}",
-                        w.container,
-                        text.trim_end()
-                    ));
+                    said.push(format!("{} stopped: {last}", w.container));
                 }
             }
             if said.is_empty() {
                 return why;
             }
-            return format!("{why}\n{}", said.join("\n"));
+            // A run's reason is cut to 500 characters: what the container
+            // said goes first, the cluster's account of it after.
+            return format!("{}; {why}", said.join("; "));
         }
     }
 }
 
-/// How much of a crashing container's last run is kept in a failed deploy's
-/// reason: enough for the error a server prints before it exits.
-const CRASH_LOG_LINES: i64 = 30;
-const CRASH_LOG_BYTES: i64 = 8 * 1024;
+/// How much of a crashing container's last run is read for its reason.
+const CRASH_LOG_LINES: i64 = 60;
+const CRASH_LOG_BYTES: i64 = 16 * 1024;
+
+/// What a container that stopped said last that matters: its last lines
+/// that name an error, or its last lines when none does -- without their
+/// timestamps and colours, so the reason's few hundred characters go to the
+/// error itself.
+pub fn last_words(log: &str) -> Option<String> {
+    let lines: Vec<String> = log
+        .lines()
+        .map(plain_log_line)
+        .filter(|l| !l.is_empty())
+        .collect();
+    // A server that returns its error from `main` prints `Error: ...` and the
+    // chain of causes under it: that is the whole story, in order.
+    if let Some(at) = lines.iter().rposition(|l| l.starts_with("Error: ")) {
+        let chain: Vec<&str> = lines[at..]
+            .iter()
+            .map(String::as_str)
+            .filter(|l| *l != "Caused by:")
+            .collect();
+        return Some(chain.join(" / ").chars().take(400).collect());
+    }
+    let errors: Vec<&String> = lines
+        .iter()
+        .filter(|l| {
+            let l = l.to_ascii_lowercase();
+            ["error", "panic", "fatal", "failed"]
+                .iter()
+                .any(|w| l.contains(w))
+        })
+        .collect();
+    let pick: Vec<&String> = if errors.is_empty() {
+        lines.iter().rev().take(2).rev().collect()
+    } else {
+        errors.iter().rev().take(3).rev().copied().collect()
+    };
+    if pick.is_empty() {
+        return None;
+    }
+    Some(
+        pick.iter()
+            .map(|l| l.chars().take(240).collect::<String>())
+            .collect::<Vec<_>>()
+            .join(" / "),
+    )
+}
+
+/// A log line without its colour codes and the timestamp a server puts
+/// first.
+fn plain_log_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // An escape sequence: `ESC [` up to its final letter.
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for f in chars.by_ref() {
+                    if f.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if c.is_control() || c == '\u{fffd}' {
+            continue;
+        }
+        out.push(c);
+    }
+    let out = out.trim();
+    match out.split_once(' ') {
+        Some((first, rest))
+            if first.len() >= 20
+                && first.as_bytes().get(4) == Some(&b'-')
+                && first.contains('T') =>
+        {
+            rest.trim().to_string()
+        }
+        _ => out.to_string(),
+    }
+}
 
 /// One workload of a release as the cluster reports it.
 #[derive(Debug, Clone, Serialize)]
@@ -1366,6 +1444,34 @@ mod tests {
         assert_eq!(log_lines(Some(50)), 50);
         assert_eq!(log_lines(Some(0)), 1);
         assert_eq!(log_lines(Some(1_000_000)), LOG_LINES_MAX);
+    }
+
+    #[test]
+    fn a_stopped_container_is_remembered_by_its_errors() {
+        let log = "2026-11-05T07:13:06.882117449Z \u{1b}[32m INFO\u{1b}[0m toolkit: Initializing a gear... gear=\"a\"\n\
+                   2026-11-05T07:13:06.990000000Z \u{1b}[31mERROR\u{1b}[0m toolkit: gear init failed: oidc discovery: connection refused\n\
+                   2026-11-05T07:13:07.000000000Z  INFO toolkit: shutting down\n";
+        assert_eq!(
+            last_words(log).as_deref(),
+            Some("ERROR toolkit: gear init failed: oidc discovery: connection refused")
+        );
+        // Nothing names an error: the last lines are what is left.
+        assert_eq!(
+            last_words("one\ntwo\nthree\n").as_deref(),
+            Some("two / three")
+        );
+        assert_eq!(last_words("\n \n"), None);
+        // An error returned from `main` is told with its causes.
+        let log = "2026-11-05T07:16:48.383Z ERROR hw: Failed to get hardware machine ID\n\
+                   Error: initialization failed for gear 'm'\n\
+                   \n\
+                   Caused by:\n    invalid config for gear 'm': missing field `model_catalog`\n";
+        assert_eq!(
+            last_words(log).as_deref(),
+            Some(
+                "Error: initialization failed for gear 'm' / invalid config for gear 'm': missing field `model_catalog`"
+            )
+        );
     }
 
     #[test]
