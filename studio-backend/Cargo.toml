@@ -40,13 +40,14 @@ theia-event-broker = ["theia-bridge", "dep:event-broker-sdk"]
 # the release included. Default ON so `cargo run` / the docker-compose dev
 # build get Ask AI. The k8s release image drops it:
 # .github/workflows/studio-delivery.yml builds `--no-default-features --features graph,theia-bridge`, so `graph` and
-# the Theia bridge ARE in the release and only the LLM chain is out. The reason
-# is the fresh-boot root-tenant deadlock documented on the mini_chat/api_egress
-# dependencies below, not the deployment target — the DMZ justification that
-# used to be here is stale, that environment is no longer deployed to (the
-# Virtuozzo `studio-dev`/`studio-test` clusters are, via .github/workflows/deploy.yml).
-# Turning `llm` back on for a cluster deploy therefore needs the deadlock
-# resolved first, plus an LLM key in that environment.
+# the Theia bridge ARE in the release and only the LLM chain is out. It used to
+# be out because oagw < 0.6 could not boot on a fresh database (see the
+# mini_chat/api_egress dependencies below); with oagw 0.6 and its database
+# that is gone, so turning `llm` on for a cluster deploy needs only an LLM key
+# in that environment (and the `studio_oagw` database the bootstrap hook
+# creates from config/k8s.yaml). The DMZ justification that used to be here is
+# stale too: the Virtuozzo `studio-dev`/`studio-test` clusters are what is
+# deployed to, via .github/workflows/deploy.yml.
 #
 # `graph` links the graph-storage gear (`cf-gears-graph-storage`) with both of
 # its embedding providers, and the consumers that feed it: the repository
@@ -236,16 +237,16 @@ keycloak_idp_plugin = { package = "cf-gears-keycloak-idp-plugin", version = "=0.
 # (src/infra/plugins/static_model_policy); the standalone
 # gears/mini-chat/plugins/static-model-policy-plugin dir is a leftover
 # Cargo.toml with no sources (gears issue candidate #5).
-# mini-chat + oagw are gated behind the `llm` feature (default on). oagw's
-# post_init provisions the mini-chat upstream under the ROOT tenant, but the
-# root is created by account-management's bootstrap saga in its run phase —
-# after every gear's post_init. On a fresh database the root does not exist
-# yet, so oagw's post_init fails and the boot dies before the saga can seed
-# it (a deadlock masked in docker only because the volume already held a root
-# from an earlier boot). So the release image leaves the `llm` feature off:
-# no LLM chain, no oagw, and the boot reaches the run phase and bootstraps its
-# own root. That is the whole reason — it holds for any fresh database, not for
-# a particular environment.
+# mini-chat + oagw are gated behind the `llm` feature (default on). oagw
+# provisions the mini-chat upstream under the ROOT tenant, which
+# account-management's bootstrap saga creates in its serve phase — after every
+# gear's post_init. oagw < 0.6 did that in post_init and so killed the boot on
+# a fresh database (Studio worked around it with a no-LLM seeder run). oagw
+# >= 0.6 with a database (`gears.oagw.database`, set in every profile) keeps
+# upstreams and routes there and reconciles them in a background task started
+# in `start`, which waits for the root instead of failing the boot (ADR-0018).
+# Without a database oagw still reconciles in post_init, so the section is
+# load-bearing.
 mini_chat = { package = "cf-gears-mini-chat", version = "=0.5.2", optional = true }
 api_egress = { package = "cf-gears-oagw", version = "=0.6.2", optional = true }
 credstore = { package = "cf-gears-credstore", version = "=0.6.2" }

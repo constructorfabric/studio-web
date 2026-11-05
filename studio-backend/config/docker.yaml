@@ -506,6 +506,14 @@ gears:
         platform_tenant_id: "00000000-0000-0000-0000-000000000001"
       keycloak:
         base_url: "http://keycloak:8080"
+        # The plugin takes its admin token in init and fails the boot when
+        # Keycloak does not answer within this budget (default 5 x 3s). Under
+        # compose the backend starts as soon as Keycloak has STARTED, and a
+        # first realm import takes a minute or two: 60 x 3s covers it, the
+        # same three minutes as the backend's health start_period.
+        bootstrap_pre_warm:
+          max_attempts: 60
+          backoff: 3s
         bootstrap_admin:
           # Shared-only mode: assert (GET) the studio realm — no master realm needed.
           realm: "studio"

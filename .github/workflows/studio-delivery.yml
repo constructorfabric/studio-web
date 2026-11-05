@@ -242,16 +242,6 @@ jobs:
         run: cargo clippy --locked --all-targets --features theia-bridge -- -D warnings
       - name: Build
         run: cargo build --locked --features theia-bridge
-      # `backend-bootstrap` is built `--no-default-features`, which nothing else
-      # here compiles, so a change could be green above and still fail
-      # `docker compose up`. `check` rather than `build`: this is about the code
-      # compiling under that set, and a second link would cost minutes to prove
-      # nothing more. Deliberately without `-D warnings`, unlike the lint above:
-      # a reduced build leaves about sixteen dead-code warnings for items only
-      # the default features use, which is its expected shape rather than a set
-      # of defects to fix.
-      - name: Compile the reduced set backend-bootstrap builds
-        run: cargo check --locked --no-default-features
       - name: Test
         run: cargo test --locked --features theia-bridge
       - name: "Smoke: the assembly resolves its gears"

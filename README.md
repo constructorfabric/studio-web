@@ -310,9 +310,10 @@ How to branch, sign off, test and get a change reviewed is in
 ### The backend never becomes healthy
 
 `docker compose ps` shows which dependency it waits for, and
-`docker compose logs -f backend` why. On an empty database the backend waits
-for `backend-bootstrap` to seed the root tenant, and that waits for Keycloak to
-finish importing its realm.
+`docker compose logs -f backend` why. The backend first waits for
+`backend-bootstrap` to create and migrate the gear databases
+(`docker compose logs backend-bootstrap`); on an empty database it then seeds
+the root tenant itself, retrying while Keycloak finishes importing its realm.
 
 ### Browser sign-in fails
 

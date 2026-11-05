@@ -58,15 +58,10 @@ COPY docs/design/ /src/docs/design/
 # The commit, when the caller knows it (`--build-arg STUDIO_BUILD_COMMIT=$(git
 # rev-parse HEAD)`); compose does not pass it, and the manifest then says null.
 ARG STUDIO_BUILD_COMMIT=""
-# CARGO_FEATURES lets the two-step dev bootstrap build a stripped binary
-# (--no-default-features) that reaches the serve phase and seeds the root
-# tenant, without the oagw post_init that deadlocks on an empty DB. Note that
-# this drops BOTH default features: `llm` (mini-chat + oagw) and `graph`
-# (graph-storage + the repository importer). The bootstrap run only has to seed
-# a tenant, so neither is missed — but a binary built this way serves no
-# /graph-storage routes. Default is empty = the normal dev build with both on.
-# The cargo-chef dep layer above is unchanged, so both variants share it and
-# only the final app compile differs.
+# CARGO_FEATURES picks the cargo features of the binary (compose passes
+# `--features theia-bridge`). Default is empty = the default features, `llm`
+# and `graph`. The cargo-chef dep layer above is unchanged by it, so every
+# variant shares it and only the final app compile differs.
 ARG CARGO_FEATURES=""
 RUN cargo build --locked --release ${CARGO_FEATURES} \
  && cp target/release/studio-backend /studio-backend
@@ -161,12 +156,8 @@ ENV STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox \
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 COPY studio-backend/config/ /app/config/
 COPY studio-backend/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-# Fresh-DB seeder entrypoint used only by the `backend-bootstrap` compose
-# service (built --no-default-features): it runs the backend, waits for the
-# platform root tenant to be seeded, then exits so the main backend can start.
-COPY studio-backend/docker/bootstrap-seed.sh /usr/local/bin/bootstrap-seed.sh
 RUN chown -R studio /app \
- && chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/bootstrap-seed.sh
+ && chmod +x /usr/local/bin/entrypoint.sh
 # Stays root: the entrypoint needs it to join the Docker socket's group, and
 # hands the server to `studio` via gosu as its last act.
 EXPOSE 8090
