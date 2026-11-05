@@ -140,12 +140,116 @@ const INSTALL_WORDS: Record<InfraPlanItem["install"], string> = {
 /** One plan item as a line. */
 export function planItemText(i: InfraPlanItem): string {
   const from = i.chart ?? i.image;
-  return `${i.service}: ${INSTALL_WORDS[i.install]}${from ? ` (${from})` : ""}`;
+  return `${i.service}: ${INSTALL_WORDS[i.install]}${from ? ` (${from})` : ""}${i.route ? `, reached at ${i.route}` : ""}`;
 }
 
 /** The plan's refusals, the first of which stops a deploy. */
 export function planRefusals(p: InfraPlan | null): string[] {
   return (p?.items ?? []).filter((i) => i.refusal).map((i) => `${i.refusal_code}: ${i.refusal}`);
+}
+
+/** What the plan says a deploy leaves undone, each with its service. */
+export function planNotes(p: InfraPlan | null): string[] {
+  return (p?.items ?? []).flatMap((i) => (i.notes ?? []).map((n) => `${i.service}: ${n}`));
+}
+
+/* ── Files a service's container reads (ADR-0064, amended) ──────────────── */
+
+/** As the backend: at most 20 files and 256 KiB together. */
+export const MAX_FILES = 20;
+export const MAX_FILES_BYTES = 256 * 1024;
+
+/** Where stock Keycloak imports realms from with `--import-realm`. */
+export const KEYCLOAK_IMPORT_DIR = "/opt/keycloak/data/import";
+
+/** What is wrong with a service's files, as the backend checks them: each
+ *  path absolute without `.`, `..` or empty names; the size together. */
+export function fileProblems(files: Record<string, string>): string[] {
+  const out: string[] = [];
+  const entries = Object.entries(files);
+  if (entries.length > MAX_FILES) out.push(`at most ${MAX_FILES} files`);
+  for (const [path] of entries) {
+    const names = path.slice(1).split("/");
+    if (!path.startsWith("/") || path.length < 2 || names.some((n) => n === "" || n === "." || n === ".."))
+      out.push(`"${path}" is not an absolute path in the container (/…, no ..)`);
+  }
+  const size = entries.reduce((n, [k, v]) => n + new TextEncoder().encode(k).length + new TextEncoder().encode(v).length, 0);
+  if (size > MAX_FILES_BYTES) out.push(`the files are ${size} bytes together; at most ${MAX_FILES_BYTES}`);
+  return out;
+}
+
+/** The realm a passport's issuer names: `{public_url}/realms/product` is
+ *  `product`. */
+export function realmNameOf(p: Pick<InfraPassport, "provides">): string {
+  return p.provides["oidc.issuer"]?.match(/\/realms\/([^/{}?#\s]+)/)?.[1] ?? "product";
+}
+
+/** The passport's secret a confidential client's secret is kept as: one
+ *  named for a client, else any but the admin's. */
+export function clientSecretKeyOf(p: Pick<InfraPassport, "secrets">): string | null {
+  return (
+    p.secrets.find((k) => /CLIENT_SECRET/.test(k)) ?? p.secrets.find((k) => !/ADMIN/.test(k)) ?? null
+  );
+}
+
+/** A Keycloak realm to import: named from the passport's issuer, with one
+ *  public client for the product's portal (`portalUrl`, else any address)
+ *  and one confidential client whose secret is the passport's
+ *  `{secret.KEY}`, which Studio makes per environment and the product
+ *  reads as what the service provides. */
+export function keycloakRealm(
+  p: Pick<InfraPassport, "provides" | "secrets">,
+  portalUrl?: string | null,
+): { path: string; content: string; secretKey: string } {
+  const realm = realmNameOf(p);
+  const secretKey = clientSecretKeyOf(p) ?? "OIDC_CLIENT_SECRET";
+  const portal = portalUrl?.trim().replace(/\/+$/, "") || null;
+  const doc = {
+    realm,
+    enabled: true,
+    clients: [
+      {
+        clientId: `${realm}-portal`,
+        name: "The product's portal",
+        publicClient: true,
+        standardFlowEnabled: true,
+        directAccessGrantsEnabled: false,
+        redirectUris: [portal ? `${portal}/*` : "*"],
+        webOrigins: [portal ?? "+"],
+        attributes: { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "+" },
+      },
+      {
+        clientId: `${realm}-backend`,
+        name: "The product's backend",
+        publicClient: false,
+        clientAuthenticatorType: "client-secret",
+        secret: `{secret.${secretKey}}`,
+        serviceAccountsEnabled: true,
+        standardFlowEnabled: false,
+        directAccessGrantsEnabled: false,
+      },
+    ],
+  };
+  return { path: `${KEYCLOAK_IMPORT_DIR}/${realm}.json`, content: JSON.stringify(doc, null, 2), secretKey };
+}
+
+/** `s`'s files and arguments with a realm to import added: the realm file,
+ *  and `--import-realm` once. */
+export function withKeycloakRealm(
+  s: Pick<InfraService, "passport" | "files" | "args">,
+  portalUrl?: string | null,
+): { files: Record<string, string>; args: string[] } {
+  const r = keycloakRealm(s.passport, portalUrl);
+  const args = s.args ?? [];
+  return {
+    files: { ...(s.files ?? {}), [r.path]: r.content },
+    args: args.includes("--import-realm") ? [...args] : [...args, "--import-realm"],
+  };
+}
+
+/** Is `p` a Keycloak: it gives an issuer, or is named so. */
+export function isKeycloak(p: Pick<InfraPassport, "name" | "provides">): boolean {
+  return p.name === "keycloak" || "keycloak.admin_url" in p.provides;
 }
 
 /** The variables the product gets from its infra services, sorted. */
@@ -637,6 +741,7 @@ const REFUSAL_WORDS: Record<string, string> = {
   INFRA_IMAGE_NOT_IMPORTED: "no copy yet",
   IMAGE_NOT_IN_PROJECT_PATH: "copy outside the project",
   INFRA_NOT_IN_SHARED_PLACE: "not in the shared place",
+  INFRA_PUBLIC_URL_MISSING: "no public address",
 };
 
 /** How one service comes in one environment, as its plan says. */
@@ -654,7 +759,7 @@ export function servicePill(env: Pick<RowEnvironment, "name">, item: InfraPlanIt
     tone: "ok",
     text: `${env.name} ✓ ${item.placement === "shared" ? "shared place" : "with the product"}`,
     // Without the image's reference: the digest is the environment's copy.
-    detail: INSTALL_WORDS[item.install],
+    detail: [INSTALL_WORDS[item.install], ...(item.route ? [`reached at ${item.route}`] : []), ...(item.notes ?? [])].join("; "),
   };
 }
 

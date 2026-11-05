@@ -37,6 +37,15 @@ import {
   sharedText,
   sourceText,
   variableOf,
+  clientSecretKeyOf,
+  fileProblems,
+  isKeycloak,
+  KEYCLOAK_IMPORT_DIR,
+  keycloakRealm,
+  MAX_FILES_BYTES,
+  planNotes,
+  realmNameOf,
+  withKeycloakRealm,
 } from "./infra-services";
 
 const keycloakNode = {
@@ -401,5 +410,68 @@ describe("the Infrastructure editor", () => {
       ["oidc", "keycloak"],
       ["keycloak", "keycloak"],
     ]);
+  });
+});
+
+describe("files, arguments and the address people reach", () => {
+  const kc = passportOf(keycloakNode)!;
+  const withClientSecret = { ...kc, secrets: ["KC_BOOTSTRAP_ADMIN_PASSWORD", "OIDC_CLIENT_SECRET"] };
+
+  it("checks files as the backend does", () => {
+    expect(fileProblems({ "/opt/keycloak/data/import/product.json": "{}" })).toEqual([]);
+    for (const bad of ["realm.json", "/opt/../etc", "/opt//x", "/opt/x/", "/"])
+      expect(fileProblems({ [bad]: "x" })).toHaveLength(1);
+    expect(fileProblems({ "/a": "x".repeat(MAX_FILES_BYTES) })[0]).toMatch(/bytes together/);
+  });
+
+  it("names the realm from the issuer, and the client secret from the passport", () => {
+    expect(realmNameOf(kc)).toBe("product");
+    expect(realmNameOf({ provides: { "oidc.issuer": "{public_url}/realms/shop" } })).toBe("shop");
+    expect(realmNameOf({ provides: {} })).toBe("product");
+    expect(clientSecretKeyOf(kc)).toBeNull();
+    expect(clientSecretKeyOf(withClientSecret)).toBe("OIDC_CLIENT_SECRET");
+  });
+
+  it("writes a realm with a public portal client and a confidential one", () => {
+    const r = keycloakRealm(withClientSecret, "https://shop.example.com/");
+    expect(r.path).toBe(`${KEYCLOAK_IMPORT_DIR}/product.json`);
+    const doc = JSON.parse(r.content);
+    expect(doc.realm).toBe("product");
+    expect(doc.clients[0]).toMatchObject({ clientId: "product-portal", publicClient: true, redirectUris: ["https://shop.example.com/*"] });
+    expect(doc.clients[1]).toMatchObject({ clientId: "product-backend", publicClient: false, secret: "{secret.OIDC_CLIENT_SECRET}" });
+    expect(JSON.parse(keycloakRealm(kc).content).clients[0].redirectUris).toEqual(["*"]);
+  });
+
+  it("adds the realm and --import-realm once, keeping other files", () => {
+    const s = { ...serviceFrom(withClientSecret), files: { "/etc/x": "y" }, args: [] };
+    const once = withKeycloakRealm(s);
+    expect(Object.keys(once.files).sort()).toEqual(["/etc/x", `${KEYCLOAK_IMPORT_DIR}/product.json`]);
+    expect(once.args).toEqual(["--import-realm"]);
+    expect(withKeycloakRealm({ ...s, ...once }).args).toEqual(["--import-realm"]);
+    expect(isKeycloak(kc)).toBe(true);
+    expect(isKeycloak(passportOf(postgresNode)!)).toBe(false);
+  });
+
+  it("shows the route, the notes and the missing address in the plan", () => {
+    const item = {
+      service: "keycloak",
+      placement: "with_product" as const,
+      install: "generated" as const,
+      provides: [],
+      route: "https://id.shop.example",
+    };
+    expect(planItemText(item)).toMatch(/reached at https:\/\/id\.shop\.example$/);
+    expect(servicePill({ name: "dev" }, item).detail).toMatch(/reached at https:\/\/id\.shop\.example/);
+    const plan = {
+      environment_id: "e",
+      environment_name: "dev",
+      placement: "with_product" as const,
+      namespace: "shop-dev",
+      items: [{ ...item, install: "chart" as const, route: null, notes: ["its files are not applied: a ready chart …"] }],
+    };
+    expect(planNotes(plan)).toEqual(["keycloak: its files are not applied: a ready chart …"]);
+    expect(
+      servicePill({ name: "dev" }, { ...item, refusal_code: "INFRA_PUBLIC_URL_MISSING", refusal: "set its public_url" }).text,
+    ).toBe("dev ⚠ no public address");
   });
 });

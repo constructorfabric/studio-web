@@ -1456,7 +1456,13 @@ impl EnvironmentService {
         // Infra services run on a cluster (ADR-0064); a Research
         // environment brings its own services.
         let infra = if env.kind == EnvironmentKind::Kubernetes {
-            super::infra::installs(env.boundaries.infra.as_ref(), &services)
+            super::infra::installs(
+                env.boundaries.infra.as_ref(),
+                &services,
+                env.previews
+                    .as_ref()
+                    .and_then(|s| s.ingress_class.as_deref()),
+            )
         } else {
             Vec::new()
         };

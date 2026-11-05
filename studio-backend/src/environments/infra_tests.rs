@@ -25,6 +25,7 @@ fn keycloak() -> InfraService {
             ..Default::default()
         },
         image: Some("registry.example/acme/shop/mirror/keycloak@sha256:abc".into()),
+        public_url: Some("https://id.shop.example".into()),
         ..Default::default()
     }
 }
@@ -67,6 +68,7 @@ fn a_dev_environment_runs_infra_with_the_product() {
     let shared = InfraPlacement {
         placement: Placement::Shared,
         shared: vec![],
+        ingress: None,
     };
     let e = check_placement(Some(shared.clone()), true).unwrap_err();
     assert!(e.contains("dev environment"), "{e}");
@@ -92,6 +94,7 @@ fn a_shared_place_is_checked() {
             };
             2
         ],
+        ingress: None,
     };
     assert!(
         check_placement(Some(twice), false)
@@ -105,6 +108,7 @@ fn a_shared_place_is_checked() {
             namespace: None,
             provides: [("OIDC".to_owned(), "x".to_owned())].into(),
         }],
+        ingress: None,
     };
     assert!(check_placement(Some(bad_key), false).is_err());
 }
@@ -195,6 +199,7 @@ fn a_shared_place_installs_nothing_and_must_name_the_service() {
             )]
             .into(),
         }],
+        ingress: None,
     };
     let p = plan(Some(&place), &[keycloak(), postgres()], under_shop);
     assert_eq!(p[0].install, Install::Shared);
@@ -217,17 +222,13 @@ fn a_shared_place_installs_nothing_and_must_name_the_service() {
 #[test]
 fn provided_values_are_filled_for_the_namespace() {
     let values = provided_values(&keycloak(), None, "shop-dev", &secrets()).unwrap();
-    assert_eq!(values["OIDC_ISSUER"], "http://keycloak:8080/realms/product");
-    assert_eq!(values["KEYCLOAK_ADMIN_PASSWORD"], "s3cret");
-    let mut public = keycloak();
-    public.public_url = Some("https://id.shop.example".into());
-    let values = provided_values(&public, None, "shop-dev", &secrets()).unwrap();
     assert_eq!(
         values["OIDC_ISSUER"],
         "https://id.shop.example/realms/product"
     );
+    assert_eq!(values["KEYCLOAK_ADMIN_PASSWORD"], "s3cret");
     assert!(provided_values(&keycloak(), None, "shop-dev", &BTreeMap::new()).is_err());
-    let installs = installs(None, &[keycloak(), postgres()]);
+    let installs = installs(None, &[keycloak(), postgres()], None);
     // The database step wires the gears to their server itself.
     assert_eq!(
         produced_variables(&installs),
@@ -262,8 +263,10 @@ fn a_generated_chart_is_the_manifests_the_passport_describes() {
     let files = generated_chart(
         &keycloak(),
         "registry.example/acme/shop/mirror/keycloak@sha256:abc",
+        "shop-dev",
         &secrets(),
         Some("studio-registry"),
+        None,
     )
     .unwrap();
     let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
@@ -288,7 +291,9 @@ fn a_generated_chart_is_the_manifests_the_passport_describes() {
     let pg = generated_chart(
         &postgres(),
         "registry.example/acme/shop/mirror/postgresql@sha256:def",
+        "shop-dev",
         &[("POSTGRES_PASSWORD".to_owned(), "p".to_owned())].into(),
+        None,
         None,
     )
     .unwrap();
@@ -450,5 +455,335 @@ fn without_a_digest_the_lock_is_copied_by_its_tag() {
     assert_eq!(
         from_lock(&locked, std::slice::from_ref(&record))[0].image,
         record.image
+    );
+}
+
+/* ── files, arguments and the address people reach (ADR-0064, amended) ── */
+
+const REALM: &str = r#"{"realm":"product","clients":[{"clientId":"product-api","secret":"{secret.KC_BOOTSTRAP_ADMIN_PASSWORD}","attributes":{}},{"clientId":"product-portal","redirectUris":["https://shop.example/*"],"rootUrl":"{public_url}"}],"note":"{not a template}"}"#;
+
+fn with_realm() -> InfraService {
+    let mut s = keycloak();
+    s.files = [(
+        "/opt/keycloak/data/import/product.json".to_owned(),
+        REALM.to_owned(),
+    )]
+    .into();
+    s.args = vec!["--import-realm".into()];
+    s
+}
+
+fn chart_file(files: &[(String, String)], name: &str) -> String {
+    files
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, f)| f.clone())
+        .unwrap_or_else(|| panic!("no {name}"))
+}
+
+#[test]
+fn files_are_checked_paths_size_and_templates() {
+    assert!(checked_services(vec![with_realm()]).is_ok());
+    for bad in [
+        "relative/realm.json",
+        "/opt/../etc/passwd",
+        "/opt//x",
+        "/opt/./x",
+        "/",
+        "/opt/x/",
+    ] {
+        let mut s = keycloak();
+        s.files = [(bad.to_owned(), "x".to_owned())].into();
+        let e = checked_services(vec![s]).unwrap_err();
+        assert!(e.contains("absolute path"), "{bad}: {e}");
+    }
+    let mut big = keycloak();
+    big.files = [("/a".to_owned(), "x".repeat(MAX_FILES_BYTES))].into();
+    let e = checked_services(vec![big]).unwrap_err();
+    assert!(e.contains("bytes together"), "{e}");
+
+    let mut undeclared = keycloak();
+    undeclared.files = [("/a".to_owned(), r#"{"s":"{secret.NOPE}"}"#.to_owned())].into();
+    let e = checked_services(vec![undeclared]).unwrap_err();
+    assert!(
+        e.contains("{secret.NOPE}") && e.contains("does not declare"),
+        "{e}"
+    );
+
+    let mut braces = keycloak();
+    braces.args = vec!["--x={{ .Values }}".into()];
+    assert!(checked_services(vec![braces]).is_err());
+
+    let mut not_an_address = keycloak();
+    not_an_address.public_url = Some("https://not a host".into());
+    assert!(checked_services(vec![not_an_address]).is_err());
+}
+
+#[test]
+fn a_files_template_names_are_filled_and_its_own_braces_kept() {
+    let filled = files(&with_realm(), "shop-dev", &secrets()).unwrap();
+    let realm = &filled["/opt/keycloak/data/import/product.json"];
+    assert!(realm.contains(r#""secret":"s3cret""#), "{realm}");
+    assert!(
+        realm.contains(r#""rootUrl":"https://id.shop.example""#),
+        "{realm}"
+    );
+    assert!(realm.contains(r#""attributes":{}"#), "{realm}");
+    assert!(realm.contains(r#""note":"{not a template}""#), "{realm}");
+    serde_json::from_str::<Value>(realm).expect("still JSON");
+    assert!(files(&with_realm(), "shop-dev", &BTreeMap::new()).is_err());
+}
+
+#[test]
+fn a_generated_chart_mounts_the_files_read_only_and_restarts_on_a_change() {
+    let chart = |s: &InfraService| {
+        generated_chart(
+            s,
+            "registry.example/acme/shop/mirror/keycloak@sha256:abc",
+            "shop-dev",
+            &secrets(),
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    let files = chart(&with_realm());
+    // A file that says a secret is kept in a Secret, base64.
+    let holder = chart_file(&files, "templates/files.yaml");
+    assert!(holder.contains("kind: Secret"), "{holder}");
+    assert!(holder.contains("name: keycloak-files"), "{holder}");
+    assert!(!holder.contains("s3cret"), "{holder}");
+    let workload = chart_file(&files, "templates/workload.yaml");
+    assert!(
+        workload.contains("mountPath: /opt/keycloak/data/import/product.json"),
+        "{workload}"
+    );
+    assert!(workload.contains("subPath: file-0"), "{workload}");
+    assert!(workload.contains("readOnly: true"), "{workload}");
+    assert!(
+        workload.contains("secretName: keycloak-files"),
+        "{workload}"
+    );
+    assert!(workload.contains(FILES_HASH_ANNOTATION), "{workload}");
+    // The passport's arguments, then the project's.
+    let start = workload.find("start-dev").unwrap();
+    let import = workload.find("--import-realm").unwrap();
+    assert!(start < import, "{workload}");
+    assert!(!files.iter().any(|(_, f)| f.contains("{{")));
+
+    // Without a secret, a ConfigMap; another text, another hash.
+    let mut plain = keycloak();
+    plain.files = [("/etc/x.conf".to_owned(), "a = {host}".to_owned())].into();
+    let files = chart(&plain);
+    let holder = chart_file(&files, "templates/files.yaml");
+    assert!(holder.contains("kind: ConfigMap"), "{holder}");
+    assert!(holder.contains("binaryData"), "{holder}");
+    let hash = |w: &str| {
+        w.lines()
+            .find(|l| l.contains(FILES_HASH_ANNOTATION))
+            .unwrap()
+            .to_owned()
+    };
+    let before = hash(&chart_file(&files, "templates/workload.yaml"));
+    plain.files = [("/etc/x.conf".to_owned(), "a = b".to_owned())].into();
+    let after = hash(&chart_file(&chart(&plain), "templates/workload.yaml"));
+    assert_ne!(before, after);
+    // No files: neither the object nor the annotation.
+    let bare = chart(&keycloak());
+    assert!(!bare.iter().any(|(n, _)| n == "templates/files.yaml"));
+    assert!(!chart_file(&bare, "templates/workload.yaml").contains(FILES_HASH_ANNOTATION));
+}
+
+#[test]
+fn a_public_url_is_routed_by_an_ingress_as_the_environment_asks() {
+    let settings = InfraIngress {
+        class: Some("nginx".into()),
+        tls_secret: Some("shop-tls".into()),
+        annotations: [(
+            "cert-manager.io/cluster-issuer".to_owned(),
+            "letsencrypt".to_owned(),
+        )]
+        .into(),
+    };
+    let mut s = keycloak();
+    s.public_url = Some("https://id.shop.example/auth".into());
+    let files = generated_chart(
+        &s,
+        "img@sha256:abc",
+        "shop-dev",
+        &secrets(),
+        None,
+        Some(&settings),
+    )
+    .unwrap();
+    let v: Value = serde_yaml::from_str(&chart_file(&files, "templates/ingress.yaml")).unwrap();
+    assert_eq!(v["kind"], "Ingress");
+    assert_eq!(v["spec"]["ingressClassName"], "nginx");
+    assert_eq!(v["spec"]["rules"][0]["host"], "id.shop.example");
+    let path = &v["spec"]["rules"][0]["http"]["paths"][0];
+    assert_eq!(path["path"], "/auth");
+    assert_eq!(path["backend"]["service"]["name"], "keycloak");
+    assert_eq!(path["backend"]["service"]["port"]["number"], 8080);
+    assert_eq!(v["spec"]["tls"][0]["secretName"], "shop-tls");
+    assert_eq!(v["spec"]["tls"][0]["hosts"][0], "id.shop.example");
+    assert_eq!(
+        v["metadata"]["annotations"]["cert-manager.io/cluster-issuer"],
+        "letsencrypt"
+    );
+
+    // An http address, no settings: a plain rule at `/`.
+    s.public_url = Some("http://id.shop.example".into());
+    let files = generated_chart(
+        &s,
+        "img@sha256:abc",
+        "shop-dev",
+        &secrets(),
+        None,
+        Some(&InfraIngress::default()),
+    )
+    .unwrap();
+    let v: Value = serde_yaml::from_str(&chart_file(&files, "templates/ingress.yaml")).unwrap();
+    assert_eq!(v["spec"]["rules"][0]["http"]["paths"][0]["path"], "/");
+    assert!(v["spec"].get("tls").is_none());
+    assert!(v["spec"].get("ingressClassName").is_none());
+}
+
+#[test]
+fn installs_route_a_generated_services_public_url_with_the_preview_class_by_default() {
+    let mut no_url = keycloak();
+    no_url.passport.name = "other".into();
+    no_url.passport.provides.clear();
+    no_url.public_url = None;
+    let list = installs(None, &[keycloak(), postgres(), no_url], Some("nginx"));
+    assert_eq!(
+        list[0].ingress.as_ref().and_then(|i| i.class.as_deref()),
+        Some("nginx")
+    );
+    assert_eq!(list[1].ingress, None, "the database step routes nothing");
+    assert_eq!(list[2].ingress, None, "no address, nothing to route");
+    let own = InfraPlacement {
+        ingress: Some(InfraIngress {
+            class: Some("traefik".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let list = installs(Some(&own), &[keycloak()], Some("nginx"));
+    assert_eq!(
+        list[0].ingress.as_ref().and_then(|i| i.class.as_deref()),
+        Some("traefik")
+    );
+}
+
+#[test]
+fn the_ingress_settings_are_checked() {
+    let with = |i: InfraIngress| {
+        check_placement(
+            Some(InfraPlacement {
+                ingress: Some(i),
+                ..Default::default()
+            }),
+            true,
+        )
+    };
+    assert!(
+        with(InfraIngress {
+            class: Some("not a class".into()),
+            ..Default::default()
+        })
+        .is_err()
+    );
+    assert!(
+        with(InfraIngress {
+            annotations: [("a".to_owned(), "x\ny".to_owned())].into(),
+            ..Default::default()
+        })
+        .is_err()
+    );
+    // Blank settings are none.
+    assert_eq!(
+        with(InfraIngress {
+            class: Some(" ".into()),
+            ..Default::default()
+        })
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_public_url_template_without_an_address_refuses_the_deploy() {
+    let mut s = keycloak();
+    s.public_url = None;
+    let item = &plan(None, std::slice::from_ref(&s), under_shop)[0];
+    let (code, why) = item.refusal.clone().expect("refused");
+    assert_eq!(code, PUBLIC_URL_MISSING);
+    assert!(why.contains("oidc.issuer"), "{why}");
+    assert!(why.contains("public_url"), "{why}");
+    assert_eq!(item.route, None);
+    // The run refuses the same, never the cluster's own address.
+    let e = provided_values(&s, None, "shop-dev", &secrets()).unwrap_err();
+    assert!(e.contains(PUBLIC_URL_MISSING), "{e}");
+
+    // A ready chart is refused the same; a shared place gives its own values.
+    let mut chart = s.clone();
+    chart.chart_ref = Some("oci://registry.example/acme/shop/mirror/charts/keycloak".into());
+    chart.chart_version = Some("24.4.0".into());
+    let item = &plan(None, &[chart], under_shop)[0];
+    assert_eq!(item.refusal.as_ref().unwrap().0, PUBLIC_URL_MISSING);
+    let place = InfraPlacement {
+        placement: Placement::Shared,
+        shared: vec![SharedService {
+            service: "keycloak".into(),
+            namespace: None,
+            provides: BTreeMap::new(),
+        }],
+        ingress: None,
+    };
+    assert_eq!(
+        plan(Some(&place), std::slice::from_ref(&s), under_shop)[0].refusal,
+        None
+    );
+
+    // A file that says {public_url} needs one too, even when no capability does.
+    let mut file_only = s;
+    file_only.passport.provides.remove("oidc.issuer");
+    file_only.files = [("/a".to_owned(), "{public_url}".to_owned())].into();
+    let (code, why) = plan(None, &[file_only], under_shop)[0]
+        .refusal
+        .clone()
+        .unwrap();
+    assert_eq!(code, PUBLIC_URL_MISSING);
+    assert!(why.contains("/a"), "{why}");
+}
+
+#[test]
+fn the_plan_shows_the_route_and_what_a_ready_chart_does_not_apply() {
+    let item = &plan(None, &[with_realm()], under_shop)[0];
+    assert_eq!(item.refusal, None);
+    assert_eq!(item.route.as_deref(), Some("https://id.shop.example"));
+    assert!(item.notes.is_empty());
+    let mut chart = with_realm();
+    chart.chart_ref = Some("oci://registry.example/acme/shop/mirror/charts/keycloak".into());
+    chart.chart_version = Some("24.4.0".into());
+    let item = &plan(None, &[chart], under_shop)[0];
+    assert_eq!(item.route, None);
+    assert_eq!(item.notes.len(), 1);
+    assert!(
+        item.notes[0].contains("files and extra arguments are not applied"),
+        "{:?}",
+        item.notes
+    );
+}
+
+#[test]
+fn the_lock_keeps_the_records_files_and_arguments() {
+    let locked = locked_services(&resolved("quay.io/keycloak/keycloak:26.0.7@sha256:abc")).unwrap();
+    let services = from_lock(&locked, &[with_realm()]);
+    assert_eq!(services[0].args, vec!["--import-realm"]);
+    assert!(
+        services[0]
+            .files
+            .contains_key("/opt/keycloak/data/import/product.json")
     );
 }

@@ -123,8 +123,9 @@ pub(crate) enum TemplateRef {
     Host,
     /// `{namespace}`: the namespace it runs in.
     Namespace,
-    /// `{public_url}`: where people reach it, as the project says, else
-    /// `http://{host}:<its http port>`.
+    /// `{public_url}`: where people reach it, as the project says; a deploy
+    /// of a service without one is refused (`INFRA_PUBLIC_URL_MISSING`),
+    /// never filled with the cluster's own address.
     PublicUrl,
     /// `{port.<name>}`.
     Port(String),

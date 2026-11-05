@@ -1341,7 +1341,7 @@ fn default_preview_max_live() -> u32 {
 }
 
 /// Is `s` a DNS name: dot-separated labels, at most 253 characters?
-fn is_dns_name(s: &str) -> bool {
+pub(super) fn is_dns_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 253 && s.split('.').all(is_dns_label)
 }
 

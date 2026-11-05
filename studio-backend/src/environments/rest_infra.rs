@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::{Environments, License, ProjectQuery, TAG, problem};
 use crate::environments::infra::{
-    InfraPassport, InfraPlacement, InfraService, Placement, SharedService,
+    InfraIngress, InfraPassport, InfraPlacement, InfraService, Placement, SharedService,
 };
 use crate::environments::service::InfraPlan;
 
@@ -29,6 +29,28 @@ pub struct InfraPlacementDto {
     /// For `shared`: the place of each service.
     #[serde(default)]
     pub shared: Vec<InfraSharedServiceDto>,
+    /// How a service placed with the product is reached at its
+    /// `public_url`: the Ingress its generated chart carries.
+    #[serde(default)]
+    pub ingress: Option<InfraIngressDto>,
+}
+
+/// The Ingress a generated chart routes an infra service's `public_url`
+/// with.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct InfraIngressDto {
+    /// `ingressClassName`; absent: the environment's preview class, else the
+    /// cluster's default.
+    #[serde(default)]
+    pub class: Option<String>,
+    /// The TLS secret of an `https://` address; absent: the controller's
+    /// default certificate.
+    #[serde(default)]
+    pub tls_secret: Option<String>,
+    /// Annotations the ingress controller reads.
+    #[serde(default)]
+    pub annotations: BTreeMap<String, String>,
 }
 
 /// One service an organization runs for every product of an environment.
@@ -57,6 +79,11 @@ pub(super) fn placement_dto(p: Option<InfraPlacement>) -> Option<InfraPlacementD
                 provides: s.provides,
             })
             .collect(),
+        ingress: p.ingress.map(|i| InfraIngressDto {
+            class: i.class,
+            tls_secret: i.tls_secret,
+            annotations: i.annotations,
+        }),
     })
 }
 
@@ -83,6 +110,11 @@ pub(super) fn placement_of(
                 provides: s.provides,
             })
             .collect(),
+        ingress: d.ingress.map(|i| InfraIngress {
+            class: i.class,
+            tls_secret: i.tls_secret,
+            annotations: i.annotations,
+        }),
     }))
 }
 
@@ -148,8 +180,20 @@ pub struct InfraServiceDto {
     #[serde(default)]
     pub chart_values: Option<serde_json::Value>,
     /// Where people reach it (`{public_url}`), e.g. an issuer's address.
+    /// Placed with the product, its generated chart routes it with an
+    /// Ingress.
     #[serde(default)]
     pub public_url: Option<String>,
+    /// Files its container reads, by absolute path (a realm to import at
+    /// `/opt/keycloak/data/import/product.json`), mounted read-only by the
+    /// generated chart. Text whose `{secret.KEY}`, `{host}`, `{public_url}`,
+    /// `{namespace}`, `{port.<name>}` and `{config.KEY}` are filled as in the
+    /// passport's `provides`; at most 20 files and 256 KiB together.
+    #[serde(default)]
+    pub files: BTreeMap<String, String>,
+    /// Arguments after the passport's (`--import-realm`).
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 /// A project's infra services.
@@ -200,6 +244,8 @@ fn service_dto(s: InfraService) -> InfraServiceDto {
         chart_version: s.chart_version,
         chart_values: s.chart_values,
         public_url: s.public_url,
+        files: s.files,
+        args: s.args,
     }
 }
 
@@ -228,6 +274,8 @@ fn service_of(d: InfraServiceDto) -> InfraService {
         chart_version: d.chart_version,
         chart_values: d.chart_values,
         public_url: d.public_url,
+        files: d.files,
+        args: d.args,
     }
 }
 
@@ -259,9 +307,14 @@ pub struct InfraPlanItemDto {
     pub provides: Vec<InfraProvidedDto>,
     /// The code a deploy would be refused with now
     /// (`INFRA_IMAGE_NOT_IMPORTED`, `IMAGE_NOT_IN_PROJECT_PATH`,
-    /// `INFRA_NOT_IN_SHARED_PLACE`).
+    /// `INFRA_NOT_IN_SHARED_PLACE`, `INFRA_PUBLIC_URL_MISSING`).
     pub refusal_code: Option<String>,
     pub refusal: Option<String>,
+    /// The address its generated chart routes to it with an Ingress.
+    pub route: Option<String>,
+    /// What the deploy does not apply of what the project says of it (files
+    /// and arguments, for a ready chart).
+    pub notes: Vec<String>,
 }
 
 /// What a deploy of a project to one environment does with its infra
@@ -303,6 +356,8 @@ fn plan_dto(p: InfraPlan) -> InfraPlanDto {
                     .collect(),
                 refusal_code: i.refusal.as_ref().map(|(c, _)| (*c).to_owned()),
                 refusal: i.refusal.map(|(_, why)| why),
+                route: i.route,
+                notes: i.notes,
             })
             .collect(),
     }

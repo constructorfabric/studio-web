@@ -1787,6 +1787,17 @@ export interface InfraPlacement {
    *  (always so in a dev environment). `shared`: the organization's place. */
   placement: "with_product" | "shared";
   shared: InfraSharedService[];
+  /** The Ingress a generated chart routes a service's `public_url` with. */
+  ingress?: InfraIngress | null;
+}
+
+/** How a service placed with the product is reached at its `public_url`. */
+export interface InfraIngress {
+  /** `ingressClassName`; absent: the environment's preview class. */
+  class?: string | null;
+  /** The TLS secret of an `https://` address. */
+  tls_secret?: string | null;
+  annotations?: Record<string, string>;
 }
 
 /** One service the organization runs for every product of an environment. */
@@ -1827,8 +1838,15 @@ export interface InfraService {
   chart_ref?: string | null;
   chart_version?: string | null;
   chart_values?: Record<string, unknown> | null;
-  /** Where people reach it: `{public_url}`. */
+  /** Where people reach it: `{public_url}`. Placed with the product, its
+   *  generated chart routes it with an Ingress. */
   public_url?: string | null;
+  /** Files its container reads, by absolute path; text with the same
+   *  template names as `provides` (`{secret.KEY}`, `{public_url}`). Mounted
+   *  read-only by a generated chart. */
+  files?: Record<string, string>;
+  /** Arguments after the passport's (`--import-realm`). */
+  args?: string[];
 }
 
 /** What a deploy does with one infra service. */
@@ -1841,6 +1859,10 @@ export interface InfraPlanItem {
   provides: { capability: string; variable: string }[];
   refusal_code?: string | null;
   refusal?: string | null;
+  /** The address its generated chart routes to it with an Ingress. */
+  route?: string | null;
+  /** What the deploy does not apply of what the project says of it. */
+  notes?: string[];
 }
 
 /** What a deploy of the project to one environment does with its infra services. */

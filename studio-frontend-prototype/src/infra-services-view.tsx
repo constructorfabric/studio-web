@@ -13,6 +13,7 @@ import {
   type DeployEnvironment,
   type DeployEnvironmentInput,
   type GearConfig,
+  type InfraIngress,
   type InfraPassport,
   type InfraPlan,
   type InfraService,
@@ -35,10 +36,16 @@ import {
   offersFor,
   parseConfigLines,
   parseShared,
+  fileProblems,
+  isKeycloak,
+  keycloakRealm,
   patchPassport,
+  patchService,
   placementText,
   planItemText,
+  planNotes,
   planRefusals,
+  withKeycloakRealm,
   serviceFrom,
   sharedAllowed,
   sharedText,
@@ -252,6 +259,18 @@ export function InfraPlacementField({
   const placement = input.infra?.placement ?? "with_product";
   const allowed = sharedAllowed(input);
   const [text, setText] = useState(() => sharedText(input.infra?.shared ?? []));
+  const ingress = input.infra?.ingress ?? null;
+  const [notes, setNotes] = useState(() =>
+    Object.entries(ingress?.annotations ?? {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n"),
+  );
+  const setIngress = (patch: Partial<InfraIngress>) =>
+    set("infra", {
+      placement,
+      shared: input.infra?.shared ?? [],
+      ingress: { ...(ingress ?? {}), ...patch },
+    });
   return (
     <details className="env-advanced" open={placement === "shared"} data-environment-infra>
       <summary>
@@ -266,8 +285,8 @@ export function InfraPlacementField({
             set(
               "infra",
               e.target.value === "shared"
-                ? { placement: "shared", shared: parseShared(text) }
-                : { placement: "with_product", shared: [] },
+                ? { placement: "shared", shared: parseShared(text), ingress }
+                : { placement: "with_product", shared: [], ingress },
             )
           }
           aria-label="Infra placement"
@@ -290,7 +309,7 @@ export function InfraPlacementField({
             value={text}
             onChange={(e) => {
               setText(e.target.value);
-              set("infra", { placement: "shared", shared: parseShared(e.target.value) });
+              set("infra", { placement: "shared", shared: parseShared(e.target.value), ingress });
             }}
             placeholder="keycloak @identity oidc.issuer=https://id.acme.example/realms/shop"
           />
@@ -299,6 +318,44 @@ export function InfraPlacementField({
             project&apos;s configuration secrets.
           </span>
         </label>
+      )}
+      {placement === "with_product" && (
+        <div className="field" data-environment-infra-ingress>
+          <span>Public address of a service (its Ingress)</span>
+          <span className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            <input
+              value={ingress?.class ?? ""}
+              onChange={(e) => setIngress({ class: e.target.value || null })}
+              placeholder="ingress class (the preview one)"
+              aria-label="Infra ingress class"
+            />
+            <input
+              value={ingress?.tls_secret ?? ""}
+              onChange={(e) => setIngress({ tls_secret: e.target.value || null })}
+              placeholder="TLS secret (the controller's default)"
+              aria-label="Infra TLS secret"
+            />
+          </span>
+          <textarea
+            rows={2}
+            value={notes}
+            onChange={(e) => {
+              setNotes(e.target.value);
+              const annotations: Record<string, string> = {};
+              for (const line of e.target.value.split("\n")) {
+                const at = line.indexOf("=");
+                if (at > 0) annotations[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+              }
+              setIngress({ annotations });
+            }}
+            placeholder="cert-manager.io/cluster-issuer=letsencrypt"
+            aria-label="Infra ingress annotations"
+          />
+          <span className="hint">
+            A service the project gives a public address gets an Ingress at that host and path, so the address
+            answers. One annotation per line, <code>key=value</code>.
+          </span>
+        </div>
       )}
     </details>
   );
@@ -321,6 +378,7 @@ export function InfraPlanView({ token, projectId, environmentId }: { token: stri
   if (error) return <p className="hint">What the infra services will do could not be read: {error}</p>;
   if (!plan || plan.items.length === 0) return null;
   const refusals = planRefusals(plan);
+  const notes = planNotes(plan);
   return (
     <details className="build-plan" data-infra-plan open={refusals.length > 0}>
       <summary>
@@ -338,6 +396,13 @@ export function InfraPlanView({ token, projectId, environmentId }: { token: stri
           </li>
         ))}
       </ul>
+      {notes.length > 0 && (
+        <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }} data-infra-plan-notes>
+          {notes.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      )}
       {refusals.length > 0 && (
         <ul className="error" style={{ margin: "6px 0 0", paddingLeft: 18 }} data-infra-plan-refusals>
           {refusals.map((r) => (
@@ -360,15 +425,17 @@ export interface InfraPlace {
 
 /** What the product decides about a service: the publisher image (its
  *  version) and the passport's literal config. The rest is an environment's. */
-type Editing = { service: string; what: "image" | "config" };
+type Editing = { service: string; what: "image" | "config" | "files" };
 
 /** The product's infra services as one table, one row per thing that runs
  *  beside the gears: the environment's own Postgres while no service gives
  *  the database, then each service. A row opens to its image, its settings,
  *  its links to gear fields (Link writes `${VARIABLE}` into the product's
  *  gear config) and each environment. What an environment does -- placement,
- *  public address, chart, secrets, its mirror copy -- is shown, not edited:
- *  Releases has it. Every save writes the whole list through the store
+ *  chart, secrets, its mirror copy -- is shown, not edited: Releases has it.
+ *  Address & files edits the project's side of a service: its public
+ *  address, the files its container reads (a Keycloak realm to import) and
+ *  extra arguments. Every save writes the whole list through the store
  *  (infra-store.ts). */
 export function ProductInfraServices({
   token,
@@ -682,6 +749,7 @@ export function ProductInfraServices({
           return [
             { label: "Change image…", onSelect: () => setEditing({ service: s.passport.name, what: "image" }) },
             { label: "Settings…", onSelect: () => setEditing({ service: s.passport.name, what: "config" }) },
+            { label: "Address & files…", onSelect: () => setEditing({ service: s.passport.name, what: "files" }) },
             {
               label: "Remove",
               disabled: !!busy,
@@ -717,7 +785,17 @@ export function ProductInfraServices({
           />
         )}
         detail={(r) =>
-          r.service && editing?.service === r.id ? (
+          r.service && editing?.service === r.id && editing.what === "files" ? (
+            <FilesEditor
+              key={`${r.id}:files`}
+              service={r.service}
+              busy={!!busy}
+              onSave={async (patch, what) => {
+                if (await save(patchService(services, r.id, patch), what)) setEditing(null);
+              }}
+              onClose={() => setEditing(null)}
+            />
+          ) : r.service && editing?.service === r.id ? (
             <ServiceEditor
               key={`${r.id}:${editing.what}`}
               service={r.service}
@@ -823,6 +901,7 @@ function RowDetail({
             <b>{e.name}</b>: {pill?.detail ?? "—"}
             {s && (e.registry ? (copy ? " · its copy is in the registry" : " · no copy of this image in its registry") : "")}
             {s?.public_url && ` · public at ${s.public_url}`}
+            {s?.files && Object.keys(s.files).length > 0 && ` · ${Object.keys(s.files).length} file(s) mounted`}
             {s?.chart_ref && ` · ready chart ${s.chart_ref}`}
             {onReleases && (
               <>
@@ -944,4 +1023,154 @@ function ServiceEditor({
       )}
     </div>
   );
+}
+
+/** One service's project side: where people reach it, the files its
+ *  container reads (path + content), and arguments after the passport's.
+ *  A Keycloak gets a one-click realm to import. */
+function FilesEditor({
+  service: s,
+  busy,
+  onSave,
+  onClose,
+}: {
+  service: InfraService;
+  busy: boolean;
+  onSave: (patch: Pick<InfraService, "public_url" | "files" | "args">, what: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const p = s.passport;
+  const [url, setUrl] = useState(s.public_url ?? "");
+  const [rows, setRows] = useState<{ path: string; content: string }[]>(() =>
+    Object.entries(s.files ?? {}).map(([path, content]) => ({ path, content })),
+  );
+  const [argsText, setArgsText] = useState((s.args ?? []).join("\n"));
+  const [portal, setPortal] = useState("");
+  const files = Object.fromEntries(rows.filter((r) => r.path.trim()).map((r) => [r.path.trim(), r.content]));
+  const args = argsText
+    .split("\n")
+    .map((a) => a.trim())
+    .filter(Boolean);
+  const problems = [
+    ...fileProblems(files),
+    ...(new Set(rows.map((r) => r.path.trim())).size < rows.length ? ["two files have the same path"] : []),
+    ...(url.trim() && !/^https?:\/\/[^\s/?#]+(\/[^\s?#]*)?$/.test(url.trim()) ? [`"${url.trim()}" is not an address (https://…)`] : []),
+  ];
+  const usesUrl = Object.values(p.provides).some((t) => t.includes("{public_url}"));
+  const realm = isKeycloak(p) ? keycloakRealm(p, portal) : null;
+  const addRealm = () => {
+    const next = withKeycloakRealm({ passport: p, files, args }, portal);
+    setRows(Object.entries(next.files).map(([path, content]) => ({ path, content })));
+    setArgsText(next.args.join("\n"));
+  };
+  return (
+    <div style={{ display: "grid", gap: 8, padding: "8px 0" }} data-infra-editor-panel={`${p.name}:files`}>
+      <label className="field">
+        Public address
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder={`https://${p.name}.example.com`}
+          aria-label="Public address"
+          data-infra-public-url
+        />
+        <span className="hint">
+          Where a browser reaches {p.name}: <code>{"{public_url}"}</code>.{" "}
+          {usesUrl && "What it gives the product says it, so a deploy is refused without one. "}
+          Placed with the product, its chart routes this address to it with an Ingress.
+        </span>
+      </label>
+      <div className="field">
+        <span>
+          <b>Files</b> <span className="sub">mounted read-only in its container</span>
+        </span>
+        {rows.length === 0 && <span className="muted">none</span>}
+        {rows.map((r, n) => (
+          <div key={n} style={{ display: "grid", gap: 4 }} data-infra-file={r.path}>
+            <span className="row" style={{ gap: 6 }}>
+              <input
+                value={r.path}
+                onChange={(e) => setRows(rows.map((x, i) => (i === n ? { ...x, path: e.target.value } : x)))}
+                placeholder="/etc/app/config.json"
+                aria-label="File path"
+                style={{ flex: 1 }}
+              />
+              <button type="button" className="ghost" onClick={() => setRows(rows.filter((_, i) => i !== n))}>
+                Remove
+              </button>
+            </span>
+            <textarea
+              rows={Math.min(16, Math.max(4, r.content.split("\n").length))}
+              value={r.content}
+              onChange={(e) => setRows(rows.map((x, i) => (i === n ? { ...x, content: e.target.value } : x)))}
+              aria-label={`Content of ${r.path || "the file"}`}
+              style={{ fontFamily: "monospace", fontSize: 12 }}
+            />
+          </div>
+        ))}
+        <span className="row" style={{ gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <button type="button" className="ghost" onClick={() => setRows([...rows, { path: "", content: "" }])}>
+            Add file
+          </button>
+          {realm && (
+            <>
+              <input
+                value={portal}
+                onChange={(e) => setPortal(e.target.value)}
+                placeholder="https://shop.example.com (the portal)"
+                aria-label="The product's portal address"
+              />
+              <button type="button" onClick={addRealm} data-infra-keycloak-realm>
+                Keycloak realm
+              </button>
+            </>
+          )}
+        </span>
+        <span className="hint">
+          Text may say <code>{"{secret.KEY}"}</code>, <code>{"{host}"}</code>, <code>{"{public_url}"}</code> and{" "}
+          <code>{"{namespace}"}</code>, filled at deploy; with a secret the files are kept in a Secret. A ready chart
+          does not apply them.
+          {realm &&
+            ` The realm template imports ${realm.path} with clients ${realmClients(realm.content)}; the confidential one's secret is {secret.${realm.secretKey}}, made once per environment.`}
+        </span>
+      </div>
+      <label className="field">
+        More arguments
+        <textarea rows={2} value={argsText} onChange={(e) => setArgsText(e.target.value)} aria-label="More arguments" />
+        <span className="hint">
+          One per line, after the passport&apos;s ({p.args.join(" ") || "none"}).
+        </span>
+      </label>
+      {problems.map((m) => (
+        <span key={m} className="env-field-error">
+          {m}
+        </span>
+      ))}
+      <span className="row" style={{ gap: 6 }}>
+        <button
+          type="button"
+          className="primary"
+          disabled={busy || problems.length > 0}
+          onClick={() =>
+            void onSave({ public_url: url.trim() || null, files, args }, `${p.name}'s address and files saved`)
+          }
+        >
+          Save
+        </button>
+        <button type="button" className="ghost" onClick={onClose}>
+          Cancel
+        </button>
+      </span>
+    </div>
+  );
+}
+
+/** The client ids of a realm as written, for the hint. */
+function realmClients(content: string): string {
+  try {
+    const doc = JSON.parse(content) as { clients?: { clientId?: string }[] };
+    return (doc.clients ?? []).map((c) => c.clientId).join(" and ");
+  } catch {
+    return "";
+  }
 }
