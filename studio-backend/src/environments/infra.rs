@@ -846,6 +846,127 @@ pub fn generated_chart(
     Ok(files)
 }
 
+/* ── what a build's lock says (ADR-0065) ── */
+
+/// How many builds' infra a project keeps: a deploy names a recent build.
+pub const MAX_LOCKED_BUILDS: usize = 20;
+
+/// An image as the product chose it, and its digest when the reference
+/// names one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockedImage {
+    pub reference: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+/// One infra service as a build's lock resolved it for the build's profile
+/// (ADR-0065 §3): the passport read from its source, the product's choice of
+/// image and chart, and its configuration with the product's values over it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockedService {
+    pub name: String,
+    pub source: String,
+    #[serde(default)]
+    pub passport_hash: String,
+    pub passport: InfraPassport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<LockedImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart_version: Option<String>,
+    #[serde(default)]
+    pub config: BTreeMap<String, String>,
+}
+
+/// One build's infra services, kept on the project for its deploys.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuiltInfra {
+    pub build: String,
+    pub services: Vec<LockedService>,
+}
+
+/// The services of `resolved`, a `gearbox resolve --format json` answer;
+/// empty for a product without `infra`. A passport's description is left
+/// out: a deploy does not read it, and the manifest that carries these is
+/// small.
+pub fn locked_services(resolved: &Value) -> Result<Vec<LockedService>, String> {
+    let Some(services) = resolved.pointer("/infra/services") else {
+        return Ok(Vec::new());
+    };
+    let mut list: Vec<LockedService> = serde_json::from_value(services.clone())
+        .map_err(|e| format!("the lock's infra services are not what Studio reads: {e}"))?;
+    for s in &mut list {
+        s.passport.description = None;
+    }
+    Ok(list)
+}
+
+/// Keep `services` as `build`'s, the newest first, at most
+/// [`MAX_LOCKED_BUILDS`].
+pub fn keep_built(kept: &mut Vec<BuiltInfra>, build: &str, services: Vec<LockedService>) {
+    kept.retain(|b| b.build != build);
+    kept.insert(
+        0,
+        BuiltInfra {
+            build: build.to_owned(),
+            services,
+        },
+    );
+    kept.truncate(MAX_LOCKED_BUILDS);
+}
+
+/// The digest an image reference names (`…@sha256:…`).
+fn digest_in(reference: &str) -> Option<&str> {
+    reference
+        .rsplit_once('@')
+        .map(|(_, d)| d)
+        .filter(|d| d.starts_with("sha256:"))
+}
+
+/// The services a deploy of a build runs (ADR-0065 §3): each one the lock
+/// names, with its passport and configuration, joined by name with the
+/// environment's side kept on the project (`records`): the copy of its
+/// image, a ready chart's copy and values, its public address.
+///
+/// A copy whose digest is not the one the lock names is no copy of it: the
+/// service is left without an image, which the plan refuses as
+/// `INFRA_IMAGE_NOT_IMPORTED` naming the lock's reference.
+pub fn from_lock(locked: &[LockedService], records: &[InfraService]) -> Vec<InfraService> {
+    locked
+        .iter()
+        .map(|l| {
+            let record = records.iter().find(|r| r.name() == l.name);
+            let mut passport = l.passport.clone();
+            passport.name = l.name.clone();
+            passport.config = l.config.clone();
+            if let Some(i) = &l.image {
+                passport.image = Some(i.reference.clone());
+            }
+            if l.chart.is_some() {
+                passport.chart = l.chart.clone();
+                passport.chart_version = l.chart_version.clone();
+            }
+            let wanted = l.image.as_ref().and_then(|i| i.digest.as_deref());
+            let image = record.and_then(|r| r.image.clone()).filter(|copy| {
+                match (wanted, digest_in(copy)) {
+                    (Some(w), Some(have)) => w == have,
+                    _ => true,
+                }
+            });
+            InfraService {
+                passport,
+                image,
+                chart_ref: record.and_then(|r| r.chart_ref.clone()),
+                chart_version: record.and_then(|r| r.chart_version.clone()),
+                chart_values: record.and_then(|r| r.chart_values.clone()),
+                public_url: record.and_then(|r| r.public_url.clone()),
+            }
+        })
+        .collect()
+}
+
 fn merge_obj(base: &mut Value, over: Value) {
     super::model::merge(base, over);
 }

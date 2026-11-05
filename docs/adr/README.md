@@ -76,6 +76,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) | A project's build, its images and its namespaces are its own, not the platform's | proposed | 2026-11-04 |
 | [0063](0063-what-a-product-is-comes-from-its-specs-and-a-project-starts-from-an-optional-template.md) | What a product is comes from its specs, and a project starts from an optional template | proposed | 2026-11-04 |
 | [0064](0064-a-products-infra-services-are-catalogue-components-deployed-with-it.md) | A product's infra services are catalogue components, deployed with it | proposed | 2026-11-04 |
+| [0065](0065-a-products-infra-services-are-said-by-its-description-and-placed-by-the-environment.md) | A product's infra services are said by its description and placed by the environment | proposed | 2026-11-05 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

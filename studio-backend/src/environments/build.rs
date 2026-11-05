@@ -779,6 +779,36 @@ pub async fn enqueue(
         .await
 }
 
+/// Keep what a build's lock says of its infra services on the project
+/// (ADR-0065 §3), where its deploys read them.
+async fn keep_infra(
+    hub: &Arc<ClientHub>,
+    org: Uuid,
+    project: Uuid,
+    build: &str,
+    services: Vec<super::infra::LockedService>,
+) -> anyhow::Result<()> {
+    let am = hub
+        .get::<dyn account_management_sdk::AccountManagementClient>()
+        .map_err(|_| anyhow!("account management is not available"))?;
+    let ctx = super::store::service_context(org)?;
+    match super::store::Store::new(am)
+        .update::<super::model::BindingList, (), std::convert::Infallible>(
+            &ctx,
+            project,
+            super::BINDINGS_METADATA_TYPE,
+            |row| {
+                super::infra::keep_built(&mut row.built_infra, build, services.clone());
+                Ok(())
+            },
+        )
+        .await?
+    {
+        Ok(_) => Ok(()),
+        Err(never) => match never {},
+    }
+}
+
 /// Record a build's outcome in the project's graph: in `records_in`, the
 /// tenant its first record went to, when it names one; else in the run's.
 pub(super) async fn record_outcome(
@@ -1486,10 +1516,12 @@ impl WatchTask {
     ) -> anyhow::Result<()> {
         use crate::artifact_ingest::port::BuildOutcome;
         let mut chart_digest = None;
+        let mut infra = Vec::new();
         let mut record_of = match outcome {
             Ok(manifest) => match serde_json::from_str::<Manifest>(manifest.trim()) {
                 Ok(m) => {
                     chart_digest = m.chart.digest.clone();
+                    infra = m.infra;
                     BuildOutcome {
                         build_id: p.build_id.clone(),
                         status: "passed".into(),
@@ -1560,6 +1592,7 @@ impl WatchTask {
                 }
             }
         }
+        let passed = record_of.status == "passed";
         record(
             &self.hub,
             &ctx.security,
@@ -1568,6 +1601,19 @@ impl WatchTask {
             record_of,
         )
         .await?;
+        if passed
+            && !infra.is_empty()
+            && let Err(e) = keep_infra(
+                &self.hub,
+                p.organization_id,
+                p.project_id,
+                &p.build_id,
+                infra,
+            )
+            .await
+        {
+            warn!(build = %p.build_id, "studio-environments: the build's infra services could not be kept ({e:#})");
+        }
         // The repository's and the registry's tokens go with the build.
         let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), &p.namespace);
         for name in [
@@ -1694,6 +1740,10 @@ pub struct Manifest {
     /// §3): what a dev build actually took from each branch.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<(String, String)>,
+    /// The infra services the build's lock resolved (ADR-0065 §3); empty
+    /// for a product without `infra`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra: Vec<super::infra::LockedService>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1720,6 +1770,9 @@ pub fn pushed_digest(output: &str) -> Option<String> {
     })
 }
 
+/// How much of a container's termination message the kubelet keeps.
+const TERMINATION_MESSAGE_BYTES: usize = 4096;
+
 /// What `prepare` leaves for `build` and `publish`, in `/work/build.json`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Prepared {
@@ -1734,6 +1787,9 @@ pub struct Prepared {
     /// `(source id, commit)` of every source fetched.
     #[serde(default)]
     pub sources: Vec<(String, String)>,
+    /// What the lock says of the product's infra services (ADR-0065 §3).
+    #[serde(default)]
+    pub infra: Vec<super::infra::LockedService>,
 }
 
 /// The applications `docker/build.sh` builds, `(app, image)`, and its build
@@ -2241,6 +2297,7 @@ pub fn prepare_own(
         chart_base: chart_base_version(&chart_yaml),
         apps: named,
         sources: Vec::new(),
+        infra: Vec::new(),
     };
     std::fs::write(
         work.join("build.json"),
@@ -2469,6 +2526,7 @@ pub fn prepare_as(
         ));
         named.push((app.clone(), name));
     }
+    let infra = locked_infra(&intent, &roots, &file, profile)?;
     let chart_dir = out.join("helm").join(&product);
     // The product's screens: one image beside the applications, built from
     // the generated frontend's own folder, and named as the chart's `ui`
@@ -2504,6 +2562,7 @@ pub fn prepare_as(
         chart_base,
         apps: named,
         sources: fetched,
+        infra,
     };
     std::fs::write(
         work.join("build.json"),
@@ -2516,6 +2575,47 @@ pub fn prepare_as(
         prepared.product
     );
     Ok(())
+}
+
+/// What the lock says of the product's infra services (ADR-0065 §3): asked
+/// of `gearbox resolve` only when the description chooses any, since the
+/// resolve scans every root again.
+fn locked_infra(
+    intent: &serde_json::Value,
+    roots: &[PathBuf],
+    file: &Path,
+    profile: &str,
+) -> anyhow::Result<Vec<super::infra::LockedService>> {
+    let chooses = intent
+        .get("infra")
+        .and_then(|i| i.as_array())
+        .is_some_and(|i| !i.is_empty());
+    if !chooses {
+        return Ok(Vec::new());
+    }
+    let mut resolve = Command::new(gearbox());
+    resolve.arg("resolve");
+    for r in roots {
+        resolve.arg("--root").arg(r);
+    }
+    resolve
+        .arg("--product")
+        .arg(file)
+        .arg("--profile")
+        .arg(profile)
+        .args(["--format", "json"]);
+    let resolved: serde_json::Value = serde_json::from_str(&run(&mut resolve, "gearbox resolve")?)
+        .context("gearbox resolve did not answer JSON")?;
+    let services = super::infra::locked_services(&resolved).map_err(|e| anyhow!(e))?;
+    println!(
+        "infra services from the lock: {}",
+        services
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    Ok(services)
 }
 
 /// Leave what `prepare` made as its termination message, where Studio reads
@@ -2599,10 +2699,19 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
         },
         gearbox: engine_revision(),
         sources: prepared.sources,
+        infra: prepared.infra,
     };
     let text = serde_json::to_string(&manifest)?;
     // The kubelet keeps a container's termination message (at most 4 KiB):
-    // that is how Studio reads what was published without reading logs.
+    // that is how Studio reads what was published without reading logs. One
+    // cut short would be read as no manifest, or lose infra services.
+    if text.len() > TERMINATION_MESSAGE_BYTES {
+        bail!(
+            "the build's manifest is {} bytes, over the {TERMINATION_MESSAGE_BYTES} a              termination message holds; its infra section has {} service(s)",
+            text.len(),
+            manifest.infra.len()
+        );
+    }
     let _ = std::fs::write("/dev/termination-log", &text);
     println!("{text}");
     Ok(text)

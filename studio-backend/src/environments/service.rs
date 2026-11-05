@@ -1418,23 +1418,31 @@ impl EnvironmentService {
         }
     }
 
-    /// The project's configuration for a release in `env`: the bound
-    /// profile's values, and the keys of its secrets there.
+    /// The project's configuration for a release of `build` in `env`: the
+    /// bound profile's values, and the keys of its secrets there.
     async fn project_config(
         &self,
         ctx: &SecurityContext,
         project: Uuid,
         env: &Environment,
         profile: &str,
+        build: Option<&str>,
     ) -> Result<Config> {
         let (list, _) = self
             .store
             .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
             .await?;
+        // The services the build's lock resolved, placed by the project's
+        // records (ADR-0065 §3); a build without them runs the records as
+        // they are (ADR-0064).
+        let services = match build.and_then(|b| list.built_infra.iter().find(|x| x.build == b)) {
+            Some(built) => super::infra::from_lock(&built.services, &list.infra),
+            None => list.infra.clone(),
+        };
         // Infra services run on a cluster (ADR-0064); a Research
         // environment brings its own services.
         let infra = if env.kind == EnvironmentKind::Kubernetes {
-            super::infra::installs(env.boundaries.infra.as_ref(), &list.infra)
+            super::infra::installs(env.boundaries.infra.as_ref(), &services)
         } else {
             Vec::new()
         };
@@ -1704,7 +1712,9 @@ impl EnvironmentService {
             self.check_cluster_ready(org, project, &env, &at, env.pull_connection(), false)
                 .await?;
         }
-        let mut config = self.project_config(ctx, project, &env, &d.profile).await?;
+        let mut config = self
+            .project_config(ctx, project, &env, &d.profile, d.build.as_deref())
+            .await?;
         config.build_namespace = Some(place.build_namespace.clone());
         if d.action == DeploymentAction::Install {
             self.check_infra(&env, &place.prefix, &config.infra)?;
@@ -2653,7 +2663,9 @@ impl EnvironmentService {
         let build_id = format!("research-{}", &Uuid::new_v4().simple().to_string()[..12]);
         // The build bakes in what the chart mounts, so it renders the chart
         // with the values the deploy will (ADR-0049 §3).
-        let config = self.project_config(ctx, project, env, &profile).await?;
+        let config = self
+            .project_config(ctx, project, env, &profile, None)
+            .await?;
         let payload = research::ResearchBuildPayload {
             namespace: application.clone(),
             values: config.values,
@@ -2865,7 +2877,9 @@ impl EnvironmentService {
         if d.action == DeploymentAction::Install {
             self.check_promoted(ctx, org, env, &d).await?;
         }
-        let config = self.project_config(ctx, project, env, &d.profile).await?;
+        let config = self
+            .project_config(ctx, project, env, &d.profile, d.build.as_deref())
+            .await?;
         self.submit(org, env, d, None, config).await
     }
 
@@ -3014,12 +3028,12 @@ impl EnvironmentService {
             // row whoever the administrator is.
             let svc = self.service(org)?;
             let config = match self
-                .project_config(&svc, d.project_id, &env, &d.profile)
+                .project_config(&svc, d.project_id, &env, &d.profile, d.build.as_deref())
                 .await
             {
                 Ok(c) => c,
                 Err(_) => {
-                    self.project_config(ctx, d.project_id, &env, &d.profile)
+                    self.project_config(ctx, d.project_id, &env, &d.profile, d.build.as_deref())
                         .await?
                 }
             };

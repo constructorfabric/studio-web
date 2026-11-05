@@ -793,6 +793,10 @@ pub struct BindingList {
     /// The infra services the product runs beside its gears (ADR-0064).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub infra: Vec<super::infra::InfraService>,
+    /// The infra services each recent build's lock resolved (ADR-0065 §3),
+    /// newest first: what a deploy of that build runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub built_infra: Vec<super::infra::BuiltInfra>,
 }
 
 /// A project built without a product description (ADR-0054 §7): the
@@ -1024,6 +1028,7 @@ pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
         environments: Vec::new(),
         build: None,
         infra: Vec::new(),
+        built_infra: Vec::new(),
     })
 }
 

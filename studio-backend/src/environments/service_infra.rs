@@ -93,7 +93,17 @@ impl EnvironmentService {
         let env = self
             .project_environment(ctx, org, project, environment)
             .await?;
-        let services = self.project_infra(ctx, project).await?;
+        // As a deploy of the newest build whose lock says its services
+        // (ADR-0065 §3), else of the project's records alone (ADR-0064).
+        let list = self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await?
+            .0;
+        let services = match list.built_infra.first() {
+            Some(built) => infra::from_lock(&built.services, &list.infra),
+            None => list.infra,
+        };
         let placement = env.boundaries.infra.clone().unwrap_or_default();
         if env.kind != EnvironmentKind::Kubernetes {
             return Ok(InfraPlan {

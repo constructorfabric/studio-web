@@ -132,7 +132,9 @@ into a generated chart is needed.
 
 A project's infra services are a list on the project
 (`GET`/`PUT /infra-services?project_id=`). No two of them may provide the
-same capability. The engine's needs bind to capabilities: `postgres` to
+same capability.
+
+> Amended by ADR-0065 ([a product's infra services are said by its description and placed by the environment](0065-a-products-infra-services-are-said-by-its-description-and-placed-by-the-environment.md)): which services the product runs, their image and their configuration are `product(infra = [use_service(...)])` in `product.gdl`, and a deploy runs the services its build's lock resolved. The list keeps the environment's side: the copy of the image, a ready chart and its values, the public address. The engine's needs bind to capabilities: `postgres` to
 `postgres`, `oidc` to `oidc.issuer`, `keycloak` to `keycloak.admin_url`,
 `clickhouse` to `clickhouse.url`, `timescaledb` to `timescaledb.url`. The
 product map shows each need with the service that meets it, or the catalogue

@@ -321,3 +321,110 @@ fn a_services_own_secret_is_kept_under_its_name() {
         "INFRA_KEYCLOAK_KC_BOOTSTRAP_ADMIN_PASSWORD"
     );
 }
+
+/* ── a build's lock (ADR-0065) ── */
+
+/// What `gearbox resolve --format json` says of a product with Keycloak.
+fn resolved(image: &str) -> Value {
+    json!({
+        "id": "shop",
+        "infra": {
+            "services": [{
+                "name": "keycloak", "source": "studio-web",
+                "gdl_path": "infra/keycloak/service.gdl", "passport_hash": "b3",
+                "passport": {
+                    "name": "keycloak", "kind": "infra", "version": "26.0.7",
+                    "description": "Keycloak: the product's own OIDC identity provider",
+                    "image": "quay.io/keycloak/keycloak:26.0.7",
+                    "ports": {"http": 8080, "management": 9000},
+                    "config": {"KC_HEALTH_ENABLED": "true"},
+                    "secrets": ["KC_BOOTSTRAP_ADMIN_PASSWORD"],
+                    "provides": {"oidc.issuer": "{public_url}/realms/product"},
+                    "env": {}, "requires": [], "docs": []
+                },
+                "image": {"reference": image, "digest": image.rsplit_once('@').map(|(_, d)| d)},
+                "config": {"KC_HEALTH_ENABLED": "false", "KC_PROXY_HEADERS": "xforwarded"},
+                "overridden": ["KC_HEALTH_ENABLED", "KC_PROXY_HEADERS"]
+            }],
+            "capabilities": {
+                "oidc.issuer": {"service": "keycloak", "env": "OIDC_ISSUER", "template": "{public_url}/realms/product"}
+            },
+            "needs": []
+        }
+    })
+}
+
+#[test]
+fn a_product_without_infra_locks_no_services() {
+    assert!(
+        locked_services(&json!({ "id": "shop" }))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_lock_gives_each_service_its_passport_without_its_description() {
+    let list = locked_services(&resolved("quay.io/keycloak/keycloak:26.0.7@sha256:abc")).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "keycloak");
+    assert_eq!(list[0].passport.ports["http"], 8080);
+    assert_eq!(list[0].passport.description, None);
+    assert_eq!(
+        list[0].image.as_ref().unwrap().digest.as_deref(),
+        Some("sha256:abc")
+    );
+}
+
+#[test]
+fn a_deploy_runs_the_locks_configuration_with_the_environments_copy() {
+    let locked = locked_services(&resolved("quay.io/keycloak/keycloak:26.0.7@sha256:abc")).unwrap();
+    let mut record = keycloak();
+    record.passport.config.clear();
+    record.public_url = Some("https://shop.example".into());
+    let services = from_lock(&locked, &[record]);
+    assert_eq!(services.len(), 1);
+    let s = &services[0];
+    assert_eq!(s.passport.config["KC_HEALTH_ENABLED"], "false");
+    assert_eq!(s.passport.config["KC_PROXY_HEADERS"], "xforwarded");
+    assert_eq!(
+        s.passport.image.as_deref(),
+        Some("quay.io/keycloak/keycloak:26.0.7@sha256:abc")
+    );
+    assert_eq!(
+        s.image.as_deref(),
+        Some("registry.example/acme/shop/mirror/keycloak@sha256:abc")
+    );
+    assert_eq!(s.public_url.as_deref(), Some("https://shop.example"));
+}
+
+#[test]
+fn a_copy_of_another_digest_is_no_copy_of_the_locked_image() {
+    let locked = locked_services(&resolved("quay.io/keycloak/keycloak:26.0.8@sha256:fff")).unwrap();
+    let services = from_lock(&locked, &[keycloak()]);
+    assert_eq!(services[0].image, None);
+    let item = &plan(None, &services, |_| Ok(()))[0];
+    let (code, why) = item.refusal.clone().unwrap();
+    assert_eq!(code, "INFRA_IMAGE_NOT_IMPORTED");
+    assert!(why.contains("keycloak:26.0.8@sha256:fff"), "{why}");
+}
+
+#[test]
+fn a_service_the_lock_names_without_a_record_has_nothing_imported() {
+    let locked = locked_services(&resolved("quay.io/keycloak/keycloak:26.0.7")).unwrap();
+    let services = from_lock(&locked, &[postgres()]);
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0].image, None);
+}
+
+#[test]
+fn a_project_keeps_the_newest_builds_infra_first_and_a_bounded_few() {
+    let mut kept = Vec::new();
+    for n in 0..=MAX_LOCKED_BUILDS {
+        keep_built(&mut kept, &format!("b{n}"), Vec::new());
+    }
+    keep_built(&mut kept, "b3", Vec::new());
+    assert_eq!(kept.len(), MAX_LOCKED_BUILDS);
+    assert_eq!(kept[0].build, "b3");
+    assert_eq!(kept.iter().filter(|b| b.build == "b3").count(), 1);
+}
