@@ -106,8 +106,9 @@ pub fn tools() -> Vec<Tool> {
             description: "Ask the Gearbox engine to validate and resolve the product for one \
                 deployment profile, from the product record's picked gears (or `gears`): \
                 answers `ok`, the engine's `diagnostics`, and the applications and gears it \
-                resolved to. It composes the description from the picks; it does not check a \
-                text revision you saved. The verdict is kept on the product under \
+                resolved to. It composes the description from the picks; a revision you \
+                saved is checked as written with `product_description_check`. The verdict is \
+                kept on the product under \
                 `checks.<profile>`; nothing else is saved or published. The composed text is \
                 left out of the answer.",
             input_schema: || {
@@ -127,6 +128,36 @@ pub fn tools() -> Vec<Tool> {
             effect: Effect::Write,
             experimental: true,
             run: Run::Custom(product_check),
+        },
+        Tool {
+            name: "product_description_check",
+            description: "Ask the Gearbox engine to validate and resolve a SAVED revision of \
+                the project's product description as it is written, for one profile, as a \
+                build would lay it down: `revision` (default the latest), `profile` (default \
+                `prod`), `strictness: dev` to check it as a development profile. Answers \
+                `ok`, the engine's `diagnostics` (GBX codes, file, line, help), and the \
+                applications and gears it resolved to. Call it after \
+                `product_description_save` and before `build_start`. Saves nothing.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "revision": { "type": "integer", "minimum": 1,
+                            "description": "The revision's number; absent: the latest." },
+                        "profile": { "type": "string",
+                            "description": "A profile id the description declares (`prod`, `dev`). Default `prod`." },
+                        "strictness": { "type": "string", "enum": ["dev", "prod"],
+                            "description": "`dev`: production rules' findings as warnings." }
+                    }),
+                    &["project_id"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Post {
+                path: "/studio-product/v1/product-description-checks",
+                query: &["project_id"],
+            },
         },
         Tool {
             name: "gdl_file",
@@ -307,6 +338,24 @@ mod tests {
                 ("project_id".to_owned(), "p".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn a_saved_revision_is_checked_by_its_own_route() {
+        let r = request_of(
+            &tools(),
+            "product_description_check",
+            json!({"project_id": "p", "revision": 4, "profile": "prod"}),
+        );
+        assert_eq!(
+            (r.method, r.path.as_str()),
+            (
+                Method::Post,
+                "/studio-product/v1/product-description-checks"
+            )
+        );
+        assert_eq!(r.query, vec![("project_id".to_owned(), "p".to_owned())]);
+        assert_eq!(r.body, json!({"revision": 4, "profile": "prod"}));
     }
 
     #[test]

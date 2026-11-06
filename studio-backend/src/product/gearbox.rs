@@ -4314,23 +4314,7 @@ impl Gearbox {
             bail!("`{}` is not a profile id", input.profile);
         }
         let started = Instant::now();
-        let mut loaded = self.ensure(scope).await?;
-        // The project's own repository, read as a build reads it (ADR-0060
-        // §6): its gears are the product's, and the corpus's roots inside it
-        // give way to it, so one repository is one source.
-        let inside: BTreeSet<String> = match &input.home {
-            Some(home) => loaded
-                .roots
-                .iter()
-                .filter(|r| inside_home(&r.dir, &home.dir))
-                .map(|r| r.id.clone())
-                .collect(),
-            None => BTreeSet::new(),
-        };
-        if let Some(home) = &input.home {
-            let own = self.home_catalogue(home).await?;
-            loaded.catalogue = Arc::new(with_home(&loaded.catalogue, &own, &home.id, &inside));
-        }
+        let (loaded, inside) = self.loaded_with_home(scope, input.home.as_ref()).await?;
         let corpus_ms = started.elapsed().as_millis();
         let catalogue = &loaded.catalogue;
         let composition = compose(catalogue, &input.gears);
@@ -4451,6 +4435,62 @@ impl Gearbox {
             composition,
             loaded,
             corpus_ms,
+        })
+    }
+
+    /// The corpus `scope` reads, with the project's own repository read as a
+    /// build reads it (ADR-0060 §6): its gears are the product's, and the
+    /// corpus's roots inside it give way to it, so one repository is one
+    /// source. With the ids of the roots that gave way.
+    async fn loaded_with_home(
+        &self,
+        scope: Scope,
+        home: Option<&HomeCheckout>,
+    ) -> anyhow::Result<(Loaded, BTreeSet<String>)> {
+        let mut loaded = self.ensure(scope).await?;
+        let inside: BTreeSet<String> = match home {
+            Some(home) => loaded
+                .roots
+                .iter()
+                .filter(|r| inside_home(&r.dir, &home.dir))
+                .map(|r| r.id.clone())
+                .collect(),
+            None => BTreeSet::new(),
+        };
+        if let Some(home) = home {
+            let own = self.home_catalogue(home).await?;
+            loaded.catalogue = Arc::new(with_home(&loaded.catalogue, &own, &home.id, &inside));
+        }
+        Ok((loaded, inside))
+    }
+
+    /// A saved description revision as it is written, for [`Gearbox::check`]
+    /// to check: the corpus loaded as [`Gearbox::describe`] loads it, and
+    /// `text` untouched -- a revision is what a build lays down (ADR-0053),
+    /// so it is checked as it is, not composed again from the picks.
+    pub async fn as_written(
+        &self,
+        scope: Scope,
+        input: &PreviewInput,
+        text: String,
+    ) -> anyhow::Result<Described> {
+        if !is_profile_id(&input.profile) {
+            bail!("`{}` is not a profile id", input.profile);
+        }
+        if !is_product_path(&input.product_path) {
+            bail!(
+                "`{}` is not a place for a product description: a relative path to a `product.gdl`",
+                input.product_path
+            );
+        }
+        let started = Instant::now();
+        let (loaded, _) = self.loaded_with_home(scope, input.home.as_ref()).await?;
+        Ok(Described {
+            corpus_commit: loaded.commit(),
+            product_gdl: text,
+            composition: Composition::default(),
+            loaded,
+            corpus_ms: started.elapsed().as_millis(),
         })
     }
 

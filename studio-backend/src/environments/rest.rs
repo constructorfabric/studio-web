@@ -30,6 +30,9 @@ mod images_routes;
 #[path = "rest_infra.rs"]
 mod infra_routes;
 
+#[path = "rest_pipeline.rs"]
+mod pipeline_routes;
+
 /// Errors attributable to an environment or a deployment as a resource.
 #[resource_error(gts_id!("cf.studio.environments.environment.v1~"))]
 pub struct StudioEnvironmentsError;
@@ -2299,6 +2302,8 @@ pub fn register_routes(
     // namespace assignments and a build's plan (ADR-0062).
     router = images_routes::register(router, openapi);
     router = infra_routes::register(router, openapi);
+    // One build, one deployment, an environment's secret keys (docs/mcp.md).
+    router = pipeline_routes::register(router, openapi);
 
     router.layer(Extension(Environments(service)))
 }

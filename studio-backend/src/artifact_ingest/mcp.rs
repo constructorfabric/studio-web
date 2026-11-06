@@ -2,58 +2,40 @@
 //!
 //! Every build is recorded here, whoever ran it: Studio in an environment's
 //! cluster (`build_start`), a CI workflow, or a desktop. These read the
-//! records: status, failure, images and chart. The steps of a build Studio
-//! runs, read from its pod, are `build_log` (environments).
+//! records: status, failure, images and chart. One build by its id, with the
+//! infra services its lock resolved, is `build_get`, and the steps of a build
+//! Studio runs, read from its pod, are `build_log` (both environments).
 
 use serde_json::{Map, Value, json};
 
-use crate::mcp::sdk::{
-    Api, Effect, Run, Tool, ToolError, ToolFuture, find_by, object, project_id, required_text,
-};
+use crate::mcp::sdk::{Api, Effect, Run, Tool, ToolFuture, object, project_id, required_text};
 
 const NODES: &str = "/studio-artifact-ingest/v1/nodes";
-/// The most builds one read lists; `build_get` looks among these.
+/// The most builds one read lists.
 const MAX_BUILDS: u64 = 200;
 const DEFAULT_BUILDS: u64 = 20;
 
 pub fn tools() -> Vec<Tool> {
-    vec![
-        Tool {
-            name: "build_list",
-            description: "The project's builds, newest first: each with `build_id`, `status` \
+    vec![Tool {
+        name: "build_list",
+        description: "The project's builds, newest first: each with `build_id`, `status` \
                 (running, passed, failed), `failure` and the stage it failed in, where it ran, \
                 the product, commit, images and published chart. A passed build's `build_id` \
                 is what `deploy_request` deploys.",
-            input_schema: || {
-                object(
-                    json!({
-                        "project_id": project_id(),
-                        "limit": { "type": "integer", "minimum": 1, "maximum": MAX_BUILDS,
-                            "description": "How many, newest first. Default 20." }
-                    }),
-                    &["project_id"],
-                )
-            },
-            effect: Effect::Read,
-            experimental: false,
-            run: Run::Custom(build_list),
+        input_schema: || {
+            object(
+                json!({
+                    "project_id": project_id(),
+                    "limit": { "type": "integer", "minimum": 1, "maximum": MAX_BUILDS,
+                        "description": "How many, newest first. Default 20." }
+                }),
+                &["project_id"],
+            )
         },
-        Tool {
-            name: "build_get",
-            description: "One of the project's builds by `build_id`, as recorded: `status`, \
-                `failure`, images and chart. Kept after the build's pod is gone, unlike \
-                `build_log`. Looks among the latest 200 builds.",
-            input_schema: || {
-                object(
-                    json!({ "project_id": project_id(), "build_id": { "type": "string" } }),
-                    &["project_id", "build_id"],
-                )
-            },
-            effect: Effect::Read,
-            experimental: false,
-            run: Run::Custom(build_get),
-        },
-    ]
+        effect: Effect::Read,
+        experimental: false,
+        run: Run::Custom(build_list),
+    }]
 }
 
 fn builds_query(project: String, limit: u64) -> Vec<(String, String)> {
@@ -87,20 +69,6 @@ fn build_list(api: Api, args: Map<String, Value>) -> ToolFuture {
     })
 }
 
-fn build_get(api: Api, args: Map<String, Value>) -> ToolFuture {
-    Box::pin(async move {
-        let project = required_text(&args, "project_id")?;
-        let id = required_text(&args, "build_id")?;
-        let page = api.get(NODES, &builds_query(project, MAX_BUILDS)).await?;
-        find_by(&Value::Array(records(&page)), "build_id", &id).ok_or_else(|| {
-            ToolError::new(format!(
-                "no build {id} among the project's latest {MAX_BUILDS}; a build just started \
-                 is recorded within seconds, so try again shortly"
-            ))
-        })
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,7 +90,7 @@ mod tests {
         ]});
         let all = records(&page);
         assert_eq!(all.len(), 2);
-        let found = find_by(&Value::Array(all), "build_id", "b2").unwrap();
+        let found = all.iter().find(|b| b["build_id"] == "b2").unwrap();
         assert_eq!(found["status"], "failed");
         assert!(records(&json!({})).is_empty());
     }

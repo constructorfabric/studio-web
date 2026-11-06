@@ -751,6 +751,9 @@ request	POST /studio-product/v1/gearbox/brings	gears	Vec<String>	required
 request	POST /studio-product/v1/gearbox/complete	config	Value	optional
 request	POST /studio-product/v1/gearbox/complete	gears	Vec<String>	required
 request	POST /studio-product/v1/gearbox/config-schema	gears	Vec<String>	required
+request	POST /studio-product/v1/product-description-checks	profile	String	optional
+request	POST /studio-product/v1/product-description-checks	revision	i64	optional
+request	POST /studio-product/v1/product-description-checks	strictness	String	optional
 request	POST /studio-product/v1/product-description-publications	onto_base	bool	optional
 request	POST /studio-product/v1/product-description-revisions	base_revision	i64	optional
 request	POST /studio-product/v1/product-description-revisions	from_repository	bool	optional
@@ -2744,6 +2747,30 @@ response	GET /studio-domain-model/v1/types/{}/conformance	violations	Vec<{}>	alw
 response	GET /studio-domain-model/v1/types/{}/conformance	violations.count	u64	always
 response	GET /studio-domain-model/v1/types/{}/conformance	violations.field	String	always
 response	GET /studio-domain-model/v1/types/{}/conformance	violations.kind	String	optional
+response	GET /studio-environments/v1/builds/{}	build_id	String	always
+response	GET /studio-environments/v1/builds/{}	builder_image	String	optional
+response	GET /studio-environments/v1/builds/{}	built_infra	Vec<Value>	optional
+response	GET /studio-environments/v1/builds/{}	chart_ref	String	optional
+response	GET /studio-environments/v1/builds/{}	chart_version	String	optional
+response	GET /studio-environments/v1/builds/{}	commit	String	optional
+response	GET /studio-environments/v1/builds/{}	environment	String	optional
+response	GET /studio-environments/v1/builds/{}	environment_id	String	optional
+response	GET /studio-environments/v1/builds/{}	failure	String	optional
+response	GET /studio-environments/v1/builds/{}	failure_step	String	optional
+response	GET /studio-environments/v1/builds/{}	gearbox_version	String	optional
+response	GET /studio-environments/v1/builds/{}	git_ref	String	optional
+response	GET /studio-environments/v1/builds/{}	images	Vec<{}>	always
+response	GET /studio-environments/v1/builds/{}	images.app	String	always
+response	GET /studio-environments/v1/builds/{}	images.image	String	always
+response	GET /studio-environments/v1/builds/{}	lock_hash	String	optional
+response	GET /studio-environments/v1/builds/{}	namespace	String	optional
+response	GET /studio-environments/v1/builds/{}	product	String	optional
+response	GET /studio-environments/v1/builds/{}	profile	String	optional
+response	GET /studio-environments/v1/builds/{}	source_commits	String	optional
+response	GET /studio-environments/v1/builds/{}	source_connection	String	optional
+response	GET /studio-environments/v1/builds/{}	source_connection_id	String	optional
+response	GET /studio-environments/v1/builds/{}	status	String	always
+response	GET /studio-environments/v1/builds/{}	where	String	optional
 response	GET /studio-environments/v1/builds/{}/log	build_id	String	always
 response	GET /studio-environments/v1/builds/{}/log	environment	String	always
 response	GET /studio-environments/v1/builds/{}/log	namespace	String	always
@@ -2751,6 +2778,16 @@ response	GET /studio-environments/v1/builds/{}/log	steps	Vec<{}>	always
 response	GET /studio-environments/v1/builds/{}/log	steps.log	String	always
 response	GET /studio-environments/v1/builds/{}/log	steps.state	String	always
 response	GET /studio-environments/v1/builds/{}/log	steps.step	String	always
+response	GET /studio-environments/v1/config-secrets	environment_id	Uuid	always
+response	GET /studio-environments/v1/config-secrets	keys	Vec<String>	always
+response	GET /studio-environments/v1/config-secrets	missing	Vec<String>	always
+response	GET /studio-environments/v1/config-secrets	needed	Vec<{}>	always
+response	GET /studio-environments/v1/config-secrets	needed.key	String	always
+response	GET /studio-environments/v1/config-secrets	needed.needed_by	Vec<String>	always
+response	GET /studio-environments/v1/config-secrets	needed.provided_by	String	optional
+response	GET /studio-environments/v1/config-secrets	needed.set	bool	always
+response	GET /studio-environments/v1/config-secrets	profile	String	always
+response	GET /studio-environments/v1/config-secrets	revision	i64	optional
 response	GET /studio-environments/v1/deployments	items	Vec<{}>	always
 response	GET /studio-environments/v1/deployments	items.action	String	always
 response	GET /studio-environments/v1/deployments	items.build	String	optional
@@ -2788,6 +2825,41 @@ response	GET /studio-environments/v1/deployments	items.requested_by_name	String	
 response	GET /studio-environments/v1/deployments	items.run_id	Uuid	optional
 response	GET /studio-environments/v1/deployments	items.state	String	always
 response	GET /studio-environments/v1/deployments	total	u32	always
+response	GET /studio-environments/v1/deployments/{}	action	String	always
+response	GET /studio-environments/v1/deployments/{}	build	String	optional
+response	GET /studio-environments/v1/deployments/{}	chart_ref	String	optional
+response	GET /studio-environments/v1/deployments/{}	chart_sha256	String	always
+response	GET /studio-environments/v1/deployments/{}	chart_version	String	optional
+response	GET /studio-environments/v1/deployments/{}	commit	String	optional
+response	GET /studio-environments/v1/deployments/{}	decided_at	String	optional
+response	GET /studio-environments/v1/deployments/{}	decided_by	String	optional
+response	GET /studio-environments/v1/deployments/{}	decided_by_name	String	optional
+response	GET /studio-environments/v1/deployments/{}	environment_id	Uuid	always
+response	GET /studio-environments/v1/deployments/{}	environment_name	String	always
+response	GET /studio-environments/v1/deployments/{}	id	Uuid	always
+response	GET /studio-environments/v1/deployments/{}	images	Vec<{}>	always
+response	GET /studio-environments/v1/deployments/{}	images.app	String	always
+response	GET /studio-environments/v1/deployments/{}	images.image	String	always
+response	GET /studio-environments/v1/deployments/{}	lock_hash	String	optional
+response	GET /studio-environments/v1/deployments/{}	namespace	String	always
+response	GET /studio-environments/v1/deployments/{}	outcome	String	optional
+response	GET /studio-environments/v1/deployments/{}	preview	{}	optional
+response	GET /studio-environments/v1/deployments/{}	preview.expires_at	String	optional
+response	GET /studio-environments/v1/deployments/{}	preview.host	String	optional
+response	GET /studio-environments/v1/deployments/{}	preview.name	String	optional
+response	GET /studio-environments/v1/deployments/{}	preview.removal_error	String	optional
+response	GET /studio-environments/v1/deployments/{}	preview.removed_at	String	optional
+response	GET /studio-environments/v1/deployments/{}	product	String	always
+response	GET /studio-environments/v1/deployments/{}	profile	String	always
+response	GET /studio-environments/v1/deployments/{}	project_id	Uuid	always
+response	GET /studio-environments/v1/deployments/{}	project_name	String	always
+response	GET /studio-environments/v1/deployments/{}	reason	String	optional
+response	GET /studio-environments/v1/deployments/{}	redeploy_of	Uuid	optional
+response	GET /studio-environments/v1/deployments/{}	requested_at	String	always
+response	GET /studio-environments/v1/deployments/{}	requested_by	String	always
+response	GET /studio-environments/v1/deployments/{}	requested_by_name	String	always
+response	GET /studio-environments/v1/deployments/{}	run_id	Uuid	optional
+response	GET /studio-environments/v1/deployments/{}	state	String	always
 response	GET /studio-environments/v1/deployments/{}/logs	containers	Vec<{}>	always
 response	GET /studio-environments/v1/deployments/{}/logs	containers.container	String	always
 response	GET /studio-environments/v1/deployments/{}/logs	containers.pod	String	always
@@ -5585,6 +5657,36 @@ response	POST /studio-product/v1/gearbox/config-schema	items.fields.required	boo
 response	POST /studio-product/v1/gearbox/config-schema	items.gear	String	always
 response	POST /studio-product/v1/gearbox/config-schema	items.id	String	optional
 response	POST /studio-product/v1/gearbox/config-schema	total	u32	always
+response	POST /studio-product/v1/product-description-checks	applications	Vec<{}>	always
+response	POST /studio-product/v1/product-description-checks	applications.anchor	String	optional
+response	POST /studio-product/v1/product-description-checks	applications.gears	Vec<String>	always
+response	POST /studio-product/v1/product-description-checks	applications.kind	String	always
+response	POST /studio-product/v1/product-description-checks	applications.listens	Vec<{}>	always
+response	POST /studio-product/v1/product-description-checks	applications.listens.address	String	always
+response	POST /studio-product/v1/product-description-checks	applications.listens.gear	String	always
+response	POST /studio-product/v1/product-description-checks	applications.listens.name	String	always
+response	POST /studio-product/v1/product-description-checks	applications.name	String	always
+response	POST /studio-product/v1/product-description-checks	applications.replicas	u32	always
+response	POST /studio-product/v1/product-description-checks	corpus_commit	String	optional
+response	POST /studio-product/v1/product-description-checks	diagnostics	Vec<{}>	always
+response	POST /studio-product/v1/product-description-checks	diagnostics.code	String	always
+response	POST /studio-product/v1/product-description-checks	diagnostics.file	String	optional
+response	POST /studio-product/v1/product-description-checks	diagnostics.help	String	optional
+response	POST /studio-product/v1/product-description-checks	diagnostics.line	u32	optional
+response	POST /studio-product/v1/product-description-checks	diagnostics.message	String	always
+response	POST /studio-product/v1/product-description-checks	diagnostics.severity	String	always
+response	POST /studio-product/v1/product-description-checks	gears	Vec<{}>	always
+response	POST /studio-product/v1/product-description-checks	gears.crate_name	String	always
+response	POST /studio-product/v1/product-description-checks	gears.id	String	always
+response	POST /studio-product/v1/product-description-checks	gears.reasons	Vec<String>	always
+response	POST /studio-product/v1/product-description-checks	ok	bool	always
+response	POST /studio-product/v1/product-description-checks	profile	String	always
+response	POST /studio-product/v1/product-description-checks	revision	i64	always
+response	POST /studio-product/v1/product-description-checks	sha256	String	always
+response	POST /studio-product/v1/product-description-checks	unreadable	Vec<{}>	always
+response	POST /studio-product/v1/product-description-checks	unreadable.project_id	Uuid	optional
+response	POST /studio-product/v1/product-description-checks	unreadable.reason	String	always
+response	POST /studio-product/v1/product-description-checks	unreadable.source	String	always
 response	POST /studio-product/v1/product-description-publications	at	String	optional
 response	POST /studio-product/v1/product-description-publications	branch	String	always
 response	POST /studio-product/v1/product-description-publications	commit_sha	String	always
@@ -6595,8 +6697,11 @@ route	GET /studio-domain-model/v1/relations
 route	GET /studio-domain-model/v1/types
 route	GET /studio-domain-model/v1/types/{}
 route	GET /studio-domain-model/v1/types/{}/conformance
+route	GET /studio-environments/v1/builds/{}
 route	GET /studio-environments/v1/builds/{}/log
+route	GET /studio-environments/v1/config-secrets
 route	GET /studio-environments/v1/deployments
+route	GET /studio-environments/v1/deployments/{}
 route	GET /studio-environments/v1/deployments/{}/logs
 route	GET /studio-environments/v1/deployments/{}/status
 route	GET /studio-environments/v1/environments
@@ -6824,6 +6929,7 @@ route	POST /studio-product/v1/gearbox/config-schema
 route	POST /studio-product/v1/gearbox/corpus/git-upload-pack
 route	POST /studio-product/v1/gearbox/corpus/{}/git-upload-pack
 route	POST /studio-product/v1/organizations/{}/gearbox/corpus/{}/git-upload-pack
+route	POST /studio-product/v1/product-description-checks
 route	POST /studio-product/v1/product-description-publications
 route	POST /studio-product/v1/product-description-revisions
 route	POST /studio-product/v1/projects/{}/create-repo

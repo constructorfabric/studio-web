@@ -3,19 +3,34 @@
 //! the images imported into its path, the builds Studio runs and the deploys
 //! of them, up to the approval and what the cluster reports.
 //!
-//! A build and a deploy are started here and followed with the reads; no tool
-//! waits on one. A deploy to a protected environment waits for an
-//! organization administrator's decision, which `deployment_decide` gives as
-//! the caller, so only an administrator's agent can give it.
+//! A build and a deploy are started here and followed with the reads, or
+//! waited on with `build_wait` and `deployment_wait` up to a timeout. A
+//! deploy to a protected environment waits for an organization
+//! administrator's decision, which `deployment_decide` gives as the caller,
+//! so only an administrator's agent can give it.
+
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
 use crate::mcp::sdk::{
-    Api, Effect, Run, Tool, ToolError, ToolFuture, find_by, object, optional_text, project_id,
-    required_text,
+    Api, Effect, Run, Tool, ToolError, ToolFuture, fill_path, object, optional_text, pause,
+    project_id, required_text,
 };
 
 const ENVIRONMENTS: &str = "/studio-environments/v1";
+
+/// How long `build_wait` and `deployment_wait` wait at most in one call:
+/// inside the api-gateway's request timeout, 30 s and fixed
+/// (`config/k8s.yaml`), which the MCP route is behind like any other. A build
+/// takes minutes; past the wait the agent gets the record as it is and calls
+/// again.
+const MAX_WAIT_SECS: u64 = 25;
+const DEFAULT_WAIT_SECS: u64 = MAX_WAIT_SECS;
+/// The gateway's timeout, with room for the last read after the wait.
+const _: () = assert!(MAX_WAIT_SECS + 5 <= 30);
+const BUILD_POLL: Duration = Duration::from_secs(5);
+const DEPLOY_POLL: Duration = Duration::from_secs(5);
 
 fn project_only() -> Value {
     object(json!({ "project_id": project_id() }), &["project_id"])
@@ -110,6 +125,29 @@ pub fn tools() -> Vec<Tool> {
             effect: Effect::Read,
             experimental: false,
             run: Run::Custom(config_secrets),
+        },
+        Tool {
+            name: "config_secret_keys",
+            description: "One environment's configuration secrets against what the product \
+                needs there: `keys` set (names only, a value is never returned), and \
+                `needed`, each with what needs it (`description`, `profile <id>`, `infra \
+                <service>`), what gives it otherwise (`database`, `infra <service>`) and \
+                whether it is set. `missing` is what a deploy there would run without: set \
+                each with `config_secret_set`. Read from the latest description revision \
+                (each `${NAME}` outside every profile or in the profile the environment runs) \
+                and the infra services.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "environment_id": environment_id("The environment.")
+                    }),
+                    &["project_id", "environment_id"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-environments/v1/config-secrets"),
         },
         Tool {
             name: "config_secret_set",
@@ -212,6 +250,30 @@ pub fn tools() -> Vec<Tool> {
             run: Run::Get("/studio-environments/v1/environments/{environment_id}/infra-plan"),
         },
         Tool {
+            name: "infra_service_public_url_set",
+            description: "Set where people reach one of the project's infra services \
+                (`public_url`, e.g. a Keycloak issuer's `https://id.acme.example`), or remove \
+                it with null; the rest of the list is kept as it is. A generated chart routes \
+                that address with an Ingress, and a `{public_url}` in what the service \
+                provides needs one (`INFRA_PUBLIC_URL_MISSING` in `infra_plan` otherwise). \
+                Answers the service as saved. Ask your person first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "service": { "type": "string",
+                            "description": "The service's name, as its passport gives it (`keycloak`)." },
+                        "public_url": { "type": ["string", "null"],
+                            "description": "An `https://` or `http://` address; null removes it." }
+                    }),
+                    &["project_id", "service", "public_url"],
+                )
+            },
+            effect: Effect::Destructive,
+            experimental: true,
+            run: Run::Custom(infra_public_url_set),
+        },
+        Tool {
             name: "image_import",
             description: "Copy an external image or chart (`docker.io/library/postgres:16`, \
                 with a tag or a digest) by digest into the project's own path of an \
@@ -308,6 +370,37 @@ pub fn tools() -> Vec<Tool> {
             },
         },
         Tool {
+            name: "build_get",
+            description: "One of the project's builds by `build_id`, whoever ran it: `status` \
+                (running, passed, failed, cancelled), `failure` and `failure_step`, product, \
+                profile, commit, `lock_hash`, the images and chart it published, where Studio \
+                ran it and with what, and `built_infra`, the infra services its lock resolved, \
+                which a deploy of it runs. Kept after the build's pod is gone, unlike \
+                `build_log`. To wait for it to end, `build_wait`.",
+            input_schema: || {
+                object(
+                    json!({ "project_id": project_id(), "build_id": { "type": "string" } }),
+                    &["project_id", "build_id"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-environments/v1/builds/{build_id}"),
+        },
+        Tool {
+            name: "build_wait",
+            description: "Wait until a build ends (passed, failed or cancelled), up to \
+                `timeout_seconds` (25, the most one call may wait), and answer `done` with \
+                the build's record as `build_get` gives it. Not ended by then: `done: false` \
+                and the record as it is; call again until `done`. A build takes minutes. A \
+                build just started may not be recorded for a few seconds; the wait covers \
+                that. Use it instead of polling from a shell.",
+            input_schema: || wait_input("build_id"),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Custom(build_wait),
+        },
+        Tool {
             name: "build_log",
             description: "A build Studio runs, step by step (prepare, build, publish): whether \
                 each waits, runs, passed or failed, and the last lines it wrote, read from its \
@@ -375,9 +468,11 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "deployment_get",
-            description: "One deployment of the project as Studio records it: its `state`, \
-                `outcome` (why it failed), the run that installs it, and the decision on it. \
-                What the cluster reports now is `deployment_status`.",
+            description: "One deployment of the project as Studio records it: its `state` \
+                (with where its run has got to), `outcome` (why it failed), the build and \
+                images it installs, the run that installs it, and the decision on it. What \
+                the cluster reports now is `deployment_status`; to wait for it to settle, \
+                `deployment_wait`.",
             input_schema: || {
                 object(
                     json!({ "project_id": project_id(), "deployment_id": { "type": "string" } }),
@@ -386,7 +481,21 @@ pub fn tools() -> Vec<Tool> {
             },
             effect: Effect::Read,
             experimental: false,
-            run: Run::Custom(deployment_get),
+            run: Run::Get("/studio-environments/v1/deployments/{deployment_id}"),
+        },
+        Tool {
+            name: "deployment_wait",
+            description: "Wait until a deployment settles, up to `timeout_seconds` (25, the \
+                most one call may wait), and answer `done` with its record as \
+                `deployment_get` gives it: settled is succeeded, failed, cancelled or \
+                declined, and also `awaiting_approval`, which nothing changes until an \
+                organization administrator decides (`deployment_decide`). Not settled by \
+                then: `done: false` and the record as it is; call again until `done`. Use it \
+                instead of polling from a shell.",
+            input_schema: || wait_input("deployment_id"),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Custom(deployment_wait),
         },
         Tool {
             name: "deployment_decide",
@@ -503,21 +612,194 @@ fn deploy_body(mut args: Map<String, Value>) -> Result<(Vec<(String, String)>, V
     ))
 }
 
-fn deployment_get(api: Api, args: Map<String, Value>) -> ToolFuture {
+/// What `build_wait` and `deployment_wait` take: the project, the id and
+/// how long to wait.
+fn wait_input(id: &str) -> Value {
+    let mut properties = json!({
+        "project_id": project_id(),
+        "timeout_seconds": { "type": "integer", "minimum": 0, "maximum": MAX_WAIT_SECS,
+            "description": "How long to wait, in seconds. Default and most 25." }
+    });
+    properties[id] = json!({ "type": "string" });
+    object(properties, &["project_id", id])
+}
+
+/// The wait asked for, within the bounds.
+fn wait_of(args: &Map<String, Value>) -> Duration {
+    Duration::from_secs(
+        args.get("timeout_seconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_WAIT_SECS)
+            .min(MAX_WAIT_SECS),
+    )
+}
+
+/// A build's record says it ended.
+fn build_ended(build: &Value) -> bool {
+    matches!(
+        build["status"].as_str(),
+        Some("passed" | "failed" | "cancelled")
+    )
+}
+
+/// A deployment's record says it settled: it ended, or it waits on a
+/// person's decision, which no wait changes.
+fn deployment_settled(deployment: &Value) -> bool {
+    matches!(
+        deployment["state"].as_str(),
+        Some("succeeded" | "failed" | "cancelled" | "declined" | "awaiting_approval")
+    )
+}
+
+/// A wait's answer: whether it is done, how long it took, the record.
+fn waited(done: bool, started: Instant, key: &str, record: Value) -> Value {
+    let mut out = json!({ "done": done, "waited_seconds": started.elapsed().as_secs() });
+    out[key] = record;
+    out
+}
+
+/// What a wait reads, and how.
+struct Wait {
+    path: String,
+    query: Vec<(String, String)>,
+    wait: Duration,
+    poll: Duration,
+    /// The answer's key for the record: `build`, `deployment`.
+    key: &'static str,
+    settled: fn(&Value) -> bool,
+}
+
+impl Wait {
+    /// `template`'s `{id_name}` filled with the argument of that name, for
+    /// the project the arguments name.
+    fn of(
+        args: &Map<String, Value>,
+        template: &str,
+        id_name: &str,
+        poll: Duration,
+        key: &'static str,
+        settled: fn(&Value) -> bool,
+    ) -> Result<Self, ToolError> {
+        let project = required_text(args, "project_id")?;
+        let id = required_text(args, id_name)?;
+        let (path, _) = fill_path(template, Map::from_iter([(id_name.to_owned(), json!(id))]))?;
+        Ok(Self {
+            path,
+            query: vec![("project_id".to_owned(), project)],
+            wait: wait_of(args),
+            poll,
+            key,
+            settled,
+        })
+    }
+
+    /// Read the record until it settles or the wait is up. A 404 is a
+    /// record not written yet (a build just started): read again, and
+    /// answer the refusal only if it is still not there at the end.
+    async fn run(self, api: &Api) -> Result<Value, ToolError> {
+        let started = Instant::now();
+        let deadline = started + self.wait;
+        loop {
+            let answer = api.get_answer(&self.path, &self.query).await?;
+            let record = match answer.status {
+                404 => None,
+                _ if answer.ok() => Some(answer.body.clone()),
+                _ => return Err(answer.refusal()),
+            };
+            let now = Instant::now();
+            match record {
+                Some(r) if (self.settled)(&r) => return Ok(waited(true, started, self.key, r)),
+                Some(r) if now >= deadline => return Ok(waited(false, started, self.key, r)),
+                None if now >= deadline => return Err(answer.refusal()),
+                _ => pause(self.poll.min(deadline.saturating_duration_since(now))).await,
+            }
+        }
+    }
+}
+
+fn build_wait(api: Api, args: Map<String, Value>) -> ToolFuture {
+    Box::pin(async move {
+        Wait::of(
+            &args,
+            "/studio-environments/v1/builds/{build_id}",
+            "build_id",
+            BUILD_POLL,
+            "build",
+            build_ended,
+        )?
+        .run(&api)
+        .await
+    })
+}
+
+fn deployment_wait(api: Api, args: Map<String, Value>) -> ToolFuture {
+    Box::pin(async move {
+        Wait::of(
+            &args,
+            "/studio-environments/v1/deployments/{deployment_id}",
+            "deployment_id",
+            DEPLOY_POLL,
+            "deployment",
+            deployment_settled,
+        )?
+        .run(&api)
+        .await
+    })
+}
+
+/// `items` (the project's infra services, as listed) with `service`'s
+/// `public_url` set to `url`, null removing it; the service as changed.
+fn with_public_url(items: &mut Value, service: &str, url: Value) -> Result<Value, ToolError> {
+    let list = items
+        .as_array_mut()
+        .ok_or_else(|| ToolError::new("Studio answered no list of infra services"))?;
+    let names: Vec<String> = list
+        .iter()
+        .filter_map(|i| i["passport"]["name"].as_str().map(str::to_owned))
+        .collect();
+    let item = list
+        .iter_mut()
+        .find(|i| i["passport"]["name"].as_str() == Some(service))
+        .ok_or_else(|| {
+            ToolError::new(format!(
+                "the project has no infra service {service}; it has: {}",
+                if names.is_empty() {
+                    "none".to_owned()
+                } else {
+                    names.join(", ")
+                }
+            ))
+        })?;
+    item["public_url"] = url;
+    Ok(item.clone())
+}
+
+fn infra_public_url_set(api: Api, args: Map<String, Value>) -> ToolFuture {
     Box::pin(async move {
         let project = required_text(&args, "project_id")?;
-        let id = required_text(&args, "deployment_id")?;
-        let list = api
-            .get(
-                &format!("{ENVIRONMENTS}/deployments"),
-                &[("project_id".to_owned(), project)],
-            )
-            .await?;
-        find_by(&list["items"], "id", &id).ok_or_else(|| {
-            ToolError::new(format!(
-                "the project has no deployment {id} among those Studio keeps; `deployments` lists them"
-            ))
-        })
+        let service = required_text(&args, "service")?;
+        let url = match args.get("public_url") {
+            Some(Value::String(u)) if !u.trim().is_empty() => json!(u.trim()),
+            Some(Value::Null) => Value::Null,
+            _ => {
+                return Err(ToolError::new(
+                    "`public_url` is an address, or null to remove it",
+                ));
+            }
+        };
+        let path = format!("{ENVIRONMENTS}/infra-services");
+        let query = [("project_id".to_owned(), project)];
+        let mut items = api.get(&path, &query).await?["items"].take();
+        with_public_url(&mut items, &service, url)?;
+        let saved = api.put(&path, &query, &json!({ "items": items })).await?;
+        saved["items"]
+            .as_array()
+            .and_then(|l| {
+                l.iter()
+                    .find(|i| i["passport"]["name"].as_str() == Some(service.as_str()))
+            })
+            .cloned()
+            .ok_or_else(|| ToolError::new(format!("Studio saved no infra service {service}")))
     })
 }
 
@@ -632,9 +914,107 @@ mod tests {
     }
 
     #[test]
-    fn one_deployment_is_found_by_id() {
-        let list = json!([{"id": "a", "state": "queued"}, {"id": "b", "state": "failed"}]);
-        assert_eq!(find_by(&list, "id", "b").unwrap()["state"], "failed");
-        assert!(find_by(&list, "id", "c").is_none());
+    fn one_build_and_one_deployment_are_read_by_their_own_routes() {
+        let all = tools();
+        let r = request_of(
+            &all,
+            "build_get",
+            json!({"project_id": "p", "build_id": "studio-1"}),
+        );
+        assert_eq!(
+            (r.method, r.path.as_str()),
+            (Method::Get, "/studio-environments/v1/builds/studio-1")
+        );
+        assert_eq!(r.query, q(&[("project_id", "p")]));
+        let r = request_of(
+            &all,
+            "deployment_get",
+            json!({"project_id": "p", "deployment_id": "d"}),
+        );
+        assert_eq!(r.path, "/studio-environments/v1/deployments/d");
+        assert_eq!(r.query, q(&[("project_id", "p")]));
+        let r = request_of(
+            &all,
+            "config_secret_keys",
+            json!({"project_id": "p", "environment_id": "e"}),
+        );
+        assert_eq!(
+            (r.method, r.path.as_str()),
+            (Method::Get, "/studio-environments/v1/config-secrets")
+        );
+        assert_eq!(r.query, q(&[("environment_id", "e"), ("project_id", "p")]));
+        assert_eq!(r.body, Value::Null);
+    }
+
+    #[test]
+    fn a_wait_ends_on_an_end_and_on_a_decision_to_make() {
+        for s in ["passed", "failed", "cancelled"] {
+            assert!(build_ended(&json!({ "status": s })), "{s}");
+        }
+        assert!(!build_ended(&json!({"status": "running"})));
+        assert!(!build_ended(&json!({})));
+        for s in [
+            "succeeded",
+            "failed",
+            "cancelled",
+            "declined",
+            "awaiting_approval",
+        ] {
+            assert!(deployment_settled(&json!({ "state": s })), "{s}");
+        }
+        for s in ["queued", "running"] {
+            assert!(!deployment_settled(&json!({ "state": s })), "{s}");
+        }
+        let args = |v: Value| v.as_object().cloned().unwrap();
+        assert_eq!(wait_of(&args(json!({}))), Duration::from_secs(25));
+        assert_eq!(
+            wait_of(&args(json!({"timeout_seconds": 9999}))),
+            Duration::from_secs(25)
+        );
+        let w = Wait::of(
+            &args(json!({"project_id": "p", "build_id": "a/b", "timeout_seconds": 0})),
+            "/studio-environments/v1/builds/{build_id}",
+            "build_id",
+            BUILD_POLL,
+            "build",
+            build_ended,
+        )
+        .unwrap();
+        assert_eq!(w.path, "/studio-environments/v1/builds/a%2Fb");
+        assert_eq!(w.query, q(&[("project_id", "p")]));
+        assert_eq!(w.wait, Duration::ZERO);
+        assert!(
+            Wait::of(
+                &args(json!({"project_id": "p"})),
+                "/x/{build_id}",
+                "build_id",
+                BUILD_POLL,
+                "build",
+                build_ended,
+            )
+            .is_err()
+        );
+        let answer = waited(true, Instant::now(), "build", json!({"status": "passed"}));
+        assert_eq!(answer["done"], true);
+        assert_eq!(answer["build"]["status"], "passed");
+    }
+
+    #[test]
+    fn a_public_url_is_set_on_its_service_and_the_rest_kept() {
+        let mut items = json!([
+            {"passport": {"name": "postgres"}, "image": "x"},
+            {"passport": {"name": "keycloak"}, "public_url": null}
+        ]);
+        let changed = with_public_url(&mut items, "keycloak", json!("https://id.acme")).unwrap();
+        assert_eq!(changed["public_url"], "https://id.acme");
+        assert_eq!(items[1]["public_url"], "https://id.acme");
+        assert_eq!(
+            items[0],
+            json!({"passport": {"name": "postgres"}, "image": "x"})
+        );
+        with_public_url(&mut items, "keycloak", Value::Null).unwrap();
+        assert!(items[1]["public_url"].is_null());
+        let err = with_public_url(&mut items, "redis", Value::Null).unwrap_err();
+        assert!(err.0.contains("postgres, keycloak"), "{}", err.0);
     }
 }
