@@ -44,13 +44,20 @@ pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {
 #[derive(Clone)]
 pub struct ProjectTypes(pub Arc<dyn AccountManagementClient>);
 
-/// A tenant's project types.
+/// A tenant's project types, and the phases its projects move through.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request, response)]
 pub struct ProjectTypesDocDto {
-    /// The types, in the order the New project card offers them.
-    #[schema(value_type = Vec<Object>)]
-    pub types: Vec<Value>,
+    /// The types, in the order the New project card offers them; absent when
+    /// the tenant sets only phases, and the built-in types apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Vec<Object>>)]
+    pub types: Option<Vec<Value>>,
+    /// The phases its projects move through, in order (the portal's
+    /// `project-lifecycle.ts`); absent when the tenant sets none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Vec<Object>>)]
+    pub phases: Option<Vec<Value>>,
 }
 
 /// What applies at a tenant and what it sets itself.
@@ -81,8 +88,9 @@ fn tenant_of(q: &TenantQuery) -> ApiResult<Uuid> {
 }
 
 fn doc(value: Value) -> Option<ProjectTypesDocDto> {
-    let types = value.get("types")?.as_array()?.clone();
-    Some(ProjectTypesDocDto { types })
+    let list = |field: &str| value.get(field).and_then(Value::as_array).cloned();
+    let (types, phases) = (list("types"), list("phases"));
+    (types.is_some() || phases.is_some()).then_some(ProjectTypesDocDto { types, phases })
 }
 
 fn type_id() -> GtsTypeId {
@@ -104,6 +112,7 @@ async fn get_project_types(
     let resolved = match &own {
         Some(o) => Some(ProjectTypesDocDto {
             types: o.types.clone(),
+            phases: o.phases.clone(),
         }),
         None => store
             .0
@@ -123,7 +132,7 @@ async fn put_project_types(
     let store = available(store)?;
     let tenant = tenant_of(&query)?;
     let mut seen = std::collections::HashSet::new();
-    for t in &body.types {
+    for t in body.types.iter().flatten() {
         let key = t.get("key").and_then(Value::as_str).unwrap_or_default();
         if key.is_empty() || !seen.insert(key.to_owned()) {
             return Err(OrganizationError::invalid_argument()
@@ -131,7 +140,14 @@ async fn put_project_types(
                 .create());
         }
     }
-    let value = serde_json::json!({"types": body.types});
+    let mut value = serde_json::Map::new();
+    if let Some(types) = &body.types {
+        value.insert("types".to_owned(), Value::Array(types.clone()));
+    }
+    if let Some(phases) = &body.phases {
+        value.insert("phases".to_owned(), Value::Array(phases.clone()));
+    }
+    let value = Value::Object(value);
     store
         .0
         .upsert_metadata(&ctx, tenant, UpsertMetadataRequest::new(type_id(), value))
@@ -188,8 +204,9 @@ pub fn register(
         .operation_id("studio_organizations.upsert_project_types")
         .summary("Set the project types a tenant offers")
         .description(
-            "Replaces the tenant's own list; its workspaces inherit it unless they set their \
-             own. Each type is kept as a `project-type` domain object; who may write the \
+            "Replaces the tenant's own document: its types and the phases its projects move \
+             through, either of which may be absent. Its workspaces inherit it unless they \
+             set their own. Each type is kept as a `project-type` domain object; who may write the \
              tenant's domain objects may.",
         )
         .tag("StudioOrganizations")
