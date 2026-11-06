@@ -3384,6 +3384,7 @@ response	GET /studio-organizations/v1/overview	workspaces.spend	f64	optional
 response	GET /studio-organizations/v1/overview	workspaces.stuck	u32	always
 response	GET /studio-organizations/v1/rollups	items	Vec<{}>	always
 response	GET /studio-organizations/v1/rollups	items.activity_days	u32	optional
+response	GET /studio-organizations/v1/rollups	items.attributes	Value	optional
 response	GET /studio-organizations/v1/rollups	items.brief	String	optional
 response	GET /studio-organizations/v1/rollups	items.documents	u32	optional
 response	GET /studio-organizations/v1/rollups	items.findings	u32	optional

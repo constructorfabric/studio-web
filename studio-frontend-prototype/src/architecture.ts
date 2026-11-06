@@ -533,8 +533,8 @@ export const SURFACES: Surface[] = [
     id: "workspaces",
     area: "portal",
     title: "Workspaces and their projects",
-    does: "Browse workspaces, create a project -- optionally from a template that fills in its sources, brief and kits; a new repository, one attached or none yet, with a starter gear if asked -- and see the portfolio. Attaching or detaching a repository has the project's catalogue read its sources again.",
-    components: ["WorkspacesView", "WorkspaceProjects", "ProjectsPortfolio", "WorkspaceStatusLine", "ProjectScreen"],
+    does: "Browse workspaces, create a project -- optionally from a template that fills in its sources, brief and kits; a new repository, one attached or none yet, with a starter gear if asked -- and see the portfolio, filtered by what each project's config carries (its phase, its template, its repositories, any other short value). A project's status -- the phase it is in -- shows on its row and card and in its tab bar, where a member moves it. Attaching or detaching a repository has the project's catalogue read its sources again.",
+    components: ["WorkspacesView", "WorkspaceProjects", "ProjectsPortfolio", "WorkspaceStatusLine", "ProjectScreen", "ProjectFieldControls"],
     gears: [
       "account-management",
       "studio-components-catalog",
@@ -556,9 +556,9 @@ export const SURFACES: Surface[] = [
   {
     id: "project-types",
     area: "portal",
-    title: "Project templates",
-    does: "Decide which templates an organization or a workspace offers a new project, each optional and only filling in the card -- the sources it starts with and whether a starter gear goes there, a brief, the kits ticked -- and which tabs its projects show; or offer none.",
-    components: ["ProjectTypesTab"],
+    title: "Project templates and phases",
+    does: "Decide which templates an organization or a workspace offers a new project, each optional and only filling in the card -- the sources it starts with and whether a starter gear goes there, a brief, the kits ticked -- and which tabs its projects show; or offer none. Beside them, the phases its projects move through, in order.",
+    components: ["ProjectTypesTab", "PhasesEditor"],
     gears: ["account-management", "studio-kits"],
   },
   {

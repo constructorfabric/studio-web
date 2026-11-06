@@ -1001,12 +1001,10 @@ export const ACCESS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.c
  *  modernization has exactly one. Carried in a project's config metadata. */
 export type ProjectMode = "greenfield" | "modernize";
 
-/** Forward-only: draft -> active -> archived, and archived is terminal. */
-export type ProjectStatus = "draft" | "active" | "archived";
-
-/** The status ladder in order — used to enforce forward-only transitions in
- *  the UI now that the studio-project gear no longer guards them server-side. */
-export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
+/** The phase the project is in: the key of one of the phases its workspace
+ *  lists (`project-phases.ts`). A project from before phases may carry
+ *  `draft`, `active` or `archived`, which are read as the phases they meant. */
+export type ProjectStatus = string;
 
 /** One journey stage, as the catalogue serves it.
  *
@@ -3812,6 +3810,10 @@ export interface RollupRow {
   /** Projects: `new_gears` | `product` | `existing`, and the project's brief. */
   project_kind?: string | null;
   brief?: string | null;
+  /** Projects: the short top-level values of its config (`project.config`),
+   *  by name -- what a list filters by (project-filters.ts). Absent (not
+   *  null) from a server before them: rollups.ts then reads each config. */
+  attributes?: Record<string, unknown> | null;
   /** The icon chosen for it, both halves or neither; null: none chosen. */
   icon_glyph?: string | null;
   icon_color?: string | null;
@@ -5788,7 +5790,13 @@ export const api = {
     }
   },
 
-  putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTemplatesDoc) =>
+  /** The whole document: the templates (`types`) and the phases beside them
+   *  (`phases`, project-phases.ts). A writer of one keeps the other. */
+  putProjectTypes: (
+    token: string,
+    tenantId: string,
+    value: Partial<import("./project-types").ProjectTemplatesDoc> & { phases?: import("./project-lifecycle").ProjectPhase[] },
+  ) =>
     request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
       method: "PUT",
       body: JSON.stringify(value),

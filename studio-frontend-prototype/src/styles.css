@@ -2135,6 +2135,29 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
 .prowmenu-list button { justify-content: flex-start; text-align: left; background: none; border: none; padding: 6px 10px; }
 .prowmenu-list button:hover { background: var(--accent); }
 .prowmenu-list button.danger { color: var(--destructive); }
+.prowmenu-list button:disabled { opacity: 0.5; cursor: default; }
+/* MenuButton (menu-button.tsx): the row menu's look, with an icon column and
+   an optional heading line. */
+.menu-list { min-width: 200px; gap: 1px; }
+.menu-list button { display: flex; align-items: center; gap: 8px; border-radius: var(--radius-md, 6px); font-size: 13px; color: var(--foreground); }
+.menu-ico { display: grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--muted-foreground); }
+.menu-heading { padding: 6px 10px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); }
+
+/* A project's fields in its tab bar (project-fields-view.tsx): the status
+   chip is the button, and its menu says the ladder before the moves. */
+.field-controls { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.field-controls + .psection-pin { margin-left: 4px; }
+.field-trigger { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; border: none; background: none; border-radius: var(--radius-md); cursor: pointer; }
+.field-trigger:hover { background: var(--studio-control-hover-neutral); }
+.field-caret { font-size: 10px; color: var(--muted-foreground); }
+.field-error { font-size: 12px; }
+.field-ladder { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.field-ladder li { padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); font-size: 11px; }
+.field-ladder li.on { border-color: var(--primary); color: var(--primary); font-weight: 600; }
+.pname + .badge, .ws-tree-title .badge[data-project-field] { margin-left: 6px; }
+.phases-table { width: 100%; border-collapse: collapse; }
+.phases-table th { text-align: left; font-size: 12px; font-weight: 500; color: var(--muted-foreground); padding: 4px 6px; }
+.phases-table td { padding: 4px 6px; border-top: 1px solid var(--border); }
 
 /* ── DataTable: the one list (data-table.tsx, docs/list-standard.md) ── */
 .dt { display: flex; flex-direction: column; gap: 8px; }

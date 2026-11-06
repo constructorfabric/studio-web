@@ -103,6 +103,11 @@ pub struct Rollup {
     /// `existing`) and its brief, from its own configuration.
     pub project_kind: Option<String>,
     pub brief: Option<String>,
+    /// Projects only: the short top-level values of its configuration, by
+    /// name -- see [`attributes_in`]. What they mean is the portal's (and its
+    /// kits') to say; this only carries them, so a list can be filtered by a
+    /// field nobody taught the backend.
+    pub attributes: Option<serde_json::Map<String, serde_json::Value>>,
     /// Projects only: how its specs stand.
     pub specs: Option<SpecSummary>,
     /// Projects only: open findings and comments, pull requests over the last
@@ -130,6 +135,7 @@ impl Rollup {
             repos: None,
             project_kind: None,
             brief: None,
+            attributes: None,
             specs: None,
             signals: None,
             team: None,
@@ -445,6 +451,7 @@ impl Sources {
             repos,
             project_kind: text("kind"),
             brief: text("brief"),
+            attributes: attributes_in(config.as_ref()),
             specs,
             signals,
             team,
@@ -542,6 +549,31 @@ fn icon_in(config: Option<&serde_json::Value>) -> Option<(String, String)> {
             .map(str::to_owned)
     };
     Some((part("glyph")?, part("color")?))
+}
+
+/// The longest text value [`attributes_in`] carries.
+const MAX_ATTRIBUTE_CHARS: usize = 120;
+
+/// The configuration's top-level values a list may filter on: every text
+/// value up to [`MAX_ATTRIBUTE_CHARS`] characters, every number and every
+/// boolean, by name. Objects, lists and long text (the brief, the sources)
+/// are left out: a row is not the place for them. `None` when the
+/// configuration could not be read, an empty map when it holds none.
+fn attributes_in(
+    config: Option<&serde_json::Value>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let config = config?.as_object()?;
+    Some(
+        config
+            .iter()
+            .filter(|(_, v)| match v {
+                serde_json::Value::String(s) => s.chars().count() <= MAX_ATTRIBUTE_CHARS,
+                serde_json::Value::Number(_) | serde_json::Value::Bool(_) => true,
+                _ => false,
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    )
 }
 
 /// The children of `parent` of one tenant type, every page of them.
@@ -653,6 +685,28 @@ mod tests {
         assert_eq!(ids, vec![(1, 11), (3, 31), (3, 32)]);
         assert_eq!(found[0].name, "b");
         assert_eq!(found[0].workspace_name, "w1");
+    }
+
+    #[test]
+    fn attributes_carry_the_short_top_level_values_only() {
+        let long = "x".repeat(MAX_ATTRIBUTE_CHARS + 1);
+        let config = json!({
+            "status": "testing",
+            "type": "product",
+            "count": 3,
+            "flag": true,
+            "brief": long,
+            "sources": [{"url": "u"}],
+            "icon": {"glyph": "g", "color": "c"},
+            "nothing": null,
+        });
+        let attrs = attributes_in(Some(&config)).unwrap();
+        let mut keys: Vec<&str> = attrs.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["count", "flag", "status", "type"]);
+        assert_eq!(attrs["status"], "testing");
+        assert_eq!(attributes_in(None), None);
+        assert_eq!(attributes_in(Some(&json!([]))), None);
     }
 
     /// The distinction the whole file turns on, at the one place it is decided.

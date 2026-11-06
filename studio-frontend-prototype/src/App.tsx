@@ -171,6 +171,18 @@ import {
   type RepoRoad,
 } from "./project-form";
 import { ProjectTypesTab } from "./project-types-editor";
+import {
+  FieldChips,
+  PROJECT_FIELDS_CHANGED,
+  ProjectFieldControls,
+  ProjectFieldSettings,
+  fieldFilters,
+  fieldMoveItems,
+  initialAttributes,
+  patchProjectConfig,
+  useProjectFields,
+} from "./project-fields-view";
+import { factsOf } from "./project-filters";
 import { productAttention, type TabAttention } from "./product-flow";
 import { ProductPage } from "./product-sections-view";
 import {
@@ -2623,6 +2635,16 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onOpen={setProjectTab}
             icon={(name) => <NavIcon name={name} />}
           />
+          {/* The project's fields that draw a chip -- its status -- and the
+              moves from where it is. */}
+          {crumb.nestedId && (
+            <ProjectFieldControls
+              token={token}
+              projectId={crumb.nestedId}
+              workspaceId={crumb.projectId ?? null}
+              orgId={workspaces.find((w) => w.id === crumb.projectId)?.orgId ?? null}
+            />
+          )}
           {/* Pinning a project section belongs on the section, not in the rail:
               the rail cannot know which project is open, and a picker listing
               every project x every section is a list nobody reads. */}
@@ -3918,7 +3940,7 @@ function WorkspaceHeader({
 
 const WORKSPACE_TABS: { id: WorkspaceTab; icon: string; label: string; hint: string }[] = [
   { id: "projects", icon: "grid", label: "Projects", hint: "The projects in this workspace" },
-  { id: "ptypes", icon: "layers", label: "Project templates", hint: "What a new project may start from: its sources, a brief, kits and tabs" },
+  { id: "ptypes", icon: "layers", label: "Templates & phases", hint: "What a new project may start from, and the phases a project moves through" },
   { id: "types", icon: "file", label: "Document types", hint: "Templates, section checklists and rules" },
 ];
 
@@ -3939,7 +3961,12 @@ function WorkspaceCatalogue({
   const workspaceId = workspace.id;
   return (
     <div>
-      {tab === "ptypes" && <ProjectTypesTab token={token} workspace={workspace} tabs={PROJECT_TABS} />}
+      {tab === "ptypes" && (
+        <div style={{ display: "grid", gap: 16 }}>
+          <ProjectTypesTab token={token} workspace={workspace} tabs={PROJECT_TABS} />
+          <ProjectFieldSettings token={token} workspace={workspace} />
+        </div>
+      )}
       {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
     </div>
   );
@@ -3990,6 +4017,10 @@ function WorkspaceProjects({
   // none is picked until somebody picks one, and a template only fills in the
   // fields below -- what the product is comes from its specs (product-kind.ts).
   const [offeredTemplates, setOfferedTemplates] = useState<ProjectTemplate[]>(BUILTIN_TEMPLATES);
+  // The project fields (project-fields-view.tsx): what the table filters by,
+  // the chips a row shows, the moves its menu offers, and what a new project
+  // starts with.
+  const fields = useProjectFields(token, workspace.id, workspace.orgId);
   const [templateKey, setTemplateKey] = useState<string | null>(null);
   const template = offeredTemplates.find((t) => t.key === templateKey) ?? null;
   // What the new project takes from the shared catalogue. A kit is a component
@@ -4080,6 +4111,13 @@ function WorkspaceProjects({
   // rest, rather than costing the whole column. Deliberately NOT part of
   // `reload`: a rename must not make every count blink back to "—".
   const projectIds = (projects ?? []).map((p) => p.id).join(",");
+  // A field changed from a row's menu: count again, so the row says it.
+  const [fieldTick, setFieldTick] = useState(0);
+  useEffect(() => {
+    const changed = () => setFieldTick((n) => n + 1);
+    window.addEventListener(PROJECT_FIELDS_CHANGED, changed);
+    return () => window.removeEventListener(PROJECT_FIELDS_CHANGED, changed);
+  }, []);
   useEffect(() => {
     if (!projectIds) {
       setRollups({});
@@ -4104,7 +4142,7 @@ function WorkspaceProjects({
     return () => {
       alive = false;
     };
-  }, [token, workspace.id, projectIds]);
+  }, [token, workspace.id, projectIds, fieldTick]);
 
   // Load the shared component catalogue when the create card opens.
   useEffect(() => {
@@ -4305,7 +4343,10 @@ function WorkspaceProjects({
           ...cfg,
           mode,
           ...(template ? { type: template.key } : {}),
-          status: cfg.status ?? "draft",
+          // What the project fields start a project with (its phase), unless
+          // a retried run already wrote it.
+          ...initialAttributes(fields),
+          ...(cfg.status ? { status: cfg.status } : {}),
           brief: brief.trim() || cfg.brief,
           source_git_url: ctx.cloneUrl || cfg.source_git_url,
         });
@@ -5251,6 +5292,7 @@ function WorkspaceProjects({
               options: REVIEW_FILTERS.filter((f) => f.id !== "all").map((f) => ({ value: f.id, label: f.label })),
               match: (p, value) => !!p.row && inReviewFilter(reviewOf(p.row), value as ReviewFilter),
             },
+            ...fieldFilters(fields, listed, (p) => factsOf(p.row)),
           ]}
           primary={
             <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
@@ -5297,6 +5339,23 @@ function WorkspaceProjects({
                 </div>
               ),
             },
+            // A column for each field that draws a chip (the lifecycle's Status).
+            ...fields
+              .filter((f) => f.chip)
+              .map((f) => ({
+                id: `field-${f.id}`,
+                header: f.header ?? f.label,
+                compare: (a: ProjectListRow, b: ProjectListRow) => {
+                  const order = (f.choices?.() ?? []).map((c) => c.value);
+                  const at = (r: ProjectListRow) => {
+                    const facts = factsOf(r.row);
+                    return facts ? order.indexOf(f.value(facts) ?? "") : -1;
+                  };
+                  return at(a) - at(b);
+                },
+                cell: (p: ProjectListRow) =>
+                  p.row ? <FieldChips fields={[f]} facts={factsOf(p.row)} /> : <span className="sub">—</span>,
+              })),
             {
               id: "review",
               header: "Review",
@@ -5387,6 +5446,10 @@ function WorkspaceProjects({
               ? []
               : [
                   { label: "Open", onSelect: () => onOpenProject(p) },
+                  // The fields' moves (the phase), as the project's tab bar offers them.
+                  ...fieldMoveItems(fields, factsOf(p.row), (patch) =>
+                    void patchProjectConfig(token, p.id, patch).catch((e) => setErr(errText(e))),
+                  ),
                   { label: "Rename", onSelect: () => startEdit(p) },
                   {
                     label: "Delete",
@@ -5407,7 +5470,11 @@ function WorkspaceProjects({
             <VTile
               icon={<span aria-hidden>▦</span>}
               title={p.name}
-              subtitle={kindLine(p.row)}
+              subtitle={
+                <>
+                  <FieldChips fields={fields} facts={factsOf(p.row)} /> {kindLine(p.row)}
+                </>
+              }
               onClick={open}
               tone={rollups[p.id]?.findings ? "attn" : undefined}
               stats={[

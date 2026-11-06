@@ -678,6 +678,15 @@ pub struct RollupDto {
     pub project_kind: Option<String>,
     /// Projects: what the project is for, in its owner's words.
     pub brief: Option<String>,
+    /// Projects: the short top-level values of the project's configuration
+    /// (`project.config`), by name -- text up to 120 characters, numbers and
+    /// booleans; objects, lists and long text left out. Carried as they are
+    /// stored, without meaning: the portal filters a list by them (`status`,
+    /// the phase a person put the project in; `type`, the template it was
+    /// created from; whatever a kit adds). Null when the configuration could
+    /// not be read.
+    #[schema(value_type = Option<Object>)]
+    pub attributes: Option<serde_json::Value>,
     /// Projects: findings placed in the text — the items of each verdict's
     /// `details.findings`, and one for a failed verdict (`high`,
     /// `gate-failed`) recorded without items. The Specs list's per-row
@@ -761,6 +770,7 @@ fn rollup_dto(r: super::rollups::Rollup) -> RollupDto {
     RollupDto {
         project_kind: r.project_kind,
         brief: r.brief,
+        attributes: r.attributes.map(serde_json::Value::Object),
         open_findings: r.signals.as_ref().map(|s| s.open_findings),
         open_comments: r.signals.as_ref().and_then(|s| s.open_comments),
         specs: r.specs.map(|s| s.specs),
@@ -1443,7 +1453,8 @@ Labels are deliberately              absent: what a privilege is called belongs 
             "One call for the whole portfolio: every workspace under the caller's tenant, \
              or under an organization in it, with the number of projects it holds, and every \
              project with what its row in a projects table shows: documents, detector findings \
-             and attached repositories; its kind and brief; open findings and open comments; \
+             and attached repositories; its kind and brief; the short values of its \
+             configuration (`attributes`), to filter by; open findings and open comments; \
              its specs, checked and failing; pull requests over the last `activity_days` days; \
              its team; and the last event the Activity feed lists. `?project_id=` narrows it to \
              one project, `?workspace_id=` to one workspace and its projects.\n\n\
