@@ -202,15 +202,15 @@ FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe6
 # engine is a snapshot of that branch on its author's fork; move back to a
 # constructorfabric/gearbox release once they do.
 ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-bcaa7d6
-ARG STUDIO_GEARBOX_VERSION=0.1.0-bcaa7d6
-ARG STUDIO_GEARBOX_REF=bcaa7d65cdb216a4e63c356e3ff4144239cc59ea
-ARG STUDIO_GEARBOX_SHA256=195e2a34f650269d19391f8b5113dc9d6827c6dc65d3e51b3d3151fe77ccffae
+ARG STUDIO_GEARBOX_RELEASE=snapshot-f2deac5
+ARG STUDIO_GEARBOX_VERSION=0.1.0-f2deac5
+ARG STUDIO_GEARBOX_REF=f2deac58fee0144ad418abdd36abbc5d378e1474
+ARG STUDIO_GEARBOX_SHA256=acc86bffdde0417c91dfad0e3358ac14cd65953599ca72ca18c056110b62b305
 # Not used here: gearbox-engine.yml reads them for the desktop's archives.
 # Empty when the release has no archive for that platform: the workflow then
 # packs no engine for it.
-ARG STUDIO_GEARBOX_SHA256_WIN32_X64=8b6fa906a0c10d4dd76fa066d4733420359e08eb7f242a602b7790d7159f0bdc
-ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=820a668f784a47d838660df047ec34724cc6e3121500f70ffe878d1d722122c2
+ARG STUDIO_GEARBOX_SHA256_WIN32_X64=
+ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \
