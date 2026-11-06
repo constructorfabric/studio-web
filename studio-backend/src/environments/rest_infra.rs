@@ -366,7 +366,81 @@ fn plan_dto(p: InfraPlan) -> InfraPlanDto {
     }
 }
 
+/// The realm a product's own Keycloak imports.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KeycloakRealmDto {
+    /// Where it goes in the container: a key of the service's `files`.
+    pub path: String,
+    /// The realm JSON: its `{secret.KEY}` and `{env.KEY}` are filled at
+    /// deploy.
+    pub content: String,
+    /// The argument that imports it, for the service's `args`.
+    pub args: Vec<String>,
+    pub clients: Vec<RealmClientDto>,
+    /// The `tenant_id` claim every confidential client's tokens carry.
+    pub root_tenant_id: String,
+    /// `description` (account-management's `bootstrap.root_id`) or
+    /// `platform`.
+    pub root_tenant_from: String,
+    /// What the realm could not do as the description asks.
+    pub notes: Vec<String>,
+}
+
+/// One client of a realm.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RealmClientDto {
+    pub client_id: String,
+    /// `public` or `confidential`.
+    pub kind: String,
+    /// The gear that signs in with it (`client_credentials`).
+    pub gear: Option<String>,
+    /// What its secret is filled with at deploy: `{secret.KEY}` (the
+    /// passport's) or `{env.KEY}` (the environment's configuration secret
+    /// the gear reads, made once when none is set).
+    pub secret: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct RealmQuery {
+    project_id: Uuid,
+    #[serde(default)]
+    portal_url: Option<String>,
+}
+
 /* ── handlers ── */
+
+async fn get_keycloak_realm(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(name): Path<String>,
+    Query(q): Query<RealmQuery>,
+) -> ApiResult<JsonBody<KeycloakRealmDto>> {
+    let r = envs
+        .0
+        .keycloak_realm(&ctx, q.project_id, &name, q.portal_url.as_deref())
+        .await
+        .map_err(problem)?;
+    Ok(Json(KeycloakRealmDto {
+        path: r.path,
+        content: r.content,
+        args: vec![crate::environments::realm::IMPORT_ARG.to_owned()],
+        clients: r
+            .clients
+            .into_iter()
+            .map(|c| RealmClientDto {
+                client_id: c.client_id,
+                kind: c.kind.to_owned(),
+                gear: c.gear,
+                secret: c.secret,
+            })
+            .collect(),
+        root_tenant_id: r.root_tenant_id,
+        root_tenant_from: r.root_tenant_from.to_owned(),
+        notes: r.notes,
+    }))
+}
 
 async fn list_infra_services(
     Extension(ctx): Extension<SecurityContext>,
@@ -453,6 +527,37 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .json_request::<InfraServicesRequest>(openapi, "The infra services")
         .handler(put_infra_services)
         .json_response_with_schema::<InfraServiceListDto>(openapi, StatusCode::OK, "Saved")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/infra-services/{name}/keycloak-realm")
+        .operation_id("studio_environments.get_keycloak_realm")
+        .summary("The realm a project's Keycloak imports")
+        .description(
+            "For `?project_id=` and the project's Keycloak infra service `name`: the realm file \
+             it imports at start (`path`, `content`) and the argument that imports it. A public \
+             client for the portal (`?portal_url=` its redirect address), a confidential one for \
+             the backend, and a service-account client for every gear the latest description \
+             signs in with `client_credentials`, its secret the variable that gear reads; every \
+             confidential client carries a `tenant_id` claim of the root tenant. Nothing is \
+             written: put the file and the argument on the service.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("name", "The infra service's name")
+        .query_param_typed("project_id", true, "The project", "string")
+        .query_param_typed(
+            "portal_url",
+            false,
+            "The product's portal address, for the portal client's redirects",
+            "string",
+        )
+        .handler(get_keycloak_realm)
+        .json_response_with_schema::<KeycloakRealmDto>(openapi, StatusCode::OK, "The realm")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

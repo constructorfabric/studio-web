@@ -17,6 +17,7 @@ import {
   type InfraPassport,
   type InfraPlan,
   type InfraService,
+  type KeycloakRealm,
   type ProductTechnology,
   type ProjectImage,
 } from "./api";
@@ -38,14 +39,15 @@ import {
   parseShared,
   fileProblems,
   isKeycloak,
-  keycloakRealm,
   patchPassport,
   patchService,
   placementText,
   planItemText,
   planNotes,
-  planRefusals,
-  withKeycloakRealm,
+  planAllRefusals,
+  planWarnings,
+  realmClientsText,
+  withRealmFile,
   serviceFrom,
   sharedAllowed,
   sharedText,
@@ -797,6 +799,7 @@ export function ProductInfraServices({
             <FilesEditor
               key={`${r.id}:files`}
               service={r.service}
+              loadRealm={(portal) => api.keycloakRealm(token, projectId, r.id, portal)}
               busy={!!busy}
               onSave={async (patch, what) => {
                 if (await save(patchService(services, r.id, patch), what)) setEditing(null);
@@ -1038,11 +1041,14 @@ function ServiceEditor({
  *  A Keycloak gets a one-click realm to import. */
 function FilesEditor({
   service: s,
+  loadRealm,
   busy,
   onSave,
   onClose,
 }: {
   service: InfraService;
+  /** The realm the server makes for this service (a Keycloak). */
+  loadRealm: (portal: string) => Promise<KeycloakRealm>;
   busy: boolean;
   onSave: (patch: Pick<InfraService, "public_url" | "files" | "args">, what: string) => Promise<void>;
   onClose: () => void;
@@ -1065,11 +1071,20 @@ function FilesEditor({
     ...(url.trim() && !/^https?:\/\/[^\s/?#]+(\/[^\s?#]*)?$/.test(url.trim()) ? [`"${url.trim()}" is not an address (https://…)`] : []),
   ];
   const usesUrl = Object.values(p.provides).some((t) => t.includes("{public_url}"));
-  const realm = isKeycloak(p) ? keycloakRealm(p, portal) : null;
-  const addRealm = () => {
-    const next = withKeycloakRealm({ passport: p, files, args }, portal);
-    setRows(Object.entries(next.files).map(([path, content]) => ({ path, content })));
-    setArgsText(next.args.join("\n"));
+  const keycloak = isKeycloak(p);
+  const [realm, setRealm] = useState<KeycloakRealm | null>(null);
+  const [realmError, setRealmError] = useState<string | null>(null);
+  const addRealm = async () => {
+    setRealmError(null);
+    try {
+      const made = await loadRealm(portal);
+      const next = withRealmFile({ files, args }, made);
+      setRealm(made);
+      setRows(Object.entries(next.files).map(([path, content]) => ({ path, content })));
+      setArgsText(next.args.join("\n"));
+    } catch (e) {
+      setRealmError(e instanceof Error ? e.message : String(e));
+    }
   };
   return (
     <div style={{ display: "grid", gap: 8, padding: "8px 0" }} data-infra-editor-panel={`${p.name}:files`}>
@@ -1120,7 +1135,7 @@ function FilesEditor({
           <button type="button" className="ghost" onClick={() => setRows([...rows, { path: "", content: "" }])}>
             Add file
           </button>
-          {realm && (
+          {keycloak && (
             <>
               <input
                 value={portal}
@@ -1128,7 +1143,7 @@ function FilesEditor({
                 placeholder="https://shop.example.com (the portal)"
                 aria-label="The product's portal address"
               />
-              <button type="button" onClick={addRealm} data-infra-keycloak-realm>
+              <button type="button" onClick={() => void addRealm()} data-infra-keycloak-realm>
                 Keycloak realm
               </button>
             </>
@@ -1138,9 +1153,18 @@ function FilesEditor({
           Text may say <code>{"{secret.KEY}"}</code>, <code>{"{host}"}</code>, <code>{"{public_url}"}</code> and{" "}
           <code>{"{namespace}"}</code>, filled at deploy; with a secret the files are kept in a Secret. A ready chart
           does not apply them.
+          {keycloak &&
+            !realm &&
+            " The Keycloak realm is made by the server from the product description: a client for the portal, the backend, and each gear that signs in with client credentials."}
           {realm &&
-            ` The realm template imports ${realm.path} with clients ${realmClients(realm.content)}; the confidential one's secret is {secret.${realm.secretKey}}, made once per environment.`}
+            ` The realm imports ${realm.path} with clients ${realmClientsText(realm)}; every confidential client's tokens carry tenant_id ${realm.root_tenant_id} (${realm.root_tenant_from === "description" ? "account-management's bootstrap.root_id" : "the platform's root tenant"}). {env.KEY} is the environment's configuration secret KEY, made once when none is set.`}
         </span>
+        {realm?.notes.map((n) => (
+          <span key={n} className="env-field-error" data-infra-realm-note>
+            {n}
+          </span>
+        ))}
+        {realmError && <span className="env-field-error">The realm could not be made: {realmError}</span>}
       </div>
       <label className="field">
         More arguments
@@ -1173,12 +1197,3 @@ function FilesEditor({
   );
 }
 
-/** The client ids of a realm as written, for the hint. */
-function realmClients(content: string): string {
-  try {
-    const doc = JSON.parse(content) as { clients?: { clientId?: string }[] };
-    return (doc.clients ?? []).map((c) => c.clientId).join(" and ");
-  } catch {
-    return "";
-  }
-}

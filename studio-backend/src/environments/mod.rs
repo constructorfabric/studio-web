@@ -49,7 +49,8 @@ mod placement; // a project's slug, namespaces and registry path (ADR-0062 §3, 
 pub(crate) mod port; // what another gear asks of this one directly
 mod preflight; // what a deploy checks before and while it installs
 mod preview; // a build tried in a namespace of its own, removed when it expires (ADR-0055)
-mod readiness; // what a build or a deploy checks before it is queued
+mod readiness;
+mod realm; // the Keycloak realm a product's own Keycloak imports // what a build or a deploy checks before it is queued
 mod records; // the gear's own tables (ADR-0062)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)

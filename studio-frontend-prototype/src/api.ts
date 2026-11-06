@@ -1889,6 +1889,20 @@ export interface InfraPlan {
   placement: "with_product" | "shared";
   namespace: string;
   items: InfraPlanItem[];
+  /** Configuration secrets the description also sets. Absent from a server before it. */
+  configuration?: ConfigClash[];
+}
+
+/** The realm a project's Keycloak imports, made by the server from its
+ *  passport and the product description. */
+export interface KeycloakRealm {
+  path: string;
+  content: string;
+  args: string[];
+  clients: { client_id: string; kind: "public" | "confidential"; gear?: string | null; secret?: string | null }[];
+  root_tenant_id: string;
+  root_tenant_from: "description" | "platform";
+  notes: string[];
 }
 
 /** What a build would do, said before it is started (`POST /builds/plan`):
@@ -5325,6 +5339,13 @@ export const api = {
   infraPlan: (token: string, projectId: string, environmentId: string) =>
     request<InfraPlan>(
       `/studio-environments/v1/environments/${encodeURIComponent(environmentId)}/infra-plan?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  keycloakRealm: (token: string, projectId: string, service: string, portalUrl?: string | null) =>
+    request<KeycloakRealm>(
+      `/studio-environments/v1/infra-services/${encodeURIComponent(service)}/keycloak-realm?project_id=${encodeURIComponent(projectId)}${
+        portalUrl?.trim() ? `&portal_url=${encodeURIComponent(portalUrl.trim())}` : ""
+      }`,
       token,
     ),
   importImage: (

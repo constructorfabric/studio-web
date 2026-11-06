@@ -37,15 +37,15 @@ import {
   sharedText,
   sourceText,
   variableOf,
-  clientSecretKeyOf,
   fileProblems,
   isKeycloak,
-  KEYCLOAK_IMPORT_DIR,
-  keycloakRealm,
   MAX_FILES_BYTES,
+  planAllRefusals,
   planNotes,
+  planWarnings,
+  realmClientsText,
   realmNameOf,
-  withKeycloakRealm,
+  withRealmFile,
 } from "./infra-services";
 
 const keycloakNode = {
@@ -424,32 +424,69 @@ describe("files, arguments and the address people reach", () => {
     expect(fileProblems({ "/a": "x".repeat(MAX_FILES_BYTES) })[0]).toMatch(/bytes together/);
   });
 
-  it("names the realm from the issuer, and the client secret from the passport", () => {
+  it("names the realm from the issuer", () => {
     expect(realmNameOf(kc)).toBe("product");
     expect(realmNameOf({ provides: { "oidc.issuer": "{public_url}/realms/shop" } })).toBe("shop");
     expect(realmNameOf({ provides: {} })).toBe("product");
-    expect(clientSecretKeyOf(kc)).toBeNull();
-    expect(clientSecretKeyOf(withClientSecret)).toBe("OIDC_CLIENT_SECRET");
   });
 
-  it("writes a realm with a public portal client and a confidential one", () => {
-    const r = keycloakRealm(withClientSecret, "https://shop.example.com/");
-    expect(r.path).toBe(`${KEYCLOAK_IMPORT_DIR}/product.json`);
-    const doc = JSON.parse(r.content);
-    expect(doc.realm).toBe("product");
-    expect(doc.clients[0]).toMatchObject({ clientId: "product-portal", publicClient: true, redirectUris: ["https://shop.example.com/*"] });
-    expect(doc.clients[1]).toMatchObject({ clientId: "product-backend", publicClient: false, secret: "{secret.OIDC_CLIENT_SECRET}" });
-    expect(JSON.parse(keycloakRealm(kc).content).clients[0].redirectUris).toEqual(["*"]);
-  });
+  // The server makes the realm (infra_keycloak_realm): the editor lays it on.
+  const realm = {
+    path: "/opt/keycloak/data/import/product.json",
+    content: '{"realm":"product"}',
+    args: ["--import-realm"],
+    clients: [
+      { client_id: "product-portal", kind: "public" as const },
+      { client_id: "product-backend", kind: "confidential" as const, secret: "{secret.OIDC_CLIENT_SECRET}" },
+      { client_id: "mini-chat", kind: "confidential" as const, gear: "mini-chat", secret: "{env.MINI_CHAT_CLIENT_SECRET}" },
+    ],
+  };
 
-  it("adds the realm and --import-realm once, keeping other files", () => {
+  it("adds the server's realm and --import-realm once, keeping other files", () => {
     const s = { ...serviceFrom(withClientSecret), files: { "/etc/x": "y" }, args: [] };
-    const once = withKeycloakRealm(s);
-    expect(Object.keys(once.files).sort()).toEqual(["/etc/x", `${KEYCLOAK_IMPORT_DIR}/product.json`]);
+    const once = withRealmFile(s, realm);
+    expect(Object.keys(once.files).sort()).toEqual(["/etc/x", "/opt/keycloak/data/import/product.json"]);
     expect(once.args).toEqual(["--import-realm"]);
-    expect(withKeycloakRealm({ ...s, ...once }).args).toEqual(["--import-realm"]);
+    expect(withRealmFile({ ...s, ...once }, realm).args).toEqual(["--import-realm"]);
     expect(isKeycloak(kc)).toBe(true);
     expect(isKeycloak(passportOf(postgresNode)!)).toBe(false);
+  });
+
+  it("says each client of the realm and the secret it is wired to", () => {
+    expect(realmClientsText(realm)).toBe(
+      "product-portal (public), product-backend (confidential, secret {secret.OIDC_CLIENT_SECRET}), mini-chat (mini-chat's, secret {env.MINI_CHAT_CLIENT_SECRET})",
+    );
+  });
+
+  it("shows an issuer that is not https as a refusal, and one pods cannot reach as a warning", () => {
+    const item = { service: "keycloak", placement: "with_product" as const, install: "generated" as const, provides: [] };
+    expect(
+      servicePill({ name: "dev" }, { ...item, refusal_code: "INFRA_ISSUER_NOT_HTTPS", refusal: "give it https" }),
+    ).toMatchObject({ tone: "danger", text: "dev ⚠ issuer not https" });
+    const warned = {
+      ...item,
+      warnings: [{ code: "INFRA_ISSUER_UNREACHABLE_IN_CLUSTER", message: "id.localtest.me reaches only this machine" }],
+    };
+    const pill = servicePill({ name: "dev" }, warned);
+    expect(pill).toMatchObject({ tone: "warn", text: "dev ⚠ pods cannot reach it" });
+    expect(pill.detail).toContain("INFRA_ISSUER_UNREACHABLE_IN_CLUSTER: id.localtest.me");
+    const plan: InfraPlan = {
+      environment_id: "e",
+      environment_name: "dev",
+      placement: "with_product",
+      namespace: "shop-dev",
+      items: [warned],
+      configuration: [
+        { code: "CONFIG_SECRET_SHADOWED_BY_DESCRIPTION", key: "K", gear: "mini-chat", field: "f", refuses: false, message: "the description wins" },
+        { code: "CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION", key: "L", gear: "mini-chat", field: "g", refuses: true, message: "keep one" },
+      ],
+    };
+    expect(planWarnings(plan)).toEqual([
+      "INFRA_ISSUER_UNREACHABLE_IN_CLUSTER: id.localtest.me reaches only this machine",
+      "CONFIG_SECRET_SHADOWED_BY_DESCRIPTION: the description wins",
+    ]);
+    expect(planAllRefusals(plan)).toEqual(["CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION: keep one"]);
+    expect(planWarnings(null)).toEqual([]);
   });
 
   it("shows the route, the notes and the missing address in the plan", () => {

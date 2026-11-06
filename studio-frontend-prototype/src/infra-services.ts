@@ -8,6 +8,7 @@
 import type {
   CatalogNode,
   InfraPassport,
+  KeycloakRealm,
   InfraPlacement,
   InfraPlan,
   InfraPlanItem,
@@ -184,67 +185,25 @@ export function realmNameOf(p: Pick<InfraPassport, "provides">): string {
   return p.provides["oidc.issuer"]?.match(/\/realms\/([^/{}?#\s]+)/)?.[1] ?? "product";
 }
 
-/** The passport's secret a confidential client's secret is kept as: one
- *  named for a client, else any but the admin's. */
-export function clientSecretKeyOf(p: Pick<InfraPassport, "secrets">): string | null {
-  return (
-    p.secrets.find((k) => /CLIENT_SECRET/.test(k)) ?? p.secrets.find((k) => !/ADMIN/.test(k)) ?? null
-  );
-}
-
-/** A Keycloak realm to import: named from the passport's issuer, with one
- *  public client for the product's portal (`portalUrl`, else any address)
- *  and one confidential client whose secret is the passport's
- *  `{secret.KEY}`, which Studio makes per environment and the product
- *  reads as what the service provides. */
-export function keycloakRealm(
-  p: Pick<InfraPassport, "provides" | "secrets">,
-  portalUrl?: string | null,
-): { path: string; content: string; secretKey: string } {
-  const realm = realmNameOf(p);
-  const secretKey = clientSecretKeyOf(p) ?? "OIDC_CLIENT_SECRET";
-  const portal = portalUrl?.trim().replace(/\/+$/, "") || null;
-  const doc = {
-    realm,
-    enabled: true,
-    clients: [
-      {
-        clientId: `${realm}-portal`,
-        name: "The product's portal",
-        publicClient: true,
-        standardFlowEnabled: true,
-        directAccessGrantsEnabled: false,
-        redirectUris: [portal ? `${portal}/*` : "*"],
-        webOrigins: [portal ?? "+"],
-        attributes: { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "+" },
-      },
-      {
-        clientId: `${realm}-backend`,
-        name: "The product's backend",
-        publicClient: false,
-        clientAuthenticatorType: "client-secret",
-        secret: `{secret.${secretKey}}`,
-        serviceAccountsEnabled: true,
-        standardFlowEnabled: false,
-        directAccessGrantsEnabled: false,
-      },
-    ],
-  };
-  return { path: `${KEYCLOAK_IMPORT_DIR}/${realm}.json`, content: JSON.stringify(doc, null, 2), secretKey };
-}
-
-/** `s`'s files and arguments with a realm to import added: the realm file,
- *  and `--import-realm` once. */
-export function withKeycloakRealm(
-  s: Pick<InfraService, "passport" | "files" | "args">,
-  portalUrl?: string | null,
+/** `s`'s files and arguments with the realm the server made added: its
+ *  file, and `--import-realm` once. The realm itself is the server's
+ *  (`GET /infra-services/{name}/keycloak-realm`, the MCP tool
+ *  `infra_keycloak_realm`): a client for each gear that signs in, wired to
+ *  the secret it reads, and the root tenant on every confidential one. */
+export function withRealmFile(
+  s: Pick<InfraService, "files" | "args">,
+  realm: Pick<KeycloakRealm, "path" | "content" | "args">,
 ): { files: Record<string, string>; args: string[] } {
-  const r = keycloakRealm(s.passport, portalUrl);
-  const args = s.args ?? [];
-  return {
-    files: { ...(s.files ?? {}), [r.path]: r.content },
-    args: args.includes("--import-realm") ? [...args] : [...args, "--import-realm"],
-  };
+  const args = [...(s.args ?? [])];
+  for (const a of realm.args) if (!args.includes(a)) args.push(a);
+  return { files: { ...(s.files ?? {}), [realm.path]: realm.content }, args };
+}
+
+/** The realm's clients in words: `product-portal (public), mini-chat (mini-chat's, {env.MINI_CHAT_CLIENT_SECRET})`. */
+export function realmClientsText(realm: Pick<KeycloakRealm, "clients">): string {
+  return realm.clients
+    .map((c) => `${c.client_id} (${c.gear ? `${c.gear}'s` : c.kind}${c.secret ? `, secret ${c.secret}` : ""})`)
+    .join(", ");
 }
 
 /** Is `p` a Keycloak: it gives an issuer, or is named so. */
@@ -753,6 +712,14 @@ export function servicePill(env: Pick<RowEnvironment, "name">, item: InfraPlanIt
       tone: "danger",
       text: `${env.name} ⚠ ${REFUSAL_WORDS[item.refusal_code ?? ""] ?? "refused"}`,
       detail: `${item.refusal_code}: ${item.refusal}`,
+    };
+  const warnings = item.warnings ?? [];
+  if (warnings.length)
+    return {
+      environment: env.name,
+      tone: "warn",
+      text: `${env.name} ⚠ ${WARNING_WORDS[warnings[0].code] ?? "warning"}`,
+      detail: [INSTALL_WORDS[item.install], ...warnings.map((w) => `${w.code}: ${w.message}`)].join("; "),
     };
   return {
     environment: env.name,

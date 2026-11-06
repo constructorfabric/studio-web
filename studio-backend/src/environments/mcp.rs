@@ -215,6 +215,32 @@ pub fn tools() -> Vec<Tool> {
             run: Run::Get("/studio-environments/v1/environments/{environment_id}/infra-plan"),
         },
         Tool {
+            name: "infra_keycloak_realm",
+            description: "The Keycloak realm the project's Keycloak infra service imports at \
+                start, made from its passport and the latest product description: a public \
+                client for the portal, a confidential one for the backend, and a \
+                service-account client for every gear whose config has \
+                `client_credentials.client_id` (mini-chat), its secret the `${VAR}` that gear \
+                reads (filled at deploy from the environment's configuration secret VAR, made \
+                once when none is set). Every confidential client carries a hardcoded \
+                `tenant_id` claim of the root tenant. Nothing is written: put `content` at \
+                `path` in the service's `files` and add `args` to its `args` with \
+                `infra_services_set`. `notes` says what it could not wire.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "name": { "type": "string", "description": "The infra service: `keycloak`." },
+                        "portal_url": { "type": "string", "description": "The product's portal address, for redirects." }
+                    }),
+                    &["project_id", "name"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-environments/v1/infra-services/{name}/keycloak-realm"),
+        },
+        Tool {
             name: "image_import",
             description: "Copy an external image or chart (`docker.io/library/postgres:16`, \
                 with a tag or a digest) by digest into the project's own path of an \
@@ -579,6 +605,22 @@ mod tests {
         );
         assert_eq!(r.path, "/studio-environments/v1/environments/e/infra-plan");
         assert_eq!(r.query, q(&[("project_id", "p")]));
+        let r = request_of(
+            &all,
+            "infra_keycloak_realm",
+            json!({"project_id": "p", "name": "keycloak", "portal_url": "https://shop.example"}),
+        );
+        assert_eq!(
+            (r.method, r.path.as_str()),
+            (
+                Method::Get,
+                "/studio-environments/v1/infra-services/keycloak/keycloak-realm"
+            )
+        );
+        assert_eq!(
+            r.query,
+            q(&[("portal_url", "https://shop.example"), ("project_id", "p")])
+        );
         let r = request_of(
             &all,
             "infra_services_set",

@@ -1595,7 +1595,10 @@ impl EnvironmentService {
             .collect();
         // What the infra services provide reaches the product as more of
         // its configuration secrets, written by the run before the release.
-        for v in super::infra::produced_variables(&infra) {
+        for v in super::infra::produced_variables(&infra)
+            .into_iter()
+            .chain(super::infra::file_variables(&infra))
+        {
             if !secret_keys.contains(&v) {
                 secret_keys.push(v);
             }
