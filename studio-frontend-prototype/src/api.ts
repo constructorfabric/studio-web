@@ -967,6 +967,9 @@ export interface ProjectConfig {
   /** What the product is, as a member confirmed it after Studio proposed it
    *  from the specs (`product-kind.ts`); absent: not decided yet. */
   product_kind?: import("./product-kind").ProductKindChoice;
+  /** The tabs an administrator turned off for this project, on top of what its
+   *  template shows (`level-tabs.ts`). */
+  hidden_tabs?: string[];
 }
 
 /** Where a FrontX package is: `owner/name`, its directory there, the ref it is
@@ -2694,6 +2697,10 @@ export interface WorkspaceSettings {
   repos?: RepoEntry[];
   /** The icon somebody chose (`tenant-icon.ts`); absent: a folder. */
   icon?: import("./tenant-icon").TenantIcon;
+  /** The tabs an administrator turned off for this tenant's band
+   *  (`level-tabs.ts`). Kept here on a workspace and on an organization too:
+   *  the document is override_only, so neither inherits the other's. */
+  hidden_tabs?: string[];
 }
 
 /** A versioned capability bundle published in the Studio kit registry. */

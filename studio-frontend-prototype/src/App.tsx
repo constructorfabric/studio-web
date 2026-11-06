@@ -183,6 +183,8 @@ import {
   visibleTabs,
   type ProjectTemplate,
 } from "./project-types";
+import { shownTabs, tabToOpen } from "./level-tabs";
+import { TabsSettings, useHiddenTabs } from "./level-tabs-ui";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -1744,6 +1746,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // component's, and their first catalogue or report fetch must already name
   // the organization. Assigning the same id again is a no-op.
   setCurrentOrganization(orgAsSpace?.id);
+  // The organization's band without the tabs an administrator turned off
+  // (level-tabs.ts), kept in its own workspace settings document.
+  const orgHidden = useHiddenTabs(token, "organization", orgAsSpace?.id ?? null);
+  const orgTabs = useMemo(() => shownTabs(LEVEL_NAV.organization, orgHidden.hidden), [orgHidden.hidden]);
 
   // The organizations offered in the switcher: every one that holds projects
   // (derived from the loaded workspaces, which carry orgId/orgName) plus any
@@ -1824,21 +1830,37 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       window.removeEventListener(PRODUCT_CHANGED_EVENT, changed);
     };
   }, [crumb.nestedId, token]);
-  const projectTabs = visibleTabs(PROJECT_TABS, projectType).map((t) =>
+  // What the template shows, then without what the project turned off
+  // (level-tabs.ts): the project's own setting narrows the template's.
+  const templateTabs = visibleTabs(PROJECT_TABS, projectType);
+  const projectHidden = useHiddenTabs(token, "project", projectOpen ? (crumb.nestedId ?? null) : null);
+  const projectTabs = shownTabs(templateTabs, projectHidden.hidden).map((t) =>
     attention[t.id] ? { ...t, attention: attention[t.id] } : t,
   );
+  const projectLanding = tabToOpen(projectTabs, landingTab(PROJECT_TABS, projectType));
   useEffect(() => {
     if (!projectType) return;
     const fresh = landOnType.current;
     landOnType.current = false;
-    if (fresh || !projectTabs.some((t) => t.id === projectTab)) setProjectTab(landingTab(PROJECT_TABS, projectType));
+    if (fresh || !projectTabs.some((t) => t.id === projectTab)) setProjectTab(projectLanding);
     // Only when the type arrives: a tab chosen afterwards is the person's.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectType]);
+  // A tab turned off while it is open: move to where the project lands.
+  useEffect(() => {
+    if (!projectTabs.some((t) => t.id === projectTab)) setProjectTab(projectLanding);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectHidden.hidden]);
   /** A workspace is open when one is picked and no project inside it is. The
    *  two are mutually exclusive, so exactly one band ever shows. */
   const workspaceOpen =
     !adminOpen && !activeSpace && view === "projects" && !!crumb.projectId && !crumb.nestedId;
+  const workspaceHidden = useHiddenTabs(token, "workspace", workspaceOpen ? (crumb.projectId ?? null) : null);
+  const workspaceTabs = useMemo(() => shownTabs(WORKSPACE_TABS, workspaceHidden.hidden), [workspaceHidden.hidden]);
+  useEffect(() => {
+    if (!workspaceTabs.some((t) => t.id === workspaceTab)) setWorkspaceTab(tabToOpen(workspaceTabs, workspaceTab));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceTabs]);
   /** The level the path has open, which decides what the rail lists. */
   const level: Level = projectOpen
     ? "project"
@@ -2538,7 +2560,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           a project's below. The rail is only what the person pinned. */}
       {!adminOpen && !activeSpace && (level === "platform" || level === "organization") && (
         <nav className="project-sections" aria-label={level === "platform" ? "Platform sections" : "Organization sections"}>
-          {LEVEL_NAV[level].filter((n) => n.id !== "system" || showPlatform).map((n) => (
+          {(level === "organization" ? orgTabs : LEVEL_NAV[level])
+            .filter((n) => n.id !== "system" || showPlatform)
+            .map((n) => (
             <button
               key={n.id}
               className={`psection${view === n.id ? " on" : ""}`}
@@ -2554,6 +2578,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               {n.label}
             </button>
           ))}
+          {level === "organization" && orgAsSpace && (
+            <TabsSettings
+              levelName="organization"
+              tabs={LEVEL_NAV.organization}
+              hidden={orgHidden.hidden}
+              onSave={orgHidden.save}
+            />
+          )}
           {railPref !== "hidden" &&
             (() => {
               const pin: Pin = { kind: "view", id: view };
@@ -2621,6 +2653,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               </button>
             );
           })()}
+          <TabsSettings
+            levelName="project"
+            tabs={templateTabs}
+            hidden={projectHidden.hidden}
+            onSave={projectHidden.save}
+            note="Which tabs exist at all is the project's template's (Project templates in its workspace)."
+          />
         </nav>
       )}
       {/* A workspace gets the same band, because it is the same kind of thing:
@@ -2631,10 +2670,16 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         <nav className="project-sections" aria-label="Workspace sections">
           <OrderedSections
             prefKey={PREF_WORKSPACE_TAB_ORDER}
-            tabs={WORKSPACE_TABS}
+            tabs={workspaceTabs}
             active={workspaceTab}
             onOpen={setWorkspaceTab}
             icon={(name) => <NavIcon name={name} />}
+          />
+          <TabsSettings
+            levelName="workspace"
+            tabs={WORKSPACE_TABS}
+            hidden={workspaceHidden.hidden}
+            onSave={workspaceHidden.save}
           />
         </nav>
       )}
