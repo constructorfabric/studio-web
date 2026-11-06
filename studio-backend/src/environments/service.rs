@@ -1509,8 +1509,7 @@ impl EnvironmentService {
         // longer kept is refused rather than run with today's.
         let built = build.and_then(|b| list.built_infra.iter().find(|x| x.build == b));
         let services = match (built, build) {
-            (Some(built), _) if built.services.is_empty() => list.infra.clone(),
-            (Some(built), _) => super::infra::from_lock(&built.services, &list.infra),
+            (Some(built), _) => super::infra::built_services(built, &list.infra),
             (None, Some(b))
                 if !list.built_infra.is_empty() && env.kind == EnvironmentKind::Kubernetes =>
             {

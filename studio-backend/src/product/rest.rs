@@ -2010,13 +2010,14 @@ async fn preview_product(
     };
     let latest_text = match &latest {
         Some(l) => Some(l.text.clone()),
-        // Without kept revisions, the repository's file is the latest.
+        // Without kept revisions, the repository's file is the latest. A
+        // read that failed is no missing file: written over by a render, the
+        // description would lose what the record does not hold.
         None if write && !kept => product
             .service
             .read_project_file(&ctx, &project, &product_path)
             .await
-            .ok()
-            .flatten(),
+            .map_err(|e| write_problem("the description could not be read", &e))?,
         None => None,
     };
     let record_value = record.as_ref().map(|n| &n.value);

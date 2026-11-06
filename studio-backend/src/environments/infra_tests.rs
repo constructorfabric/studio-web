@@ -435,6 +435,25 @@ fn a_project_keeps_the_newest_builds_infra_first_and_a_bounded_few() {
 }
 
 #[test]
+fn a_build_that_kept_no_services_runs_the_records() {
+    let records = [keycloak()];
+    let none = BuiltInfra {
+        build: "b1".into(),
+        services: Vec::new(),
+    };
+    assert_eq!(built_services(&none, &records), records.to_vec());
+    let locked = BuiltInfra {
+        build: "b2".into(),
+        services: locked_services(&resolved("quay.io/keycloak/keycloak:26.0.8@sha256:fff"))
+            .unwrap(),
+    };
+    assert_eq!(
+        built_services(&locked, &records),
+        from_lock(&locked.services, &records)
+    );
+}
+
+#[test]
 fn a_copy_without_the_locked_digest_is_no_copy() {
     let locked = locked_services(&resolved("quay.io/keycloak/keycloak:26.0.7@sha256:abc")).unwrap();
     let mut record = keycloak();
