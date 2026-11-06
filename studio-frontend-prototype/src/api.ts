@@ -1899,6 +1899,21 @@ export interface InfraPlanItem {
   route?: string | null;
   /** What the deploy does not apply of what the project says of it. */
   notes?: string[];
+  /** What the deploy goes on with and says (`INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`). */
+  warnings?: { code: string; message: string }[];
+}
+
+/** A configuration secret of the environment that sets a gear's config
+ *  field the product description also sets. */
+export interface ConfigClash {
+  /** `CONFIG_SECRET_SHADOWED_BY_DESCRIPTION` (the description wins) or
+   *  `CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION` (an install is refused). */
+  code: string;
+  key: string;
+  gear: string;
+  field: string;
+  refuses: boolean;
+  message: string;
 }
 
 /** What a deploy of the project to one environment does with its infra services. */
@@ -1908,6 +1923,20 @@ export interface InfraPlan {
   placement: "with_product" | "shared";
   namespace: string;
   items: InfraPlanItem[];
+  /** Configuration secrets the description also sets. Absent from a server before it. */
+  configuration?: ConfigClash[];
+}
+
+/** The realm a project's Keycloak imports, made by the server from its
+ *  passport and the product description. */
+export interface KeycloakRealm {
+  path: string;
+  content: string;
+  args: string[];
+  clients: { client_id: string; kind: "public" | "confidential"; gear?: string | null; secret?: string | null }[];
+  root_tenant_id: string;
+  root_tenant_from: "description" | "platform";
+  notes: string[];
 }
 
 /** What a build would do, said before it is started (`POST /builds/plan`):
@@ -2139,6 +2168,8 @@ export interface Deployment {
   outcome?: string | null;
   /** A preview (ADR-0055); absent for a deploy of what runs there. */
   preview?: DeploymentPreview | null;
+  /** What the deploy said when asked and goes on with, `CODE: message` each. */
+  warnings?: string[];
 }
 
 /** A release as its cluster reports it now. */
@@ -5363,6 +5394,13 @@ export const api = {
   infraPlan: (token: string, projectId: string, environmentId: string) =>
     request<InfraPlan>(
       `/studio-environments/v1/environments/${encodeURIComponent(environmentId)}/infra-plan?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  keycloakRealm: (token: string, projectId: string, service: string, portalUrl?: string | null) =>
+    request<KeycloakRealm>(
+      `/studio-environments/v1/infra-services/${encodeURIComponent(service)}/keycloak-realm?project_id=${encodeURIComponent(projectId)}${
+        portalUrl?.trim() ? `&portal_url=${encodeURIComponent(portalUrl.trim())}` : ""
+      }`,
       token,
     ),
   importImage: (

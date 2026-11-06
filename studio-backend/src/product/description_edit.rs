@@ -987,6 +987,86 @@ impl<'a> Doc<'a> {
     }
 }
 
+/* ── each gear's configuration, as the description writes it ── */
+
+/// Each gear's and plugin's `config = {...}` in a description, by its id
+/// (`mini-chat`, `oidc-authn-plugin`), as JSON. A value that is not a
+/// literal (a call, a name) is kept as its text, so a field is still seen as
+/// set. A gear without `config` is absent; a description without a literal
+/// `product(...)` or `gears` list gives nothing.
+pub fn gear_configs(text: &str) -> BTreeMap<String, serde_json::Value> {
+    let d = Doc::new(text);
+    let mut out = BTreeMap::new();
+    let Some(p) = d.product() else { return out };
+    let Some(gears) = d.kw(&p, "gears").and_then(|a| d.list(a.value)) else {
+        return out;
+    };
+    let mut take = |c: &Call| {
+        if let (Some(id), Some(config)) = (d.first_str(c), d.kw(c, "config")) {
+            out.insert(id, d.literal(config.value));
+        }
+    };
+    for it in d.items(gears) {
+        let Some(c) = d.call(it) else { continue };
+        take(&c);
+        if let Some(list) = d.kw(&c, "plugins").and_then(|a| d.list(a.value)) {
+            for pi in d.items(list) {
+                if let Some(pc) = d.call(pi) {
+                    take(&pc);
+                }
+            }
+        }
+    }
+    out
+}
+
+impl Doc<'_> {
+    /// A Starlark literal as JSON: strings, numbers, `True`/`False`/`None`,
+    /// lists and dicts; anything else is its text.
+    fn literal(&self, s: Span) -> serde_json::Value {
+        use serde_json::Value;
+        let text = self.slice(s).trim();
+        let b = self.t.as_bytes();
+        match b.get(s.0) {
+            Some(b'{') if self.close_of(s.0) == Some(s.1 - 1) => {
+                let mut map = serde_json::Map::new();
+                for (is, ie) in self.items((s.0, s.1 - 1)) {
+                    // The `:` that splits the key from the value, in code.
+                    let Some(at) = (is..ie).find(|&i| b[i] == b':' && self.m[i] == K::Code) else {
+                        continue;
+                    };
+                    let raw = self.t[is..at].trim();
+                    let key = str_value(raw).unwrap_or_else(|| raw.to_owned());
+                    let mut v = at + 1;
+                    while v < ie && b[v].is_ascii_whitespace() {
+                        v += 1;
+                    }
+                    map.insert(key, self.literal((v, ie)));
+                }
+                Value::Object(map)
+            }
+            Some(b'[') if self.close_of(s.0) == Some(s.1 - 1) => Value::Array(
+                self.items((s.0, s.1 - 1))
+                    .into_iter()
+                    .map(|i| self.literal(i))
+                    .collect(),
+            ),
+            Some(b'"' | b'\'') => Value::String(str_value(text).unwrap_or_else(|| text.to_owned())),
+            _ => match text {
+                "True" => Value::Bool(true),
+                "False" => Value::Bool(false),
+                "None" => Value::Null,
+                t => t
+                    .parse::<i64>()
+                    .map(Value::from)
+                    .ok()
+                    .or_else(|| t.parse::<f64>().ok().map(Value::from))
+                    .unwrap_or_else(|| Value::String(t.to_owned())),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "description_edit_tests.rs"]
 mod tests;

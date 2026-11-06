@@ -118,6 +118,11 @@ function DeploymentLine({ d, showProject, people }: { d: Deployment; showProject
       </span>
       {d.reason && <div className="sub">“{d.reason}”</div>}
       {d.outcome && <div className="sub env-outcome">{d.outcome}</div>}
+      {(d.warnings ?? []).map((w) => (
+        <div key={w} className="sub warn" data-deployment-warning>
+          {w}
+        </div>
+      ))}
     </div>
   );
 }

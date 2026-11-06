@@ -307,7 +307,8 @@ pub struct InfraPlanItemDto {
     pub provides: Vec<InfraProvidedDto>,
     /// The code a deploy would be refused with now
     /// (`INFRA_IMAGE_NOT_IMPORTED`, `IMAGE_NOT_IN_PROJECT_PATH`,
-    /// `INFRA_NOT_IN_SHARED_PLACE`, `INFRA_PUBLIC_URL_MISSING`).
+    /// `INFRA_NOT_IN_SHARED_PLACE`, `INFRA_PUBLIC_URL_MISSING`,
+    /// `INFRA_ISSUER_NOT_HTTPS`).
     pub refusal_code: Option<String>,
     pub refusal: Option<String>,
     /// The address its generated chart routes to it with an Ingress.
@@ -315,6 +316,37 @@ pub struct InfraPlanItemDto {
     /// What the deploy does not apply of what the project says of it (files
     /// and arguments, for a ready chart).
     pub notes: Vec<String>,
+    /// What the deploy goes on with and says
+    /// (`INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`).
+    pub warnings: Vec<InfraWarningDto>,
+}
+
+/// A warning of a deploy's plan: it goes on, and says so.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InfraWarningDto {
+    pub code: String,
+    pub message: String,
+}
+
+/// A configuration secret of the environment that sets a gear's config
+/// field the product description also sets.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConfigClashDto {
+    /// `CONFIG_SECRET_SHADOWED_BY_DESCRIPTION`: the description wins and the
+    /// secret is not given to the release (a warning).
+    /// `CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION`: an install is refused.
+    pub code: String,
+    /// The configuration secret: `APP__GEARS__MINI_CHAT__CONFIG__…`.
+    pub key: String,
+    /// The gear or plugin, as the description names it.
+    pub gear: String,
+    /// The field, dotted: `client_credentials.client_secret`.
+    pub field: String,
+    /// Whether it refuses an install.
+    pub refuses: bool,
+    pub message: String,
 }
 
 /// What a deploy of a project to one environment does with its infra
@@ -329,6 +361,9 @@ pub struct InfraPlanDto {
     /// The namespace they run in with the product.
     pub namespace: String,
     pub items: Vec<InfraPlanItemDto>,
+    /// Configuration secrets the description also sets, and what a deploy
+    /// does about each.
+    pub configuration: Vec<ConfigClashDto>,
 }
 
 fn plan_dto(p: InfraPlan) -> InfraPlanDto {
@@ -358,12 +393,106 @@ fn plan_dto(p: InfraPlan) -> InfraPlanDto {
                 refusal: i.refusal.map(|(_, why)| why),
                 route: i.route,
                 notes: i.notes,
+                warnings: i
+                    .warnings
+                    .into_iter()
+                    .map(|(code, message)| InfraWarningDto {
+                        code: code.to_owned(),
+                        message,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        configuration: p
+            .configuration
+            .into_iter()
+            .map(|c| ConfigClashDto {
+                refuses: c.refuses(),
+                code: c.code.to_owned(),
+                key: c.key,
+                gear: c.gear,
+                field: c.field,
+                message: c.message,
             })
             .collect(),
     }
 }
 
+/// The realm a product's own Keycloak imports.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KeycloakRealmDto {
+    /// Where it goes in the container: a key of the service's `files`.
+    pub path: String,
+    /// The realm JSON: its `{secret.KEY}` and `{env.KEY}` are filled at
+    /// deploy.
+    pub content: String,
+    /// The argument that imports it, for the service's `args`.
+    pub args: Vec<String>,
+    pub clients: Vec<RealmClientDto>,
+    /// The `tenant_id` claim every confidential client's tokens carry.
+    pub root_tenant_id: String,
+    /// `description` (account-management's `bootstrap.root_id`) or
+    /// `platform`.
+    pub root_tenant_from: String,
+    /// What the realm could not do as the description asks.
+    pub notes: Vec<String>,
+}
+
+/// One client of a realm.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RealmClientDto {
+    pub client_id: String,
+    /// `public` or `confidential`.
+    pub kind: String,
+    /// The gear that signs in with it (`client_credentials`).
+    pub gear: Option<String>,
+    /// What its secret is filled with at deploy: `{secret.KEY}` (the
+    /// passport's) or `{env.KEY}` (the environment's configuration secret
+    /// the gear reads, made once when none is set).
+    pub secret: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct RealmQuery {
+    project_id: Uuid,
+    #[serde(default)]
+    portal_url: Option<String>,
+}
+
 /* ── handlers ── */
+
+async fn get_keycloak_realm(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(name): Path<String>,
+    Query(q): Query<RealmQuery>,
+) -> ApiResult<JsonBody<KeycloakRealmDto>> {
+    let r = envs
+        .0
+        .keycloak_realm(&ctx, q.project_id, &name, q.portal_url.as_deref())
+        .await
+        .map_err(problem)?;
+    Ok(Json(KeycloakRealmDto {
+        path: r.path,
+        content: r.content,
+        args: vec![crate::environments::realm::IMPORT_ARG.to_owned()],
+        clients: r
+            .clients
+            .into_iter()
+            .map(|c| RealmClientDto {
+                client_id: c.client_id,
+                kind: c.kind.to_owned(),
+                gear: c.gear,
+                secret: c.secret,
+            })
+            .collect(),
+        root_tenant_id: r.root_tenant_id,
+        root_tenant_from: r.root_tenant_from.to_owned(),
+        notes: r.notes,
+    }))
+}
 
 async fn list_infra_services(
     Extension(ctx): Extension<SecurityContext>,
@@ -450,6 +579,37 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .json_request::<InfraServicesRequest>(openapi, "The infra services")
         .handler(put_infra_services)
         .json_response_with_schema::<InfraServiceListDto>(openapi, StatusCode::OK, "Saved")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/infra-services/{name}/keycloak-realm")
+        .operation_id("studio_environments.get_keycloak_realm")
+        .summary("The realm a project's Keycloak imports")
+        .description(
+            "For `?project_id=` and the project's Keycloak infra service `name`: the realm file \
+             it imports at start (`path`, `content`) and the argument that imports it. A public \
+             client for the portal (`?portal_url=` its redirect address), a confidential one for \
+             the backend, and a service-account client for every gear the latest description \
+             signs in with `client_credentials`, its secret the variable that gear reads; every \
+             confidential client carries a `tenant_id` claim of the root tenant. Nothing is \
+             written: put the file and the argument on the service.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("name", "The infra service's name")
+        .query_param_typed("project_id", true, "The project", "string")
+        .query_param_typed(
+            "portal_url",
+            false,
+            "The product's portal address, for the portal client's redirects",
+            "string",
+        )
+        .handler(get_keycloak_realm)
+        .json_response_with_schema::<KeycloakRealmDto>(openapi, StatusCode::OK, "The realm")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

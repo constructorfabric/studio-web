@@ -301,26 +301,59 @@ pub const MAX_FILES: usize = 20;
 /// How many arguments a service may be given after its passport's.
 pub const MAX_ARGS: usize = 20;
 
+/// One name a file's text refers to: a `provides` template name, or
+/// `{env.KEY}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FileRef {
+    Template(TemplateRef),
+    /// `{env.KEY}`: the project's configuration value `KEY` in the
+    /// environment -- a configuration secret, made once per environment when
+    /// none is set. A realm's client reads the same secret as the gear that
+    /// signs in with it (`client_secret = "${KEY}"`).
+    Env(String),
+}
+
+impl std::fmt::Display for FileRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Template(t) => write!(f, "{t}"),
+            Self::Env(k) => write!(f, "{{env.{k}}}"),
+        }
+    }
+}
+
+/// Where the value of `{env.KEY}` is handed to [`files`] and
+/// [`generated_chart`], beside the service's own secrets: `env.KEY`, which
+/// no secret of a passport can be named.
+pub fn env_slot(key: &str) -> String {
+    format!("env.{key}")
+}
+
 /// The template name at the start of `text` (`{secret.KEY}…`) and the
 /// length it takes; `None` when the brace there is the file's own.
-fn template_at(text: &str) -> Option<(TemplateRef, usize)> {
+fn template_at(text: &str) -> Option<(FileRef, usize)> {
     let after = text.strip_prefix('{')?;
     let close = after.find(['}', '{'])?;
     if !after[close..].starts_with('}') {
         return None;
     }
+    if let Some(key) = after[..close].strip_prefix("env.")
+        && service_gdl::env_name(key).is_ok()
+    {
+        return Some((FileRef::Env(key.to_owned()), close + 2));
+    }
     let r = service_gdl::template_refs(&text[..close + 2])
         .ok()?
         .into_iter()
         .next()?;
-    Some((r, close + 2))
+    Some((FileRef::Template(r), close + 2))
 }
 
 /// `text` with each template name in it given to `value`, and replaced by
 /// what it answers; every other brace -- a JSON object's -- kept.
 fn fill_file(
     text: &str,
-    value: &mut dyn FnMut(&TemplateRef) -> Result<String, String>,
+    value: &mut dyn FnMut(&FileRef) -> Result<String, String>,
 ) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = text;
@@ -343,7 +376,7 @@ fn fill_file(
 }
 
 /// The template names a file's text refers to.
-fn file_refs(text: &str) -> Vec<TemplateRef> {
+pub(crate) fn file_refs(text: &str) -> Vec<FileRef> {
     let mut refs = Vec::new();
     let _ = fill_file(text, &mut |r| {
         refs.push(r.clone());
@@ -547,10 +580,10 @@ pub fn checked_services(mut list: Vec<InfraService>) -> Result<Vec<InfraService>
         for (path, text) in &s.files {
             file_path(path).map_err(at)?;
             let p = &s.passport;
-            if let Some(r) = file_refs(text)
-                .into_iter()
-                .find(|r| matches!(undeclared(p, &r.to_string()), Ok(Some(_))))
-            {
+            if let Some(r) = file_refs(text).into_iter().find(|r| match r {
+                FileRef::Template(t) => matches!(undeclared(p, &t.to_string()), Ok(Some(_))),
+                FileRef::Env(_) => false,
+            }) {
                 return Err(at(format!(
                     "the file {path} refers to {r}, which the passport does not declare"
                 )));
@@ -605,6 +638,9 @@ pub struct PlanItem {
     /// What the deploy does not do with what the project says of it: files
     /// and arguments only a generated chart applies.
     pub notes: Vec<String>,
+    /// What the deploy goes on with and says, with its code: an issuer pods
+    /// may not reach ([`ISSUER_UNREACHABLE`]).
+    pub warnings: Vec<(&'static str, String)>,
 }
 
 /// The code a deploy is refused with when a capability's value would be
@@ -629,7 +665,7 @@ fn public_url_missing(s: &InfraService) -> Option<String> {
     let files: Vec<&str> = s
         .files
         .iter()
-        .filter(|(_, t)| file_refs(t).contains(&TemplateRef::PublicUrl))
+        .filter(|(_, t)| file_refs(t).contains(&FileRef::Template(TemplateRef::PublicUrl)))
         .map(|(k, _)| k.as_str())
         .collect();
     if capabilities.is_empty() && files.is_empty() {
@@ -647,6 +683,105 @@ fn public_url_missing(s: &InfraService) -> Option<String> {
          PUT /infra-services); placed with the product, its chart then routes that address to it",
         name = s.name()
     ))
+}
+
+/// The code a deploy is refused with when the issuer a service gives the
+/// product is not `https://`: oidc-authn-plugin refuses any other, and has
+/// no switch for a dev stand.
+pub const ISSUER_NOT_HTTPS: &str = "INFRA_ISSUER_NOT_HTTPS";
+
+/// The code of a warning: the issuer's host is one only the machine it is
+/// typed on reaches (`localhost`, `*.localtest.me`, `*.local`), never a pod.
+pub const ISSUER_UNREACHABLE: &str = "INFRA_ISSUER_UNREACHABLE_IN_CLUSTER";
+
+/// The capability an identity provider gives: its issuer.
+pub const OIDC_ISSUER: &str = "oidc.issuer";
+
+/// The issuer address `s`, brought as `install`, gives the product: the
+/// shared place's, else the public address its `oidc.issuer` is filled with.
+/// `None` when it gives no issuer, or one not made of its `public_url`.
+fn issuer_url(
+    s: &InfraService,
+    install: Install,
+    shared: Option<&SharedService>,
+) -> Option<String> {
+    match install {
+        Install::Shared => shared.and_then(|p| p.provides.get(OIDC_ISSUER)).cloned(),
+        Install::Database => None,
+        Install::Chart | Install::Generated => {
+            let template = s.passport.provides.get(OIDC_ISSUER)?;
+            let uses_url = service_gdl::template_refs(template)
+                .is_ok_and(|r| r.contains(&TemplateRef::PublicUrl));
+            uses_url
+                .then(|| s.public_url.clone())
+                .flatten()
+                .map(|u| template.replace("{public_url}", &u))
+        }
+    }
+}
+
+/// Why a deploy of `s` is refused for its issuer: it is not `https://`.
+pub fn issuer_refusal(
+    s: &InfraService,
+    install: Install,
+    shared: Option<&SharedService>,
+) -> Option<(&'static str, String)> {
+    let url = issuer_url(s, install, shared)?;
+    if url.starts_with("https://") {
+        return None;
+    }
+    let what = match install {
+        Install::Shared => "the shared place gives it",
+        _ => "its public_url makes it",
+    };
+    Some((
+        ISSUER_NOT_HTTPS,
+        format!(
+            "'{name}' gives the product the issuer {url} ({what}), which is not https:              oidc-authn-plugin refuses any other issuer, so every gear that checks a token              would crash at start. Give it an https:// address (Product › Infrastructure or              PUT /infra-services; a shared place in the environment's settings), with a              certificate the ingress serves",
+            name = s.name()
+        ),
+    ))
+}
+
+/// Whether `host` is one only the machine it is typed on reaches: it names
+/// the loopback, or a domain that resolves to it, or mDNS.
+pub fn local_only_host(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    let under = |d: &str| h == d || h.ends_with(&format!(".{d}"));
+    under("localhost")
+        || under("localtest.me")
+        || under("lvh.me")
+        || h.ends_with(".local")
+        || h.starts_with("127.")
+        || h == "0.0.0.0"
+        || h.contains("127.0.0.1")
+        || h.contains("127-0-0-1")
+}
+
+/// What a deploy of `s` goes on with and says about its issuer: a host pods
+/// cannot reach. A gear that signs in at start (`client_credentials`) or
+/// reads the issuer's discovery document runs inside the cluster.
+pub fn issuer_warnings(
+    s: &InfraService,
+    install: Install,
+    shared: Option<&SharedService>,
+) -> Vec<(&'static str, String)> {
+    let Some(url) = issuer_url(s, install, shared) else {
+        return Vec::new();
+    };
+    let Some((host, _)) = host_and_path(&url) else {
+        return Vec::new();
+    };
+    if !local_only_host(host) {
+        return Vec::new();
+    }
+    vec![(
+        ISSUER_UNREACHABLE,
+        format!(
+            "'{name}' gives the product the issuer {url}, and {host} reaches only the machine              it is typed on, not a pod: a gear that signs in at start (client_credentials, as              mini-chat does) or reads the issuer's discovery document fails inside the              cluster. Give it a host the cluster resolves to its ingress",
+            name = s.name()
+        ),
+    )]
 }
 
 /// What a deploy leaves undone of what the project says of `s`, installed
@@ -728,6 +863,10 @@ pub fn plan(
                 }
                 Install::Database | Install::Shared => None,
             });
+            let shared = placement
+                .filter(|_| install == Install::Shared)
+                .and_then(|p| p.shared.iter().find(|x| x.service == s.name()));
+            let refusal = refusal.or_else(|| issuer_refusal(s, install, shared));
             PlanItem {
                 service: s.name().to_owned(),
                 placement: mode,
@@ -753,6 +892,7 @@ pub fn plan(
                     .then(|| s.public_url.clone())
                     .flatten(),
                 notes: notes_for(install, s),
+                warnings: issuer_warnings(s, install, shared),
             }
         })
         .collect()
@@ -855,6 +995,26 @@ pub fn produced_variables(installs: &[InfraInstall]) -> Vec<String> {
     out
 }
 
+/// The configuration values the files of `installs` read as `{env.KEY}`:
+/// only a generated chart mounts files. Each is one of the release's
+/// configuration secrets, so the gear that reads `${KEY}` gets the value the
+/// file was filled with.
+pub fn file_variables(installs: &[InfraInstall]) -> Vec<String> {
+    let mut out: Vec<String> = installs
+        .iter()
+        .filter(|i| i.install == Install::Generated)
+        .flat_map(|i| i.service.files.values())
+        .flat_map(|t| file_refs(t))
+        .filter_map(|r| match r {
+            FileRef::Env(k) => Some(k),
+            FileRef::Template(_) => None,
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The configuration-secret key a service's own secret is kept under in
 /// credstore, per project and environment: `INFRA_KEYCLOAK_KC_BOOTSTRAP_ADMIN_PASSWORD`.
 pub fn secret_key(service: &str, key: &str) -> String {
@@ -912,9 +1072,16 @@ pub fn resolve(
     namespace: &str,
     secrets: &BTreeMap<String, String>,
 ) -> Result<String, String> {
-    // Checked against the passport on the way in: every name is known.
+    // Checked against the passport on the way in: every name is known, and
+    // none is `{env.*}`, which only a file reads.
     service_gdl::template_refs(template)?;
-    fill_file(template, &mut |r| value_of(s, r, namespace, secrets))
+    fill_file(template, &mut |r| match r {
+        FileRef::Template(t) => value_of(s, t, namespace, secrets),
+        FileRef::Env(k) => Err(format!(
+            "{} provides {{env.{k}}}, which only a file reads",
+            s.name()
+        )),
+    })
 }
 
 /// `s`'s files with their template names filled, by path.
@@ -926,9 +1093,15 @@ pub fn files(
     s.files
         .iter()
         .map(|(path, text)| {
-            fill_file(text, &mut |r| value_of(s, r, namespace, secrets))
-                .map(|t| (path.clone(), t))
-                .map_err(|e| format!("the file {path}: {e}"))
+            fill_file(text, &mut |r| match r {
+                FileRef::Template(t) => value_of(s, t, namespace, secrets),
+                FileRef::Env(k) => secrets
+                    .get(&env_slot(k))
+                    .cloned()
+                    .ok_or_else(|| format!("the configuration value {k} it reads is not set yet")),
+            })
+            .map(|t| (path.clone(), t))
+            .map_err(|e| format!("the file {path}: {e}"))
         })
         .collect()
 }
@@ -1172,9 +1345,12 @@ pub fn generated_chart(
     if !filled.is_empty() {
         let holder = format!("{name}-files");
         let secret = s.files.values().any(|t| {
-            file_refs(t)
-                .iter()
-                .any(|r| matches!(r, TemplateRef::Secret(_)))
+            file_refs(t).iter().any(|r| {
+                matches!(
+                    r,
+                    FileRef::Template(TemplateRef::Secret(_)) | FileRef::Env(_)
+                )
+            })
         });
         let mut data = serde_json::Map::new();
         let mut hash = sha2::Sha256::new();

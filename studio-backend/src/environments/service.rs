@@ -217,6 +217,26 @@ struct Config {
     /// The repository's own build (ADR-0054 §7): where its chart reads the
     /// images and the configuration secret.
     own: Option<model::OwnBuild>,
+    /// What the deploy says and goes on with, `CODE: message` each: a
+    /// configuration secret the description wins over, an issuer pods may
+    /// not reach.
+    warnings: Vec<String>,
+    /// Why an install is refused: a configuration secret and the
+    /// description both set a field ([`super::gear_overrides::CONFLICT`]).
+    conflict: Option<String>,
+}
+
+impl Config {
+    /// Refuse an install the configuration contradicts.
+    fn check(&self, action: DeploymentAction) -> Result<()> {
+        match (&self.conflict, action) {
+            (Some(why), DeploymentAction::Install) => Err(Refusal::Precondition(
+                super::gear_overrides::CONFLICT,
+                why.clone(),
+            )),
+            _ => Ok(()),
+        }
+    }
 }
 
 pub struct EnvironmentService {
@@ -1362,6 +1382,36 @@ impl EnvironmentService {
                         "a secret's value is between 1 byte and 64 KiB".into(),
                     ));
                 }
+                // A value for a gear's field the description already fills
+                // would be ignored, or contradict it: not kept.
+                if super::gear_overrides::field_of(&key).is_some() {
+                    let (list, _) = self
+                        .store
+                        .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+                        .await?;
+                    let installs =
+                        super::infra::installs(env.boundaries.infra.as_ref(), &list.infra, None);
+                    let mut keys: Vec<String> = list
+                        .secrets
+                        .iter()
+                        .filter(|s| s.environment_id == env.id && s.key != key)
+                        .map(|s| s.key.clone())
+                        .chain(super::infra::produced_variables(&installs))
+                        .chain(super::infra::file_variables(&installs))
+                        .collect();
+                    keys.push(key.clone());
+                    if let Some(c) = self
+                        .config_clashes(ctx, project, &keys)
+                        .await
+                        .into_iter()
+                        .find(|c| c.key == key)
+                    {
+                        return Err(Refusal::Precondition(
+                            c.code,
+                            format!("{key} is not set: {}", c.message),
+                        ));
+                    }
+                }
                 let bytes = value.into_bytes();
                 // Overwrite whatever is there; create when nothing is.
                 if credstore
@@ -1545,11 +1595,33 @@ impl EnvironmentService {
             .collect();
         // What the infra services provide reaches the product as more of
         // its configuration secrets, written by the run before the release.
-        for v in super::infra::produced_variables(&infra) {
+        for v in super::infra::produced_variables(&infra)
+            .into_iter()
+            .chain(super::infra::file_variables(&infra))
+        {
             if !secret_keys.contains(&v) {
                 secret_keys.push(v);
             }
         }
+        let mut warnings: Vec<String> = infra
+            .iter()
+            .flat_map(|i| super::infra::issuer_warnings(&i.service, i.install, i.shared.as_ref()))
+            .map(|(code, why)| format!("{code}: {why}"))
+            .collect();
+        // A configuration secret that would set a gear's field over the
+        // description: the description wins, or the deploy is refused.
+        let clashes = self.config_clashes(ctx, project, &secret_keys).await;
+        let conflict = clashes
+            .iter()
+            .find(|c| c.refuses())
+            .map(|c| c.message.clone());
+        warnings.extend(
+            clashes
+                .iter()
+                .filter(|c| !c.refuses())
+                .map(super::gear_overrides::Clash::line),
+        );
+        let secret_keys = super::gear_overrides::injected(secret_keys, &clashes);
         Ok(Config {
             infra,
             values: list
@@ -1560,7 +1632,41 @@ impl EnvironmentService {
             secret_keys,
             build_namespace: None,
             own: list.build,
+            warnings,
+            conflict,
         })
+    }
+
+    /// The configuration secrets in `secret_keys` that set a gear's config
+    /// field the project's latest description also sets, and what a deploy
+    /// does about each. Without a description to read there is nothing to
+    /// compare: none.
+    pub(super) async fn config_clashes(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        secret_keys: &[String],
+    ) -> Vec<super::gear_overrides::Clash> {
+        if !secret_keys
+            .iter()
+            .any(|k| super::gear_overrides::field_of(k).is_some())
+        {
+            return Vec::new();
+        }
+        let Ok(products) = self.hub.get::<dyn crate::product::port::ProjectProducts>() else {
+            return Vec::new();
+        };
+        let text = match products.latest_description(ctx, project).await {
+            Ok(Some(d)) => d.text,
+            Ok(None) => return Vec::new(),
+            Err(e) => {
+                tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description could not be read; configuration secrets are not compared with it");
+                return Vec::new();
+            }
+        };
+        let configs = crate::product::port::gear_configs(&text);
+        let provided: std::collections::BTreeSet<String> = secret_keys.iter().cloned().collect();
+        super::gear_overrides::clashes(&configs, secret_keys, &provided)
     }
 
     fn payload(
@@ -1584,6 +1690,7 @@ impl EnvironmentService {
             action: d.action,
             environment_id: env.id,
             secret_keys: config.secret_keys.clone(),
+            warnings: config.warnings.clone(),
             database: env.database,
             // The product's own database server runs the image its infra
             // service imported (ADR-0064 §5), else the environment's.
@@ -1787,6 +1894,7 @@ impl EnvironmentService {
             pending_chart: None,
             research: None,
             preview: None,
+            warnings: Vec::new(),
         };
         let mut chart = None;
         if req.action == DeploymentAction::Install {
@@ -1858,6 +1966,7 @@ impl EnvironmentService {
         if d.action == DeploymentAction::Install {
             self.check_infra(&env, &place.prefix, &config.infra)?;
         }
+        d.warnings = config.warnings.clone();
         let previewing = d.preview.is_some();
         let d = self.submit(org, &env, d, chart, config).await?;
         if previewing {
@@ -3005,6 +3114,7 @@ impl EnvironmentService {
             outcome: None,
             pending_chart: None,
             preview: None,
+            warnings: Vec::new(),
             research: Some(research::ResearchDeploy {
                 research_project: target.project,
                 hardware: target.hardware,
@@ -3102,6 +3212,7 @@ impl EnvironmentService {
         chart: Option<String>,
         config: Config,
     ) -> Result<Deployment> {
+        config.check(d.action)?;
         if env.protected {
             d.state = DeploymentState::AwaitingApproval;
             // A published chart is named on the record; only an uploaded one
@@ -3195,7 +3306,9 @@ impl EnvironmentService {
                         .await?
                 }
             };
+            config.check(d.action)?;
             d.state = DeploymentState::Queued;
+            d.warnings = config.warnings.clone();
             self.record(org, d.clone()).await?;
             let payload = Self::payload(org, &env, &d, chart, config);
             let run = self.queue_or_fail(org, &mut d, payload).await?;

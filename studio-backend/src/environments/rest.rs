@@ -766,6 +766,10 @@ pub struct DeploymentDto {
     pub outcome: Option<String>,
     /// A preview (ADR-0055); absent for a deploy of what runs there.
     pub preview: Option<PreviewDto>,
+    /// What the deploy said when it was asked and goes on with, `CODE:
+    /// message` each (`CONFIG_SECRET_SHADOWED_BY_DESCRIPTION`,
+    /// `INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`).
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -825,6 +829,7 @@ fn deployment_dto(d: Deployment) -> DeploymentDto {
             removed_at: p.removed_at,
             removal_error: p.removal_error,
         }),
+        warnings: d.warnings,
     }
 }
 

@@ -145,6 +145,22 @@ async fn own_secrets(
         };
         out.insert(key.clone(), value);
     }
+    // What its files read as `{env.KEY}`: the project's configuration
+    // secret KEY there, made and kept once when none is set, so the realm's
+    // client and the gear that reads `${KEY}` hold the same value.
+    let one = std::slice::from_ref(i);
+    for key in infra::file_variables(one) {
+        let reference = model::config_secret_ref(p.project_id, p.environment_id, &key);
+        let value = match kept(credstore, ctx, &reference).await? {
+            Some(v) => v,
+            None => {
+                let v = new_secret();
+                keep(credstore, ctx, &reference, &v).await?;
+                v
+            }
+        };
+        out.insert(infra::env_slot(&key), value);
+    }
     Ok(out)
 }
 

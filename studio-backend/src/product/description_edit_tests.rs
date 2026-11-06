@@ -370,3 +370,34 @@ fn the_scanner_skips_strings_and_comments() {
     assert_eq!(d.slice(args[0].value), "\"x, ) # y\"");
     assert_eq!(d.items(d.list(args[1].value).unwrap()).len(), 2);
 }
+
+#[test]
+fn each_gears_configuration_is_read_as_json() {
+    let text = r#"
+product(
+    id = "studioweb",
+    gears = [
+        use_gear("mini-chat", source = "gears-rust",
+                 config = {"client_credentials": {"client_id": "mini-chat", # the realm's client
+                                                   "client_secret": "${MINI_CHAT_CLIENT_SECRET}"},
+                           "limits": [1, 2.5], "on": True, "off": None}),
+        use_gear("authn-resolver", plugins = [plugin("oidc-authn-plugin", config = {"jwt": {"issuer": 'https://id.example/realms/shop'}})]),
+        use_gear("api-gateway"),
+    ],
+)
+"#;
+    let configs = gear_configs(text);
+    assert_eq!(
+        configs["mini-chat"],
+        json!({
+            "client_credentials": {"client_id": "mini-chat", "client_secret": "${MINI_CHAT_CLIENT_SECRET}"},
+            "limits": [1, 2.5], "on": true, "off": null
+        })
+    );
+    assert_eq!(
+        configs["oidc-authn-plugin"]["jwt"]["issuer"],
+        "https://id.example/realms/shop"
+    );
+    assert!(!configs.contains_key("api-gateway"));
+    assert!(gear_configs("# no product\n").is_empty());
+}

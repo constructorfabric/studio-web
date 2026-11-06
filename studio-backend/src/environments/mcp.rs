@@ -117,8 +117,11 @@ pub fn tools() -> Vec<Tool> {
                 `key` is an environment-variable name (SMTP_PASSWORD), `value` its value. The \
                 value is a secret: it is kept in credstore and never echoed back, by this tool \
                 or any other; the answer names the key only. Replaces an existing value. Takes \
-                effect at the next deploy there. Do not put the value in your own messages or \
-                files; ask your person for it.",
+                effect at the next deploy there. A key `APP__GEARS__<GEAR>__CONFIG__<FIELD>` \
+                replaces that gear's config field: refused (CONFIG_SECRET_SHADOWED_BY_DESCRIPTION, \
+                CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION) when the product description already \
+                sets the field; set the `${VAR}` it reads instead. Never invent a value: ask \
+                your person for it, and do not put it in your own messages or files.",
             input_schema: || {
                 object(
                     json!({
@@ -195,9 +198,16 @@ pub fn tools() -> Vec<Tool> {
         Tool {
             name: "infra_plan",
             description: "What a deploy to one environment does with the project's infra \
-                services: how each comes (`database`, `chart`, `generated` or `shared`), from \
-                which image or chart, the variables it gives the product, and the code a \
-                deploy would be refused with now.",
+                services, checked before the deploy: how each comes (`database`, `chart`, \
+                `generated` or `shared`), from which image or chart, the variables it gives \
+                the product, `refusal_code` a deploy would be refused with now \
+                (INFRA_PUBLIC_URL_MISSING, INFRA_ISSUER_NOT_HTTPS, ...) and `warnings` it goes \
+                on with (INFRA_ISSUER_UNREACHABLE_IN_CLUSTER: pods cannot reach the issuer). \
+                `configuration` lists the environment's configuration secrets that set a \
+                gear's config field the product description also sets: \
+                CONFIG_SECRET_SHADOWED_BY_DESCRIPTION (the description wins; the secret is \
+                not given to the release) or CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION (an \
+                install is refused until one goes). Call it before `deploy_request`.",
             input_schema: || {
                 object(
                     json!({
@@ -210,6 +220,32 @@ pub fn tools() -> Vec<Tool> {
             effect: Effect::Read,
             experimental: false,
             run: Run::Get("/studio-environments/v1/environments/{environment_id}/infra-plan"),
+        },
+        Tool {
+            name: "infra_keycloak_realm",
+            description: "The Keycloak realm the project's Keycloak infra service imports at \
+                start, made from its passport and the latest product description: a public \
+                client for the portal, a confidential one for the backend, and a \
+                service-account client for every gear whose config has \
+                `client_credentials.client_id` (mini-chat), its secret the `${VAR}` that gear \
+                reads (filled at deploy from the environment's configuration secret VAR, made \
+                once when none is set). Every confidential client carries a hardcoded \
+                `tenant_id` claim of the root tenant. Nothing is written: put `content` at \
+                `path` in the service's `files` and add `args` to its `args` with \
+                `infra_services_set`. `notes` says what it could not wire.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "name": { "type": "string", "description": "The infra service: `keycloak`." },
+                        "portal_url": { "type": "string", "description": "The product's portal address, for redirects." }
+                    }),
+                    &["project_id", "name"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-environments/v1/infra-services/{name}/keycloak-realm"),
         },
         Tool {
             name: "image_import",
@@ -330,8 +366,12 @@ pub fn tools() -> Vec<Tool> {
                 uninstall (`action: uninstall` with `product` and `profile`). With `preview`, \
                 into a namespace of its own that expires. Answers the deployment record: \
                 `queued`, or `awaiting_approval` for a protected environment, which an \
-                organization administrator decides (`deployment_decide`). Follow it with \
-                `deployment_get`. Ask your person first.",
+                organization administrator decides (`deployment_decide`), and `warnings` it \
+                goes on with (CONFIG_SECRET_SHADOWED_BY_DESCRIPTION, \
+                INFRA_ISSUER_UNREACHABLE_IN_CLUSTER). Refused with \
+                CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION, INFRA_ISSUER_NOT_HTTPS and the other \
+                codes `infra_plan` shows first. Follow it with `deployment_get`. Ask your \
+                person first.",
             input_schema: || {
                 object(
                     json!({
@@ -576,6 +616,22 @@ mod tests {
         );
         assert_eq!(r.path, "/studio-environments/v1/environments/e/infra-plan");
         assert_eq!(r.query, q(&[("project_id", "p")]));
+        let r = request_of(
+            &all,
+            "infra_keycloak_realm",
+            json!({"project_id": "p", "name": "keycloak", "portal_url": "https://shop.example"}),
+        );
+        assert_eq!(
+            (r.method, r.path.as_str()),
+            (
+                Method::Get,
+                "/studio-environments/v1/infra-services/keycloak/keycloak-realm"
+            )
+        );
+        assert_eq!(
+            r.query,
+            q(&[("portal_url", "https://shop.example"), ("project_id", "p")])
+        );
         let r = request_of(
             &all,
             "infra_services_set",

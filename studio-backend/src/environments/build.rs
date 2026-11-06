@@ -363,15 +363,19 @@ pub fn is_pinned(image: &str) -> bool {
 
 /// The builder for a build in `env`: the environment's own (an
 /// organization's mirror), else the platform's (`STUDIO_BUILDER_IMAGE`, the
-/// `studio-builder` CI published by digest). Never this server's image: a
-/// project's build must not depend on the version of Studio that runs it.
-/// Refused unless it names a digest, but on a stand that sets
-/// `STUDIO_BUILDER_ALLOW_TAG=1`.
+/// `studio-builder` CI published by digest), else the one this server's
+/// image was published with (`STUDIO_BUILDER_IMAGE_BUILT`, which CI bakes
+/// in from the same commit). Never this server's image: a project's build
+/// must not depend on the version of Studio that runs it. Refused unless it
+/// names a digest, but on a stand that sets `STUDIO_BUILDER_ALLOW_TAG=1`.
 pub fn builder_for(env: &super::model::Environment) -> Result<BuilderSpec, (&'static str, String)> {
-    let platform = std::env::var("STUDIO_BUILDER_IMAGE")
-        .ok()
-        .map(|i| i.trim().to_owned())
-        .filter(|i| !i.is_empty());
+    let var = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .map(|i| i.trim().to_owned())
+            .filter(|i| !i.is_empty())
+    };
+    let platform = var("STUDIO_BUILDER_IMAGE").or_else(|| var("STUDIO_BUILDER_IMAGE_BUILT"));
     let allow_tag = std::env::var("STUDIO_BUILDER_ALLOW_TAG")
         .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"));
     builder_from(env, platform.as_deref(), allow_tag)
@@ -397,10 +401,11 @@ pub fn builder_from(
             None => {
                 return Err((
                     BUILDER_NOT_PINNED,
-                    "this Studio was deployed without a builder image: set \
-                     STUDIO_BUILDER_IMAGE to the studio-builder CI published, by digest \
-                     (…/studio-builder@sha256:…), or give the environment a builder image of \
-                     its own"
+                    "this Studio was deployed without a builder image, and its backend image \
+                     carries none (a local build): set STUDIO_BUILDER_IMAGE \
+                     (backend.builds.builderImage) to the studio-builder CI published, by \
+                     digest (…/studio-builder@sha256:…), or give the environment a builder \
+                     image of its own"
                         .into(),
                 ));
             }

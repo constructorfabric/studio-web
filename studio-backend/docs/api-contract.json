@@ -2138,6 +2138,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/infra-services/{name}/keycloak-realm",
+      "operation_id": "studio_environments.get_keycloak_realm",
+      "tag": "",
+      "summary": "The realm a project's Keycloak imports",
+      "authenticated": true,
+      "responses": [
+        "KeycloakRealmDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/namespace-assignments",
       "operation_id": "studio_environments.list_namespace_assignments",
       "tag": "",
