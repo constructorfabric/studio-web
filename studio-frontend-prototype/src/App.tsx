@@ -196,7 +196,7 @@ import {
   type ProjectTemplate,
 } from "./project-types";
 import { shownTabs, tabToOpen } from "./level-tabs";
-import { TabsSettings, useHiddenTabs } from "./level-tabs-ui";
+import { BandMenu, useHiddenTabs } from "./level-tabs-ui";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -1761,7 +1761,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // The organization's band without the tabs an administrator turned off
   // (level-tabs.ts), kept in its own workspace settings document.
   const orgHidden = useHiddenTabs(token, "organization", orgAsSpace?.id ?? null);
-  const orgTabs = useMemo(() => shownTabs(LEVEL_NAV.organization, orgHidden.hidden), [orgHidden.hidden]);
+  const orgTabs = useMemo(() => shownTabs(LEVEL_NAV.organization, orgHidden.shown), [orgHidden.shown]);
 
   // The organizations offered in the switcher: every one that holds projects
   // (derived from the loaded workspaces, which carry orgId/orgName) plus any
@@ -1846,7 +1846,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // (level-tabs.ts): the project's own setting narrows the template's.
   const templateTabs = visibleTabs(PROJECT_TABS, projectType);
   const projectHidden = useHiddenTabs(token, "project", projectOpen ? (crumb.nestedId ?? null) : null);
-  const projectTabs = shownTabs(templateTabs, projectHidden.hidden).map((t) =>
+  const projectTabs = shownTabs(templateTabs, projectHidden.shown).map((t) =>
     attention[t.id] ? { ...t, attention: attention[t.id] } : t,
   );
   const projectLanding = tabToOpen(projectTabs, landingTab(PROJECT_TABS, projectType));
@@ -1868,7 +1868,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const workspaceOpen =
     !adminOpen && !activeSpace && view === "projects" && !!crumb.projectId && !crumb.nestedId;
   const workspaceHidden = useHiddenTabs(token, "workspace", workspaceOpen ? (crumb.projectId ?? null) : null);
-  const workspaceTabs = useMemo(() => shownTabs(WORKSPACE_TABS, workspaceHidden.hidden), [workspaceHidden.hidden]);
+  const workspaceTabs = useMemo(() => shownTabs(WORKSPACE_TABS, workspaceHidden.shown), [workspaceHidden.shown]);
   useEffect(() => {
     if (!workspaceTabs.some((t) => t.id === workspaceTab)) setWorkspaceTab(tabToOpen(workspaceTabs, workspaceTab));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2590,32 +2590,26 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               {n.label}
             </button>
           ))}
-          {level === "organization" && orgAsSpace && (
-            <TabsSettings
-              levelName="organization"
-              tabs={LEVEL_NAV.organization}
-              hidden={orgHidden.hidden}
-              onSave={orgHidden.save}
-            />
-          )}
-          {railPref !== "hidden" &&
-            (() => {
-              const pin: Pin = { kind: "view", id: view };
-              const already = isPinned(pins, pin);
-              return (
-                <button
-                  className={`psection psection-pin${already ? " on" : ""}`}
-                  aria-pressed={already}
-                  title={already ? "Unpin this section from the rail" : "Pin this section to the rail"}
-                  onClick={() => setPinned(togglePin(pins, pin))}
-                >
-                  <span className="ico" aria-hidden>
-                    {already ? "★" : "☆"}
-                  </span>
-                  {already ? "Pinned" : "Pin"}
-                </button>
-              );
-            })()}
+          {/* One control at the band's end: pin this page, customize the tabs. */}
+          {(() => {
+            const pin: Pin = { kind: "view", id: view };
+            const customizable = level === "organization" && !!orgAsSpace;
+            return (
+              <BandMenu
+                levelName="organization"
+                tabs={customizable ? LEVEL_NAV.organization : []}
+                hidden={orgHidden.hidden}
+                onSave={customizable ? orgHidden.save : undefined}
+                onPreview={orgHidden.setPreview}
+                icon={(name) => <NavIcon name={name} />}
+                pin={
+                  railPref !== "hidden"
+                    ? { pinned: isPinned(pins, pin), toggle: () => setPinned(togglePin(pins, pin)) }
+                    : undefined
+                }
+              />
+            );
+          })()}
         </nav>
       )}
       {/* The project's sections, as the product draws them: a 44px band across
@@ -2647,7 +2641,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           )}
           {/* Pinning a project section belongs on the section, not in the rail:
               the rail cannot know which project is open, and a picker listing
-              every project x every section is a list nobody reads. */}
+              every project x every section is a list nobody reads. It sits in
+              the band's one menu, beside customizing the tabs. */}
           {(() => {
             const pin: Pin = {
               kind: "project",
@@ -2656,32 +2651,19 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               name: openProjectName ?? "Project",
               tab: projectTab,
             };
-            const already = isPinned(pins, pin);
             return (
-              <button
-                className={`psection psection-pin${already ? " on" : ""}`}
-                aria-pressed={already}
-                title={
-                  already
-                    ? "Unpin this section from the rail"
-                    : "Pin this section to the top of the rail"
-                }
-                onClick={() => setPinned(togglePin(pins, pin))}
-              >
-                <span className="ico" aria-hidden>
-                  {already ? "★" : "☆"}
-                </span>
-                {already ? "Pinned" : "Pin"}
-              </button>
+              <BandMenu
+                levelName="project"
+                tabs={templateTabs}
+                hidden={projectHidden.hidden}
+                onSave={projectHidden.save}
+                onPreview={projectHidden.setPreview}
+                icon={(name) => <NavIcon name={name} />}
+                pin={{ pinned: isPinned(pins, pin), toggle: () => setPinned(togglePin(pins, pin)) }}
+                note="Which tabs exist at all is the project's template's (Templates & phases in its workspace)."
+              />
             );
           })()}
-          <TabsSettings
-            levelName="project"
-            tabs={templateTabs}
-            hidden={projectHidden.hidden}
-            onSave={projectHidden.save}
-            note="Which tabs exist at all is the project's template's (Project templates in its workspace)."
-          />
         </nav>
       )}
       {/* A workspace gets the same band, because it is the same kind of thing:
@@ -2697,11 +2679,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onOpen={setWorkspaceTab}
             icon={(name) => <NavIcon name={name} />}
           />
-          <TabsSettings
+          <BandMenu
             levelName="workspace"
             tabs={WORKSPACE_TABS}
             hidden={workspaceHidden.hidden}
             onSave={workspaceHidden.save}
+            onPreview={workspaceHidden.setPreview}
+            icon={(name) => <NavIcon name={name} />}
           />
         </nav>
       )}

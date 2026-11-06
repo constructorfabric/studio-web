@@ -29,7 +29,7 @@ export function MenuButton({
   trigger: ReactNode;
   /** Its accessible name and tooltip. */
   label: string;
-  items: (MenuItem | null | false)[];
+  items: (MenuItem | null | false | undefined)[];
   className?: string;
   buttonClassName?: string;
   /** A line above the items. */
