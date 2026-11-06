@@ -1321,10 +1321,7 @@ pub fn read_gdl(roots: &[(String, PathBuf)], rel: &str, max: usize) -> Option<Gd
         return None;
     }
     roots.iter().find_map(|(id, dir)| {
-        let file = dir.join(path);
-        if !file.is_file() {
-            return None;
-        }
+        let file = contained_file(dir, path)?;
         let mut buf = Vec::new();
         std::fs::File::open(&file)
             .ok()?
@@ -1337,6 +1334,16 @@ pub fn read_gdl(roots: &[(String, PathBuf)], rel: &str, max: usize) -> Option<Gd
             text: String::from_utf8_lossy(&buf).into_owned(),
         })
     })
+}
+
+/// `rel` under `dir` as a file that may be read: what it resolves to once
+/// links are followed must stay inside `dir`. The path checks judge the text
+/// only, and a checkout holds committed symlinks -- `x.gdl -> /proc/self/environ`
+/// or `docs -> /` would otherwise hand out a server file.
+fn contained_file(dir: &Path, rel: &Path) -> Option<PathBuf> {
+    let base = dir.canonicalize().ok()?;
+    let file = dir.join(rel).canonicalize().ok()?;
+    (file.starts_with(&base) && file.is_file()).then_some(file)
 }
 
 /// The checkout `dir` is a folder of: its outermost directory under
@@ -1391,8 +1398,7 @@ pub fn read_readme(dir: &Path, path: &str, max: usize) -> Option<String> {
     };
     ["README.md", "readme.md", "README"]
         .iter()
-        .map(|f| dir.join(crate_dir).join(f))
-        .find(|f| f.is_file())
+        .find_map(|f| contained_file(dir, &crate_dir.join(f)))
         .and_then(|f| std::fs::File::open(f).ok())
         .and_then(|f| {
             let mut buf = Vec::new();
@@ -4178,29 +4184,51 @@ impl Gearbox {
     /// the gear `gear` (engine id or crate name), or the `.gdl` at `path`.
     /// Looked for in the project's own repository first (`home`), then in
     /// each of `scope`'s gear repositories. `None` when none has it.
+    ///
+    /// A gear of the home repository alone is found in its own catalogue, as
+    /// a description reads it ([`with_home`]); a `path` in the home
+    /// repository is read even when `scope` has no corpus to load.
     pub async fn gdl_file(
         &self,
         scope: Scope,
-        home: Option<(String, PathBuf)>,
+        home: Option<&HomeCheckout>,
         gear: Option<&str>,
         path: Option<&str>,
     ) -> anyhow::Result<Option<GdlFile>> {
-        let (corpus, _, catalogue) = self.ensure_corpus(scope).await?;
+        let (corpus, missed) = match self.ensure_corpus(scope).await {
+            Ok((roots, _, catalogue)) => (Some((roots, catalogue)), None),
+            Err(e) if gear.is_none() && home.is_some() => (None, Some(e)),
+            Err(e) => return Err(e),
+        };
         // A gear says where its description is and in which source; an
         // older engine leaves it beside the crate's manifest.
         let (from, rel) = match (gear, path) {
-            (Some(g), _) => match catalogue.find(g.trim()) {
-                Some(g) => match (&g.gdl_path, &g.package.path) {
-                    (Some(at), _) => (g.source.clone(), at.clone()),
-                    (None, Some(p)) => (g.source.clone(), gear_gdl_path(p)),
-                    (None, None) => return Ok(None),
-                },
-                None => return Ok(None),
-            },
+            (Some(g), _) => {
+                let g = g.trim();
+                let mut found = corpus.as_ref().and_then(|(_, c)| c.find(g).cloned());
+                if let (None, Some(h)) = (&found, home) {
+                    found = self.home_catalogue(h).await?.find(g).cloned().map(|mut g| {
+                        g.source = Some(h.id.clone());
+                        g
+                    });
+                }
+                match found {
+                    Some(g) => match (&g.gdl_path, &g.package.path) {
+                        (Some(at), _) => (g.source.clone(), at.clone()),
+                        (None, Some(p)) => (g.source.clone(), gear_gdl_path(p)),
+                        (None, None) => return Ok(None),
+                    },
+                    None => return Ok(None),
+                }
+            }
             (None, Some(p)) => (None, p.to_owned()),
             (None, None) => return Ok(None),
         };
-        let mut roots: Vec<(String, PathBuf)> = home.into_iter().chain(corpus).collect();
+        let mut roots: Vec<(String, PathBuf)> = home
+            .map(|h| (h.id.clone(), h.dir.clone()))
+            .into_iter()
+            .chain(corpus.into_iter().flat_map(|(roots, _)| roots))
+            .collect();
         // The gear's own source first; then each root's repository as a
         // whole, since a source may be a folder of it (`studio-backend`) and a
         // path is written from the repository's root.
@@ -4212,7 +4240,13 @@ impl Gearbox {
             .filter_map(|(id, dir)| repository_top(self.workdir(), dir).map(|t| (id.clone(), t)))
             .collect();
         roots.extend(tops);
-        Ok(tokio::task::spawn_blocking(move || read_gdl(&roots, &rel, MAX_GDL_BYTES)).await?)
+        let found =
+            tokio::task::spawn_blocking(move || read_gdl(&roots, &rel, MAX_GDL_BYTES)).await?;
+        // Not in the home repository, and the corpus could not be asked.
+        match (found, missed) {
+            (None, Some(e)) => Err(e),
+            (found, _) => Ok(found),
+        }
     }
 
     /// [`complete`] against `scope`'s corpus.
@@ -5117,6 +5151,25 @@ mod tests {
         assert_eq!(read_gdl(&roots, "Cargo.toml", 100), None);
         assert_eq!(read_gdl(&roots, "../corpus/mfe/frontx.gdl", 100), None);
         assert_eq!(read_gdl(&roots, "/etc/x.gdl", 100), None);
+        #[cfg(unix)]
+        {
+            // A committed link out of the checkout is not followed, be it the
+            // file or a directory on the way.
+            std::fs::write(base.join("secret.gdl"), "secret").unwrap();
+            std::os::unix::fs::symlink(base.join("secret.gdl"), home.join("link.gdl")).unwrap();
+            assert_eq!(read_gdl(&roots, "link.gdl", 100), None);
+            std::os::unix::fs::symlink(&base, home.join("up")).unwrap();
+            assert_eq!(read_gdl(&roots, "up/secret.gdl", 100), None);
+            std::os::unix::fs::symlink(&base, corpus.join("gears")).unwrap();
+            std::fs::write(base.join("README.md"), "secret").unwrap();
+            assert_eq!(read_readme(&corpus, "gears", 100), None);
+            // A link that stays inside is fine.
+            std::os::unix::fs::symlink(home.join("mfe"), home.join("inner")).unwrap();
+            assert_eq!(
+                read_gdl(&roots, "inner/frontx.gdl", 100).unwrap().text,
+                "home"
+            );
+        }
         let _ = std::fs::remove_dir_all(base);
     }
 

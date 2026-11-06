@@ -748,21 +748,32 @@ export function ModelMapView({
   }, [shown, relations, allMentions]);
   const sel = entities.find((e) => e.key === (selected ?? peek)) ?? null;
   const pinned = !!selected && sel?.key === selected;
-  /** Open `k` in the panel, keeping where it came from for Back. */
+  /** Show `l`; a cut is the layer's own (`keepers` holds Domain alone). */
+  const toLayer = (l: Layer | null | undefined) => {
+    if (!l || l === layer) return;
+    setLayer(l);
+    setOnly(null);
+  };
+  /** Open `k` in the panel, keeping where it came from for Back; `null`
+   *  unpins, and forgets the way back as Unpin does. Either way the panel
+   *  leaves what the pointer last showed: the element that showed it may be
+   *  gone without a `mouseleave`. */
   const open = (k: string | null) => {
-    if (selected && k !== selected) setBack((b) => [...b.slice(-19), selected]);
-    if (k) {
-      const l = layerOfKey.get(k);
-      if (l && l !== layer) setLayer(l);
+    setPeek(null);
+    if (!k) {
+      setSelected(null);
+      setBack([]);
+      return;
     }
+    if (selected && k !== selected) setBack((b) => [...b.slice(-19), selected]);
+    toLayer(layerOfKey.get(k));
     setSelected(k);
   };
   const goBack = () => {
     const prev = back[back.length - 1];
     setBack((b) => b.slice(0, -1));
     if (!prev) return;
-    const l = layerOfKey.get(prev);
-    if (l && l !== layer) setLayer(l);
+    toLayer(layerOfKey.get(prev));
     setSelected(prev);
   };
 
@@ -916,10 +927,7 @@ export function ModelMapView({
                   <button
                     type="button"
                     className="ghost"
-                    onClick={() => {
-                      setSelected(null);
-                      setBack([]);
-                    }}
+                    onClick={() => open(null)}
                     title="Unpin: the panel follows the pointer again"
                   >
                     Unpin ×
@@ -955,7 +963,6 @@ export function ModelMapView({
               only={only}
               onOnly={setOnly}
               onSelect={open}
-              onPeek={setPeek}
             />
           )}
         </aside>
@@ -1265,7 +1272,6 @@ function LayerOverview({
   only,
   onOnly,
   onSelect,
-  onPeek,
 }: {
   layer: Layer;
   entities: Entity[];
@@ -1275,7 +1281,6 @@ function LayerOverview({
   only: Only | null;
   onOnly: (o: Only | null) => void;
   onSelect: (k: string) => void;
-  onPeek: (k: string | null) => void;
 }) {
   const top = (by: (e: Entity) => number) => [...entities].sort((a, b) => by(b) - by(a) || a.name.localeCompare(b.name)).slice(0, 6);
   const connected = top((e) => relationCount.get(e.key) ?? 0).filter((e) => relationCount.get(e.key));
@@ -1290,8 +1295,6 @@ function LayerOverview({
           type="button"
           className="dm-ov-chip"
           onClick={() => onSelect(e.key)}
-          onMouseEnter={() => onPeek(e.key)}
-          onMouseLeave={() => onPeek(null)}
         >
           {e.name} <span className="sub">{n(e)}</span>
         </button>
@@ -1407,6 +1410,10 @@ function FactsFiltered({ facts, onOpenFile }: { facts: SpecModelFact[]; onOpenFi
   const matches = (f: SpecModelFact) =>
     !needle || [f.text, f.value, f.aspect, f.source.path].some((t) => (t ?? "").toLowerCase().includes(needle));
   if (facts.length === 0) return null;
+  const visible = groups
+    .filter((g) => !kind || g.kind === kind)
+    .map((g) => ({ ...g, facts: g.facts.filter(matches) }))
+    .filter((g) => g.facts.length > 0);
   return (
     <div className="dm-facts">
       {facts.length > 6 && (
@@ -1421,19 +1428,19 @@ function FactsFiltered({ facts, onOpenFile }: { facts: SpecModelFact[]; onOpenFi
           </span>
         </div>
       )}
-      {groups
-        .filter((g) => !kind || g.kind === kind)
-        .map((g) => ({ ...g, facts: g.facts.filter(matches) }))
-        .filter((g) => g.facts.length > 0)
-        .map((g) => (
-          <section key={g.kind} className="sm-kind">
-            <h3>{KIND_TITLE[g.kind] ?? g.kind}</h3>
-            {g.facts.map((f, i) => (
-              <FactRow key={i} fact={f} onOpenFile={onOpenFile} />
-            ))}
-          </section>
-        ))}
-      {needle && groups.every((g) => !g.facts.some(matches)) && <p className="hint">No fact says “{q.trim()}”.</p>}
+      {visible.map((g) => (
+        <section key={g.kind} className="sm-kind">
+          <h3>{KIND_TITLE[g.kind] ?? g.kind}</h3>
+          {g.facts.map((f, i) => (
+            <FactRow key={i} fact={f} onOpenFile={onOpenFile} />
+          ))}
+        </section>
+      ))}
+      {needle && visible.length === 0 && (
+        <p className="hint">
+          No {kind ? `${(KIND_TITLE[kind] ?? kind).toLowerCase()} ` : ""}fact says “{q.trim()}”.
+        </p>
+      )}
     </div>
   );
 }

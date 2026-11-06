@@ -1185,18 +1185,28 @@ function Canvas({
                                     {n.label}
                                     {n.state !== "ok" && ` · ${STATE_WORDS[n.state]}`}
                                   </span>
+                                  {/* A picked micro-frontend lists every screen; each is
+                                      reached by Tab as well as by the pointer. */}
                                   {screensOf(n)
-                                    .slice(0, MENU)
+                                    .slice(0, selected === n.id ? undefined : MENU)
                                     .map((s) => (
                                       <span
                                         key={s}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-pressed={screen === s && shown?.id === n.id}
                                         className={`pmap-app-item${screen === s && shown?.id === n.id ? " on" : ""}`}
                                         onMouseEnter={() => setScreenOn({ node: n.id, screen: s })}
+                                        onFocus={() => setScreenOn({ node: n.id, screen: s })}
                                       >
                                         {s}
                                       </span>
                                     ))}
-                                  {screensOf(n).length > MENU && <span className="pmap-app-item muted">+{screensOf(n).length - MENU} more</span>}
+                                  {selected !== n.id && screensOf(n).length > MENU && (
+                                    <span className="pmap-app-item muted" title="Pick it to list every screen">
+                                      +{screensOf(n).length - MENU} more
+                                    </span>
+                                  )}
                                 </div>
                               ))}
                             </nav>
@@ -1629,7 +1639,8 @@ function Detail({
         ))}
       </ul>
       {params && <ParamList key={`params:${node.id}`} params={params} />}
-      {gdlOf(node) && <GdlSection key={`gdl:${node.id}`} token={token} projectId={projectId} what={gdlOf(node)!} />}
+      {/* Keyed by what it reads: a shell keeps its id when its path changes. */}
+      {gdlOf(node) && <GdlSection key={`gdl:${projectId}:${JSON.stringify(gdlOf(node))}`} token={token} projectId={projectId} what={gdlOf(node)!} />}
       {its.length > 0 && (
         <>
           <div className="pmap-detail-kind" style={{ marginTop: 8 }}>
