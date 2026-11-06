@@ -319,8 +319,12 @@ backend:
   # image, `studio-builder`, which CI publishes beside the backend and the
   # deploy pins by digest (ADR-0062 §1): `…/studio-builder@sha256:…`. Never the
   # backend's own image, so a project's build does not change with the Studio
-  # that runs it. Empty refuses every build (BUILDER_NOT_PINNED); an
-  # environment may name a mirror of its own. `build` runs rootless BuildKit
+  # that runs it. Empty takes the builder the backend image was published
+  # with: CI builds `studio-builder` first and bakes its digest into the
+  # backend image (STUDIO_BUILDER_IMAGE_BUILT), so `backend.image.tag` alone
+  # pins both. Set it to build in another builder; an environment may name a
+  # mirror of its own. A backend image built without one (a local build)
+  # refuses every build (BUILDER_NOT_PINNED) until one is named here. `build` runs rootless BuildKit
   # from buildkitImage; point both at a proxy where the cluster admits only its
   # own registry's images.
   builds:

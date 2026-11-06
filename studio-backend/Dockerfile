@@ -121,6 +121,13 @@ ENV STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox \
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 RUN chmod +x /app/studio-backend && chown -R studio:studio /app
+# The builder CI published from the same commit, by digest
+# (`…/studio-builder@sha256:…`, ADR-0062 §1): what a build runs in when the
+# deploy names none (STUDIO_BUILDER_IMAGE). Empty in a local build, which then
+# refuses builds with BUILDER_NOT_PINNED until one is named. Declared last so
+# a new digest invalidates no layer above.
+ARG STUDIO_BUILDER_IMAGE_BUILT=""
+ENV STUDIO_BUILDER_IMAGE_BUILT=${STUDIO_BUILDER_IMAGE_BUILT}
 
 # Numeric on purpose: with `runAsNonRoot: true` the kubelet must prove the
 # container is non-root BEFORE starting it, and a named USER gives it nothing

@@ -275,7 +275,8 @@ spec:
             - name: STUDIO_OTLP_ENDPOINT
               value: {{ .Values.backend.telemetry.endpoint | quote }}
             # The builder by digest (ADR-0062 §1), never this server's image:
-            # empty refuses every build with BUILDER_NOT_PINNED.
+            # empty takes the one the backend image was published with
+            # (STUDIO_BUILDER_IMAGE_BUILT, baked by CI).
             - name: STUDIO_BUILDER_IMAGE
               value: {{ .Values.backend.builds.builderImage | quote }}
             - name: STUDIO_BUILDKIT_IMAGE
