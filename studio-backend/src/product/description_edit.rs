@@ -281,12 +281,11 @@ fn plugins(
         match rplugins.iter().find(|(p, _, _)| *p == id) {
             None if removed(id.as_str()) => edits.delete_item(ld, it),
             None => {}
-            Some((_, _, pc)) => {
-                if change.config_changed.contains(&id) {
-                    let value = rd.kw(pc, "config").map(|a| rd.slice(a.value).to_owned());
-                    edits.set_kw(ld, &c, "config", value);
-                }
+            Some((_, _, pc)) if change.config_changed.contains(&id) => {
+                let value = rd.kw(pc, "config").map(|a| rd.slice(a.value).to_owned());
+                edits.set_kw(ld, &c, "config", value);
             }
+            Some(_) => {}
         }
     }
     let added: Vec<String> = rplugins
@@ -790,11 +789,11 @@ impl<'a> Doc<'a> {
                 out.push((s, e));
             }
         };
-        for i in open + 1..close {
+        for (i, &ch) in b.iter().enumerate().take(close).skip(open + 1) {
             if self.m[i] != K::Code {
                 continue;
             }
-            match b[i] {
+            match ch {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth = depth.saturating_sub(1),
                 b',' if depth == 0 => {
