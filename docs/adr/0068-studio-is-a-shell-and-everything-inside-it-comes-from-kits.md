@@ -19,11 +19,14 @@ Status: **proposed** · Date: 2026-11-06 · Builds on ADR-0067 (a kit brings mod
 - [Decision Outcome](#decision-outcome)
   - [1. What the shell is](#1-what-the-shell-is)
   - [2. What a kit brings](#2-what-a-kit-brings)
-  - [3. One manifest](#3-one-manifest)
+  - [3. One manifest: `kit.gdl`](#3-one-manifest-kitgdl)
   - [4. The kit library](#4-the-kit-library)
   - [5. The installer works on a level](#5-the-installer-works-on-a-level)
   - [6. The Inbox takes items from kits](#6-the-inbox-takes-items-from-kits)
   - [7. Today's tabs become built-in kits](#7-todays-tabs-become-built-in-kits)
+  - [8. Anatomy of a kit](#8-anatomy-of-a-kit)
+  - [9. Kit code runs as WebAssembly inside Studio](#9-kit-code-runs-as-webassembly-inside-studio)
+  - [10. A kit is published as an OCI artifact](#10-a-kit-is-published-as-an-oci-artifact)
 - [Phases](#phases)
 - [Consequences](#consequences)
 - [Confirmation](#confirmation)
@@ -103,38 +106,71 @@ contributes at named points:
 Every contribution carries the kit's origin (`meta.origin = "kit"`, the kit
 and its version), so uninstalling removes exactly what the kit brought.
 
-### 3. One manifest
+### 3. One manifest: `kit.gdl`
 
-A kit is described by one manifest, `.cf-studio-kit.toml` at its repository
-root, today's file extended with one section per contribution point:
+A kit is described in GDL, the language a gear (`gear.gdl`), a micro-frontend
+package (`frontx.gdl`), an infra service (`service.gdl`) and a product
+(`product.gdl`) are already described in. One `kit.gdl` at the kit's root
+says everything it brings. Gearbox's engine parses and checks it, so Studio,
+the IDE and CI read a kit the same way and a mistake is a diagnostic before
+install, not a failure after:
 
-```toml
-[kit]
-slug = "project-lifecycle"
-name = "Project lifecycle"
-version = "1.0.0"
-levels = ["organization", "workspace", "project"]   # where it may be installed
+```python
+gdl_version = "1.7"
 
-[model]                      # ADR-0067 §6: an overlay, as an upload has it
-overlay = "model/overlay.json"
+kit(
+    slug = "project-lifecycle",
+    name = "Project lifecycle",
+    version = "1.0.0",
+    description = "A project's phases, its status chip, filters and what waits on its owner",
+    levels = ["organization", "workspace", "project"],   # where it may be installed
 
-[[tab]]
-level = "project"
-shows = "project-lifecycle"
-mfe = "mfe/lifecycle"        # optional: without it, the generic screens
+    # Types: GTS schemas registered in types-registry under the kit's namespace,
+    # and the overlay that gives them fields, relations, events and a lifecycle.
+    types = [
+        kit_type(gts = "gts.cf.studio.kit.lifecycle.phase.v1~", schema = path("types/phase.json")),
+    ],
+    model = path("model/overlay.json"),                  # ADR-0067 §6
 
-[[inbox-source]]
-id = "phase-waiting"
-query = "inbox/phase-waiting.json"
+    # Screens: FrontX bundles mounted by the shell.
+    tabs = [
+        kit_tab(level = "project", shows = "project-lifecycle",
+                mfe = frontx_mfe(package = path("mfe/lifecycle"))),   # optional
+    ],
+    sections = [
+        kit_section(screen = "project.header", slot = "status",
+                    mfe = frontx_mfe(package = path("mfe/status-chip"))),
+    ],
 
-[[mcp-tool]]
-name = "set_project_phase"
+    # Handlers, lightest first (§8).
+    rules = [path("rules/phase-waiting.json")],
+    functions = [
+        kit_function(name = "advance_phase", wasm = path("functions/advance_phase.wasm"),
+                     limits = {"fuel": 10_000_000, "memory_mb": 32, "timeout_ms": 2000}),
+        kit_function(name = "summarize_phase", agent = path("functions/summarize.md")),
+    ],
+    services = [],                                       # a kit service: use_service(...), ADR-0065
 
-[material]                   # today's: what cfs writes into a checkout
-paths = ["skills/", "templates/"]
+    inbox = [kit_inbox_source(id = "phase-waiting", query = path("inbox/phase-waiting.json"))],
+    mcp_tools = ["set_project_phase", "advance_phase"],
+
+    # What the administrator approves at install; the PDP holds the kit to it.
+    permissions = permissions(
+        reads = ["gts.cf.studio.project.v1~"],
+        writes = ["gts.cf.studio.kit.lifecycle.phase.v1~"],
+        listens = ["project.updated"],
+    ),
+
+    material = [path("skills/"), path("templates/")],    # today's: files cfs writes into a checkout
+)
 ```
 
-A built-in kit has the same manifest, compiled into Studio's image instead of
+The names (`kit`, `kit_type`, `kit_tab`, ...) are what GDL 1.7 adds for this
+ADR; the shapes follow what GDL already has (`frontx_mfe`, `use_service`,
+`path`). Today's `.cf-studio-kit.toml` is still read for a kit that brings only
+working material, and a kit that has both is described by its `kit.gdl`.
+
+A built-in kit has the same `kit.gdl`, compiled into Studio's image instead of
 fetched.
 
 ### 4. The kit library
@@ -205,17 +241,94 @@ The tabs marked experimental today (Issues, Tests, Kits, Artifacts, Activity)
 are the first to leave the default set: installed only where someone asks for
 them.
 
+### 8. Anatomy of a kit
+
+A kit is three kinds of thing Studio takes in **without a redeploy**, plus the
+working material it already has:
+
+```
+kit (its own repository, published as an OCI artifact, §10)
+ ├─ kit.gdl              the manifest (§3)
+ ├─ types/                GTS schemas → types-registry; the model overlay → domain model
+ ├─ mfe/                  FrontX bundles → mounted by the shell where `shows` says
+ ├─ rules/                automation-rule objects → studio-tasks
+ ├─ functions/            *.wasm modules and agent prompts → the function runtime (§9)
+ └─ material/             files cfs writes into a project's checkout (as today)
+```
+
+- **Types.** Each type a kit adds is registered in types-registry under the
+  kit's own GTS namespace (`gts.cf.studio.kit.<slug>.<type>.v1~`), so its
+  meaning is catalogued like every other (ADR-0013). Its fields, relations,
+  tabs, events and lifecycle are the kit's model overlay (ADR-0067 §6),
+  stored with `meta.origin = "kit"`. Its objects live in graph-storage like any
+  domain object; no gear changes and no migration of Studio's own tables.
+- **Micro-frontends.** A kit's FrontX bundles are built and published with the
+  kit. The shell loads them at run time from the kit's artifact, by the
+  manifest, and mounts each where its `shows` relation or `section` says
+  (ADR-0050). A kit with no micro-frontend gets the generic screens
+  (ADR-0067 §7). The portal is not rebuilt for a kit.
+- **Handlers.** What reacts to the kit's types is, from the lightest to the
+  heaviest:
+
+  | Tier | What it is | Runs in | Isolation |
+  |---|---|---|---|
+  | Rules | event → condition → action, in the expression language (ADR-0067 §4) | `studio-tasks` | no code |
+  | Agent functions | a prompt and the MCP tools it may call | Studio's agent | the tools and the PDP |
+  | WebAssembly functions | the kit's own code (§9) | the function runtime inside Studio | a sandbox |
+  | A kit service | a container the kit needs for heavy work | deployed by Studio as an infra service (ADR-0065) | its own pod, called by contract |
+
+  The first three are installed and upgraded with no redeploy. The fourth
+  deploys the kit's service, never Studio.
+
+Besides these, a kit declares **permissions**: which types it reads and
+writes, which events it listens to, and which MCP tools it calls. The
+administrator sees them before installing, and the PDP holds the kit's code
+and rules to them. A kit's functions and actions are **MCP tools** on install,
+so an agent can use everything a person can.
+
+### 9. Kit code runs as WebAssembly inside Studio
+
+A kit that needs code brings WebAssembly modules (WASI preview 2, component
+model), compiled from any language that targets it. Studio runs them in an
+embedded runtime (wasmtime) inside the function runtime of ADR-0067 §5.
+
+- **No ambient authority.** A module has no network, no files and no clock
+  beyond what its host functions give it.
+- **Host functions** are the only way out: read and write domain objects
+  (through the PDP, as the installing organization's kit principal), emit
+  events, call an MCP tool the kit declared, and log.
+- **Limits** per call: fuel (instructions), memory and wall time, set by the
+  manifest within the organization's ceilings. A call that exceeds them fails
+  as a run failure, retried by `studio-tasks` under the rule's policy.
+- **Triggers** are the same as for any function: a rule on an event, a
+  lifecycle transition, a screen action, or a direct API or MCP call.
+
+This answers ADR-0067's open question 1: kit code needs no gear.
+
+### 10. A kit is published as an OCI artifact
+
+A kit is built from its own repository and published as one OCI artifact
+(`kit.gdl`, types, bundles, modules, material), pinned by digest the way
+Studio's images and charts are. The library (§4) lists artifacts; an
+installation records the digest it installed, so an upgrade is a new digest
+and a rollback is the old one. Built-in kits are the same artifacts, baked
+into Studio's image. An organization's kits are published from a repository
+it connects, into a registry it names; a kit from outside the organization
+installs only when its publisher's signature is one the organization trusts.
+
 ## Phases
 
 | Phase | Delivers | Depends on |
 |---|---|---|
-| 1 | The manifest's contribution sections; built-in kits declared in the image; installation records per level | ADR-0066 |
+| 1 | `kit.gdl` in GDL 1.7, parsed and checked by Gearbox's engine; built-in kits declared in the image; installation records per level | ADR-0066 |
 | 2 | The installer for tabs and the model overlay (ADR-0067 phase 6), as runs, REST routes and MCP tools; the library screen | 1 |
 | 3 | Project lifecycle as the first built-in kit: type fields, tab, filters, inbox source | 2 |
 | 4 | Inbox sources as a contribution point; the shell's own sources; today's Inbox items moved into their kits | 2 |
 | 5 | Micro-frontends mounted for `shows` relations and sections | 2, ADR-0050 |
 | 6 | Today's tabs moved into built-in kits, one per change | 3, 5 |
 | 7 | Organization kits: publish from a connected repository | 2 |
+| 8 | The WebAssembly function runtime, host functions and limits (§9) | ADR-0067 phase 5 |
+| 9 | Kits as signed OCI artifacts; install by digest; upgrade and rollback (§10) | 2 |
 
 ## Consequences
 
@@ -247,5 +360,9 @@ them.
 2. **A kit that needs another kit's types** (Releases needs Sources'
    repositories): declared dependencies in the manifest, resolved by the
    installer.
-3. **Kit code outside a gear** stays ADR-0067's open question 1. Until it is
-   answered, a kit that needs server code ships a gear.
+3. **Data migrations between kit versions**: a WebAssembly function the
+   manifest names for the upgrade, run once per organization, or an
+   expression-level mapping for simple field renames.
+4. **Which host functions a module gets first**: object read and write, events
+   and logging are enough for Project lifecycle; calling MCP tools and
+   outbound HTTP through OAGW come when a kit needs them.
