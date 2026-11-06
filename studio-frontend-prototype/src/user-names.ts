@@ -52,15 +52,22 @@ export function nameOf(u: User): string | null {
   return u.display_name?.trim() || u.username?.trim() || u.email?.trim() || null;
 }
 
-/** Each tenant's names, asked once per page load: a failed ask (the caller
- *  may not list that tenant's users) is no names, not an error. */
+/** Each tenant's names, asked once per page load and sign-in: a failed ask
+ *  (the caller may not list that tenant's users) is no names, not an error.
+ *  Another token is asked afresh: who signed in may since have changed, and
+ *  may see other names. */
 const byTenant = new Map<string, Promise<Map<string, string>>>();
+let askedWith: string | null = null;
 
 export function peopleOf(
   token: string,
   tenantId: string,
   list: (token: string, tenantId: string) => Promise<{ items?: User[] }> = api.tenantUsersAll,
 ): Promise<Map<string, string>> {
+  if (token !== askedWith) {
+    byTenant.clear();
+    askedWith = token;
+  }
   let found = byTenant.get(tenantId);
   if (!found) {
     found = list(token, tenantId).then(
@@ -82,6 +89,7 @@ export function peopleOf(
 /** Forget every tenant's names (tests). */
 export function forgetPeople(): void {
   byTenant.clear();
+  askedWith = null;
 }
 
 /** The names the tenants' user lists give, merged; read once per tenant. */

@@ -1559,15 +1559,16 @@ impl EnvironmentService {
         // longer kept is refused rather than run with today's.
         let built = build.and_then(|b| list.built_infra.iter().find(|x| x.build == b));
         let services = match (built, build) {
-            (Some(built), _) if built.services.is_empty() => list.infra.clone(),
-            (Some(built), _) => super::infra::from_lock(&built.services, &list.infra),
+            (Some(built), _) => super::infra::built_services(built, &list.infra),
             (None, Some(b))
                 if !list.built_infra.is_empty() && env.kind == EnvironmentKind::Kubernetes =>
             {
                 return Err(Refusal::Precondition(
                     "BUILD_INFRA_NOT_KEPT",
                     format!(
-                        "the project keeps no infra services for build {b}: it is older than the                          {} it keeps, or from before it kept them; build the product again to                          deploy it",
+                        "the project keeps no infra services for build {b}: it is older than the \
+                         {} it keeps, from before it kept them, or built outside Studio (a CI \
+                         build keeps none); build the product again in Studio to deploy it",
                         super::infra::MAX_LOCKED_BUILDS
                     ),
                 ));

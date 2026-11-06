@@ -1054,11 +1054,12 @@ function AddPlaceMenu({ onPick }: { onPick: (kind: PlaceKind) => void }) {
  *  open in a side panel; an environment is added from its place. */
 export function OrgInfrastructure({ token, org, workspaceIds }: { token: string; org: { id: string; name: string }; workspaceIds: string[] }) {
   const [environments, setEnvironments] = useState<DeployEnvironment[] | null>(null);
-  const people = usePeople(token, [org.id, ...workspaceIds]);
   const [mayManage, setMayManage] = useState(false);
   const [openClusters, setOpenClusters] = useState<string[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  // A requester may be in their project's user list alone.
+  const people = usePeople(token, [org.id, ...workspaceIds, ...deployments.map((d) => d.project_id)]);
   const [projects, setProjects] = useState<Tenant[]>([]);
   const [editing, setEditing] = useState<DeployEnvironment | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);

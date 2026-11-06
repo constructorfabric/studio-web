@@ -18,7 +18,7 @@ import {
   type RegistryPublishPreview,
 } from "./api";
 import { errText, relTime } from "./format";
-import { NO_PEOPLE, personLabel } from "./user-names";
+import { personLabel, usePeople } from "./user-names";
 import { publishPreviewLines } from "./registry";
 import { EmptyState, InfoPopover, PageHeader, StatusChip } from "./ui-standard";
 
@@ -34,6 +34,9 @@ export function PublicationRequests({
   orgId?: string;
 }) {
   const [items, setItems] = useState<PublicationRequest[] | null>(null);
+  // A request saved without its asker's name: the organization's user list
+  // may have it, where the curator may read it.
+  const people = usePeople(token, items?.map((r) => r.organization_id) ?? []);
   const [refused, setRefused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Record<string, RegistryPublishPreview>>({});
@@ -150,7 +153,7 @@ export function PublicationRequests({
                       <b>{r.name}</b>
                       {r.version && <StatusChip tone="neutral">v{r.version.replace(/^v/, "")}</StatusChip>}
                       <span className="sub">
-                        {r.organization_name ?? r.organization_id} · asked by {personLabel(r.requested_by, r.requested_by_name, NO_PEOPLE)} ·{" "}
+                        {r.organization_name ?? r.organization_id} · asked by {personLabel(r.requested_by, r.requested_by_name, people)} ·{" "}
                         {relTime(r.at)}
                       </span>
                     </div>

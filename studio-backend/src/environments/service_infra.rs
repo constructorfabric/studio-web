@@ -105,7 +105,7 @@ impl EnvironmentService {
             .await?
             .0;
         let services = match list.built_infra.first() {
-            Some(built) => infra::from_lock(&built.services, &list.infra),
+            Some(built) => infra::built_services(built, &list.infra),
             None => list.infra.clone(),
         };
         let placement = env.boundaries.infra.clone().unwrap_or_default();

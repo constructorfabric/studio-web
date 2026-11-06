@@ -836,13 +836,22 @@ async fn plan_build(
     Query(q): Query<ProjectQuery>,
     Json(body): Json<StudioBuildRequest>,
 ) -> ApiResult<JsonBody<BuildPlanDto>> {
+    // The profile a build of the same request would take.
+    let profile = match body.profile.filter(|p| !p.trim().is_empty()) {
+        Some(p) => p,
+        None => {
+            envs.0
+                .profile_for(&ctx, q.project_id, body.environment_id)
+                .await
+        }
+    };
     let asked = envs
         .0
         .request_build(
             &ctx,
             q.project_id,
             body.environment_id,
-            body.profile.as_deref().unwrap_or("prod"),
+            &profile,
             body.product_file.as_deref(),
             body.git_ref,
             true,

@@ -4,9 +4,11 @@
  *
  * Read and written as text, the way a person writes it: the rest of the
  * file, its comments among it, is left as it was. Only literals are read --
- * strings, and dicts of strings -- which is all `use_service` takes. A call
- * with anything else keeps its text: `profile_config` is carried over
- * unread. */
+ * strings, and dicts of strings -- which is all `use_service` takes.
+ * `profile_config` is carried over unread; a call that says anything else
+ * (a name for a value, another argument) keeps its whole text, written back
+ * as it is, and a list with more than `use_service` calls in it is not
+ * rewritten at all. */
 
 /** One `use_service(...)` call. */
 export interface UseService {
@@ -19,7 +21,13 @@ export interface UseService {
   config: Record<string, string>;
   /** The `profile_config = {...}` argument as written, carried over unread. */
   profileConfigText?: string;
+  /** The whole call as written, when it says more than the fields above
+   *  read: written back as it is. */
+  text?: string;
 }
+
+/** The arguments `use_service` takes by name. */
+const KEYWORDS = new Set(["source", "image", "chart", "chart_version", "config", "profile_config"]);
 
 type Tok = { kind: "str" | "ident" | "punct"; text: string; value: string; start: number; end: number };
 
@@ -138,14 +146,32 @@ export function readInfra(text: string): UseService[] | null {
     const close = closing(toks, open);
     const first = toks[open + 1];
     const s: UseService = { name: first?.kind === "str" ? first.value : "", source: "", config: {} };
+    // Anything this does not read: the call is then kept as it is written.
+    let unread = first?.kind !== "str" || ![",", ")"].includes(toks[open + 2]?.text ?? "");
+    let positional = 0;
+    for (let j = open + 1; j < close; j++) {
+      if (toks[j].kind === "ident" && toks[j + 1]?.text === "=") unread ||= !KEYWORDS.has(toks[j].text);
+      else positional++;
+      while (j < close && toks[j].text !== ",") j = opens(toks[j]) ? closing(toks, j) + 1 : j + 1;
+    }
+    unread ||= positional > 1;
     for (const key of ["source", "image", "chart", "chart_version"] as const) {
       const a = argument(toks, open, close, key);
       if (a && toks[a.value].kind === "str" && a.end === a.value + 1) s[key] = toks[a.value].value;
+      else if (a) unread = true;
     }
     const config = argument(toks, open, close, "config");
-    if (config && toks[config.value].text === "{") s.config = stringDict(toks, config.value, closing(toks, config.value)) ?? {};
+    if (config) {
+      const dict =
+        toks[config.value].text === "{" && closing(toks, config.value) === config.end - 1
+          ? stringDict(toks, config.value, config.end - 1)
+          : null;
+      if (dict) s.config = dict;
+      else unread = true;
+    }
     const profiles = argument(toks, open, close, "profile_config");
     if (profiles) s.profileConfigText = text.slice(toks[profiles.value].start, toks[profiles.end - 1].end);
+    if (unread) s.text = text.slice(toks[i].start, toks[close].end);
     out.push(s);
     i = close;
   }
@@ -154,8 +180,9 @@ export function readInfra(text: string): UseService[] | null {
 
 const quote = (s: string) => JSON.stringify(s);
 
-/** One call, on one line. */
+/** One call, on one line; one this does not read whole, as it was written. */
 export function useServiceText(s: UseService): string {
+  if (s.text) return s.text;
   const args = [quote(s.name), `source = ${quote(s.source)}`];
   if (s.image) args.push(`image = ${quote(s.image)}`);
   if (s.chart) args.push(`chart = ${quote(s.chart)}`);
@@ -172,6 +199,20 @@ function indentAt(text: string, at: number): string {
   return /^[ \t]*/.exec(text.slice(line))?.[0] ?? "";
 }
 
+/** Whether the value between `value` and `end` (by token) is a list of
+ *  `use_service(...)` calls alone. */
+function onlyCalls(toks: Tok[], value: number, end: number): boolean {
+  if (toks[value]?.text !== "[" || closing(toks, value) !== end - 1) return false;
+  let i = value + 1;
+  while (i < end - 1) {
+    if (!(toks[i].kind === "ident" && toks[i].text === "use_service" && toks[i + 1]?.text === "(")) return false;
+    i = closing(toks, i + 1) + 1;
+    if (toks[i]?.text === ",") i++;
+    else if (i !== end - 1) return false;
+  }
+  return true;
+}
+
 /** `text` with its product's `infra` set to `list`: the argument replaced
  *  where it is, else added before `gears`, else at the end of `product(...)`.
  *  An empty list takes the argument out. */
@@ -180,6 +221,9 @@ export function writeInfra(text: string, list: readonly UseService[]): string {
   const call = productCall(toks);
   if (!call) throw new Error("product.gdl has no product(...) call");
   const arg = argument(toks, call.open, call.close, "infra");
+  if (arg && !onlyCalls(toks, arg.value, arg.end)) {
+    throw new Error("product.gdl's infra says more than use_service(...) calls, which Studio does not rewrite: change it in product.gdl");
+  }
   const gears = argument(toks, call.open, call.close, "gears");
   const indent = indentAt(text, toks[(arg ?? gears)?.name ?? call.close].start) || "    ";
   const block =

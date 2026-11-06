@@ -605,7 +605,17 @@ export function DataTable<T>(props: DataTableProps<T>) {
               {hasActions && <th className="pactions" aria-label="Actions" />}
             </tr>
           </thead>
-          <tbody onMouseLeave={props.onPeek ? () => props.onPeek!(null) : undefined}>
+          <tbody
+            onMouseLeave={props.onPeek ? () => props.onPeek!(null) : undefined}
+            onBlur={
+              props.onPeek
+                ? (e) => {
+                    // Focus moving to another row peeks that one.
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) props.onPeek!(null);
+                  }
+                : undefined
+            }
+          >
             {visible.map((row) => {
               const key = props.rowKey(row);
               const open = expanded.has(key);

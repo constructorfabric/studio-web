@@ -2760,7 +2760,8 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
     // cut short would be read as no manifest, or lose infra services.
     if text.len() > TERMINATION_MESSAGE_BYTES {
         bail!(
-            "the build's manifest is {} bytes, over the {TERMINATION_MESSAGE_BYTES} a              termination message holds; its infra section has {} service(s)",
+            "the build's manifest is {} bytes, over the {TERMINATION_MESSAGE_BYTES} a \
+             termination message holds; its infra section has {} service(s)",
             text.len(),
             manifest.infra.len()
         );

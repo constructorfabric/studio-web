@@ -31,7 +31,7 @@ fn build_input() -> Value {
         json!({
             "project_id": project_id(),
             "environment_id": environment_id("The environment whose cluster builds it and whose registry gets it."),
-            "profile": { "type": "string", "description": "The `kubernetes` profile it builds; default `prod`." },
+            "profile": { "type": "string", "description": "The `kubernetes` profile it builds; absent, the one the project binds to the environment, else `prod`." },
             "product_file": { "type": "string",
                 "description": "The description's path in the repository; default where the product record says." },
             "ref": { "type": "string", "description": "A branch, tag or commit; the repository's branch when absent." }

@@ -1085,21 +1085,50 @@ async fn get_gdl_file(
         product.home(&ctx, project_id),
     );
     // A repository still being cloned is read on the next ask; the corpus
-    // answers meanwhile.
-    let home = home.ok().flatten().map(|h| (h.id, h.dir));
+    // answers meanwhile. One that cannot be read is said when nothing else
+    // has the file, not taken for no repository.
+    let (home, missed) = match home {
+        Ok(home) => (home, None),
+        Err(e) => (None, Some(e)),
+    };
+    let still_reading = |e: &anyhow::Error| {
+        e.downcast_ref::<super::gearbox::HomeStillReading>()
+            .is_some()
+    };
     let found = gearbox
-        .gdl_file(scope, home, gear, path)
+        .gdl_file(scope, home.as_ref(), gear, path)
         .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-        .ok_or_else(|| {
-            let what = gear.map_or_else(
-                || path.unwrap_or_default().to_owned(),
-                |g| format!("gear.gdl of {g}"),
-            );
-            StudioProductError::not_found(format!("no repository the server reads has {what}"))
-                .with_resource(what)
-                .create()
+        .map_err(|e| {
+            if still_reading(&e) {
+                CanonicalError::service_unavailable()
+                    .with_detail(format!("{e:#}"))
+                    .create()
+            } else {
+                CanonicalError::internal(format!("{e:#}")).create()
+            }
         })?;
+    let Some(found) = found else {
+        let what = gear.map_or_else(
+            || path.unwrap_or_default().to_owned(),
+            |g| format!("gear.gdl of {g}"),
+        );
+        return Err(match missed {
+            Some(e) if still_reading(&e) => CanonicalError::service_unavailable()
+                .with_detail(format!("no gear repository has {what}, and {e:#}"))
+                .create(),
+            Some(e) => StudioProductError::not_found(format!(
+                "no repository the server reads has {what}; the project's own repository \
+                 could not be read: {e:#}"
+            ))
+            .with_resource(what)
+            .create(),
+            None => {
+                StudioProductError::not_found(format!("no repository the server reads has {what}"))
+                    .with_resource(what)
+                    .create()
+            }
+        });
+    };
     Ok(Json(GdlFileDto {
         source: found.source,
         path: found.path,
@@ -1981,13 +2010,14 @@ async fn preview_product(
     };
     let latest_text = match &latest {
         Some(l) => Some(l.text.clone()),
-        // Without kept revisions, the repository's file is the latest.
+        // Without kept revisions, the repository's file is the latest. A
+        // read that failed is no missing file: written over by a render, the
+        // description would lose what the record does not hold.
         None if write && !kept => product
             .service
             .read_project_file(&ctx, &project, &product_path)
             .await
-            .ok()
-            .flatten(),
+            .map_err(|e| write_problem("the description could not be read", &e))?,
         None => None,
     };
     let record_value = record.as_ref().map(|n| &n.value);

@@ -1590,6 +1590,18 @@ pub fn from_lock(locked: &[LockedService], records: &[InfraService]) -> Vec<Infr
         .collect()
 }
 
+/// The services a deploy of `built` runs: what its lock resolved
+/// ([`from_lock`]), or the project's records as they are when the build kept
+/// none (ADR-0064). One rule for the plan and the deploy, so the plan shows
+/// what a deploy will install and refuse.
+pub fn built_services(built: &BuiltInfra, records: &[InfraService]) -> Vec<InfraService> {
+    if built.services.is_empty() {
+        records.to_vec()
+    } else {
+        from_lock(&built.services, records)
+    }
+}
+
 fn merge_obj(base: &mut Value, over: Value) {
     super::model::merge(base, over);
 }

@@ -571,7 +571,8 @@ pub struct StudioBuildRequest {
     /// The environment whose cluster builds it and whose registry gets it.
     #[schema(value_type = String)]
     pub environment_id: Uuid,
-    /// The `kubernetes` profile it builds; default `prod`.
+    /// The `kubernetes` profile it builds; absent or blank, the profile the
+    /// project binds to the environment, else `prod`.
     #[serde(default)]
     pub profile: Option<String>,
     /// The product's description in the repository; default where the
@@ -622,7 +623,8 @@ pub struct BuildWorkflowRequest {
     /// The environment whose registry the workflow publishes to.
     #[schema(value_type = String)]
     pub environment_id: Uuid,
-    /// The `kubernetes` profile it builds; default `prod`.
+    /// The `kubernetes` profile it builds; absent or blank, the profile the
+    /// project binds to the environment, else `prod`.
     #[serde(default)]
     pub profile: Option<String>,
     /// The product's description in the repository; default where the
