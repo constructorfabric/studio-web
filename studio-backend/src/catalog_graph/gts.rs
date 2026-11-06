@@ -429,8 +429,9 @@ pub fn graph_node_type_schemas() -> Vec<Value> {
 ///
 /// Declares `component` and `day` as index paths, which is what lets a history
 /// read ask the graph for one component, or for one week of days, instead of
-/// paging every snapshot ever taken. The index has to be declared here, at
-/// first registration: graph-storage cannot add one to a type afterwards.
+/// paging every snapshot ever taken. A path added here later reaches a
+/// stored type through the sink's `on_existing: Update` registration, as long
+/// as the change is compatible.
 /// No search traits -- a snapshot is nothing a person looks for by text.
 pub fn graph_snapshot_type_schema() -> Value {
     json!({

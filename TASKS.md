@@ -124,9 +124,11 @@ What the release leaves open (its notes: `docs/desktop-release-notes.md`):
 
 - [ ] After the weftgraph deploy on studio-dev @andrejk666
 
-  Update the stored edge types with `scripts/graph-storage-update-edge-types.sh`
-  and then drop the script (#532); drop `outbox_repair` once toolkit-db
-  upgrades old outboxes itself (#531). From #512 and #521.
+  ~~Update the stored edge types with `scripts/graph-storage-update-edge-types.sh`
+  and then drop the script (#532)~~ -- done in #966: the in-process
+  registration passes `on_existing: update`, and the script is gone. Drop
+  `outbox_repair` once toolkit-db upgrades old outboxes itself (#531). From
+  #512 and #521.
 
 - [ ] Look at the Components readiness in a running IDE @andrejk666
 
