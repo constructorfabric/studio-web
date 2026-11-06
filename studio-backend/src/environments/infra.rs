@@ -72,6 +72,60 @@ pub struct InfraPlacement {
     /// The organization's shared places, by service, for `shared`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shared: Vec<SharedService>,
+    /// How a service placed with the product is reached at its
+    /// `public_url`: the Ingress its generated chart carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ingress: Option<InfraIngress>,
+}
+
+/// The Ingress a generated chart routes a service's `public_url` with
+/// (ADR-0064, amended): what the cluster's ingress controller asks of it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InfraIngress {
+    /// The `ingressClassName`; `None`: the environment's preview class, else
+    /// the cluster's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    /// The TLS secret of an `https://` address; `None`: the controller's
+    /// default certificate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_secret: Option<String>,
+    /// Annotations the controller reads (`cert-manager.io/cluster-issuer`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub annotations: BTreeMap<String, String>,
+}
+
+/// How many annotations an infra Ingress may carry.
+pub const MAX_INGRESS_ANNOTATIONS: usize = 20;
+
+fn check_ingress(i: Option<InfraIngress>) -> Result<Option<InfraIngress>, String> {
+    let Some(mut i) = i else { return Ok(None) };
+    let tidy = |v: Option<String>| v.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    i.class = tidy(i.class.take());
+    i.tls_secret = tidy(i.tls_secret.take());
+    for (what, v) in [("ingress class", &i.class), ("TLS secret", &i.tls_secret)] {
+        if let Some(v) = v
+            && !super::model::is_dns_name(v)
+        {
+            return Err(format!("'{v}' is not an {what} name"));
+        }
+    }
+    if i.annotations.len() > MAX_INGRESS_ANNOTATIONS {
+        return Err(format!(
+            "an infra Ingress takes at most {MAX_INGRESS_ANNOTATIONS} annotations"
+        ));
+    }
+    for (k, v) in &i.annotations {
+        if k.is_empty() || k.contains(char::is_whitespace) || k.len() > 253 {
+            return Err(format!("'{k}' is not an annotation name"));
+        }
+        if v.contains(['\n', '\r']) || v.contains("{{") {
+            return Err(format!(
+                "the annotation {k} is one line without `{{{{`: it goes into a chart"
+            ));
+        }
+    }
+    Ok((i != InfraIngress::default()).then_some(i))
 }
 
 /// One service an organization runs for every product of an environment.
@@ -129,6 +183,7 @@ pub fn check_placement(
             }
         }
     }
+    p.ingress = check_ingress(p.ingress.take())?;
     if p == InfraPlacement::default() {
         return Ok(None);
     }
@@ -207,8 +262,20 @@ pub struct InfraService {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chart_values: Option<Value>,
     /// Where people reach it (an issuer's public address), `{public_url}`.
+    /// Placed with the product, its generated chart routes it with an
+    /// Ingress.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    /// Files its container reads, by absolute path (a realm to import at
+    /// `/opt/keycloak/data/import/product.json`): text whose `{secret.KEY}`,
+    /// `{host}`, `{public_url}`, `{namespace}`, `{port.x}` and `{config.K}`
+    /// are filled as in `provides`; any other brace is the file's own. The
+    /// generated chart mounts them read-only.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<String, String>,
+    /// Arguments after the passport's (`--import-realm`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
 }
 
 impl InfraService {
@@ -224,6 +291,99 @@ impl InfraService {
 
 /// How large a ready chart's values may be.
 pub const MAX_CHART_VALUES_BYTES: usize = 32 * 1024;
+
+/// How large a service's files may be, all together.
+pub const MAX_FILES_BYTES: usize = 256 * 1024;
+
+/// How many files a service may be given.
+pub const MAX_FILES: usize = 20;
+
+/// How many arguments a service may be given after its passport's.
+pub const MAX_ARGS: usize = 20;
+
+/// The template name at the start of `text` (`{secret.KEY}…`) and the
+/// length it takes; `None` when the brace there is the file's own.
+fn template_at(text: &str) -> Option<(TemplateRef, usize)> {
+    let after = text.strip_prefix('{')?;
+    let close = after.find(['}', '{'])?;
+    if !after[close..].starts_with('}') {
+        return None;
+    }
+    let r = service_gdl::template_refs(&text[..close + 2])
+        .ok()?
+        .into_iter()
+        .next()?;
+    Some((r, close + 2))
+}
+
+/// `text` with each template name in it given to `value`, and replaced by
+/// what it answers; every other brace -- a JSON object's -- kept.
+fn fill_file(
+    text: &str,
+    value: &mut dyn FnMut(&TemplateRef) -> Result<String, String>,
+) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        rest = &rest[open..];
+        match template_at(rest) {
+            Some((r, len)) => {
+                out.push_str(&value(&r)?);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('{');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// The template names a file's text refers to.
+fn file_refs(text: &str) -> Vec<TemplateRef> {
+    let mut refs = Vec::new();
+    let _ = fill_file(text, &mut |r| {
+        refs.push(r.clone());
+        Ok(String::new())
+    });
+    refs
+}
+
+/// Is `path` an absolute path in a container: `/`-separated names, none
+/// empty, `.` or `..`.
+fn file_path(path: &str) -> Result<(), String> {
+    let ok = path.len() > 1
+        && path.len() <= 255
+        && path.starts_with('/')
+        && path[1..]
+            .split('/')
+            .all(|n| !n.is_empty() && n != "." && n != "..")
+        && !path.chars().any(|c| c.is_control() || c == '\\');
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "'{path}' is not an absolute path in the container (/…, no `..`)"
+        ))
+    }
+}
+
+/// The host and path of an address: `https://id.shop.example/auth` is
+/// `id.shop.example` and `/auth`; without a path, `/`.
+pub fn host_and_path(url: &str) -> Option<(&str, &str)> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let (authority, path) = match rest.find('/') {
+        Some(at) => rest.split_at(at),
+        None => (rest, "/"),
+    };
+    let host = authority.split(':').next().unwrap_or(authority);
+    (super::model::is_dns_name(host) && !path.contains(['?', '#', ' '])).then_some((host, path))
+}
 
 /// The first name `template` refers to that `p` does not declare.
 fn undeclared(p: &InfraPassport, template: &str) -> Result<Option<TemplateRef>, String> {
@@ -356,9 +516,45 @@ pub fn checked_services(mut list: Vec<InfraService>) -> Result<Vec<InfraService>
             .map(|u| u.trim().trim_end_matches('/').to_owned())
             .filter(|u| !u.is_empty());
         if let Some(u) = &s.public_url
-            && !(u.starts_with("https://") || u.starts_with("http://"))
+            && host_and_path(u).is_none()
         {
-            return Err(at(format!("'{u}' is not an address (https://…)")));
+            return Err(at(format!(
+                "'{u}' is not an address (https://host/path, the host a DNS name)"
+            )));
+        }
+        s.args.retain(|a| !a.trim().is_empty());
+        if s.args.len() > MAX_ARGS {
+            return Err(at(format!("at most {MAX_ARGS} more arguments")));
+        }
+        if let Some(a) = s
+            .args
+            .iter()
+            .find(|a| a.contains("{{") || a.contains(['\n', '\r']))
+        {
+            return Err(at(format!(
+                "argument '{a}' is one line without `{{{{`: it goes into a chart"
+            )));
+        }
+        if s.files.len() > MAX_FILES {
+            return Err(at(format!("at most {MAX_FILES} files")));
+        }
+        let size: usize = s.files.iter().map(|(k, v)| k.len() + v.len()).sum();
+        if size > MAX_FILES_BYTES {
+            return Err(at(format!(
+                "its files are at most {MAX_FILES_BYTES} bytes together, not {size}"
+            )));
+        }
+        for (path, text) in &s.files {
+            file_path(path).map_err(at)?;
+            let p = &s.passport;
+            if let Some(r) = file_refs(text)
+                .into_iter()
+                .find(|r| matches!(undeclared(p, &r.to_string()), Ok(Some(_))))
+            {
+                return Err(at(format!(
+                    "the file {path} refers to {r}, which the passport does not declare"
+                )));
+            }
         }
     }
     Ok(list)
@@ -403,6 +599,77 @@ pub struct PlanItem {
     pub provides: Vec<(String, String)>,
     /// Why a deploy would be refused now, with its code.
     pub refusal: Option<(&'static str, String)>,
+    /// The address its generated chart routes with an Ingress: its
+    /// `public_url`.
+    pub route: Option<String>,
+    /// What the deploy does not do with what the project says of it: files
+    /// and arguments only a generated chart applies.
+    pub notes: Vec<String>,
+}
+
+/// The code a deploy is refused with when a capability's value would be
+/// an address only the cluster reaches.
+pub const PUBLIC_URL_MISSING: &str = "INFRA_PUBLIC_URL_MISSING";
+
+/// Why `s`, installed by Studio, cannot give what it provides: a template
+/// says `{public_url}`, and the project gives the service none.
+fn public_url_missing(s: &InfraService) -> Option<String> {
+    if s.public_url.is_some() {
+        return None;
+    }
+    let uses =
+        |t: &str| service_gdl::template_refs(t).is_ok_and(|r| r.contains(&TemplateRef::PublicUrl));
+    let capabilities: Vec<&str> = s
+        .passport
+        .provides
+        .iter()
+        .filter(|(_, t)| uses(t))
+        .map(|(k, _)| k.as_str())
+        .collect();
+    let files: Vec<&str> = s
+        .files
+        .iter()
+        .filter(|(_, t)| file_refs(t).contains(&TemplateRef::PublicUrl))
+        .map(|(k, _)| k.as_str())
+        .collect();
+    if capabilities.is_empty() && files.is_empty() {
+        return None;
+    }
+    let what = if capabilities.is_empty() {
+        format!("its file(s) {}", files.join(", "))
+    } else {
+        format!("what it gives as {}", capabilities.join(", "))
+    };
+    Some(format!(
+        "'{name}' fills {what} with {{public_url}}, and the project gives it no public address: \
+         a browser cannot reach the cluster's own http://{name}. Set its public_url to the \
+         address people reach it at (https://id.<your domain>, in Product › Infrastructure or \
+         PUT /infra-services); placed with the product, its chart then routes that address to it",
+        name = s.name()
+    ))
+}
+
+/// What a deploy leaves undone of what the project says of `s`, installed
+/// as `install`.
+fn notes_for(install: Install, s: &InfraService) -> Vec<String> {
+    let given = match (s.files.is_empty(), s.args.is_empty()) {
+        (true, true) => return Vec::new(),
+        (false, true) => "its files are",
+        (true, false) => "its extra arguments are",
+        (false, false) => "its files and extra arguments are",
+    };
+    match install {
+        Install::Generated => Vec::new(),
+        Install::Chart => vec![format!(
+            "{given} not applied: a ready chart takes what it mounts and runs from its values"
+        )],
+        Install::Database => vec![format!(
+            "{given} not applied: the database step runs the server with its image alone"
+        )],
+        Install::Shared => vec![format!(
+            "{given} not applied: the shared place is the organization's"
+        )],
+    }
 }
 
 /// What a deploy to an environment placing infra services as `placement`
@@ -454,7 +721,13 @@ pub fn plan(
                         .err()
                         .map(|why| ("IMAGE_NOT_IN_PROJECT_PATH", why)),
                 },
-            };
+            }
+            .or_else(|| match install {
+                Install::Chart | Install::Generated => {
+                    public_url_missing(s).map(|why| (PUBLIC_URL_MISSING, why))
+                }
+                Install::Database | Install::Shared => None,
+            });
             PlanItem {
                 service: s.name().to_owned(),
                 placement: mode,
@@ -476,6 +749,10 @@ pub fn plan(
                     .map(|k| (k.clone(), variable(k)))
                     .collect(),
                 refusal,
+                route: (install == Install::Generated)
+                    .then(|| s.public_url.clone())
+                    .flatten(),
+                notes: notes_for(install, s),
             }
         })
         .collect()
@@ -499,24 +776,42 @@ pub struct InfraInstall {
     pub install: Install,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared: Option<SharedService>,
+    /// The Ingress its generated chart routes its `public_url` with; `None`
+    /// routes nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ingress: Option<InfraIngress>,
 }
 
 /// What a deploy's run installs, or reads from the shared place, for
 /// `services` where infra services are placed as `placement`.
+/// `default_class` is the environment's preview ingress class, which an
+/// infra Ingress asks for unless the placement names its own.
 pub fn installs(
     placement: Option<&InfraPlacement>,
     services: &[InfraService],
+    default_class: Option<&str>,
 ) -> Vec<InfraInstall> {
     let mode = placement.map(|p| p.placement).unwrap_or_default();
+    let mut settings = placement
+        .and_then(|p| p.ingress.clone())
+        .unwrap_or_default();
+    if settings.class.is_none() {
+        settings.class = default_class.map(str::to_owned);
+    }
     services
         .iter()
-        .map(|s| InfraInstall {
-            service: s.clone(),
-            install: install_for(mode, s),
-            shared: placement
-                .filter(|_| mode == Placement::Shared)
-                .and_then(|p| p.shared.iter().find(|x| x.service == s.name()))
-                .cloned(),
+        .map(|s| {
+            let install = install_for(mode, s);
+            InfraInstall {
+                service: s.clone(),
+                install,
+                shared: placement
+                    .filter(|_| mode == Placement::Shared)
+                    .and_then(|p| p.shared.iter().find(|x| x.service == s.name()))
+                    .cloned(),
+                ingress: (install == Install::Generated && s.public_url.is_some())
+                    .then(|| settings.clone()),
+            }
         })
         .collect()
 }
@@ -566,13 +861,48 @@ pub fn secret_key(service: &str, key: &str) -> String {
     format!("INFRA_{}_{key}", variable(service))
 }
 
-/// The port a template's `{public_url}` and the probes use: `http`, else the
-/// first.
+/// The port the probes and an Ingress use: `http`, else the first.
 fn main_port(p: &InfraPassport) -> Option<(&str, u16)> {
     p.ports
         .get_key_value("http")
         .or_else(|| p.ports.iter().next())
         .map(|(k, v)| (k.as_str(), *v))
+}
+
+/// What the template name `r` is for `s` running in `namespace`.
+fn value_of(
+    s: &InfraService,
+    r: &TemplateRef,
+    namespace: &str,
+    secrets: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let p = &s.passport;
+    match r {
+        TemplateRef::Host => Ok(p.name.clone()),
+        TemplateRef::Namespace => Ok(namespace.to_owned()),
+        // Never the cluster's own address: a browser does not reach it, and
+        // the plan refuses the deploy before ([`PUBLIC_URL_MISSING`]).
+        TemplateRef::PublicUrl => s.public_url.clone().ok_or_else(|| {
+            format!(
+                "{PUBLIC_URL_MISSING}: {} has no public address for {{public_url}}",
+                p.name
+            )
+        }),
+        TemplateRef::Port(n) => p
+            .ports
+            .get(n)
+            .map(u16::to_string)
+            .ok_or_else(|| format!("{} has no port '{n}'", p.name)),
+        TemplateRef::Config(k) => p
+            .config
+            .get(k)
+            .cloned()
+            .ok_or_else(|| format!("{} has no config {k}", p.name)),
+        TemplateRef::Secret(k) => secrets
+            .get(k)
+            .cloned()
+            .ok_or_else(|| format!("{} has no secret {k} yet", p.name)),
+    }
 }
 
 /// `template` with each name filled for `s` running in `namespace`.
@@ -582,48 +912,25 @@ pub fn resolve(
     namespace: &str,
     secrets: &BTreeMap<String, String>,
 ) -> Result<String, String> {
-    let p = &s.passport;
-    let mut out = String::new();
-    let mut rest = template;
     // Checked against the passport on the way in: every name is known.
     service_gdl::template_refs(template)?;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        let close = after.find('}').unwrap_or(after.len());
-        let name = &after[..close];
-        let value = match name.split_once('.') {
-            None if name == "host" => p.name.clone(),
-            None if name == "namespace" => namespace.to_owned(),
-            None if name == "public_url" => match &s.public_url {
-                Some(u) => u.clone(),
-                None => {
-                    let (_, port) = main_port(p)
-                        .ok_or_else(|| format!("{} has no port to be reached at", p.name))?;
-                    format!("http://{}:{port}", p.name)
-                }
-            },
-            Some(("port", n)) => p
-                .ports
-                .get(n)
-                .map(u16::to_string)
-                .ok_or_else(|| format!("{} has no port '{n}'", p.name))?,
-            Some(("config", k)) => p
-                .config
-                .get(k)
-                .cloned()
-                .ok_or_else(|| format!("{} has no config {k}", p.name))?,
-            Some(("secret", k)) => secrets
-                .get(k)
-                .cloned()
-                .ok_or_else(|| format!("{} has no secret {k} yet", p.name))?,
-            _ => return Err(format!("`{{{name}}}` is not a template name")),
-        };
-        out.push_str(&value);
-        rest = after.get(close + 1..).unwrap_or_default();
-    }
-    out.push_str(rest);
-    Ok(out)
+    fill_file(template, &mut |r| value_of(s, r, namespace, secrets))
+}
+
+/// `s`'s files with their template names filled, by path.
+pub fn files(
+    s: &InfraService,
+    namespace: &str,
+    secrets: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, String> {
+    s.files
+        .iter()
+        .map(|(path, text)| {
+            fill_file(text, &mut |r| value_of(s, r, namespace, secrets))
+                .map(|t| (path.clone(), t))
+                .map_err(|e| format!("the file {path}: {e}"))
+        })
+        .collect()
 }
 
 /// What `s` provides, by variable, running in `namespace` with `secrets`
@@ -690,18 +997,75 @@ fn labels(name: &str) -> Value {
     })
 }
 
+/// The annotation on a generated pod with the hash of its files: a change
+/// of a file is a change of the pod, which restarts it.
+pub const FILES_HASH_ANNOTATION: &str = "studio.constructor.tech/files-sha256";
+
+/// The Ingress routing `url` to `service`'s `port`, as `settings` ask: the
+/// class, the annotations, and for `https://` a TLS section naming the
+/// host (and the secret, when one is given). Like a preview's address
+/// (`preview::ingress`), with the path the address has.
+fn infra_ingress(
+    service: &str,
+    url: &str,
+    port: Option<(&str, u16)>,
+    settings: &InfraIngress,
+) -> Result<Value, String> {
+    let (host, path) =
+        host_and_path(url).ok_or_else(|| format!("{service}: '{url}' is not an address"))?;
+    let (_, port) = port.ok_or_else(|| format!("{service} has no port to route {url} to"))?;
+    let mut spec = json!({
+        "rules": [{
+            "host": host,
+            "http": { "paths": [{
+                "path": path,
+                "pathType": "Prefix",
+                "backend": { "service": { "name": service, "port": { "number": port } } },
+            }]},
+        }],
+    });
+    if let Some(class) = &settings.class {
+        spec["ingressClassName"] = class.as_str().into();
+    }
+    if url.starts_with("https://") {
+        let mut tls = json!({ "hosts": [host] });
+        if let Some(secret) = &settings.tls_secret {
+            tls["secretName"] = secret.as_str().into();
+        }
+        spec["tls"] = json!([tls]);
+    }
+    let mut metadata = json!({ "name": service, "labels": labels(service) });
+    if !settings.annotations.is_empty() {
+        metadata["annotations"] = json!(settings.annotations);
+    }
+    Ok(json!({
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "Ingress",
+        "metadata": metadata,
+        "spec": spec,
+    }))
+}
+
 /// The minimal chart Studio generates from `s`'s passport (ADR-0064 §5): a
 /// Deployment, or a StatefulSet with a volume claim when it keeps data; a
-/// Service for its ports; a Secret with what Studio made for it. Each file
-/// as `(path in the chart, contents)`. Nothing in it is templated: it is the
+/// Service for its ports; a Secret with what Studio made for it; the
+/// project's files for it in a ConfigMap -- a Secret when one of them says a
+/// `{secret.*}` -- mounted read-only at their paths, a hash of them on the
+/// pod so a change restarts it; and, given `ingress`, an Ingress routing its
+/// `public_url` to its http port. Each file as `(path in the chart,
+/// contents)`. Nothing in it is templated -- data is base64 -- it is the
 /// manifests as they apply, under Helm's release for its lifecycle.
 pub fn generated_chart(
     s: &InfraService,
     image: &str,
+    namespace: &str,
     secrets: &BTreeMap<String, String>,
     pull_secret: Option<&str>,
+    ingress: Option<&InfraIngress>,
 ) -> Result<Vec<(String, String)>, String> {
     use base64::Engine as _;
+    use sha2::Digest as _;
+    let b64 = |v: &str| base64::engine::general_purpose::STANDARD.encode(v.as_bytes());
     let p = &s.passport;
     let name = p.name.as_str();
     let mut files = Vec::new();
@@ -761,8 +1125,9 @@ pub fn generated_chart(
         "ports": p.ports.iter().map(|(n, port)| json!({ "name": n, "containerPort": port })).collect::<Vec<_>>(),
     });
     let c = container.as_object_mut().expect("an object");
-    if !p.args.is_empty() {
-        c.insert("args".into(), json!(p.args));
+    let args: Vec<&String> = p.args.iter().chain(&s.args).collect();
+    if !args.is_empty() {
+        c.insert("args".into(), json!(args));
     }
     if !p.secrets.is_empty() {
         c.insert(
@@ -795,23 +1160,82 @@ pub fn generated_chart(
         c.insert("livenessProbe".into(), live);
     }
     let volume = "data";
+    let mut mounts = Vec::new();
     if let (true, Some(path)) = (p.stateful, &p.data_path) {
-        c.insert(
-            "volumeMounts".into(),
-            json!([{ "name": volume, "mountPath": path }]),
+        mounts.push(json!({ "name": volume, "mountPath": path }));
+    }
+    // The project's files: one object, each file a key mounted by subPath
+    // at its path, read-only.
+    let filled = self::files(s, namespace, secrets)?;
+    let mut volumes = Vec::new();
+    let mut annotations = serde_json::Map::new();
+    if !filled.is_empty() {
+        let holder = format!("{name}-files");
+        let secret = s.files.values().any(|t| {
+            file_refs(t)
+                .iter()
+                .any(|r| matches!(r, TemplateRef::Secret(_)))
+        });
+        let mut data = serde_json::Map::new();
+        let mut hash = sha2::Sha256::new();
+        for (n, (path, text)) in filled.iter().enumerate() {
+            let key = format!("file-{n}");
+            data.insert(key.clone(), b64(text).into());
+            mounts.push(json!({
+                "name": "files", "mountPath": path, "subPath": key, "readOnly": true,
+            }));
+            hash.update(path.as_bytes());
+            hash.update([0u8]);
+            hash.update(text.as_bytes());
+            hash.update([0u8]);
+        }
+        let object = if secret {
+            volumes.push(json!({ "name": "files", "secret": { "secretName": holder } }));
+            json!({
+                "apiVersion": "v1", "kind": "Secret",
+                "metadata": { "name": holder, "labels": labels(name) },
+                "type": "Opaque",
+                "data": data,
+            })
+        } else {
+            volumes.push(json!({ "name": "files", "configMap": { "name": holder } }));
+            json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": { "name": holder, "labels": labels(name) },
+                "binaryData": data,
+            })
+        };
+        files.push(("templates/files.yaml".to_owned(), yaml(&object)?));
+        annotations.insert(
+            FILES_HASH_ANNOTATION.into(),
+            format!("{:x}", hash.finalize()).into(),
         );
     }
+    if !mounts.is_empty() {
+        c.insert("volumeMounts".into(), mounts.into());
+    }
     let mut pod = json!({ "containers": [container] });
+    if !volumes.is_empty() {
+        merge_obj(&mut pod, json!({ "volumes": volumes }));
+    }
     if let Some(secret) = pull_secret {
         merge_obj(
             &mut pod,
             json!({ "imagePullSecrets": [{ "name": secret }] }),
         );
     }
+    let mut meta = json!({ "labels": labels(name) });
+    if !annotations.is_empty() {
+        meta["annotations"] = annotations.into();
+    }
     let template = json!({
-        "metadata": { "labels": labels(name) },
+        "metadata": meta,
         "spec": pod,
     });
+    if let (Some(settings), Some(url)) = (ingress, &s.public_url) {
+        let object = infra_ingress(name, url, main_port(p), settings)?;
+        files.push(("templates/ingress.yaml".to_owned(), yaml(&object)?));
+    }
     let selector = json!({ "matchLabels": { "app.kubernetes.io/name": name } });
     let workload = if p.stateful {
         json!({
@@ -983,6 +1407,8 @@ pub fn from_lock(locked: &[LockedService], records: &[InfraService]) -> Vec<Infr
                 chart_version: record.and_then(|r| r.chart_version.clone()),
                 chart_values: record.and_then(|r| r.chart_values.clone()),
                 public_url: record.and_then(|r| r.public_url.clone()),
+                files: record.map(|r| r.files.clone()).unwrap_or_default(),
+                args: record.map(|r| r.args.clone()).unwrap_or_default(),
             }
         })
         .collect()

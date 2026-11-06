@@ -211,10 +211,16 @@ pub(super) async fn bring(
                 let files = infra::generated_chart(
                     &i.service,
                     image,
+                    &p.namespace,
                     &secrets,
                     p.registry_connection_id.map(|_| PULL_SECRET),
+                    i.ingress.as_ref(),
                 )
                 .map_err(|e| anyhow!("{name}: {e}"))?;
+                if let Some(url) = i.ingress.as_ref().and(i.service.public_url.as_deref()) {
+                    ctx.progress(format!("{name}: an Ingress routes {url} to it"))
+                        .await;
+                }
                 let dir = scratch.path().join("infra").join(name);
                 write_chart(&dir, files)?;
                 ctx.progress(format!(

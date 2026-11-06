@@ -1,8 +1,18 @@
 # A product's own identity provider, an infra service (ADR-0064): stock
 # Keycloak, imported into the project's path and run beside the product, so
 # a deployed product never signs in through Studio's own IdP (ADR-0062 §9).
-# The realm `product` is the product's to create or import; the admin
-# password is made by Studio once per environment and kept in credstore.
+# The admin password and the confidential client's secret are made by
+# Studio once per environment and kept in credstore.
+#
+# The realm `product` (the issuer's `/realms/product`) is the project's to
+# give: as a file of the service, a realm JSON at
+# `/opt/keycloak/data/import/product.json` with the extra argument
+# `--import-realm` (Product › Infrastructure › Address & files › Keycloak
+# realm writes one: a public client for the portal, a confidential one whose
+# secret is `{secret.OIDC_CLIENT_SECRET}`). Keycloak imports it at start
+# when the realm does not exist yet. The issuer is `{public_url}`: the
+# project sets the address a browser reaches, and the generated chart
+# routes it with an Ingress; without one a deploy is refused.
 gdl_version = "1.6"
 
 service(
@@ -21,9 +31,10 @@ service(
         "KC_PROXY_HEADERS": "xforwarded",
         "KC_BOOTSTRAP_ADMIN_USERNAME": "admin",
     },
-    secrets = ["KC_BOOTSTRAP_ADMIN_PASSWORD"],
+    secrets = ["KC_BOOTSTRAP_ADMIN_PASSWORD", "OIDC_CLIENT_SECRET"],
     provides = {
         "oidc.issuer": "{public_url}/realms/product",
+        "oidc.client_secret": "{secret.OIDC_CLIENT_SECRET}",
         "keycloak.admin_url": "http://{host}:{port.http}",
         "keycloak.admin_password": "{secret.KC_BOOTSTRAP_ADMIN_PASSWORD}",
     },
