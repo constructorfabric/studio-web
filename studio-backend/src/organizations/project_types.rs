@@ -44,18 +44,27 @@ pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {
 #[derive(Clone)]
 pub struct ProjectTypes(pub Arc<dyn AccountManagementClient>);
 
-/// A tenant's project types, and the phases its projects move through.
+/// A tenant's project types.
 #[derive(Debug)]
-#[toolkit_macros::api_dto(request, response)]
+#[toolkit_macros::api_dto(response)]
 pub struct ProjectTypesDocDto {
-    /// The types, in the order the New project card offers them; absent when
-    /// the tenant sets only phases, and the built-in types apply.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The types, in the order the New project card offers them.
+    #[schema(value_type = Vec<Object>)]
+    pub types: Vec<Value>,
+}
+
+/// What a tenant sets: its types, the phases its projects move through, or
+/// both. A field left out keeps what the tenant has.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ProjectTypesWriteDto {
+    /// The types, in the order the New project card offers them.
+    #[serde(default)]
     #[schema(value_type = Option<Vec<Object>>)]
     pub types: Option<Vec<Value>>,
     /// The phases its projects move through, in order (the portal's
-    /// `project-lifecycle.ts`); absent when the tenant sets none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `project-lifecycle.ts`).
+    #[serde(default)]
     #[schema(value_type = Option<Vec<Object>>)]
     pub phases: Option<Vec<Value>>,
 }
@@ -69,6 +78,13 @@ pub struct ProjectTypesDto {
     /// What applies: its own, else its nearest ancestor's; absent when nobody
     /// set any and the built-in types apply.
     pub resolved: Option<ProjectTypesDocDto>,
+    /// The phases the tenant sets itself; absent when it sets none.
+    #[schema(value_type = Option<Vec<Object>>)]
+    pub own_phases: Option<Vec<Value>>,
+    /// The phases that apply: its own, else those of the nearest document
+    /// above it; absent when nobody set any and the built-in phases apply.
+    #[schema(value_type = Option<Vec<Object>>)]
+    pub resolved_phases: Option<Vec<Value>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -87,14 +103,30 @@ fn tenant_of(q: &TenantQuery) -> ApiResult<Uuid> {
         })
 }
 
-fn doc(value: Value) -> Option<ProjectTypesDocDto> {
-    let list = |field: &str| value.get(field).and_then(Value::as_array).cloned();
-    let (types, phases) = (list("types"), list("phases"));
-    (types.is_some() || phases.is_some()).then_some(ProjectTypesDocDto { types, phases })
+/// The list a stored document keeps under `field`, if it keeps one.
+fn list(value: &Value, field: &str) -> Option<Vec<Value>> {
+    value.get(field).and_then(Value::as_array).cloned()
+}
+
+fn doc(value: &Value) -> Option<ProjectTypesDocDto> {
+    list(value, "types").map(|types| ProjectTypesDocDto { types })
 }
 
 fn type_id() -> GtsTypeId {
     GtsTypeId::new(PROJECT_TYPES_METADATA_TYPE)
+}
+
+/// The tenant's own document; null when it has none.
+async fn own_document(
+    store: &ProjectTypes,
+    ctx: &SecurityContext,
+    tenant: Uuid,
+) -> ApiResult<Option<Value>> {
+    match store.0.get_metadata(ctx, tenant, type_id()).await {
+        Ok(entry) => Ok(Some(entry.value)),
+        Err(CanonicalError::NotFound { .. }) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 async fn get_project_types(
@@ -104,30 +136,36 @@ async fn get_project_types(
 ) -> ApiResult<JsonBody<ProjectTypesDto>> {
     let store = available(store)?;
     let tenant = tenant_of(&query)?;
-    let own = match store.0.get_metadata(&ctx, tenant, type_id()).await {
-        Ok(entry) => doc(entry.value),
-        Err(CanonicalError::NotFound { .. }) => None,
-        Err(e) => return Err(e),
+    let own_doc = own_document(&store, &ctx, tenant).await?;
+    let own = own_doc.as_ref().and_then(doc);
+    let own_phases = own_doc.as_ref().and_then(|v| list(v, "phases"));
+    let above = if own.is_none() || own_phases.is_none() {
+        store.0.resolve_metadata(&ctx, tenant, type_id()).await?
+    } else {
+        None
     };
     let resolved = match &own {
         Some(o) => Some(ProjectTypesDocDto {
             types: o.types.clone(),
-            phases: o.phases.clone(),
         }),
-        None => store
-            .0
-            .resolve_metadata(&ctx, tenant, type_id())
-            .await?
-            .and_then(|e| doc(e.value)),
+        None => above.as_ref().and_then(|e| doc(&e.value)),
     };
-    Ok(Json(ProjectTypesDto { own, resolved }))
+    let resolved_phases = own_phases
+        .clone()
+        .or_else(|| above.as_ref().and_then(|e| list(&e.value, "phases")));
+    Ok(Json(ProjectTypesDto {
+        own,
+        resolved,
+        own_phases,
+        resolved_phases,
+    }))
 }
 
 async fn put_project_types(
     Extension(ctx): Extension<SecurityContext>,
     Extension(store): Extension<Option<ProjectTypes>>,
     axum::extract::Query(query): axum::extract::Query<TenantQuery>,
-    Json(body): Json<ProjectTypesDocDto>,
+    Json(body): Json<ProjectTypesWriteDto>,
 ) -> ApiResult<JsonBody<ProjectTypesDocDto>> {
     let store = available(store)?;
     let tenant = tenant_of(&query)?;
@@ -140,19 +178,28 @@ async fn put_project_types(
                 .create());
         }
     }
-    let mut value = serde_json::Map::new();
+    // What the write leaves out stays as the tenant has it, so a writer of
+    // the types keeps the phases and the other way round.
+    let mut value = match own_document(&store, &ctx, tenant).await? {
+        Some(Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
     if let Some(types) = &body.types {
         value.insert("types".to_owned(), Value::Array(types.clone()));
     }
     if let Some(phases) = &body.phases {
         value.insert("phases".to_owned(), Value::Array(phases.clone()));
     }
-    let value = Value::Object(value);
+    let types = list(&Value::Object(value.clone()), "types").unwrap_or_default();
     store
         .0
-        .upsert_metadata(&ctx, tenant, UpsertMetadataRequest::new(type_id(), value))
+        .upsert_metadata(
+            &ctx,
+            tenant,
+            UpsertMetadataRequest::new(type_id(), Value::Object(value)),
+        )
         .await?;
-    Ok(Json(body))
+    Ok(Json(ProjectTypesDocDto { types }))
 }
 
 async fn delete_project_types(
@@ -204,16 +251,16 @@ pub fn register(
         .operation_id("studio_organizations.upsert_project_types")
         .summary("Set the project types a tenant offers")
         .description(
-            "Replaces the tenant's own document: its types and the phases its projects move \
-             through, either of which may be absent. Its workspaces inherit it unless they \
-             set their own. Each type is kept as a `project-type` domain object; who may write the \
-             tenant's domain objects may.",
+            "Sets the tenant's own types, the phases its projects move through, or both; \
+             a field left out keeps what the tenant has. Its workspaces inherit them unless \
+             they set their own. Each type is kept as a `project-type` domain object; who \
+             may write the tenant's domain objects may.",
         )
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<super::rest::License>([])
         .query_param_typed("tenant_id", true, "The organization or workspace", "string")
-        .json_request::<ProjectTypesDocDto>(openapi, "The types")
+        .json_request::<ProjectTypesWriteDto>(openapi, "The types, the phases, or both")
         .handler(put_project_types)
         .json_response_with_schema::<ProjectTypesDocDto>(openapi, StatusCode::OK, "The types kept")
         .error_400(openapi)

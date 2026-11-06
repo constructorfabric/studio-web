@@ -6856,7 +6856,7 @@
       "tag": "StudioOrganizations",
       "summary": "Set the project types a tenant offers",
       "authenticated": true,
-      "request": "ProjectTypesDocDto",
+      "request": "ProjectTypesWriteDto",
       "responses": [
         "ProjectTypesDocDto"
       ],

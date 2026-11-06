@@ -1074,7 +1074,8 @@ request	PUT /studio-environments/v1/project-environments/{}	research_project	Str
 request	PUT /studio-environments/v1/project-environments/{}	strictness	String	optional
 request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
-request	PUT /studio-organizations/v1/project-types	types	Vec<Value>	required
+request	PUT /studio-organizations/v1/project-types	phases	Vec<Value>	optional
+request	PUT /studio-organizations/v1/project-types	types	Vec<Value>	optional
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
 request	PUT /studio-product/v1/projects/{}/product	config	Value	optional
 request	PUT /studio-product/v1/projects/{}/product	frontend	Value	optional
@@ -3416,8 +3417,10 @@ response	GET /studio-organizations/v1/overview	workspaces.spend	f64	optional
 response	GET /studio-organizations/v1/overview	workspaces.stuck	u32	always
 response	GET /studio-organizations/v1/project-types	own	{}	optional
 response	GET /studio-organizations/v1/project-types	own.types	Vec<Value>	optional
+response	GET /studio-organizations/v1/project-types	own_phases	Vec<Value>	optional
 response	GET /studio-organizations/v1/project-types	resolved	{}	optional
 response	GET /studio-organizations/v1/project-types	resolved.types	Vec<Value>	optional
+response	GET /studio-organizations/v1/project-types	resolved_phases	Vec<Value>	optional
 response	GET /studio-organizations/v1/rollups	items	Vec<{}>	always
 response	GET /studio-organizations/v1/rollups	items.activity_days	u32	optional
 response	GET /studio-organizations/v1/rollups	items.attributes	Value	optional

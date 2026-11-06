@@ -433,6 +433,23 @@ export const PROJECT_CONFIG_TYPE =
   "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
 /** The project types a workspace offers (`project-types.ts`). Inherited: the
  *  nearest tenant that sets it wins. */
+/** What `GET /studio-organizations/v1/project-types` answers. */
+interface ProjectTypesAnswer {
+  own?: { types?: unknown[] } | null;
+  resolved?: { types?: unknown[] } | null;
+  own_phases?: unknown[] | null;
+  resolved_phases?: unknown[] | null;
+}
+
+/** One side of the answer as the document the portal reads: the types and
+ *  the phases beside them (project-lifecycle.ts), each only when set. */
+function projectTypesDoc(a: ProjectTypesAnswer, side: "own" | "resolved"): Record<string, unknown> | null {
+  const types = a[side]?.types;
+  const phases = side === "own" ? a.own_phases : a.resolved_phases;
+  if (!Array.isArray(types) && !Array.isArray(phases)) return null;
+  return { ...(Array.isArray(types) ? { types } : {}), ...(Array.isArray(phases) ? { phases } : {}) };
+}
+
 export const PROJECT_TYPES_TYPE =
   "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.types.v1~";
 
@@ -5783,17 +5800,24 @@ export const api = {
   /** The project types that apply at this tenant — its own, else the nearest
    *  ancestor's. `null`: nobody set any (the built-in types apply). */
   projectTypes: async (token: string, tenantId: string): Promise<unknown | null> =>
-    (await request<{ resolved?: unknown | null }>(
-      `/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`,
-      token,
-    )).resolved ?? null,
+    projectTypesDoc(
+      await request<ProjectTypesAnswer>(
+        `/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`,
+        token,
+      ),
+      "resolved",
+    ),
 
-  /** What this tenant itself sets, ignoring its ancestors. `null`: nothing. */
+  /** What this tenant itself sets, ignoring its ancestors: `{types?, phases?}`.
+   *  `null`: nothing. */
   ownProjectTypes: async (token: string, tenantId: string): Promise<unknown | null> =>
-    (await request<{ own?: unknown | null }>(
-      `/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`,
-      token,
-    )).own ?? null,
+    projectTypesDoc(
+      await request<ProjectTypesAnswer>(
+        `/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`,
+        token,
+      ),
+      "own",
+    ),
 
   /** The whole document: the templates (`types`) and the phases beside them
    *  (`phases`, project-phases.ts). A writer of one keeps the other. */
