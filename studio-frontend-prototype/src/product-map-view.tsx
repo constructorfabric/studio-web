@@ -1504,7 +1504,8 @@ export function gdlOf(node: MapNode): { gear: string } | { path: string } | null
   if (d.kind === "mfe" && d.path) return { path: `${d.path.replace(/\/$/, "")}/frontx.gdl` };
   if (d.kind === "shell") {
     const at = d.params?.find((p) => p.key === "path")?.value;
-    return { path: at ? `${at.replace(/^\.?\/?/, "").replace(/\/$/, "")}/frontx.gdl`.replace(/^\//, "") : "frontx.gdl" };
+    // Only a leading `./` or `/` goes: `.studio/shell` is a directory of its own.
+    return { path: at ? `${at.replace(/^(\.\/|\/)+/, "").replace(/\/$/, "")}/frontx.gdl`.replace(/^\//, "") : "frontx.gdl" };
   }
   return null;
 }
