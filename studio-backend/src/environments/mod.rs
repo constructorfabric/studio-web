@@ -154,7 +154,9 @@ impl Gear for StudioEnvironmentsGear {
             Ok(db) => Some(Arc::new(records::Records::new(db.db()))),
             Err(e) => {
                 warn!(
-                    "studio-environments: no database configured -- namespaces follow the                      pattern, image paths the project's name, and the image routes answer 503                      until a `database:` section is added: {e}"
+                    "studio-environments: no database configured -- namespaces follow the \
+                     pattern, image paths the project's name, and the image routes answer 503 \
+                     until a `database:` section is added: {e}"
                 );
                 None
             }

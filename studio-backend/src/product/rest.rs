@@ -2668,7 +2668,11 @@ pub fn register_routes(
         .operation_id("studio_product.get_gdl_file")
         .summary("A component's description file, as the server's checkout holds it")
         .description(
-            "The `gear.gdl` of a gear (`gear`, engine id or crate name), or a `.gdl`              file at `path` (a micro-frontend's `frontx.gdl`, a service's              `service.gdl`), read from the project's own repository first and then              from the gear repositories its product reads. 404 when none has it.              Writes nothing.",
+            "The `gear.gdl` of a gear (`gear`, engine id or crate name), or a `.gdl` \
+             file at `path` (a micro-frontend's `frontx.gdl`, a service's \
+             `service.gdl`), read from the project's own repository first and then \
+             from the gear repositories its product reads. 404 when none has it. \
+             Writes nothing.",
         )
         .tag("StudioProduct")
         .authenticated()

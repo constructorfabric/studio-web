@@ -210,7 +210,9 @@ fn bootstrap_check(right: &ClusterRight, ok: bool) -> DriverCheck {
             String::new()
         } else {
             format!(
-                "Studio cannot make a project's namespace on its own: a cluster administrator                  applies {BOOTSTRAP_FILE}, or prepares each namespace and gives this account                  admin in it"
+                "Studio cannot make a project's namespace on its own: a cluster administrator \
+                 applies {BOOTSTRAP_FILE}, or prepares each namespace and gives this account \
+                 admin in it"
             )
         },
     }

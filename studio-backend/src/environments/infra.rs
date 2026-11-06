@@ -737,7 +737,11 @@ pub fn issuer_refusal(
     Some((
         ISSUER_NOT_HTTPS,
         format!(
-            "'{name}' gives the product the issuer {url} ({what}), which is not https:              oidc-authn-plugin refuses any other issuer, so every gear that checks a token              would crash at start. Give it an https:// address (Product › Infrastructure or              PUT /infra-services; a shared place in the environment's settings), with a              certificate the ingress serves",
+            "'{name}' gives the product the issuer {url} ({what}), which is not https: \
+             oidc-authn-plugin refuses any other issuer, so every gear that checks a token \
+             would crash at start. Give it an https:// address (Product › Infrastructure or \
+             PUT /infra-services; a shared place in the environment's settings), with a \
+             certificate the ingress serves",
             name = s.name()
         ),
     ))
@@ -778,7 +782,10 @@ pub fn issuer_warnings(
     vec![(
         ISSUER_UNREACHABLE,
         format!(
-            "'{name}' gives the product the issuer {url}, and {host} reaches only the machine              it is typed on, not a pod: a gear that signs in at start (client_credentials, as              mini-chat does) or reads the issuer's discovery document fails inside the              cluster. Give it a host the cluster resolves to its ingress",
+            "'{name}' gives the product the issuer {url}, and {host} reaches only the machine \
+             it is typed on, not a pod: a gear that signs in at start (client_credentials, as \
+             mini-chat does) or reads the issuer's discovery document fails inside the \
+             cluster. Give it a host the cluster resolves to its ingress",
             name = s.name()
         ),
     )]

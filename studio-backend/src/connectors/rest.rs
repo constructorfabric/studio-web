@@ -119,7 +119,8 @@ impl GraphSink {
             .map_err(|_| {
                 CanonicalError::service_unavailable()
                     .with_detail(
-                        "repository imports are not available in this deployment                          (studio-tasks has no database configured)",
+                        "repository imports are not available in this deployment \
+                         (studio-tasks has no database configured)",
                     )
                     .create()
             })

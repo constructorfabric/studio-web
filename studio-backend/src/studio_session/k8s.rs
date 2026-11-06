@@ -237,7 +237,8 @@ impl KubernetesDriver {
                 CreateRefusal::Terminating(_) => {
                     tracing::info!(
                         pod = %name,
-                        "studio-session: the previous session Pod is still terminating —                          waiting for it before launching the replacement"
+                        "studio-session: the previous session Pod is still terminating — \
+                         waiting for it before launching the replacement"
                     );
                     self.await_pod_gone(name).await;
                     // Once. A second collision means something other than the
@@ -249,7 +250,8 @@ impl KubernetesDriver {
                             CreateRefusal::NoRoom(detail) => Err(anyhow!(NoCapacity { detail })),
                             CreateRefusal::Terminating(again) | CreateRefusal::Other(again) => {
                                 Err(anyhow::Error::new(again).context(
-                                    "failed to create the session Pod after waiting for its                                      predecessor to terminate",
+                                    "failed to create the session Pod after waiting for its \
+                                     predecessor to terminate",
                                 ))
                             }
                         },
@@ -815,7 +817,9 @@ mod tests {
     /// sentence is kept, because the quota it names is what has to be raised.
     #[test]
     fn a_full_namespace_is_reported_as_having_no_room() {
-        let message = "pods \"cf-studio-session-01d89b55\" is forbidden: exceeded quota:                        studio-dev, requested: limits.cpu=2, used: limits.cpu=8, limited:                        limits.cpu=8";
+        let message = "pods \"cf-studio-session-01d89b55\" is forbidden: exceeded quota: \
+                       studio-dev, requested: limits.cpu=2, used: limits.cpu=8, limited: \
+                       limits.cpu=8";
         match classify_create(refusal(403, message)) {
             CreateRefusal::NoRoom(detail) => assert_eq!(detail, message),
             _ => panic!("a quota refusal has to be recognised as one"),

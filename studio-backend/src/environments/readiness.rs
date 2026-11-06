@@ -162,7 +162,10 @@ pub fn token_refusal(label: &str, broad: &[String], allowed: bool) -> Option<Ref
     Some((
         REGISTRY_TOKEN_TOO_BROAD,
         format!(
-            "the environment's registry connection '{label}' holds a token that may also {}: a              build Studio runs pushes only with a token that pushes and pulls packages              (write:packages, read:packages). Replace the token, or let the environment take a              broad one",
+            "the environment's registry connection '{label}' holds a token that may also {}: a \
+             build Studio runs pushes only with a token that pushes and pulls packages \
+             (write:packages, read:packages). Replace the token, or let the environment take a \
+             broad one",
             broad.join(", ")
         ),
     ))
@@ -194,7 +197,8 @@ pub fn bootstrap_refusal(
                 (
                     super::placement::NAMESPACE_NOT_ASSIGNED,
                     format!(
-                        "the cluster gives Studio only {} and may not make namespaces: {} is not                          among them -- an administrator assigns the project one in Infrastructure",
+                        "the cluster gives Studio only {} and may not make namespaces: {} is not \
+                         among them -- an administrator assigns the project one in Infrastructure",
                         given.join(", "),
                         absent.join(", ")
                     ),

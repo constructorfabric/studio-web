@@ -1838,7 +1838,8 @@ impl IngestService {
                 repo = repo_full_path,
                 gone = gone.len(),
                 bindings,
-                "studio-artifact-ingest: could not forget the verdicts on deleted files;                  the files are kept for the next sync"
+                "studio-artifact-ingest: could not forget the verdicts on deleted files; \
+                 the files are kept for the next sync"
             );
             return 0;
         }

@@ -2148,7 +2148,11 @@ pub fn register_routes(
         .operation_id("studio_domain_model.list_legacy_scopes")
         .summary("Objects stored with a scope that is not a project")
         .description(
-            "Objects written before `project_id` with a free-form `scope`. Authorization              treats them as organization-wide, so no project grant reaches them (ADR-0035).              Lists what the caller may read, from one bounded read of at most 5 000 objects              across every type; `complete` says whether it saw them all. Paged: `total`              counts every match.",
+            "Objects written before `project_id` with a free-form `scope`. Authorization \
+             treats them as organization-wide, so no project grant reaches them (ADR-0035). \
+             Lists what the caller may read, from one bounded read of at most 5 000 objects \
+             across every type; `complete` says whether it saw them all. Paged: `total` \
+             counts every match.",
         )
         .tag("StudioDomainModel")
         .authenticated()
@@ -2159,7 +2163,12 @@ pub fn register_routes(
             "string",
         )
         .require_license_features::<License>([])
-        .query_param_typed("offset", false, "Zero-based index of the first object", "integer")
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first object",
+            "integer",
+        )
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_legacy_scopes)
         .json_response_with_schema::<LegacyScopesResponse>(

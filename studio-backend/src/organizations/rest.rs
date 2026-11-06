@@ -1431,11 +1431,18 @@ pub fn register_routes(
         .operation_id("studio_organizations.get_access_catalogue")
         .summary("The privileges a role may carry, and the seeded ladder")
         .description(
-            "What the policy decision point understands, from the side that evaluates it. A              screen that edits roles needs both: the privileges to offer, and the ladder a              fresh organization already has.
+            "What the policy decision point understands, from the side that evaluates it. A \
+             screen that edits roles needs both: the privileges to offer, and the ladder a \
+             fresh organization already has.
 
-The prototype kept its own copy of both, under              a comment saying they must match the backend. They did. The point is that nothing              made them — a privilege named where the document is WRITTEN but not where it is              READ goes into a role and carries nothing, silently.
+The prototype kept its own copy of both, under \
+             a comment saying they must match the backend. They did. The point is that nothing \
+             made them — a privilege named where the document is WRITTEN but not where it is \
+             READ goes into a role and carries nothing, silently.
 
-Labels are deliberately              absent: what a privilege is called belongs to whoever draws the screen. What              cannot differ between them is the set of identifiers.",
+Labels are deliberately \
+             absent: what a privilege is called belongs to whoever draws the screen. What \
+             cannot differ between them is the set of identifiers.",
         )
         .tag("StudioOrganizations")
         .authenticated()
@@ -1527,9 +1534,18 @@ Labels are deliberately              absent: what a privilege is called belongs 
         .operation_id("studio_organizations.get_organization_metrics")
         .summary("An organization's delivery, quality, money and people, over a range")
         .description(
-            "The leaders' metrics board for an organization -- or, with `workspace_id` or              `project_id`, for one workspace or project in it -- over `range` (`7d`, `30d`              or `90d`, default `30d`) against the same number of days before it, bucketed              by day (7d) or Monday week.
+            "The leaders' metrics board for an organization -- or, with `workspace_id` or \
+             `project_id`, for one workspace or project in it -- over `range` (`7d`, `30d` \
+             or `90d`, default `30d`) against the same number of days before it, bucketed \
+             by day (7d) or Monday week.
 
-             Studio's part is the spend (null unless the caller holds `cost.view`; people's              own keys never count), per bucket and per workspace. Insight's part is git, CI              and task figures for the repositories the scope's projects are made of, built              and aggregated on the server; `insight.state` says when there is none and why              (`unconfigured`, `unreachable`, `failed`, `absent`, `no_repositories`), and              the Studio part answers regardless. 404 when the organization is not the              caller's, or the workspace or project is not in it.",
+             Studio's part is the spend (null unless the caller holds `cost.view`; people's \
+             own keys never count), per bucket and per workspace. Insight's part is git, CI \
+             and task figures for the repositories the scope's projects are made of, built \
+             and aggregated on the server; `insight.state` says when there is none and why \
+             (`unconfigured`, `unreachable`, `failed`, `absent`, `no_repositories`), and \
+             the Studio part answers regardless. 404 when the organization is not the \
+             caller's, or the workspace or project is not in it.",
         )
         .tag("StudioOrganizations")
         .authenticated()

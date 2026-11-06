@@ -654,7 +654,19 @@ pub fn register_routes(
         .operation_id("studio_insight.component_pull_requests")
         .summary("Pull requests for one repository, sliced by component")
         .description(
-            "Counts pull requests by the state they are in now — open, merged,              closed — for each component they touched, with the mean merge              cycle time and the number of distinct authors. A pull request              belongs to a repository, so there is no component dimension to              group it by; it is attributed here through the files its commits              changed, which means two caveats worth repeating to whoever reads              the numbers. One that touches three components is counted in all              three, so the rows do not partition the repository's pull              requests. And attribution needs the commits to exist in the              repository's history: ~97% of merged pull requests reach their              files, against ~29% of closed and ~46% of open ones, because an              abandoned branch's commits often never landed. Dependable for what              shipped, indicative for what did not.",
+            "Counts pull requests by the state they are in now — open, merged, \
+             closed — for each component they touched, with the mean merge \
+             cycle time and the number of distinct authors. A pull request \
+             belongs to a repository, so there is no component dimension to \
+             group it by; it is attributed here through the files its commits \
+             changed, which means two caveats worth repeating to whoever reads \
+             the numbers. One that touches three components is counted in all \
+             three, so the rows do not partition the repository's pull \
+             requests. And attribution needs the commits to exist in the \
+             repository's history: ~97% of merged pull requests reach their \
+             files, against ~29% of closed and ~46% of open ones, because an \
+             abandoned branch's commits often never landed. Dependable for what \
+             shipped, indicative for what did not.",
         )
         .tag("StudioInsight")
         .authenticated()

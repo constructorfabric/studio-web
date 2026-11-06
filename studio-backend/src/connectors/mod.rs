@@ -365,7 +365,9 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
                 ))
                 .inspect_err(|_| {
                     warn!(
-                        "studio-connector: studio-user person resolver not registered — a                          personal connection stays editable only from the sign-in method that                          created it"
+                        "studio-connector: studio-user person resolver not registered — a \
+                         personal connection stays editable only from the sign-in method that \
+                         created it"
                     );
                 })
                 .ok(),

@@ -186,7 +186,8 @@ impl RestApiCapability for StudioOrganizationsGear {
             });
         if sources.is_none() {
             warn!(
-                "studio-organizations: account-management is not available — the portfolio's                  counts answer 503 rather than reporting every column as unknown"
+                "studio-organizations: account-management is not available — the portfolio's \
+                 counts answer 503 rather than reporting every column as unknown"
             );
         }
         // The organization's overview reads its other gears per request:

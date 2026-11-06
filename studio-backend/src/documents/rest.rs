@@ -1709,7 +1709,8 @@ async fn delete_document(
                 tracing::warn!(error = %e, %id, "studio-documents: verdicts not forgotten; document kept");
                 CanonicalError::service_unavailable()
                     .with_detail(
-                        "the document's recorded verdicts could not be removed, so it was                          kept; try again",
+                        "the document's recorded verdicts could not be removed, so it was \
+                         kept; try again",
                     )
                     .create()
             })?;
@@ -5863,7 +5864,8 @@ async fn create_glossary_document_proposal(
     }
     let what = match (&found, &moved) {
         (Some(f), Some(_)) => format!(
-            "The glossary moves out of `{}` ({}) into `{GLOSSARY_DOC_PATH}`, where every document can link a term;              the section keeps its heading and links there.",
+            "The glossary moves out of `{}` ({}) into `{GLOSSARY_DOC_PATH}`, where every document can link a term; \
+             the section keeps its heading and links there.",
             f.path,
             f.heading.as_deref().unwrap_or("its glossary section"),
         ),
@@ -9340,14 +9342,23 @@ pub fn register_routes(
         .operation_id("studio_documents.list_spec_model_findings")
         .summary("Where a project's documents disagree, or refer to what is not there")
         .description(
-            "Read from the documents as they are written (docs/spec-domain-model.md). Today the              rules that need no model: a reference to an identifier, ADR, file or section the              project does not have (`reference.dangling`), and an ADR number two of the              project's ADR sets share, cited without a link from outside both              (`reference.ambiguous`). Every finding quotes each side, and its `fingerprint`              survives the lines moving. The list is read whole.",
+            "Read from the documents as they are written (docs/spec-domain-model.md). Today the \
+             rules that need no model: a reference to an identifier, ADR, file or section the \
+             project does not have (`reference.dangling`), and an ADR number two of the \
+             project's ADR sets share, cited without a link from outside both \
+             (`reference.ambiguous`). Every finding quotes each side, and its `fingerprint` \
+             survives the lines moving. The list is read whole.",
         )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project whose documents to check")
         .handler(list_spec_model_findings)
-        .json_response_with_schema::<SpecModelFindingListDto>(openapi, StatusCode::OK, "The findings")
+        .json_response_with_schema::<SpecModelFindingListDto>(
+            openapi,
+            StatusCode::OK,
+            "The findings",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -9430,7 +9441,24 @@ pub fn register_routes(
     .operation_id("studio_documents.analyze_project_documents")
     .summary("Run a Spec Quality detector over a project's documents")
     .description(
-        "Hands the named bindings to Spec Quality as one background run. The          request carries binding ids, NOT text: the server reads the documents          from the checkout a sync left on disk, which is where they already are.          The one exception is `documents`: texts the server cannot have, such as          an editor's unsaved buffer, each analysed under its own `path` and          replacing the named binding at the same path. At most 20 of them, 256 KiB          each and 1 MiB together; more is a 400.          `bloat` and `traceability` judge a set and become one analysis over all          of them; `purpose` and `leak` judge a document and become one each.          Which bindings deserve a detector is the caller's decision and is not          made here. Answers 202 with the `run_id`; follow the run at the returned          `poll`. Send an `Idempotency-Key` header to make a retry of this request          safe: a repeat with the same key answers the same run.          The run RECORDS each document's result itself as it finishes: a          `spec_finding` node per detector per document, whose `details.findings`          are the findings placed in the text, and the gate verdict a stage reads.          A caller does not write them back, and should not: a second write          without `details.findings` would replace the one the run made.",
+        "Hands the named bindings to Spec Quality as one background run. The \
+         request carries binding ids, NOT text: the server reads the documents \
+         from the checkout a sync left on disk, which is where they already are. \
+         The one exception is `documents`: texts the server cannot have, such as \
+         an editor's unsaved buffer, each analysed under its own `path` and \
+         replacing the named binding at the same path. At most 20 of them, 256 KiB \
+         each and 1 MiB together; more is a 400. \
+         `bloat` and `traceability` judge a set and become one analysis over all \
+         of them; `purpose` and `leak` judge a document and become one each. \
+         Which bindings deserve a detector is the caller's decision and is not \
+         made here. Answers 202 with the `run_id`; follow the run at the returned \
+         `poll`. Send an `Idempotency-Key` header to make a retry of this request \
+         safe: a repeat with the same key answers the same run. \
+         The run RECORDS each document's result itself as it finishes: a \
+         `spec_finding` node per detector per document, whose `details.findings` \
+         are the findings placed in the text, and the gate verdict a stage reads. \
+         A caller does not write them back, and should not: a second write \
+         without `details.findings` would replace the one the run made.",
     )
     .tag("StudioDocuments")
     .authenticated()
@@ -9501,7 +9529,8 @@ pub fn register_routes(
         .operation_id("studio_documents.list_organization_types")
         .summary("List the document types an organization publishes")
         .description(
-            "The organization's own editing view: the platform catalogue overlaid by its              entries. Not what a workspace sees -- a workspace may replace or hide any of it.",
+            "The organization's own editing view: the platform catalogue overlaid by its \
+             entries. Not what a workspace sees -- a workspace may replace or hide any of it.",
         )
         .tag("StudioDocuments")
         .authenticated()
@@ -9615,7 +9644,9 @@ pub fn register_routes(
         .operation_id("studio_documents.list_stages")
         .summary("List the journey stages a workspace's projects may pass through")
         .description(
-            "In catalogue order. Replaces the client-side `JOURNEY_STAGES` constant two              frontends have been carrying since the studio-project gear was retired              (ADR-0010, ADR-0014 section 7).",
+            "In catalogue order. Replaces the client-side `JOURNEY_STAGES` constant two \
+             frontends have been carrying since the studio-project gear was retired \
+             (ADR-0010, ADR-0014 section 7).",
         )
         .tag("StudioDocuments")
         .authenticated()
@@ -9691,7 +9722,9 @@ pub fn register_routes(
         .operation_id("studio_documents.list_capabilities")
         .summary("List the capability vocabulary for a workspace")
         .description(
-            "A questionnaire answer seeds a capability, and the composer resolves it to              candidate components through this entry's search terms. Replaces the              `CAP_KEYWORDS` table the prototype carried in a UI file.",
+            "A questionnaire answer seeds a capability, and the composer resolves it to \
+             candidate components through this entry's search terms. Replaces the \
+             `CAP_KEYWORDS` table the prototype carried in a UI file.",
         )
         .tag("StudioDocuments")
         .authenticated()
@@ -9704,22 +9737,25 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::get("/studio-documents/v1/organizations/{organization_id}/capabilities")
-        .operation_id("studio_documents.list_organization_capabilities")
-        .summary("List the capability vocabulary an organization publishes")
-        .description(
-            "A questionnaire answer seeds a capability, and the composer resolves it to              candidate components through this entry's search terms. Replaces the              `CAP_KEYWORDS` table the prototype carried in a UI file.",
-        )
-        .tag("StudioDocuments")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("organization_id", "Organization tenant id")
-        .handler(list_organization_capabilities)
-        .json_response_with_schema::<CapabilityListDto>(openapi, StatusCode::OK, "Capabilities")
-        .error_401(openapi)
-        .error_403(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
+    router =
+        OperationBuilder::get("/studio-documents/v1/organizations/{organization_id}/capabilities")
+            .operation_id("studio_documents.list_organization_capabilities")
+            .summary("List the capability vocabulary an organization publishes")
+            .description(
+                "A questionnaire answer seeds a capability, and the composer resolves it to \
+             candidate components through this entry's search terms. Replaces the \
+             `CAP_KEYWORDS` table the prototype carried in a UI file.",
+            )
+            .tag("StudioDocuments")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("organization_id", "Organization tenant id")
+            .handler(list_organization_capabilities)
+            .json_response_with_schema::<CapabilityListDto>(openapi, StatusCode::OK, "Capabilities")
+            .error_401(openapi)
+            .error_403(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/workspaces/{workspace_id}/capabilities")
         .operation_id("studio_documents.upsert_capability")
@@ -9810,7 +9846,8 @@ pub fn register_routes(
         .operation_id("studio_documents.delete_type")
         .summary("Revert a workspace's own document type, falling back to what it inherits")
         .description(
-            "Removes only this level's row. Idempotent: a key this level never              overrode still answers 204, because the request names a desired state.",
+            "Removes only this level's row. Idempotent: a key this level never \
+             overrode still answers 204, because the request names a desired state.",
         )
         .tag("StudioDocuments")
         .authenticated()
@@ -9824,59 +9861,67 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::delete("/studio-documents/v1/organizations/{organization_id}/types/{key}")
-        .operation_id("studio_documents.delete_organization_type")
-        .summary("Revert an organization's own document type, falling back to the platform catalogue")
-        .description(
-            "Removes only this level's row. Idempotent: a key this level never              overrode still answers 204, because the request names a desired state.",
-        )
-        .tag("StudioDocuments")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("organization_id", "Organization tenant id")
-        .path_param("key", "Catalogue entry key")
-        .handler(delete_organization_type)
-        .no_content_response(StatusCode::NO_CONTENT, "Reverted")
-        .error_401(openapi)
-        .error_403(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
+    router = OperationBuilder::delete(
+        "/studio-documents/v1/organizations/{organization_id}/types/{key}",
+    )
+    .operation_id("studio_documents.delete_organization_type")
+    .summary("Revert an organization's own document type, falling back to the platform catalogue")
+    .description(
+        "Removes only this level's row. Idempotent: a key this level never \
+             overrode still answers 204, because the request names a desired state.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("organization_id", "Organization tenant id")
+    .path_param("key", "Catalogue entry key")
+    .handler(delete_organization_type)
+    .no_content_response(StatusCode::NO_CONTENT, "Reverted")
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
 
-    router = OperationBuilder::delete("/studio-documents/v1/workspaces/{workspace_id}/stages/{key}")
-        .operation_id("studio_documents.delete_stage")
-        .summary("Revert a workspace's own journey stage, falling back to what it inherits")
-        .description(
-            "Removes only this level's row. Idempotent: a key this level never              overrode still answers 204, because the request names a desired state.",
-        )
-        .tag("StudioDocuments")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("workspace_id", "Workspace tenant id")
-        .path_param("key", "Catalogue entry key")
-        .handler(delete_workspace_stage)
-        .no_content_response(StatusCode::NO_CONTENT, "Reverted")
-        .error_401(openapi)
-        .error_403(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
+    router =
+        OperationBuilder::delete("/studio-documents/v1/workspaces/{workspace_id}/stages/{key}")
+            .operation_id("studio_documents.delete_stage")
+            .summary("Revert a workspace's own journey stage, falling back to what it inherits")
+            .description(
+                "Removes only this level's row. Idempotent: a key this level never \
+             overrode still answers 204, because the request names a desired state.",
+            )
+            .tag("StudioDocuments")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("workspace_id", "Workspace tenant id")
+            .path_param("key", "Catalogue entry key")
+            .handler(delete_workspace_stage)
+            .no_content_response(StatusCode::NO_CONTENT, "Reverted")
+            .error_401(openapi)
+            .error_403(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
 
-    router = OperationBuilder::delete("/studio-documents/v1/organizations/{organization_id}/stages/{key}")
-        .operation_id("studio_documents.delete_organization_stage")
-        .summary("Revert an organization's own journey stage, falling back to the platform catalogue")
-        .description(
-            "Removes only this level's row. Idempotent: a key this level never              overrode still answers 204, because the request names a desired state.",
-        )
-        .tag("StudioDocuments")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("organization_id", "Organization tenant id")
-        .path_param("key", "Catalogue entry key")
-        .handler(delete_organization_stage)
-        .no_content_response(StatusCode::NO_CONTENT, "Reverted")
-        .error_401(openapi)
-        .error_403(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
+    router = OperationBuilder::delete(
+        "/studio-documents/v1/organizations/{organization_id}/stages/{key}",
+    )
+    .operation_id("studio_documents.delete_organization_stage")
+    .summary("Revert an organization's own journey stage, falling back to the platform catalogue")
+    .description(
+        "Removes only this level's row. Idempotent: a key this level never \
+             overrode still answers 204, because the request names a desired state.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("organization_id", "Organization tenant id")
+    .path_param("key", "Catalogue entry key")
+    .handler(delete_organization_stage)
+    .no_content_response(StatusCode::NO_CONTENT, "Reverted")
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/workspaces/{workspace_id}/documents")
         .operation_id("studio_documents.list_workspace_documents")
@@ -10066,7 +10111,11 @@ pub fn register_routes(
     .operation_id("studio_documents.record_binding_analysis")
     .summary("Record one detector's verdict on a bound repository file")
     .description(
-        "The counterpart of recording a verdict on a document Studio holds, for a          document that lives in the repository instead. The full finding belongs in the          artifact graph, joined to the file node; this is the index a stage gate reads,          so a stage can depend on a detector having passed whichever of the two kinds of          document answers for the type it requires.",
+        "The counterpart of recording a verdict on a document Studio holds, for a \
+         document that lives in the repository instead. The full finding belongs in the \
+         artifact graph, joined to the file node; this is the index a stage gate reads, \
+         so a stage can depend on a detector having passed whichever of the two kinds of \
+         document answers for the type it requires.",
     )
     .tag("StudioDocuments")
     .authenticated()
@@ -10180,7 +10229,10 @@ pub fn register_routes(
             .operation_id("studio_documents.list_workspace_bindings")
             .summary("List workspace-level document bindings")
             .description(
-                "What the workspace's own ingested files were decided to be: the type                  bound to each, how it was decided, and how it fared against that                  type's template. A project's own bindings are not here — read those                  through the project route, which also returns these as inherited.",
+                "What the workspace's own ingested files were decided to be: the type \
+                 bound to each, how it was decided, and how it fared against that \
+                 type's template. A project's own bindings are not here — read those \
+                 through the project route, which also returns these as inherited.",
             )
             .tag("StudioDocuments")
             .authenticated()

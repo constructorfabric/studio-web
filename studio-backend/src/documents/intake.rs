@@ -308,7 +308,9 @@ mod tests {
         vec![
             text(
                 "product",
-                "A portal that turns a product idea into a running application by                  composing gears, so a team can go from an intent to a deployed                  service without writing the plumbing themselves.",
+                "A portal that turns a product idea into a running application by \
+                 composing gears, so a team can go from an intent to a deployed \
+                 service without writing the plumbing themselves.",
             ),
             text(
                 "primary_users",

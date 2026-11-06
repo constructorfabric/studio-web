@@ -935,7 +935,8 @@ impl GraphStore for GraphStorageBackend {
                     ?reason,
                     seed = %batch[0],
                     budget = TRAVERSE_NODE_BUDGET,
-                    "studio-artifact-ingest: node degree exceeds the traversal budget;                      some of its relations cannot be read at all"
+                    "studio-artifact-ingest: node degree exceeds the traversal budget; \
+                     some of its relations cannot be read at all"
                 );
             }
 

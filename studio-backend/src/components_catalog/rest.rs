@@ -80,7 +80,8 @@ impl Catalog {
             .map_err(|_| {
                 CanonicalError::service_unavailable()
                     .with_detail(
-                        "delivery activity is not available in this deployment                          (studio-insight is not configured)",
+                        "delivery activity is not available in this deployment \
+                         (studio-insight is not configured)",
                     )
                     .create()
             })

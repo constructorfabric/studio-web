@@ -411,7 +411,9 @@ fn address_change_needs_token(
 ) -> anyhow::Result<()> {
     if new_base_url != existing_base_url && token.is_none() {
         return Err(anyhow!(
-            "changing the address of a connection requires its token — the credential is              sent to whatever host the address names, so moving it without supplying the              token would disclose a credential you may not hold"
+            "changing the address of a connection requires its token — the credential is \
+             sent to whatever host the address names, so moving it without supplying the \
+             token would disclose a credential you may not hold"
         ));
     }
     Ok(())

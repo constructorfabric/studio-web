@@ -548,7 +548,8 @@ pub fn checked_for_project(
     if input.protected {
         return Err(invalid(
             "protected",
-            "an environment whose deploys need approval is the organization's: ask an              organization administrator for one",
+            "an environment whose deploys need approval is the organization's: ask an \
+             organization administrator for one",
         ));
     }
     let visible = EnvironmentList {

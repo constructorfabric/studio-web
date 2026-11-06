@@ -277,7 +277,8 @@ fn project_name_unreadable(project: Uuid, e: anyhow::Error) -> Refusal {
 fn no_saved_product() -> Refusal {
     Refusal::Precondition(
         "PRODUCT_NOT_SAVED",
-        "the project has no product yet: save one in the Product step first, or name its          product.gdl"
+        "the project has no product yet: save one in the Product step first, or name its \
+         product.gdl"
             .into(),
     )
 }
@@ -1229,7 +1230,8 @@ impl EnvironmentService {
                 None => Err(Refusal::Precondition(
                     "ENVIRONMENT_RESEARCH_PROJECT_UNKNOWN",
                     format!(
-                        "'{project}' is not one of your Research projects: its owner adds you                          to it in Research"
+                        "'{project}' is not one of your Research projects: its owner adds you \
+                         to it in Research"
                     ),
                 )),
             };
@@ -2419,7 +2421,8 @@ impl EnvironmentService {
         if own.is_some() && research {
             return Err(Refusal::Precondition(
                 "OWN_BUILD_NOT_IN_RESEARCH",
-                "a build of the repository's own Dockerfiles runs in a cluster environment;                  Constructor Research builds a product on gears for now"
+                "a build of the repository's own Dockerfiles runs in a cluster environment; \
+                 Constructor Research builds a product on gears for now"
                     .into(),
             ));
         }
@@ -2482,7 +2485,9 @@ impl EnvironmentService {
                     return Err(Refusal::Precondition(
                         "REVISION_NOT_PINNED",
                         format!(
-                            "environment '{}' is protected: it builds only a description                              revision Studio keeps, with its sources pinned -- save the                              product first",
+                            "environment '{}' is protected: it builds only a description \
+                             revision Studio keeps, with its sources pinned -- save the \
+                             product first",
                             env.name
                         ),
                     ));
@@ -2830,7 +2835,8 @@ impl EnvironmentService {
             .ok_or_else(|| {
                 Refusal::Precondition(
                     "ENVIRONMENT_RESEARCH_NOT_SIGNED_IN",
-                    "a Research environment runs with your own sign-in to Constructor                      Research: sign in under Connections, \"Sign in with Constructor\", first"
+                    "a Research environment runs with your own sign-in to Constructor \
+                     Research: sign in under Connections, \"Sign in with Constructor\", first"
                         .to_owned(),
                 )
             })

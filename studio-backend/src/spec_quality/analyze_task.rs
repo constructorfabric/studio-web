@@ -208,7 +208,8 @@ impl TaskHandler for AnalyzeTask {
             // only WE stop doing. Say so rather than implying the analysis was
             // called off.
             Watched::Cancelled => TaskOutcome::Failed(format!(
-                "cancelled while watching upstream task {} — the analysis itself keeps                  running upstream and can still be read there",
+                "cancelled while watching upstream task {} — the analysis itself keeps \
+                 running upstream and can still be read there",
                 payload.upstream_task_id
             )),
         }

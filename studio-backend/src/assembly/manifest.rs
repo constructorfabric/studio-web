@@ -351,7 +351,8 @@ mod tests {
             .collect();
         assert!(
             internal.is_empty(),
-            "a gear reaches into another's private module: {internal:?}. Use its `port` or              `sdk` module (add what you need there), or an item its mod.rs exports."
+            "a gear reaches into another's private module: {internal:?}. Use its `port` or \
+             `sdk` module (add what you need there), or an item its mod.rs exports."
         );
     }
 

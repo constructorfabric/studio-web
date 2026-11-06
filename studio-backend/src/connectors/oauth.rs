@@ -227,7 +227,9 @@ pub(super) fn not_reached(who: &str, url: &str, e: &reqwest::Error) -> anyhow::E
         .unwrap_or_else(|| url.to_owned());
     if e.is_connect() || e.is_timeout() {
         anyhow!(
-            "{who} at {host} cannot be reached from this Studio deployment, so nothing              can be done there yet. The network between them is not open: tell whoever runs              this deployment. ({e})"
+            "{who} at {host} cannot be reached from this Studio deployment, so nothing \
+             can be done there yet. The network between them is not open: tell whoever runs \
+             this deployment. ({e})"
         )
     } else {
         anyhow!("{who} at {host} did not answer: {e}")
