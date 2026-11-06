@@ -1628,8 +1628,8 @@ function Detail({
           <li key={f}>{f}</li>
         ))}
       </ul>
-      {params && <ParamList key={node.id} params={params} />}
-      {gdlOf(node) && <GdlSection key={node.id} token={token} projectId={projectId} what={gdlOf(node)!} />}
+      {params && <ParamList key={`params:${node.id}`} params={params} />}
+      {gdlOf(node) && <GdlSection key={`gdl:${node.id}`} token={token} projectId={projectId} what={gdlOf(node)!} />}
       {its.length > 0 && (
         <>
           <div className="pmap-detail-kind" style={{ marginTop: 8 }}>
