@@ -88,7 +88,7 @@ export function ObjectAttributes({
   const fields = useMemo(() => {
     if (!known) return [];
     const system = new Set(model.entities.filter((e) => e.bucket === SYSTEM_BUCKET).map((e) => e.id));
-    return fieldsOfModel(model, entity).filter((f) => !system.has(f.declaredBy) && f.name !== "id" && f.name !== "hidden_tabs");
+    return fieldsOfModel(model, entity).filter((f) => !system.has(f.declaredBy) && f.name !== "id");
   }, [model, entity, known]);
   /** What the tenant already says about itself (account-management): shown,
    *  and written with the first save, so nobody types the name twice. */

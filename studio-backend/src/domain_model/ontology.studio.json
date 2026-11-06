@@ -2332,12 +2332,6 @@
           "relationLabel": ""
         },
         {
-          "name": "hidden_tabs",
-          "type": "string[]",
-          "description": "The tabs an administrator turned off for this level, by name; the relations that make them stay in the model.",
-          "relationLabel": ""
-        },
-        {
           "name": "org",
           "type": "organization",
           "relation": "organization",
@@ -2462,12 +2456,6 @@
           "name": "parent_tenant_id",
           "type": "string",
           "description": "The tenant above this one in account-management; Studio keeps it in step.",
-          "relationLabel": ""
-        },
-        {
-          "name": "hidden_tabs",
-          "type": "string[]",
-          "description": "The tabs an administrator turned off for this level, by name; the relations that make them stay in the model.",
           "relationLabel": ""
         },
         {
