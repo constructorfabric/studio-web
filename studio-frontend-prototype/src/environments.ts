@@ -327,6 +327,43 @@ export function clusterCards(
  *  behind it. "Namespaces given": Studio may not make its own, and uses the
  *  ones the cluster's administrators gave. */
 export function readinessBadge(r: EnvironmentReadiness): { label: string; tone: "ok" | "info" | "warn" | "danger"; title: string } {
+  const base = clusterBadge(r);
+  const warnings = codedWarnings(r.warnings, r.warning_codes);
+  if (warnings.length === 0 || base.tone === "danger") return base;
+  const pullsWithPush = warnings.some((w) => w.code === PULL_USES_PUSH_LOGIN);
+  return {
+    label: pullsWithPush
+      ? `${base.label} · pulls with the push login`
+      : `${base.label} · ${warnings.length} warning${warnings.length === 1 ? "" : "s"}`,
+    tone: "warn",
+    title: [base.title, ...warnings.map(warningText)].join(" "),
+  };
+}
+
+/** The environment warning the server gives while the cluster pulls with the
+ *  login builds push with: it names no read-only pull connection. */
+export const PULL_USES_PUSH_LOGIN = "PULL_USES_PUSH_LOGIN";
+
+/** A warning the server said, with its code when it gave one. */
+export interface CodedWarning {
+  code: string | null;
+  text: string;
+}
+
+/** `warnings` beside `codes`, matched by position: the server lists an
+ *  environment's coded warnings first, so a plan's later, uncoded ones get
+ *  none. */
+export function codedWarnings(warnings: string[] | undefined, codes: string[] | undefined): CodedWarning[] {
+  return (warnings ?? []).map((text, i) => ({ code: codes?.[i] ?? null, text }));
+}
+
+/** A coded warning as one line: `CODE: text`. */
+export function warningText(w: CodedWarning): string {
+  return w.code ? `${w.code}: ${w.text}` : w.text;
+}
+
+/** The cluster's own readiness, before the environment's warnings. */
+function clusterBadge(r: EnvironmentReadiness): { label: string; tone: "ok" | "info" | "warn" | "danger"; title: string } {
   const detail = r.detail?.trim() ?? "";
   switch (r.level) {
     case "bootstrapped":

@@ -676,6 +676,8 @@ export const SURFACES: Surface[] = [
       "DeployProgress",
       "PendingDecisions",
       "ProjectEnvironments",
+      "DeployHistory",
+      "StepDetail",
       "StatusButton",
       "EnvironmentActions",
       "InfraPlanView",

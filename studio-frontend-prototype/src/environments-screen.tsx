@@ -45,6 +45,7 @@ import {
   canReadStatus,
   clusterCards,
   clusterConnections,
+  codedWarnings,
   emptyEnvironment,
   environmentInput,
   environmentProblems,
@@ -57,6 +58,7 @@ import {
   stateTone,
 } from "./environments";
 import { InfraPlacementField } from "./infra-services-view";
+import { personLabel, usePeople, type PeopleNames } from "./user-names";
 import { DataTable, RowMenu, When } from "./data-table";
 import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
@@ -82,7 +84,7 @@ function StateBadge({ d }: { d: Deployment }) {
 }
 
 /** One deployment as a row: what, where, who, when. */
-function DeploymentLine({ d, showProject }: { d: Deployment; showProject: boolean }) {
+function DeploymentLine({ d, showProject, people }: { d: Deployment; showProject: boolean; people: PeopleNames }) {
   return (
     <div className="env-deployment">
       <StateBadge d={d} />
@@ -103,11 +105,11 @@ function DeploymentLine({ d, showProject }: { d: Deployment; showProject: boolea
             · <code>{shortCommit(d.commit)}</code>
           </>
         )}{" "}
-        · {d.requested_by_name || d.requested_by} · {relTime(d.requested_at)}
+        · {personLabel(d.requested_by, d.requested_by_name, people)} · {relTime(d.requested_at)}
         {d.decided_at && (
           <>
             {" "}
-            · {d.state === "declined" ? "declined" : "approved"} by {d.decided_by_name || d.decided_by}
+            · {d.state === "declined" ? "declined" : "approved"} by {personLabel(d.decided_by, d.decided_by_name, people)}
           </>
         )}
       </span>
@@ -659,8 +661,12 @@ export function EnvironmentForm({
       </label>
       {(editing?.warnings ?? []).length > 0 && (
         <ul className="hint" data-environment-warnings>
-          {editing!.warnings!.map((w) => (
-            <li key={w}>{w}</li>
+          {codedWarnings(editing!.warnings, editing!.warning_codes).map((w) => (
+            <li key={w.text} data-warning-code={w.code ?? undefined}>
+              {w.code ? <code>{w.code}</code> : null}
+              {w.code ? " " : null}
+              {w.text}
+            </li>
           ))}
         </ul>
       )}
@@ -1040,6 +1046,7 @@ function AddPlaceMenu({ onPick }: { onPick: (kind: PlaceKind) => void }) {
  *  open in a side panel; an environment is added from its place. */
 export function OrgInfrastructure({ token, org, workspaceIds }: { token: string; org: { id: string; name: string }; workspaceIds: string[] }) {
   const [environments, setEnvironments] = useState<DeployEnvironment[] | null>(null);
+  const people = usePeople(token, [org.id, ...workspaceIds]);
   const [mayManage, setMayManage] = useState(false);
   const [openClusters, setOpenClusters] = useState<string[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -1414,7 +1421,7 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
               <ul className="env-list">
                 {waiting.map((d) => (
                   <li key={d.id}>
-                    <DeploymentLine d={d} showProject />
+                    <DeploymentLine d={d} showProject people={people} />
                     {mayManage ? (
                       <div className="env-actions">
                         <button
@@ -1716,7 +1723,7 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
                   <ul className="env-list">
                     {(opened.card.running.length ? opened.card.running : opened.card.deployments.slice(0, 10)).map((d) => (
                       <li key={d.id}>
-                        <DeploymentLine d={d} showProject />
+                        <DeploymentLine d={d} showProject people={people} />
                         {opened.card!.running.includes(d) && (
                           <StatusButton token={token} org={org.id} d={d} place={opened.kind === "research" ? "Research" : "the cluster"} />
                         )}
@@ -1809,6 +1816,7 @@ export function ProjectEnvironments({
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [bindings, setBindings] = useState<EnvironmentBinding[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const people = usePeople(token, [targets?.organization_id, projectId]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1921,7 +1929,7 @@ export function ProjectEnvironments({
         <ul className="env-list">
           {deployments.slice(0, 10).map((d) => (
             <li key={d.id}>
-              <DeploymentLine d={d} showProject={false} />
+              <DeploymentLine d={d} showProject={false} people={people} />
               {canReadStatus(d) && <StatusButton token={token} org={targets.organization_id} d={d} />}
             </li>
           ))}
@@ -1935,6 +1943,7 @@ export function ProjectEnvironments({
  *  when. A row opens on what the deploy said -- its reason, its outcome with
  *  a crashed container's error -- and asks the cluster how it is now. */
 function DeployHistory({ token, org, deployments }: { token: string; org: string; deployments: Deployment[] }) {
+  const people = usePeople(token, [org, ...new Set(deployments.map((d) => d.project_id))]);
   return (
     <DataTable<Deployment>
       list="deploy-history"
@@ -1944,7 +1953,7 @@ function DeployHistory({ token, org, deployments }: { token: string; org: string
       rowLabel={(d) => `${d.product} to ${d.environment_name}`}
       expand={(d) => (
         <div data-deploy-history-detail={d.id}>
-          <DeploymentLine d={d} showProject={false} />
+          <DeploymentLine d={d} showProject={false} people={people} />
           {canReadStatus(d) && <StatusButton token={token} org={org} d={d} />}
         </div>
       )}
@@ -1976,7 +1985,7 @@ function DeployHistory({ token, org, deployments }: { token: string; org: string
           ),
         },
         { id: "commit", header: "Commit", cell: (d) => (d.commit ? <code>{shortCommit(d.commit)}</code> : "—") },
-        { id: "by", header: "By", cell: (d) => d.requested_by_name || d.requested_by },
+        { id: "by", header: "By", cell: (d) => personLabel(d.requested_by, d.requested_by_name, people) },
         {
           id: "when",
           header: "When",

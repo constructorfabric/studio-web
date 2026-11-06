@@ -14,9 +14,11 @@ import {
   protectedReady,
   releaseSources,
   shortCommit,
+  sourceWarning,
   withFlag,
   type LockedSource,
   type SourceFlag,
+  type SourceUnreadable,
 } from "./source-roles";
 import { StatusChip } from "./ui-standard";
 
@@ -27,8 +29,13 @@ export interface SourceRoles {
   byDir: Map<string, ProjectSource>;
   home: string | null;
   connections: Map<string, Connection>;
+  /** Whether `connections` was read: a source whose connection is missing
+   *  from a list that was not read is not called deleted. */
+  connectionsRead: boolean;
   lock: LockedSource[] | null;
   components: ProjectComponent[] | null;
+  /** The sources the server could not read, and why (the components list). */
+  unreadable: SourceUnreadable[] | null;
   saving: string | null;
   failed: string | null;
   toggle: (dir: string, flag: SourceFlag, on: boolean) => Promise<void>;
@@ -44,8 +51,10 @@ export function useSourceRoles(
   const [connections, setConnections] = useState<Map<string, Connection>>(
     new Map(),
   );
+  const [connectionsRead, setConnectionsRead] = useState(false);
   const [lock, setLock] = useState<LockedSource[] | null>(null);
   const [components, setComponents] = useState<ProjectComponent[] | null>(null);
+  const [unreadable, setUnreadable] = useState<SourceUnreadable[] | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -57,21 +66,20 @@ export function useSourceRoles(
       api
         .connections(token, projectId)
         .then((p) => p.items)
-        .catch((): Connection[] => []),
+        .catch((): Connection[] | null => null),
       api
         .productDescription(token, projectId)
         .then((d) => d.latest?.sources_lock ?? [])
         .catch(() => null),
-      api
-        .projectComponents(token, projectId)
-        .then((p) => p.items)
-        .catch(() => null),
+      api.projectComponents(token, projectId).catch(() => null),
     ]).then(([config, conns, l, comps]) => {
       if (!live) return;
       setSources(config?.sources ?? []);
-      setConnections(new Map(conns.map((c) => [c.id, c])));
+      setConnections(new Map((conns ?? []).map((c) => [c.id, c])));
+      setConnectionsRead(conns !== null);
       setLock(l);
-      setComponents(comps);
+      setComponents(comps?.items ?? null);
+      setUnreadable(comps ? (comps.unreadable?.sources ?? []) : null);
     });
     return () => {
       live = false;
@@ -104,8 +112,10 @@ export function useSourceRoles(
     byDir,
     home: descriptionHome(sources),
     connections,
+    connectionsRead,
     lock,
     components,
+    unreadable,
     saving,
     failed,
     toggle,
@@ -174,6 +184,11 @@ export function sourceRoleColumns(roles: SourceRoles): {
         const c = s?.connection_id ? roles.connections.get(s.connection_id) : undefined;
         const pin = s && roles.lock !== null ? pinnedCommit(roles.lock, s) : undefined;
         const n = s ? componentsIn(roles.components, s) : null;
+        const warning = sourceWarning(
+          s,
+          roles.unreadable,
+          roles.connectionsRead ? new Set(roles.connections.keys()) : null,
+        );
         const facts = [
           !s?.connection_id ? "no connection" : c ? c.label : "connection not visible",
           pin ? `pinned ${shortCommit(pin)}` : pin === null ? "not pinned" : null,
@@ -193,6 +208,11 @@ export function sourceRoleColumns(roles: SourceRoles): {
             <span className="sub" style={{ overflowWrap: "anywhere" }} title={pin ?? undefined}>
               {facts.join(" · ")}
             </span>
+            {warning ? (
+              <span className="warn" data-source-unreadable={r.name} role="status" style={{ overflowWrap: "anywhere", fontSize: 12 }}>
+                ⚠ {warning}
+              </span>
+            ) : null}
           </div>
         );
       },

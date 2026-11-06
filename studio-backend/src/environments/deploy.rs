@@ -71,6 +71,10 @@ pub struct DeployPayload {
     /// a published chart is fetched with.
     #[serde(default)]
     pub registry_connection_id: Option<Uuid>,
+    /// `registry_connection_id` is the push login: the environment names no
+    /// pull identity (`PULL_USES_PUSH_LOGIN`), which the run says.
+    #[serde(default)]
+    pub pull_uses_push_login: bool,
     pub namespace: String,
     pub release: String,
     /// Install (payloads queued before uninstall existed) or uninstall.
@@ -316,6 +320,14 @@ impl TaskHandler for DeployTask {
             .await;
         }
         if let Some(registry) = &registry {
+            if payload.pull_uses_push_login {
+                ctx.progress(format!(
+                    "{}: {}",
+                    super::model::PULL_USES_PUSH_LOGIN,
+                    super::model::PULL_USES_PUSH_LOGIN_MESSAGE
+                ))
+                .await;
+            }
             ctx.progress(format!("writing the pull secret for {}", registry.host))
                 .await;
             if let Err(e) = write_pull_secret(&client, &payload.namespace, registry).await {
@@ -359,11 +371,29 @@ impl TaskHandler for DeployTask {
             Ok(out) => out,
             Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
         };
-        let needs = match database::needs(&rendered) {
-            Ok(n) => n,
+        let needs = match database::needs_reported(&rendered) {
+            Ok((n, skipped)) => {
+                for s in skipped {
+                    ctx.progress(format!(
+                        "manifest document {} does not parse and was skipped: {}",
+                        s.index, s.error
+                    ))
+                    .await;
+                }
+                n
+            }
             // Without a database of Studio's to prepare, a configuration it
-            // cannot read is the product's business, not a reason to refuse.
-            Err(_) if payload.database == DatabaseMode::Shared => Vec::new(),
+            // cannot read is the product's business, not a reason to refuse
+            // -- but said, not taken for "needs no database".
+            Err(e) if payload.database == DatabaseMode::Shared => {
+                warn!(error = %format!("{e:#}"), "studio-environments: the chart's database configuration could not be read");
+                ctx.progress(format!(
+                    "the chart's database configuration could not be read ({e:#}); \
+                     the environment's shared database is used as the chart configures it"
+                ))
+                .await;
+                Vec::new()
+            }
             Err(e) => {
                 return TaskOutcome::Failed(format!("the chart's database configuration: {e:#}"));
             }
@@ -1373,6 +1403,7 @@ mod tests {
             project_id: Uuid::nil(),
             connection_id: Uuid::nil(),
             registry_connection_id: None,
+            pull_uses_push_login: false,
             namespace: "studio-web-prod".into(),
             release: "studio-web".into(),
             action: DeploymentAction::Install,

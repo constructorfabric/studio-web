@@ -306,6 +306,13 @@ pub struct ReadinessDto {
     pub bootstrap_version: Option<String>,
     /// Whether the admission policy refused an unlabelled namespace.
     pub policy_enforced: bool,
+    /// What the environment's own setup should fix, a sentence each: the
+    /// cluster is ready, and still e.g. pulls with the push login.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// The code of each of `warnings`, in its order (`PULL_USES_PUSH_LOGIN`).
+    #[serde(default)]
+    pub warning_codes: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -351,6 +358,10 @@ pub struct BuildPlanDto {
     pub chart_repository: String,
     pub sources: Vec<PlanSourceDto>,
     pub warnings: Vec<String>,
+    /// The codes of the environment's warnings among `warnings`, e.g.
+    /// `PULL_USES_PUSH_LOGIN`: the cluster pulls with the push login.
+    #[serde(default)]
+    pub warning_codes: Vec<String>,
     /// What a build would be refused with now; absent: it would start.
     pub refusal: Option<PlanRefusalDto>,
 }
@@ -386,6 +397,7 @@ fn plan_dto(p: BuildPlan) -> BuildPlanDto {
             })
             .collect(),
         warnings: p.warnings,
+        warning_codes: p.warning_codes,
         refusal: p
             .refusal
             .map(|(code, message)| PlanRefusalDto { code, message }),
@@ -796,7 +808,7 @@ async fn get_readiness(
             .map_err(problem)?,
         None => ctx.subject_tenant_id(),
     };
-    let report = envs
+    let (report, warnings, warning_codes) = envs
         .0
         .readiness(&ctx, org, q.project_id, environment_id)
         .await
@@ -813,6 +825,8 @@ async fn get_readiness(
         namespaces,
         bootstrap_version: report.version.map(|v| v.to_string()),
         policy_enforced: report.policy_enforced,
+        warnings,
+        warning_codes,
     }))
 }
 

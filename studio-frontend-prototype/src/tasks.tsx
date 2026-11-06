@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type TaskRun, type TaskSchedule } from "./api";
 import { DataTable, When, type PageRequest, type PageResult } from "./data-table";
 import { errText } from "./format";
+import { NO_PEOPLE, personLabel } from "./user-names";
 import { subscribeStudioEvents } from "./studio-events";
 import { PageHeader, StatusChip, type Tone } from "./ui-standard";
 import "./org-screens.css";
@@ -366,7 +367,7 @@ export function BackgroundWork({ token }: { token: string; query?: string }) {
           expand={(run) => (
             <div className="rows">
               <Detail label="Run id" value={run.id} />
-              <Detail label="Requested by" value={run.requested_by} />
+              <Detail label="Requested by" value={personLabel(run.requested_by, null, NO_PEOPLE)} />
               {run.partition_key && <Detail label="Ordered with" value={run.partition_key} />}
               <Detail label="Created" value={when(run.created_at)} />
               <Detail label="Finished" value={when(run.finished_at)} />

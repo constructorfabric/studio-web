@@ -673,7 +673,14 @@ impl EnvironmentService {
                 }
                 let project_id = images::repository_owner(path, &name, &slugs);
                 let project_name = match project_id {
-                    Some(p) => Some(self.store.tenant_name(ctx, p).await),
+                    // Shown only: a name that cannot be read is none, logged.
+                    Some(p) => match self.store.tenant_name(ctx, p).await {
+                        Ok(n) => Some(n),
+                        Err(e) => {
+                            tracing::warn!(project_id = %p, error = %format!("{e:#}"), "studio-environments: a repository's project name could not be read");
+                            None
+                        }
+                    },
                     None => None,
                 };
                 out.push(OrgRepository {

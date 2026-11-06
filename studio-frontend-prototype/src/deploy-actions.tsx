@@ -19,7 +19,8 @@ import {
 import { planKey, planLines, planRefusalText } from "./build-plan";
 import { InfraPlanView } from "./infra-services-view";
 import { type IdeBuild, buildRefusalText } from "./builds";
-import { STATE_LABELS, shortCommit, stateTone } from "./environments";
+import { STATE_LABELS, codedWarnings, shortCommit, stateTone } from "./environments";
+import { personLabel, usePeople } from "./user-names";
 import { ownBuildSummary } from "./project-build";
 import { errText, relTime } from "./format";
 import {
@@ -285,6 +286,7 @@ function PendingDecisions({
   const [error, setError] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const people = usePeople(token, [organizationId, ...new Set(waiting.map((d) => d.project_id))]);
   useEffect(() => {
     if (!organizationId) return;
     let live = true;
@@ -324,7 +326,7 @@ function PendingDecisions({
               <StatusChip tone="warn">waits for a decision</StatusChip> <b>{d.chart_version ?? d.build ?? d.product}</b>{" "}
               {d.commit && <code>{shortCommit(d.commit)}</code>}{" "}
               <span className="sub">
-                asked by {d.requested_by_name || d.requested_by} {relTime(d.requested_at)}
+                asked by {personLabel(d.requested_by, d.requested_by_name, people)} {relTime(d.requested_at)}
               </span>
             </div>
             {mayDecide ? (
@@ -1105,8 +1107,12 @@ function BuildPlanView({ plan }: { plan: BuildPlan }) {
       </dl>
       {plan.warnings.length > 0 && (
         <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }} data-build-plan-warnings>
-          {plan.warnings.map((w) => (
-            <li key={w}>{w}</li>
+          {codedWarnings(plan.warnings, plan.warning_codes).map((w) => (
+            <li key={w.text} data-warning-code={w.code ?? undefined}>
+              {w.code ? <code>{w.code}</code> : null}
+              {w.code ? " " : null}
+              {w.text}
+            </li>
           ))}
         </ul>
       )}

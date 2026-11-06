@@ -3358,6 +3358,10 @@ pub struct Gearbox {
     /// The `product.gdl` each project keeps in its repository, read with its
     /// organization's roots (`project_roots`), by project.
     project_files: std::sync::Mutex<HashMap<uuid::Uuid, ProjectFile>>,
+    /// The project sources each organization's last read could not read,
+    /// and why, by organization.
+    unreadable_sources:
+        std::sync::Mutex<HashMap<uuid::Uuid, Vec<super::project_roots::UnreadableSource>>>,
     /// `gearbox --version`, asked once: the binary does not change under a
     /// running process, and the status page asked it on every load.
     version: std::sync::OnceLock<String>,
@@ -3453,6 +3457,7 @@ impl Gearbox {
             org_reads: InFlight::new(),
             checkouts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             project_files: std::sync::Mutex::new(HashMap::new()),
+            unreadable_sources: std::sync::Mutex::new(HashMap::new()),
             version: std::sync::OnceLock::new(),
             evaluations: Arc::new(std::sync::Mutex::new(Evaluations::default())),
             home_catalogues: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -3619,6 +3624,38 @@ impl Gearbox {
         let mut map = self.project_files.lock().expect("gearbox project files");
         map.retain(|_, f| f.organization != org);
         map.extend(files);
+    }
+
+    /// Replace what organization `org`'s last read of its projects could not
+    /// read.
+    pub fn use_unreadable_sources(
+        &self,
+        org: uuid::Uuid,
+        unreadable: Vec<super::project_roots::UnreadableSource>,
+    ) {
+        let mut map = self
+            .unreadable_sources
+            .lock()
+            .expect("gearbox unreadable sources");
+        if unreadable.is_empty() {
+            map.remove(&org);
+        } else {
+            map.insert(org, unreadable);
+        }
+    }
+
+    /// The project sources organization `org`'s last read could not read,
+    /// and why.
+    pub fn unreadable_sources_of(
+        &self,
+        org: uuid::Uuid,
+    ) -> Vec<super::project_roots::UnreadableSource> {
+        self.unreadable_sources
+            .lock()
+            .expect("gearbox unreadable sources")
+            .get(&org)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// The product file project `project` keeps, when its organization's

@@ -280,9 +280,39 @@ pub struct GearboxCatalogueDto {
     /// calls only its own roots' gears "this project's".
     #[serde(default)]
     pub project_source_owners: std::collections::BTreeMap<String, Vec<String>>,
+    /// The organization's project sources the last read could not read, and
+    /// why: their gears are missing from the catalogue (or are the last ones
+    /// read), not absent.
+    #[serde(default)]
+    pub unreadable: Vec<UnreadableSourceDto>,
     /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
     /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
     pub catalogue: Value,
+}
+
+/// A project source the server could not read, and why ("the token for
+/// connection 'X' is not readable -- it may belong to another user").
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct UnreadableSourceDto {
+    /// The project it belongs to; absent when the organization's projects
+    /// could not be read at all.
+    #[schema(value_type = Option<String>)]
+    pub project_id: Option<Uuid>,
+    /// `owner/repo`, or `project config` when the project's list of sources
+    /// itself could not be read.
+    pub source: String,
+    pub reason: String,
+}
+
+impl From<super::project_roots::UnreadableSource> for UnreadableSourceDto {
+    fn from(u: super::project_roots::UnreadableSource) -> Self {
+        Self {
+            project_id: u.project_id,
+            source: u.source,
+            reason: u.reason,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -308,6 +338,10 @@ pub struct GearboxStatusDto {
     /// The organization's repositories left out because a platform
     /// repository has the same source id, by source id.
     pub shadowed: Vec<String>,
+    /// The organization's project sources the last read could not read, and
+    /// why.
+    #[serde(default)]
+    pub unreadable: Vec<UnreadableSourceDto>,
     /// Where a product's frontend starts in this deployment
     /// (`STUDIO_FRONTX_*`); filled whether or not Gearbox is.
     pub frontx: FrontxDefaultsDto,
@@ -714,6 +748,10 @@ pub struct ProductPreviewDto {
     /// `ok` is false). The check carries on and is kept under the product's
     /// `checks.<profile>` when it finishes.
     pub checking: bool,
+    /// The project's sources the check could not read, and why: it ran
+    /// without them (its home repository's own gears are then missing).
+    #[serde(default)]
+    pub unreadable: Vec<UnreadableSourceDto>,
 }
 
 /// Where the scaffold landed, and what it wrote.
@@ -1428,6 +1466,12 @@ async fn gearbox_catalogue(
         roots,
         project_sources,
         project_source_owners,
+        unreadable: scope
+            .map(|org| gearbox.unreadable_sources_of(org))
+            .unwrap_or_default()
+            .into_iter()
+            .map(UnreadableSourceDto::from)
+            .collect(),
         // Written from the shared copy below instead of cloned into here.
         catalogue: Value::Null,
     };
@@ -1766,6 +1810,7 @@ async fn gearbox_status(
             problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
             sources: Vec::new(),
             shadowed: Vec::new(),
+            unreadable: Vec::new(),
             frontx: FrontxDefaultsDto::from_env(),
         }));
     };
@@ -1787,6 +1832,12 @@ async fn gearbox_status(
         profiles,
         problem: status.problem,
         shadowed: status.shadowed,
+        unreadable: scope
+            .map(|org| gearbox.unreadable_sources_of(org))
+            .unwrap_or_default()
+            .into_iter()
+            .map(UnreadableSourceDto::from)
+            .collect(),
         frontx: FrontxDefaultsDto::from_env(),
         sources: status
             .sources
@@ -1870,6 +1921,18 @@ async fn preview_product(
     );
     // The project's own repository is read as a build reads it (ADR-0060
     // §6): a description of its gears without it would leave them out.
+    // A home source the server cannot read is checked without, and said in
+    // the answer rather than left out silently.
+    let (home, unreadable) = match home {
+        Err(e) => match e.downcast::<super::project_roots::HomeUnreadable>() {
+            Ok(why) => {
+                tracing::warn!(%project_id, source = %why.0.source, reason = %why.0.reason, "studio-product: the check runs without the project's home source");
+                (Ok(None), vec![UnreadableSourceDto::from(why.0)])
+            }
+            Err(e) => (Err(e), Vec::new()),
+        },
+        ok => (ok, Vec::new()),
+    };
     let home = home.map_err(|e| {
         if e.downcast_ref::<super::gearbox::HomeStillReading>()
             .is_some()
@@ -2179,6 +2242,7 @@ async fn preview_product(
                 written,
                 description_revision,
                 checking: false,
+                unreadable,
             },
             verdict,
         ),

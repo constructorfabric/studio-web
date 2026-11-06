@@ -289,3 +289,22 @@ fn a_flag_moves_to_one_source() {
     assert_eq!(s.iter().filter(|s| s.gears_here).count(), 1);
     assert!(s[2].gears_here);
 }
+
+#[test]
+fn an_unreadable_config_is_a_reason_not_no_sources() {
+    let read = sources_of(Ok(json!({ "sources": [
+        { "full_path": "acme/api", "clone_url": "https://github.com/acme/api.git" },
+    ]})))
+    .unwrap()
+    .unwrap();
+    assert_eq!(read.len(), 1);
+    let failed = sources_of(Err(toolkit_canonical_errors::CanonicalError::internal(
+        "account-management is down",
+    )
+    .create()));
+    let reason = failed.expect_err("a failed read is not an empty list");
+    assert!(
+        reason.contains("could not be read"),
+        "the reason says what failed: {reason}"
+    );
+}

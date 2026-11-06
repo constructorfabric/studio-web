@@ -138,6 +138,14 @@ fn default_pattern() -> String {
 /// (ADR-0062 §7): one per project, beside its runtime namespaces.
 pub const DEFAULT_BUILD_NAMESPACE_PATTERN: &str = "{project}-build";
 
+/// The warning an environment carries while the cluster pulls with the push
+/// login: it names no read-only pull identity (ADR-0062 §2).
+pub const PULL_USES_PUSH_LOGIN: &str = "PULL_USES_PUSH_LOGIN";
+
+/// What [`PULL_USES_PUSH_LOGIN`] says.
+pub const PULL_USES_PUSH_LOGIN_MESSAGE: &str = "the cluster gets a credential that can write: give \
+     the environment a read-only pull connection";
+
 /// What separates a project's build from Studio and from its runtime, per
 /// environment (ADR-0062): the builder image, the registry identities, the
 /// build namespace, and the namespaces a cluster gives when Studio may not
@@ -692,17 +700,34 @@ impl Environment {
     /// What is not wrong enough to refuse but should be fixed, in a
     /// sentence each.
     pub fn warnings(&self) -> Vec<String> {
+        self.coded_warnings()
+            .into_iter()
+            .map(|(_, message)| message.to_owned())
+            .collect()
+    }
+
+    /// The codes of [`Self::warnings`], in the same order: what a screen
+    /// keys a warning on.
+    pub fn warning_codes(&self) -> Vec<String> {
+        self.coded_warnings()
+            .into_iter()
+            .map(|(code, _)| code.to_owned())
+            .collect()
+    }
+
+    fn coded_warnings(&self) -> Vec<(&'static str, &'static str)> {
         let mut out = Vec::new();
-        if self.registry_connection_id.is_some()
-            && self.boundaries.registry_pull_connection_id.is_none()
-        {
-            out.push(
-                "the cluster gets a credential that can write: give the environment a read-only \
-                 pull connection"
-                    .to_owned(),
-            );
+        if self.pulls_with_push_login() {
+            out.push((PULL_USES_PUSH_LOGIN, PULL_USES_PUSH_LOGIN_MESSAGE));
         }
         out
+    }
+
+    /// The cluster pulls with the push login: no pull identity is named, so
+    /// [`Self::pull_connection`] falls back to the registry connection.
+    pub fn pulls_with_push_login(&self) -> bool {
+        self.registry_connection_id.is_some()
+            && self.boundaries.registry_pull_connection_id.is_none()
     }
 
     /// The namespace builds of a project with `slug` run in here.
@@ -1771,9 +1796,13 @@ mod tests {
         e.registry_connection_id = Some(Uuid::from_u128(1));
         assert_eq!(e.pull_connection(), Some(Uuid::from_u128(1)));
         assert!(e.warnings()[0].contains("can write"));
+        assert_eq!(e.warning_codes(), [PULL_USES_PUSH_LOGIN]);
+        assert!(e.pulls_with_push_login());
         e.boundaries.registry_pull_connection_id = Some(Uuid::from_u128(2));
         assert_eq!(e.pull_connection(), Some(Uuid::from_u128(2)));
         assert!(e.warnings().is_empty());
+        assert!(e.warning_codes().is_empty());
+        assert!(!e.pulls_with_push_login());
         assert_eq!(e.build_namespace_for("shop").unwrap(), "shop-build");
     }
 

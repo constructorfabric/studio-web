@@ -18,6 +18,7 @@ import {
   type RegistryPublishPreview,
 } from "./api";
 import { errText, relTime } from "./format";
+import { NO_PEOPLE, personLabel } from "./user-names";
 import { publishPreviewLines } from "./registry";
 import { EmptyState, InfoPopover, PageHeader, StatusChip } from "./ui-standard";
 
@@ -149,7 +150,7 @@ export function PublicationRequests({
                       <b>{r.name}</b>
                       {r.version && <StatusChip tone="neutral">v{r.version.replace(/^v/, "")}</StatusChip>}
                       <span className="sub">
-                        {r.organization_name ?? r.organization_id} · asked by {r.requested_by_name ?? r.requested_by} ·{" "}
+                        {r.organization_name ?? r.organization_id} · asked by {personLabel(r.requested_by, r.requested_by_name, NO_PEOPLE)} ·{" "}
                         {relTime(r.at)}
                       </span>
                     </div>
