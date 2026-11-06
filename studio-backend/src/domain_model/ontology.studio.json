@@ -2494,7 +2494,7 @@
           "relation": "project-type",
           "extends": "edge",
           "relationType": "shows",
-          "relationLabel": "Project templates",
+          "relationLabel": "Templates & phases",
           "description": "A tab of the workspace: what it shows."
         },
         {
