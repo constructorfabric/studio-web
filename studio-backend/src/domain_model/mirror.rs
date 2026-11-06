@@ -737,32 +737,6 @@ impl IndexedDomainStore {
     }
 }
 
-/// Which declared relation each graph edge is, from its key: the graph does
-/// not report an edge's discriminator, so each of the model's relations of the
-/// edge's verb is tried. An edge none of them derives keeps no name.
-fn named(e: EdgeView, by_verb: &HashMap<String, Vec<String>>) -> EdgeView {
-    if e.relation.is_some() {
-        return e;
-    }
-    let Some(key) = e.key.as_deref() else {
-        return e;
-    };
-    let candidates = by_verb
-        .get(&e.type_id)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    let relation = gts::relation_of_key(
-        &e.type_id,
-        &e.from,
-        &e.to,
-        key,
-        candidates.iter().map(String::as_str),
-    )
-    .filter(|r| !r.is_empty())
-    .map(str::to_string);
-    EdgeView { relation, ..e }
-}
-
 /// Copy a tenant's live objects and their relations into the mirror, then
 /// declare it complete.
 async fn fill_tenant(
@@ -777,13 +751,6 @@ async fn fill_tenant(
         .into_iter()
         .map(|n| n.type_id)
         .collect();
-    let mut by_verb: HashMap<String, Vec<String>> = HashMap::new();
-    for d in ontology.declared_relations() {
-        let names = by_verb.entry(gts::edge_type_id(&d.verb)).or_default();
-        if !names.contains(&d.name) {
-            names.push(d.name);
-        }
-    }
     let tenant = ctx.subject_tenant_id();
     let generation = fills.generation(tenant);
     let started = Instant::now();
@@ -801,7 +768,6 @@ async fn fill_tenant(
         .await?
         .into_iter()
         .filter(|e| is_relation_type(&e.type_id))
-        .map(|e| named(e, &by_verb))
         .map(|e| edge_row(tenant, &e.type_id, &e.from, &e.to, e.relation.as_deref()))
         .collect();
     let related = edges.len();
