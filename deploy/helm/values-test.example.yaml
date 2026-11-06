@@ -8,6 +8,11 @@ backend:
   # A subject id is per-installation, so this value cannot be shared with
   # another environment — this is `admin` in the studio realm of studio-test.cfabric.org.
   platformAdmins: "00208b90-b311-443c-ad82-383778d7dcbe"
+  # A person without an organization asks for one, and the administrator
+  # above approves it (ADR-0051), at most one each.
+  organizations:
+    selfService: "request"
+    maxOwned: "1"
   image:
     tag: "sha-REPLACE_ME"
   replicas: 1

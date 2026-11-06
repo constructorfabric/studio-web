@@ -70,6 +70,8 @@ import { RegistryBrowser } from "./registry-browser-view";
 import { databaseWord, ladderOrder, versionOf, whatRunsWhere, type ProjectRuns } from "./releases";
 import { EmptyState, PageHeader, StatusChip, type Tone } from "./ui-standard";
 import "./infrastructure.css";
+import { useDomainRefresh } from "./domain-live";
+import { ModelFields } from "./object-attributes";
 
 const PROJECT_TYPE = /tenant\.project\.v1/;
 
@@ -1117,6 +1119,7 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
       live = false;
     };
   }, [token, org.id]);
+  useDomainRefresh(["deployment-environment","environment-binding","environment-config-secret","deployment","connector-connection"], load);
   useEffect(load, [load]);
 
   useEffect(() => {
@@ -1699,6 +1702,11 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     <Answer id={e.id} />
+                    <ModelFields
+                      token={token}
+                      entity="deployment-environment"
+                      where={{ doc_tenant_id: { _eq: org.id }, doc_key: { _eq: e.id } }}
+                    />
                   </li>
                 ))}
               </ul>

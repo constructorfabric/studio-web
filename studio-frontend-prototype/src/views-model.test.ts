@@ -8,7 +8,10 @@ import {
   fromViewObject,
   labelField,
   pageQuery,
+  PageCursors,
   problems,
+  relationLabel,
+  relationsOf,
   toQuery,
   toViewObject,
   type ViewSpec,
@@ -145,5 +148,58 @@ describe("a graph view", () => {
     expect(g.nodes.map((n) => n.name)).toEqual(["Apollo", "web-portal", "Mercury"]);
     expect(g.nodes[0].bucket).toBe("planning");
     expect(g.edges.map((e) => `${e.from}->${e.to}:${e.type_id}`)).toEqual(["p1->r1:uses", "p2->r1:uses"]);
+  });
+});
+
+describe("a view can follow a relation backwards", () => {
+  it("offers the relations other entities declare towards its type", () => {
+    expect(relationsOf("project")["~team.delivers"]).toBe("team");
+    expect(relationsOf("project").uses).toBe("repository");
+  });
+
+  it("includes them under their reverse name, labelled by the source", () => {
+    const q = toQuery({ ...active, relations: ["~team.delivers"] });
+    expect(q.include).toEqual({
+      "~team.delivers": { fields: ["name"], order_by: [{ field: "name" }], limit: 5 },
+    });
+    expect(problems({ ...active, relations: ["~team.delivers"] })).toEqual([]);
+  });
+});
+
+describe("a relation reads as words", () => {
+  it("forwards by its name and target, backwards by who points here", () => {
+    expect(relationLabel("delivers", "project")).toBe("delivers → project");
+    expect(relationLabel("has_members", "person")).toBe("has members → person");
+    expect(relationLabel("~team.delivers", "team")).toBe("team · delivers this");
+    expect(relationLabel("~project.includes_2", "project")).toBe("project · includes this");
+  });
+});
+
+describe("PageCursors", () => {
+  const page = (offset: number) => pageQuery(active, { q: "", sort: null, offset, limit: 25 });
+
+  it("asks a page that follows one already read by its cursor", () => {
+    const cursors = new PageCursors();
+    expect(cursors.place(page(0))).toEqual(page(0));
+    cursors.note(page(0), 25, "c25");
+    const next = cursors.place(page(25));
+    expect(next.cursor).toBe("c25");
+    expect(next.offset).toBeUndefined();
+    expect(next.limit).toBe(25);
+  });
+
+  it("jumps by offset to a page nobody has read, and forgets nothing on the last page", () => {
+    const cursors = new PageCursors();
+    cursors.note(page(0), 25, "c25");
+    expect(cursors.place(page(50)).offset).toBe(50);
+    cursors.note(page(50), 3, undefined);
+    expect(cursors.place(page(53)).cursor).toBeUndefined();
+  });
+
+  it("keeps cursors apart per search and sort", () => {
+    const cursors = new PageCursors();
+    cursors.note(page(0), 25, "c25");
+    const searched = pageQuery(active, { q: "apo", sort: null, offset: 25, limit: 25 });
+    expect(cursors.place(searched).cursor).toBeUndefined();
   });
 });

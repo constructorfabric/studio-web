@@ -905,7 +905,10 @@ async fn upsert_type_at(
             },
         },
     };
-    let saved = service.upsert_type(owner, ty).await.map_err(invalid)?;
+    let saved = service
+        .upsert_type(&ctx, owner, ty)
+        .await
+        .map_err(invalid)?;
     Ok(Json(saved.into()))
 }
 
@@ -1013,7 +1016,10 @@ async fn upsert_stage_at(
         owner: owner.clone(),
         hidden: body.hidden.unwrap_or(false),
     };
-    let saved = service.upsert_stage(owner, st).await.map_err(invalid)?;
+    let saved = service
+        .upsert_stage(&ctx, owner, st)
+        .await
+        .map_err(invalid)?;
     Ok(Json(saved.into()))
 }
 
@@ -1036,6 +1042,7 @@ async fn record_analysis(
         .ok_or_else(|| invalid(anyhow::anyhow!("state must be pending, passed or failed")))?;
     let saved = service
         .record_analysis(
+            &ctx,
             workspace_id,
             id,
             &detector,
@@ -1064,6 +1071,7 @@ async fn record_binding_analysis(
         .ok_or_else(|| invalid(anyhow::anyhow!("state must be pending, passed or failed")))?;
     let saved = service
         .record_binding_analysis(
+            &ctx,
             workspace_id,
             id,
             &detector,
@@ -1087,7 +1095,7 @@ async fn list_project_analyses(
         .await
         .map_err(no_tenant)?;
     let items = service
-        .list_analyses(workspace_id, Some(project_id))
+        .list_analyses(&ctx, workspace_id, Some(project_id))
         .await
         .map_err(internal)?;
     // This is the collection here that grows without a ceiling: one row per
@@ -1163,7 +1171,7 @@ async fn stage_evidence(
             None => None,
         };
         let awaited: Vec<String> = service
-            .reviews_with_verdicts(workspace_id, project_id, None)
+            .reviews_with_verdicts(ctx, workspace_id, project_id, None)
             .await
             .unwrap_or_default()
             .iter()
@@ -1363,7 +1371,7 @@ async fn upsert_capability_at(
         hidden: body.hidden.unwrap_or(false),
     };
     let saved = service
-        .upsert_capability(owner, cap)
+        .upsert_capability(&ctx, owner, cap)
         .await
         .map_err(invalid)?;
     Ok(Json(saved.into()))
@@ -1380,6 +1388,7 @@ async fn delete_workspace_capability(
         .map_err(no_tenant)?;
     service
         .delete_capability(
+            &ctx,
             Owner::Workspace {
                 tenant_id: workspace_id,
             },
@@ -1401,6 +1410,7 @@ async fn delete_organization_capability(
         .map_err(no_tenant)?;
     service
         .delete_capability(
+            &ctx,
             Owner::Organization {
                 tenant_id: organization_id,
             },
@@ -1428,6 +1438,7 @@ async fn delete_workspace_type(
         .map_err(no_tenant)?;
     service
         .delete_type(
+            &ctx,
             Owner::Workspace {
                 tenant_id: workspace_id,
             },
@@ -1449,6 +1460,7 @@ async fn delete_organization_type(
         .map_err(no_tenant)?;
     service
         .delete_type(
+            &ctx,
             Owner::Organization {
                 tenant_id: organization_id,
             },
@@ -1470,6 +1482,7 @@ async fn delete_workspace_stage(
         .map_err(no_tenant)?;
     service
         .delete_stage(
+            &ctx,
             Owner::Workspace {
                 tenant_id: workspace_id,
             },
@@ -1491,6 +1504,7 @@ async fn delete_organization_stage(
         .map_err(no_tenant)?;
     service
         .delete_stage(
+            &ctx,
             Owner::Organization {
                 tenant_id: organization_id,
             },
@@ -1512,7 +1526,7 @@ async fn list_workspace_documents(
         .await
         .map_err(no_tenant)?;
     let (items, total) = service
-        .list_documents(workspace_id, None, page)
+        .list_documents(&ctx, workspace_id, None, page)
         .await
         .map_err(internal)?;
     Ok(Json(DocumentListDto {
@@ -1536,7 +1550,7 @@ async fn list_project_documents(
         .await
         .map_err(no_tenant)?;
     let (items, total) = service
-        .list_documents(workspace_id, Some(project_id), page)
+        .list_documents(&ctx, workspace_id, Some(project_id), page)
         .await
         .map_err(internal)?;
     Ok(Json(DocumentListDto {
@@ -1617,7 +1631,7 @@ async fn get_document(
         .await
         .map_err(no_tenant)?;
     let doc = service
-        .get_document(workspace_id, id)
+        .get_document(&ctx, workspace_id, id)
         .await
         .map_err(internal)?
         .ok_or_else(|| {
@@ -1701,7 +1715,7 @@ async fn delete_document(
             })?;
     }
     service
-        .delete_document(workspace_id, id)
+        .delete_document(&ctx, workspace_id, id)
         .await
         .map_err(internal)?;
     Ok(StatusCode::NO_CONTENT)
@@ -2039,7 +2053,7 @@ async fn analyze_project_documents(
     };
     docs.extend(
         service
-            .quality_documents(workspace_id, project_id, &body.document_ids)
+            .quality_documents(&ctx, workspace_id, project_id, &body.document_ids)
             .await
             .map_err(internal)?,
     );
@@ -2059,6 +2073,7 @@ async fn analyze_project_documents(
     let paths: Vec<String> = docs.iter().map(|d| d.path.clone()).collect();
     let record = service
         .record_subjects(
+            &ctx,
             workspace_id,
             Some(project_id),
             &body.binding_ids,
@@ -2143,7 +2158,7 @@ async fn list_workspace_bindings(
         .await
         .map_err(no_tenant)?;
     let (items, total) = service
-        .list_bindings(workspace_id, None, page)
+        .list_bindings(&ctx, workspace_id, None, page)
         .await
         .map_err(internal)?;
     Ok(Json(DocumentBindingListDto {
@@ -2176,12 +2191,12 @@ async fn list_project_bindings(
         .collect();
     let (items, total) = if paths.is_empty() {
         service
-            .list_bindings(workspace_id, Some(project_id), page)
+            .list_bindings(&ctx, workspace_id, Some(project_id), page)
             .await
             .map_err(internal)?
     } else {
         let items = service
-            .list_bindings_at(workspace_id, Some(project_id), &paths)
+            .list_bindings_at(&ctx, workspace_id, Some(project_id), &paths)
             .await
             .map_err(internal)?;
         let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
@@ -2283,7 +2298,7 @@ async fn delete_binding(
         .await
         .map_err(no_tenant)?;
     service
-        .delete_binding(workspace_id, id)
+        .delete_binding(&ctx, workspace_id, id)
         .await
         .map_err(internal)?;
     Ok(StatusCode::NO_CONTENT)
@@ -2991,7 +3006,7 @@ async fn spec_model_state(
     // The checkout and the stored extractions are independent reads.
     let (sources, rows) = tokio::try_join!(
         service.spec_model_sources(ctx, workspace_id, project_id, reader),
-        service.spec_extractions(workspace_id, project_id),
+        service.spec_extractions(ctx, workspace_id, project_id),
     )
     .map_err(internal)?;
     let kept: Vec<super::spec_model::Kept<'_>> = rows
@@ -3082,7 +3097,7 @@ async fn start_spec_model_build(
     let (sources, _, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let pending = spec_model_pending(&sources, &coverage, body.path.as_deref())?;
-    let estimate = spec_model_estimate(&service, workspace_id, project_id, &pending).await?;
+    let estimate = spec_model_estimate(&ctx, &service, workspace_id, project_id, &pending).await?;
     if !build::begin(project_id, pending.len()) {
         return Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())));
     }
@@ -3102,6 +3117,7 @@ async fn start_spec_model_build(
     let documents = sources.documents;
     tokio::spawn(async move {
         let service_ref = &service;
+        let ctx_ref = &ctx;
         let read = build::read_all(
             project_id,
             models.as_ref(),
@@ -3110,7 +3126,7 @@ async fn start_spec_model_build(
             move |doc, read| async move {
                 let revision = super::spec_model::extract::revision(&doc.text);
                 if let Err(error) = service_ref
-                    .put_spec_extraction(workspace_id, project_id, &doc.path, &revision, &read)
+                    .put_spec_extraction(ctx_ref, workspace_id, project_id, &doc.path, &revision, &read)
                     .await
                 {
                     tracing::warn!(%error, path = %doc.path, "spec-model: an extraction could not be kept");
@@ -3182,6 +3198,7 @@ fn spec_model_pending(
 /// What reading `pending` is expected to take, at the pace of the project's
 /// earlier builds when there were any.
 async fn spec_model_estimate(
+    ctx: &SecurityContext,
     service: &DocumentsService,
     workspace_id: Uuid,
     project_id: Uuid,
@@ -3189,7 +3206,7 @@ async fn spec_model_estimate(
 ) -> ApiResult<super::spec_model::build::Estimate> {
     use super::spec_model::build;
     let rows = service
-        .spec_extractions(workspace_id, project_id)
+        .spec_extractions(ctx, workspace_id, project_id)
         .await
         .map_err(internal)?;
     let kept_at: Vec<time::OffsetDateTime> = rows.iter().map(|r| r.created_at).collect();
@@ -3211,7 +3228,7 @@ async fn get_spec_model_build_estimate(
     let (sources, _, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let pending = spec_model_pending(&sources, &coverage, query.path.as_deref())?;
-    let e = spec_model_estimate(&service, workspace_id, project_id, &pending).await?;
+    let e = spec_model_estimate(&ctx, &service, workspace_id, project_id, &pending).await?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     Ok(Json(SpecModelBuildEstimateDto {
         documents: count(e.documents),
@@ -3228,6 +3245,7 @@ async fn get_spec_model_build_estimate(
 /// Today's candidates of the project's model and the judgements kept for
 /// them: the confirmed findings, and which candidates are not judged yet.
 async fn judged_candidates(
+    ctx: &SecurityContext,
     service: &DocumentsService,
     workspace_id: Uuid,
     project_id: Uuid,
@@ -3240,9 +3258,9 @@ async fn judged_candidates(
     use super::spec_model as sm;
     // Three stored reads that do not depend on one another, asked together.
     let (rows, choices, judgements) = tokio::try_join!(
-        service.spec_extractions(workspace_id, project_id),
-        service.glossary_choices(workspace_id, project_id),
-        service.spec_judgements(workspace_id, project_id),
+        service.spec_extractions(ctx, workspace_id, project_id),
+        service.glossary_choices(ctx, workspace_id, project_id),
+        service.spec_judgements(ctx, workspace_id, project_id),
     )?;
     let kept: Vec<sm::Kept<'_>> = rows
         .iter()
@@ -3283,9 +3301,10 @@ async fn judge_new_candidates(
     documents: &[super::spec_model::SourceText],
 ) -> Result<(), String> {
     use super::spec_model::build;
-    let (candidates, _, unjudged) = judged_candidates(service, workspace_id, project_id, documents)
-        .await
-        .map_err(|e| format!("the model could not be read back: {e:#}"))?;
+    let (candidates, _, unjudged) =
+        judged_candidates(ctx, service, workspace_id, project_id, documents)
+            .await
+            .map_err(|e| format!("the model could not be read back: {e:#}"))?;
     build::update(project_id, |s| {
         s.candidates = unjudged.len();
         s.current = None;
@@ -3307,6 +3326,7 @@ async fn judge_new_candidates(
                     super::spec_model::judgement_key(candidate, &revision_of);
                 if let Err(error) = service
                     .put_spec_judgement(
+                        ctx,
                         workspace_id,
                         project_id,
                         &fingerprint,
@@ -3327,6 +3347,7 @@ async fn judge_new_candidates(
 /// Every finding of the project, references and judged alike, each with a
 /// member's decision on it when there is one.
 async fn spec_model_findings(
+    ctx: &SecurityContext,
     service: &DocumentsService,
     workspace_id: Uuid,
     project_id: Uuid,
@@ -3338,8 +3359,8 @@ async fn spec_model_findings(
     let mut findings = sources.reference_findings();
     // The decisions do not depend on the judging: both read together.
     let ((_, judged, _), decisions) = tokio::try_join!(
-        judged_candidates(service, workspace_id, project_id, &sources.documents),
-        service.spec_decisions(workspace_id, project_id),
+        judged_candidates(ctx, service, workspace_id, project_id, &sources.documents),
+        service.spec_decisions(ctx, workspace_id, project_id),
     )?;
     findings.extend(judged);
     let decisions = decisions
@@ -3363,7 +3384,7 @@ async fn record_spec_model_findings(
 ) {
     use super::spec_model::record;
     let (findings, decisions) =
-        match spec_model_findings(service, workspace_id, project_id, sources).await {
+        match spec_model_findings(ctx, service, workspace_id, project_id, sources).await {
             Ok(read) => read,
             Err(error) => {
                 tracing::warn!(%error, "spec-model: the findings could not be read to record");
@@ -3425,9 +3446,10 @@ async fn list_spec_model_findings(
         .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
         .await
         .map_err(internal)?;
-    let (findings, decisions) = spec_model_findings(&service, workspace_id, project_id, &sources)
-        .await
-        .map_err(internal)?;
+    let (findings, decisions) =
+        spec_model_findings(&ctx, &service, workspace_id, project_id, &sources)
+            .await
+            .map_err(internal)?;
     let binding_of = binding_ids(&sources);
     let items: Vec<SpecModelFindingDto> = findings
         .into_iter()
@@ -3522,11 +3544,11 @@ async fn get_glossary(
     let (_, facts, _) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let choices = service
-        .glossary_choices(workspace_id, project_id)
+        .glossary_choices(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?;
     let apart: std::collections::HashMap<String, Vec<String>> = service
-        .spec_terms(workspace_id, project_id)
+        .spec_terms(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?
         .into_iter()
@@ -3811,7 +3833,7 @@ async fn list_domain_questions(
         );
     };
     let choices = service
-        .glossary_choices(workspace_id, project_id)
+        .glossary_choices(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?;
     let entries = super::spec_model::glossary::entries(&facts, &choices);
@@ -3858,7 +3880,7 @@ async fn list_term_drift(
         );
     };
     let choices = service
-        .glossary_choices(workspace_id, project_id)
+        .glossary_choices(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?;
     let entries = super::spec_model::glossary::entries(&facts, &choices);
@@ -4274,6 +4296,7 @@ async fn create_decision(
     let me = quality.caller(&ctx).await?;
     let saved = service
         .record_decision(
+            &ctx,
             workspace_id,
             project_id,
             &body.statement,
@@ -4296,7 +4319,7 @@ async fn list_decisions(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let items: Vec<DecisionDto> = service
-        .decisions(workspace_id, project_id)
+        .decisions(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?
         .into_iter()
@@ -4407,7 +4430,7 @@ async fn list_application_parts(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let records = service
-        .part_records(workspace_id, project_id)
+        .part_records(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?;
     let mut items = Vec::new();
@@ -4480,6 +4503,7 @@ async fn upsert_application_part(
     let (me, _) = quality.caller(&ctx).await?;
     let saved = service
         .record_part(
+            &ctx,
             workspace_id,
             project_id,
             body.repo.trim(),
@@ -4693,13 +4717,14 @@ fn no_scope() -> CanonicalError {
 
 /// The scope as it now stands, with its limits and whether it is blocked.
 async fn scope_view_dto(
+    ctx: &SecurityContext,
     service: &DocumentsService,
     workspace_id: Uuid,
     project_id: Uuid,
     id: Uuid,
 ) -> ApiResult<DeliveryScopeDto> {
     let view = service
-        .delivery_scopes(workspace_id, project_id)
+        .delivery_scopes(ctx, workspace_id, project_id)
         .await
         .map_err(internal)?
         .into_iter()
@@ -4716,7 +4741,7 @@ async fn list_delivery_scopes(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let items: Vec<DeliveryScopeDto> = service
-        .delivery_scopes(workspace_id, project_id)
+        .delivery_scopes(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?
         .into_iter()
@@ -4739,6 +4764,7 @@ async fn create_delivery_scope(
     let (me, _) = quality.caller(&ctx).await?;
     let saved = service
         .create_scope(
+            &ctx,
             workspace_id,
             project_id,
             super::delivery::ScopeFields {
@@ -4786,12 +4812,12 @@ async fn update_delivery_scope(
         state: body.state,
     };
     service
-        .update_scope(workspace_id, project_id, id, patch, &me)
+        .update_scope(&ctx, workspace_id, project_id, id, patch, &me)
         .await
         .map_err(invalid)?
         .ok_or_else(no_scope)?;
     Ok(Json(
-        scope_view_dto(&service, workspace_id, project_id, id).await?,
+        scope_view_dto(&ctx, &service, workspace_id, project_id, id).await?,
     ))
 }
 
@@ -4805,7 +4831,7 @@ async fn delete_delivery_scope(
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let id = parse_uuid_field("scope_id", &scope_id)?;
     if service
-        .delete_scope(workspace_id, project_id, id)
+        .delete_scope(&ctx, workspace_id, project_id, id)
         .await
         .map_err(internal)?
     {
@@ -4825,7 +4851,7 @@ async fn list_delivery_scope_history(
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let id = parse_uuid_field("scope_id", &scope_id)?;
     let items: Vec<DeliveryScopeVersionDto> = service
-        .scope_history(workspace_id, project_id, id)
+        .scope_history(&ctx, workspace_id, project_id, id)
         .await
         .map_err(internal)?
         .ok_or_else(no_scope)?
@@ -4855,6 +4881,7 @@ async fn create_delivery_limit(
     let (me, _) = quality.caller(&ctx).await?;
     let saved = service
         .add_limit(
+            &ctx,
             workspace_id,
             project_id,
             id,
@@ -4886,6 +4913,7 @@ async fn update_delivery_limit(
     let (me, _) = quality.caller(&ctx).await?;
     let saved = service
         .update_limit(
+            &ctx,
             workspace_id,
             project_id,
             scope,
@@ -4969,7 +4997,7 @@ async fn run_pull_request_checks(
         .map_err(internal)?;
     // Which path is which type: the project's settled bindings.
     let typed: std::collections::BTreeMap<String, String> = service
-        .project_bindings(workspace_id, project_id)
+        .project_bindings(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?;
     let repos = reachable_repositories(&service, &quality, &ctx, project_id).await;
@@ -5492,7 +5520,7 @@ async fn list_spec_model_reviews(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let items: Vec<SpecModelReviewDto> = service
-        .spec_reviews(workspace_id, project_id)
+        .spec_reviews(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?
         .into_iter()
@@ -6074,7 +6102,7 @@ async fn decide_spec_model_finding(
             .await
         {
             Ok(sources) => {
-                let found = spec_model_findings(&service, workspace_id, project_id, &sources)
+                let found = spec_model_findings(&ctx, &service, workspace_id, project_id, &sources)
                     .await
                     .ok()
                     .and_then(|(fs, _)| fs.into_iter().find(|f| f.fingerprint == fingerprint));
@@ -6409,7 +6437,7 @@ async fn create_spec_model_finding_proposal(
         .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
         .await
         .map_err(internal)?;
-    let (findings, _) = spec_model_findings(&service, workspace_id, project_id, &sources)
+    let (findings, _) = spec_model_findings(&ctx, &service, workspace_id, project_id, &sources)
         .await
         .map_err(internal)?;
     let gone = || {
@@ -6582,7 +6610,7 @@ async fn list_spec_model_decisions(
                 .await
             {
                 Ok(sources) => (
-                    spec_model_findings(&service, workspace_id, project_id, &sources)
+                    spec_model_findings(&ctx, &service, workspace_id, project_id, &sources)
                         .await
                         .ok()
                         .map(|(fs, _)| fs.into_iter().map(|f| f.fingerprint).collect()),
@@ -6593,7 +6621,7 @@ async fn list_spec_model_decisions(
             Err(_) => (None, Default::default()),
         };
     let items: Vec<SpecModelDecisionDto> = service
-        .spec_decisions(workspace_id, project_id)
+        .spec_decisions(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?
         .into_iter()
@@ -7107,11 +7135,11 @@ async fn create_review_request(
         .await
         .map_err(internal)?;
     let review = service
-        .request_review(workspace_id, project_id, ask, requester, text, &types)
+        .request_review(&ctx, workspace_id, project_id, ask, requester, text, &types)
         .await
         .map_err(invalid)?;
     let versions = service
-        .subject_versions(workspace_id, project_id)
+        .subject_versions(&ctx, workspace_id, project_id)
         .await
         .unwrap_or_default();
     let dto = with_version(
@@ -7138,7 +7166,7 @@ async fn list_review_requests(
                 None => None,
             };
             service
-                .reviews_with_verdicts(workspace_id, project_id, subject)
+                .reviews_with_verdicts(&ctx, workspace_id, project_id, subject)
                 .await
                 .map_err(internal)?
         }
@@ -7149,7 +7177,7 @@ async fn list_review_requests(
                 .await
                 .map_err(no_tenant)?;
             service
-                .workspace_reviews(workspace_id)
+                .workspace_reviews(&ctx, workspace_id)
                 .await
                 .map_err(internal)?
         }
@@ -7195,7 +7223,7 @@ async fn list_review_requests(
             .find(|r| r.request.project_id == p)
             .map(|r| r.request.tenant_id)
             .unwrap_or_default();
-        if let Ok(v) = service.subject_versions(ws, p).await {
+        if let Ok(v) = service.subject_versions(&ctx, ws, p).await {
             versions.extend(v);
         }
     }
@@ -7243,6 +7271,7 @@ async fn create_review_approval(
     let approver = quality.caller(&ctx).await?;
     let (review, approval) = service
         .give_verdict(
+            &ctx,
             workspace_id,
             project_id,
             request_id,
@@ -7276,7 +7305,7 @@ async fn cancel_review_request(
     let request_id = parse_uuid_field("request_id", &request_id)?;
     let (me, _) = quality.caller(&ctx).await?;
     let review = service
-        .withdraw_review(workspace_id, project_id, request_id, &me)
+        .withdraw_review(&ctx, workspace_id, project_id, request_id, &me)
         .await
         .map_err(invalid)?
         .ok_or_else(|| {
@@ -7302,7 +7331,7 @@ async fn get_review_request_diff(
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let request_id = parse_uuid_field("request_id", &request_id)?;
     let all = service
-        .reviews_with_verdicts(workspace_id, project_id, None)
+        .reviews_with_verdicts(&ctx, workspace_id, project_id, None)
         .await
         .map_err(internal)?;
     let Some(this) = all.iter().find(|r| r.request.id == request_id) else {
@@ -7365,6 +7394,7 @@ async fn list_reviewer_suggestions(
     let (me, _) = quality.caller(&ctx).await?;
     let items: Vec<ReviewerSuggestionDto> = service
         .suggest_reviewers(
+            &ctx,
             workspace_id,
             project_id,
             subject_id,
@@ -7588,7 +7618,7 @@ async fn list_spec_rows(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
 
-    let (bindings, authored) = read_both(&service, workspace_id, project_id).await?;
+    let (bindings, authored) = read_both(&ctx, &service, workspace_id, project_id).await?;
 
     // The never-classified files, their provenance and the recorded verdicts.
     // Absent when no ingest gear is here, which costs one queue and the review
@@ -7597,7 +7627,7 @@ async fn list_spec_rows(
     let mut known = super::spec_rows::Known::default();
     // A finding a member dismissed (✗) is not counted against its document.
     let dismissed: std::collections::BTreeSet<String> = service
-        .spec_decisions(workspace_id, project_id)
+        .spec_decisions(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?
         .into_iter()
@@ -7712,7 +7742,7 @@ async fn list_spec_pipeline(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
 
-    let (bindings, authored) = read_both(&service, workspace_id, project_id).await?;
+    let (bindings, authored) = read_both(&ctx, &service, workspace_id, project_id).await?;
     let types: Vec<super::spec_rows::PipelineType> = service
         .list_types(&ctx, workspace_id)
         .await
@@ -7752,6 +7782,7 @@ async fn list_spec_pipeline(
 /// different question, and both of these are per-project lists rather than
 /// something anybody scrolls.
 async fn read_both(
+    ctx: &SecurityContext,
     service: &Arc<DocumentsService>,
     workspace_id: Uuid,
     project_id: Uuid,
@@ -7763,11 +7794,11 @@ async fn read_both(
     // paged read here showed a project with more files than that as mostly
     // "not scanned" -- its bindings existed, the page just did not reach them.
     let bindings = service
-        .all_bindings(workspace_id, Some(project_id))
+        .all_bindings(ctx, workspace_id, Some(project_id))
         .await
         .map_err(internal)?;
     let documents = service
-        .all_documents(workspace_id, Some(project_id))
+        .all_documents(ctx, workspace_id, Some(project_id))
         .await
         .map_err(internal)?;
 
@@ -7926,7 +7957,7 @@ async fn list_review_criteria(
         let project_id = parse_project_id(project)?;
         let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
         let kept = service
-            .reviews_with_verdicts(workspace_id, project_id, None)
+            .reviews_with_verdicts(&ctx, workspace_id, project_id, None)
             .await
             .map_err(internal)?
             .into_iter()
@@ -8049,8 +8080,8 @@ async fn specs_per_source(
     // bound in the project that synced them, so the workspace's own rows alone
     // made every source on the workspace's Sources table read "0 specs".
     let bindings = match service.parent_of(&ctx, scope_id).await {
-        Ok(Some(parent)) => service.all_bindings(parent, Some(scope_id)).await,
-        _ => service.every_binding_under(scope_id).await,
+        Ok(Some(parent)) => service.all_bindings(&ctx, parent, Some(scope_id)).await,
+        _ => service.every_binding_under(&ctx, scope_id).await,
     }
     .map_err(internal)?;
 

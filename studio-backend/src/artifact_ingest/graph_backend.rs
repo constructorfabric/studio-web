@@ -482,7 +482,7 @@ pub(crate) fn str_without_nul(s: String) -> String {
 /// The payload to store: the node value minus file content, plus a bounded
 /// `text_excerpt` of that content, all under the gear's per-node ceiling
 /// (drop the free-text `body` if it pushes us over).
-fn bounded_payload(value: &Value) -> Value {
+pub(crate) fn bounded_payload(value: &Value) -> Value {
     let mut obj = match without_nul(value.clone()) {
         Value::Object(m) => m,
         _ => serde_json::Map::new(),

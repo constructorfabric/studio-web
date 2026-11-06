@@ -16,6 +16,7 @@ mod catalog_graph; // the catalogue graph: node vocabulary + store, shared by th
 mod components_catalog; // connector to crates.io: catalogue our published gears + versions in the graph
 mod connectors; // source connectors: driver plugins + tenant connection catalogue
 mod credstore_pg; // persistent credstore value store (issue #66)
+mod data_places; // where each gear keeps its records, as the architecture page shows it
 mod database_bootstrap; // config-discovered PostgreSQL provisioning + migrations
 mod documents; // document management: types + templates + section-checklist validation
 mod domain_model; // store the Studio domain model as GTS types in the graph; create/extend objects
@@ -28,6 +29,8 @@ mod idempotency; // the Idempotency-Key request header every 202 operation takes
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
 mod insight; // integration seam to Constructor Insight (external decision-intelligence service)
 mod kit_registry; // Git-backed kit catalogue + project-scoped desired installations
+mod model_metadata; // tenant documents a gear keeps (account-management metadata), held as domain objects
+mod model_sweep; // moves every tenant's records into (or back out of) the domain model at start
 // keycloak-idp-plugin is the official cf-gears-keycloak-idp-plugin (linked in
 // registered_gears.rs). The former in-crate implementation was removed once the
 // official plugin went green — see docs/keycloak-idp-migration.md.

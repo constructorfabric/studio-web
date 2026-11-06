@@ -56,6 +56,8 @@ import type { KindChip } from "./component-kinds";
 import { useFrontxDefaults } from "./frontend-constructor-view";
 import { OrgSources } from "./platform-sources";
 import { CatalogueLevelsPanel } from "./catalogue-levels-view";
+import { useDomainRefresh } from "./domain-live";
+import { ModelFields } from "./object-attributes";
 
 /* ============================================================================
  * Platform Gears — a schema-driven component page per Gear, in Constructor
@@ -716,6 +718,7 @@ export function ComponentsCatalog({
       setErr(errText(e));
     }
   }, [token, tenantId]);
+  useDomainRefresh(["gear","gear-version","gear-profile","catalog-kit","frontx-package","component-field-schema","catalog-source","roadmap-item"], reload, { onModel: true });
 
   useEffect(() => {
     void reload();
@@ -2492,6 +2495,7 @@ function GearDetail({
       </div>
 
       {gear.value.description && <p className="gcat-sub">{String(gear.value.description)}</p>}
+      <ModelFields token={token} entity="gear" where={{ catalog_id: { _eq: gear.instance_id } }} />
 
       {view === "filled" && <HealthStrip values={values} schema={schema} />}
       {view === "filled" && <Kpis values={values} schema={schema} />}

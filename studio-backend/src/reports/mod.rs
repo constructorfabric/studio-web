@@ -63,6 +63,15 @@ impl Gear for StudioReportsGear {
 }
 
 fn build_store(ctx: &GearCtx) -> Arc<dyn store::ReportStore> {
+    let legacy = build_legacy_store(ctx);
+    if crate::model_metadata::keeps_in_model(ctx, "studio-reports", "sources") {
+        return Arc::new(store::ModelStore::new(legacy, ctx.client_hub()));
+    }
+    // Kept in the old store: what the model holds moves back.
+    Arc::new(store::ModelStore::returning(legacy, ctx.client_hub()))
+}
+
+fn build_legacy_store(ctx: &GearCtx) -> Arc<dyn store::ReportStore> {
     #[cfg(feature = "graph")]
     {
         match ctx

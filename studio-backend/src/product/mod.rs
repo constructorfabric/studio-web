@@ -86,6 +86,13 @@ impl Gear for StudioProductGear {
             }
         };
         let _ = self.descriptions.set(store);
+        let storage = crate::model_metadata::storage_of(ctx);
+        crate::data_places::note(
+            "studio-product",
+            "metadata",
+            &crate::data_places::store_name(storage),
+        );
+        let _ = explanations::STORAGE.set(storage);
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
         let results = registry
             .register(crate::catalog_graph::gts::product_type_schemas())
@@ -127,7 +134,19 @@ impl RestApiCapability for StudioProductGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
-        let sink = crate::catalog_graph::build_sink(&ctx.client_hub(), "studio-product");
+        let mut sink = crate::catalog_graph::build_sink(&ctx.client_hub(), "studio-product");
+        // A project's gear repository and product as domain objects (ADR-0066
+        // §8a, `storage.catalog`).
+        let held = Arc::new(
+            if crate::model_metadata::keeps_in_model(ctx, "studio-product", "catalog") {
+                crate::catalog_graph::ModelSink::new(sink, ctx.client_hub(), "studio-product")
+            } else {
+                // Kept in the graph store: what the model holds moves back.
+                crate::catalog_graph::ModelSink::returning(sink, ctx.client_hub(), "studio-product")
+            },
+        );
+        crate::model_sweep::register(held.clone());
+        sink = held;
         let connectors = crate::connectors::sdk::Connectors::new(ctx.client_hub());
         let service = Arc::new(ProductService::new(sink, connectors));
         if let Some(store) = self.descriptions.get().cloned().flatten() {

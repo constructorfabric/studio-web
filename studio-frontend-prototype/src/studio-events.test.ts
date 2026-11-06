@@ -103,6 +103,25 @@ describe("studio-events subscriber", () => {
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("after_seq=2"))).toBe(true);
   });
 
+  it("serves every subscriber from one connection", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sseBody([taskEvent(1, "queued"), taskEvent(2, "running")]))
+      .mockImplementation(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const a: number[] = [];
+    const b: number[] = [];
+    const stopA = subscribeStudioEvents("t", { onEvent: (e) => a.push(e.seq) });
+    const stopB = subscribeStudioEvents("t", { onEvent: (e) => b.push(e.seq) });
+    await until(() => a.length === 2 && b.length === 2, "both subscribers hear both events");
+    stopA();
+    stopB();
+
+    const streams = fetchMock.mock.calls.filter(([u]) => String(u).startsWith("/cf/studio-events/v1/stream"));
+    expect(streams.length).toBe(1);
+  });
+
   it("stops for good on 401 rather than reconnecting against a dead session", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

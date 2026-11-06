@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { DOMAIN_ENTITIES } from "./domain-model.gen";
-import type { DomainQuery } from "./domain-query";
+import type { DomainMutation, DomainQuery } from "./domain-query";
 
 describe("domain query client", () => {
   afterEach(() => {
@@ -49,6 +49,26 @@ describe("domain query client", () => {
     // The include's rows are typed as the relation's target.
     const project = res.items[0].relations.delivers?.items[0].value;
     expect(project?.status).toBe("active");
+  });
+
+  it("posts a batch of changes as written", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ results: [] }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const mutation: DomainMutation = {
+      operations: [
+        { op: "upsert", type: "risk", key: "r1", value: { title: "DB outage", impact: "critical" }, as: "r1" },
+        { op: "link", relation: "project.tracks", from: "p1", to: "$r1" },
+        { op: "patch", id: "$r1", set: { status: "mitigating" } },
+        { op: "delete", id: "old" },
+      ],
+    };
+    await api.mutateDomain("token", mutation);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/studio-domain-model/v1/mutate");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual(mutation);
   });
 
   it("knows every entity of the model", () => {
