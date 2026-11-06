@@ -819,7 +819,7 @@ const PLATFORM_VIEWS: ReadonlySet<View> = new Set(LEVEL_NAV.platform.map((n) => 
 
 /** Every destination the "+" picker can pin, by level. */
 const NAV_SECTIONS: { title: string; items: { id: View; icon: string; label: string }[] }[] = [
-  { title: "Platform", items: LEVEL_NAV.platform },
+  { title: "Components", items: LEVEL_NAV.platform },
   { title: "Organization", items: LEVEL_NAV.organization },
 ];
 
@@ -3573,14 +3573,14 @@ export function PathBar({
           type="button"
           className={`org-select path-platform${platformOpen ? " on" : ""}`}
           aria-current={platformOpen ? "page" : undefined}
-          title="The platform: the components every organization shares"
+          title="Components: what every organization shares"
           onClick={onOpenPlatform}
         >
           {/* Not a level one picks among -- there is one, under every
               organization -- so no level caption, and a layers mark rather
               than an initial. */}
-          <LevelMark level="platform" name="Platform" />
-          <span className="org-select-name">Platform</span>
+          <LevelMark level="platform" name="Components" />
+          <span className="org-select-name">Components</span>
         </button>
       </div>
 
