@@ -1,228 +1,246 @@
-// The pieces of model-driven tabs a screen draws: the tabs of a level with
-// what an administrator turned off, the dialog that turns them on and off,
-// and the generic tab that lists a type's objects (see level-tabs.ts).
+// What a band draws of a level's tabs (level-tabs.ts): every tab the domain
+// model gives the level, the names it hides, read from and written to its own
+// settings document, and the one control at the end of every band -- a "⋯"
+// that opens a small menu: pin this page, customize the tabs. Customizing
+// lists each tab with the icon the band draws for it and a switch; a switch
+// flipped shows in the band at once, before anything is saved. A tab the model
+// adds that no screen answers lists the objects of its type.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import { api } from "./api";
 import type { DomainEntity } from "./domain-model.gen";
-import type { DomainOperation, DomainQuery } from "./domain-query";
-import { fieldsOfModel, reloadDomainModel, useDomainModel } from "./domain-runtime";
+import type { DomainQuery } from "./domain-query";
 import { useDomainRefresh } from "./domain-live";
-import { errText } from "./format";
-import { allLevelTabs, levelTabs, modelTabs, type GenericTab } from "./level-tabs";
-import { Modal } from "./modal";
+import { fieldsOfModel, useDomainModel } from "./domain-runtime";
+import { MoreIcon, PinIcon, SlidersIcon } from "./icons";
+import { errText } from "./problem";
+import { hiddenToSave, levelTabs, modelTabs, parseHiddenTabs, type GenericTab } from "./level-tabs";
+import { MenuButton } from "./menu-button";
 
-/** The level's own object (`self` of its type, keyed by its tenant id): where
- *  its `hidden_tabs` are kept. */
-function useHiddenTabs(token: string, entity: string, tenantId: string | null) {
-  const [hidden, setHidden] = useState<string[]>([]);
-  const [objectId, setObjectId] = useState<string | null>(null);
-  const model = useDomainModel(token);
-  const known = model.byId.has(entity);
+export type TabLevel = "organization" | "workspace" | "project";
 
-  const load = useCallback(async () => {
-    if (!tenantId || !known) return;
-    try {
-      const q = {
-        type: entity,
-        project_id: tenantId,
-        where: { tenant_id: { _eq: tenantId } },
-        limit: 1,
-      } as unknown as DomainQuery<DomainEntity>;
-      const row = (await api.queryDomain(token, q)).items[0];
-      setObjectId(row?.id ?? null);
-      const value = (row?.value ?? {}) as { hidden_tabs?: unknown };
-      setHidden(Array.isArray(value.hidden_tabs) ? value.hidden_tabs.map(String) : []);
-    } catch {
-      setHidden([]);
-    }
-  }, [token, entity, tenantId, known]);
-  useDomainRefresh([entity], load);
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const save = async (next: string[]) => {
-    if (!tenantId) return;
-    const op = objectId
-      ? { op: "patch", id: objectId, set: { hidden_tabs: next } }
-      : { op: "upsert", type: entity, key: "self", project_id: tenantId, value: { tenant_id: tenantId, hidden_tabs: next } };
-    await api.mutateDomain(token, { operations: [op as DomainOperation] });
-    setHidden(next);
-    await load();
-  };
-  return { hidden, save };
-}
-
-/** A level's tabs from the model, without the ones turned off; `tenantId` is
- *  the level's own tenant (null where another setting decides, as a project
- *  type does for projects). */
-export function useLevelTabs<B extends { id: string; icon: string; label: string }>(
+/** Every tab `level` has, hidden or not: the model's `shows` relations on
+ *  the built-in screens, plus a generic tab for each the portal has no
+ *  screen for. */
+export function useModelTabs<B extends { id: string; icon: string; label: string }>(
   token: string,
-  level: "organization" | "workspace" | "project",
+  level: TabLevel,
   builtIn: readonly B[],
-  tenantId: string | null,
-) {
+): (B | GenericTab)[] {
   const model = useDomainModel(token);
-  const fromModel = useMemo(() => modelTabs(model, level), [model, level]);
-  const { hidden, save } = useHiddenTabs(token, level, tenantId);
-  const tabs = useMemo(() => levelTabs(builtIn, fromModel, hidden), [builtIn, fromModel, hidden]);
-  const all = useMemo(() => allLevelTabs(builtIn, fromModel), [builtIn, fromModel]);
-  const builtInIds = useMemo(() => builtIn.map((t) => t.id), [builtIn]);
-  return { tabs, all, hidden, saveHidden: save, canEdit: model.canEdit && tenantId !== null, level, builtInIds };
+  return useMemo(() => levelTabs(builtIn, modelTabs(model, level)), [builtIn, model, level]);
 }
 
-/** "Tabs…": an administrator turns a level's tabs on and off. */
-export function TabsSettings({
-  token,
-  level,
-  builtInIds,
-  all,
+/** Read a level's document; null when it has none yet. */
+function readSettings(token: string, level: TabLevel, tenantId: string): Promise<object | null> {
+  return level === "project" ? api.projectConfig(token, tenantId) : api.workspaceSettings(token, tenantId);
+}
+
+/** The names `tenantId` hides from its band, and how to change them. Written
+ *  as every other writer of the document does: read, changed, written back
+ *  whole, so its other fields (icon, sources, ...) stay.
+ *
+ *  `shown` is what the band draws: while somebody is customizing it, the
+ *  names they have switched off so far (`setPreview`), not saved; else what
+ *  is saved. */
+export function useHiddenTabs(token: string, level: TabLevel, tenantId: string | null) {
+  const [hidden, setHidden] = useState<string[]>([]);
+  const [preview, setPreview] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    setHidden([]);
+    setPreview(null);
+    if (!tenantId) return;
+    let alive = true;
+    readSettings(token, level, tenantId)
+      .then((doc) => {
+        if (alive) setHidden(parseHiddenTabs(doc));
+      })
+      // Not readable here: every tab shows -- hiding is never the fallback.
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [token, level, tenantId]);
+
+  const save = useCallback(
+    async (next: string[]) => {
+      if (!tenantId) return;
+      if (level === "project") {
+        const current = (await api.projectConfig(token, tenantId)) ?? {};
+        await api.putProjectConfig(token, tenantId, { ...current, hidden_tabs: next });
+      } else {
+        const current = (await api.workspaceSettings(token, tenantId)) ?? {};
+        await api.putWorkspaceSettings(token, tenantId, { ...current, hidden_tabs: next });
+      }
+      setHidden(next);
+    },
+    [token, level, tenantId],
+  );
+  return { hidden, shown: preview ?? hidden, save, setPreview };
+}
+
+/** A tab as the editor lists it: the band's own id, label and icon name. */
+export interface BandMenuTab {
+  id: string;
+  label: string;
+  icon?: string;
+}
+
+/** The control at the end of a band: one "⋯" with Pin and Customize tabs. */
+export function BandMenu({
+  levelName,
+  tabs,
   hidden,
   onSave,
-  levelName,
+  onPreview,
+  icon,
+  pin,
+  note,
 }: {
-  token: string;
-  /** The level's type, which the tabs are relations of. */
-  level: string;
-  /** Tabs the portal has a screen for: they can be turned off, not removed. */
-  builtInIds: string[];
-  all: { name: string; label: string }[];
-  hidden: string[];
-  onSave: (hidden: string[]) => Promise<void>;
-  levelName: string;
+  levelName: TabLevel;
+  /** Every tab the level could show, in its order; empty: nothing to customize. */
+  tabs: readonly BandMenuTab[];
+  hidden: readonly string[];
+  /** Absent: the tabs are not this person's to customize here. */
+  onSave?: (hidden: string[]) => Promise<void>;
+  /** Told the names switched off while customizing, and null when done. */
+  onPreview?: (hidden: string[] | null) => void;
+  /** Draws a tab's icon as the band does. */
+  icon: (name: string) => ReactNode;
+  /** This page on the rail; absent where it cannot be pinned. */
+  pin?: { pinned: boolean; toggle: () => void };
+  /** What else decides the level's tabs, said in the editor. */
+  note?: string;
 }) {
-  const model = useDomainModel(token);
-  const [adding, setAdding] = useState({ target: "", label: "", name: "" });
-  const types = useMemo(
-    () =>
-      [...model.entities]
-        .filter((e) => !e.abstract)
-        .sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id)),
-    [model],
-  );
-  const addTab = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const name = adding.name || slug(adding.label || adding.target);
-      await api.addDomainTab(token, level, { name, label: adding.label || undefined, target: adding.target });
-      await reloadDomainModel(token);
-      setAdding({ target: "", label: "", name: "" });
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const removeTab = async (name: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.removeDomainField(token, level, name);
-      await reloadDomainModel(token);
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const [open, setOpen] = useState(false);
-  const [off, setOff] = useState<Set<string>>(new Set(hidden));
+  const [off, setOff] = useState<Set<string> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const panel = useRef<HTMLDivElement | null>(null);
+  const editing = off !== null;
+  const customizable = !!onSave && tabs.length > 0;
+
+  const close = useCallback(() => {
+    setOff(null);
+    setError(null);
+    onPreview?.(null);
+  }, [onPreview]);
+
+  // Escape, or a pointer down outside the editor, is Cancel.
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    const onDown = (e: PointerEvent) => {
+      if (panel.current && e.target instanceof Node && !panel.current.contains(e.target)) close();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    panel.current?.querySelector<HTMLInputElement>("input:not([disabled])")?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [editing, close]);
+
+  if (!pin && !customizable) return null;
+
+  const change = (next: Set<string>) => {
+    setOff(next);
+    onPreview?.([...next]);
+  };
+  const next = off ? hiddenToSave(tabs, off) : null;
+  const showing = off ? tabs.filter((t) => !off.has(t.id)).length : tabs.length;
+
   return (
-    <>
-      <button
-        className="psection psection-pin"
-        title={`Choose which tabs the ${levelName} shows`}
-        onClick={() => {
-          setOff(new Set(hidden));
-          setError(null);
-          setOpen(true);
-        }}
-      >
-        <span className="ico" aria-hidden>
-          ⚙
-        </span>
-        Tabs
-      </button>
-      {open && (
-        <Modal label={`Tabs of the ${levelName}`} onClose={() => setOpen(false)}>
-          <h2 style={{ marginTop: 0 }}>Tabs of the {levelName}</h2>
-          <p className="hint">
-            Every tab is a <code>shows</code> relation of the {levelName} type in the domain model; add one there and it
-            appears here. A tab turned off is hidden for everyone in this {levelName}; its relation stays.
-          </p>
-          <div style={{ display: "grid", gap: 4, margin: "8px 0 12px" }}>
-            {all.map((t) => (
-              <label key={t.name} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  type="checkbox"
-                  checked={!off.has(t.name)}
-                  onChange={(e) => {
-                    const next = new Set(off);
-                    if (e.target.checked) next.delete(t.name);
-                    else next.add(t.name);
-                    setOff(next);
-                  }}
-                />
-                {t.label} <code className="hint">{t.name}</code>
-                {!builtInIds.includes(t.name) && (
-                  <button
-                    style={{ marginLeft: "auto" }}
-                    disabled={busy}
-                    title="Remove this tab's relation from the domain model"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      void removeTab(t.name);
-                    }}
-                  >
-                    Remove
-                  </button>
-                )}
-              </label>
-            ))}
+    <div className="band-end">
+      <MenuButton
+        label={`More for this ${levelName}`}
+        buttonClassName="band-more"
+        trigger={<MoreIcon />}
+        items={[
+          pin && {
+            label: pin.pinned ? "Unpin" : "Pin this page",
+            icon: <PinIcon />,
+            title: pin.pinned ? "Take this page off the rail" : "Keep this page on the rail",
+            onSelect: pin.toggle,
+          },
+          customizable && {
+            label: "Customize tabs…",
+            icon: <SlidersIcon />,
+            title: `Choose which tabs the ${levelName} shows, for everyone in it`,
+            onSelect: () => {
+              setError(null);
+              setOff(new Set(hidden));
+            },
+          },
+        ]}
+      />
+      {off && (
+        <div className="band-editor" ref={panel} role="dialog" aria-label={`Tabs of the ${levelName}`}>
+          <div className="band-editor-head">
+            <strong>Tabs of the {levelName}</strong>
+            <span className="sub">
+              Hidden for everyone in this {levelName}; nothing a tab shows is removed.{note ? ` ${note}` : ""}
+            </span>
           </div>
-          <fieldset style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
-            <legend className="hint">Add a tab</legend>
-            <p className="hint" style={{ margin: 0 }}>
-              Lists the objects of a type in this {levelName}. It is a <code>shows</code> relation of the {levelName} type,
-              so every {levelName} of the organization gets it.
-            </p>
-            <select value={adding.target} onChange={(e) => setAdding({ ...adding, target: e.target.value })}>
-              <option value="">Choose a type…</option>
-              {types.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name ?? e.id}
-                </option>
-              ))}
-            </select>
-            <input
-              placeholder="Tab label, e.g. Risks"
-              value={adding.label}
-              onChange={(e) => setAdding({ ...adding, label: e.target.value })}
-            />
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button disabled={busy || !adding.target} onClick={() => void addTab()}>
-                Add tab
-              </button>
-            </div>
-          </fieldset>
+          <ul className="band-editor-list">
+            {tabs.map((t) => {
+              const on = !off.has(t.id);
+              // The last tab showing stays: a band is never empty.
+              const last = on && showing <= 1;
+              return (
+                <li key={t.id}>
+                  <label className="band-editor-row" title={last ? "Keep at least one tab" : undefined}>
+                    <span className="band-editor-ico" aria-hidden>
+                      {t.icon ? icon(t.icon) : null}
+                    </span>
+                    <span className="band-editor-label">{t.label}</span>
+                    <span className="ui-toggle">
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        aria-label={`Show ${t.label}`}
+                        checked={on}
+                        disabled={last}
+                        onChange={(e) => {
+                          const changed = new Set(off);
+                          if (e.target.checked) changed.delete(t.id);
+                          else changed.add(t.id);
+                          change(changed);
+                        }}
+                      />
+                      <span className="ui-switch" aria-hidden />
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
           {error && <p className="error">{error}</p>}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button onClick={() => setOpen(false)}>Cancel</button>
+          <div className="band-editor-foot">
+            <button type="button" className="ghost" disabled={off.size === 0} title="Show every tab" onClick={() => change(new Set())}>
+              Reset
+            </button>
+            <span style={{ flex: 1 }} />
+            <button type="button" onClick={close}>
+              Cancel
+            </button>
             <button
+              type="button"
               className="primary"
-              disabled={busy || off.size >= all.length}
-              title={off.size >= all.length ? "Keep at least one tab" : undefined}
+              disabled={busy || next === null}
+              title={next === null ? "Keep at least one tab" : undefined}
               onClick={async () => {
+                if (next === null || !onSave) return;
                 setBusy(true);
                 setError(null);
                 try {
-                  await onSave(all.map((t) => t.name).filter((n) => off.has(n)));
-                  setOpen(false);
+                  await onSave(next);
+                  close();
                 } catch (e) {
                   setError(errText(e));
                 } finally {
@@ -230,12 +248,12 @@ export function TabsSettings({
                 }
               }}
             >
-              Save
+              {busy ? "Saving…" : "Save"}
             </button>
           </div>
-        </Modal>
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -370,12 +388,4 @@ export function LevelGenericTab({
       tenantId={tenantId}
     />
   );
-}
-
-function slug(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 64);
 }

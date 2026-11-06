@@ -92,7 +92,10 @@ export function ProjectTypesTab({
     setErr(null);
     setNote(null);
     try {
-      await api.putProjectTypes(token, target === "workspace" ? workspace.id : workspace.orgId, { types: types! });
+      // The phases share this document (project-phases.ts): kept as they are.
+      const tenant = target === "workspace" ? workspace.id : workspace.orgId;
+      const doc = ((await api.ownProjectTypes(token, tenant)) ?? {}) as Record<string, unknown>;
+      await api.putProjectTypes(token, tenant, { ...doc, types: types! });
       setNote(target === "workspace" ? "Saved for this workspace." : `Saved for ${workspace.orgName}.`);
       setReload((n) => n + 1);
     } catch (e) {

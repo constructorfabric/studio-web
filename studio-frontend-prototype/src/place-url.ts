@@ -50,6 +50,7 @@ export const VIEW_PATHS = {
   org: "organization",
   reports: "reports",
   tasks: "background-work",
+  inbox: "inbox",
   system: "system",
   profile: "profile",
 } as const;

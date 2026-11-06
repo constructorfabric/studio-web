@@ -23,6 +23,8 @@ mod delivery;
 mod entity;
 pub(crate) mod gts;
 pub(crate) mod intake;
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 mod migrations;
 pub(crate) mod model;
 mod model_table;

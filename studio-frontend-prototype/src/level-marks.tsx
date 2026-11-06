@@ -13,7 +13,7 @@ import type { TenantIcon } from "./tenant-icon";
 export type Level = "platform" | "organization" | "workspace" | "project";
 
 export const LEVEL_LABEL: Record<Level, string> = {
-  platform: "Platform",
+  platform: "Components",
   organization: "Organization",
   workspace: "Workspace",
   project: "Project",

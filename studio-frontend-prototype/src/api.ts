@@ -968,6 +968,9 @@ export interface ProjectConfig {
   /** What the product is, as a member confirmed it after Studio proposed it
    *  from the specs (`product-kind.ts`); absent: not decided yet. */
   product_kind?: import("./product-kind").ProductKindChoice;
+  /** The tabs an administrator turned off for this project, on top of what its
+   *  template shows (`level-tabs.ts`). */
+  hidden_tabs?: string[];
 }
 
 /** Where a FrontX package is: `owner/name`, its directory there, the ref it is
@@ -999,12 +1002,10 @@ export const ACCESS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.c
  *  modernization has exactly one. Carried in a project's config metadata. */
 export type ProjectMode = "greenfield" | "modernize";
 
-/** Forward-only: draft -> active -> archived, and archived is terminal. */
-export type ProjectStatus = "draft" | "active" | "archived";
-
-/** The status ladder in order — used to enforce forward-only transitions in
- *  the UI now that the studio-project gear no longer guards them server-side. */
-export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
+/** The phase the project is in: the key of one of the phases its workspace
+ *  lists (`project-phases.ts`). A project from before phases may carry
+ *  `draft`, `active` or `archived`, which are read as the phases they meant. */
+export type ProjectStatus = string;
 
 /** One journey stage, as the catalogue serves it.
  *
@@ -2695,6 +2696,10 @@ export interface WorkspaceSettings {
   repos?: RepoEntry[];
   /** The icon somebody chose (`tenant-icon.ts`); absent: a folder. */
   icon?: import("./tenant-icon").TenantIcon;
+  /** The tabs an administrator turned off for this tenant's band
+   *  (`level-tabs.ts`). Kept here on a workspace and on an organization too:
+   *  the document is override_only, so neither inherits the other's. */
+  hidden_tabs?: string[];
 }
 
 /** A versioned capability bundle published in the Studio kit registry. */
@@ -3819,6 +3824,10 @@ export interface RollupRow {
   /** Projects: `new_gears` | `product` | `existing`, and the project's brief. */
   project_kind?: string | null;
   brief?: string | null;
+  /** Projects: the short top-level values of its config (`project.config`),
+   *  by name -- what a list filters by (project-filters.ts). Absent (not
+   *  null) from a server before them: rollups.ts then reads each config. */
+  attributes?: Record<string, unknown> | null;
   /** The icon chosen for it, both halves or neither; null: none chosen. */
   icon_glyph?: string | null;
   icon_color?: string | null;
@@ -5786,7 +5795,13 @@ export const api = {
       token,
     )).own ?? null,
 
-  putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTemplatesDoc) =>
+  /** The whole document: the templates (`types`) and the phases beside them
+   *  (`phases`, project-phases.ts). A writer of one keeps the other. */
+  putProjectTypes: (
+    token: string,
+    tenantId: string,
+    value: Partial<import("./project-types").ProjectTemplatesDoc> & { phases?: import("./project-lifecycle").ProjectPhase[] },
+  ) =>
     request<unknown>(`/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`, token, {
       method: "PUT",
       body: JSON.stringify(value),

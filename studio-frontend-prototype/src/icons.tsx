@@ -72,6 +72,28 @@ export const SlidersIcon = icon(
 
 export const MenuIcon = icon("Menu", <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />);
 
+/** More of what this place offers: three dots in a row. */
+export const MoreIcon = icon(
+  "More",
+  <>
+    <circle cx="3.5" cy="8" r="0.9" />
+    <circle cx="8" cy="8" r="0.9" />
+    <circle cx="12.5" cy="8" r="0.9" />
+  </>,
+);
+
+/** The inbox: a tray with what came in. */
+export const InboxIcon = icon(
+  "Inbox",
+  <>
+    <path d="M2.5 9.5 4.2 3.5h7.6l1.7 6v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
+    <path d="M2.5 9.5h3l1 1.5h3l1-1.5h3" />
+  </>,
+);
+
+/** Pinned to the rail: a push pin. */
+export const PinIcon = icon("Pin", <path d="M6 2.5h4M7 2.5v4L4.5 9h7L9 6.5v-4M8 9v4.5" />);
+
 export const CloseIcon = icon("Close", <path d="M4 4l8 8M12 4l-8 8" />);
 
 export const CheckIcon = icon("Check", <path d="M3 8.5l3.2 3L13 4.5" />);

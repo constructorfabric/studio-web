@@ -28,6 +28,7 @@
  *   * counts come from the store's `total`, never from `length`.
  */
 import { api, type RollupRow } from "./api";
+import { scalarAttributes } from "./project-filters";
 import { rememberIcon } from "./tenant-icon";
 
 /** What one workspace contains. */
@@ -71,7 +72,8 @@ export async function portfolioRollups(
   const workspaces = new Map<string, WorkspaceRollup & { name: string }>();
   const projects = new Map<string, PortfolioProject>();
   const page = await api.rollups(token, undefined, workspaceId);
-  for (const row of page.items ?? []) {
+  const rows = await withConfigFacts(token, page.items ?? []);
+  for (const row of rows) {
     // The icon chosen for each, said once here so no mark reads a config
     // for it. A server that does not carry the field says nothing.
     if (row.icon_glyph !== undefined)
@@ -114,4 +116,22 @@ export async function projectRollup(token: string, projectId: string): Promise<P
  *  real 0, which is a fact worth stating. */
 export function rollupText(n: number | null): string {
   return n == null ? "—" : String(n);
+}
+
+/** The rows with each project's attributes filled in from its own config
+ *  when the server did not carry them -- a backend from before `attributes`
+ *  was a rollup field. One read per project, so only then; a newer server's
+ *  rows come back as they are. */
+export async function withConfigFacts(token: string, rows: RollupRow[]): Promise<RollupRow[]> {
+  const missing = rows.filter((r) => r.kind === "project" && r.attributes === undefined);
+  if (missing.length === 0) return rows;
+  const read = new Map(
+    await Promise.all(
+      missing.map(async (r) => {
+        const cfg = await api.projectConfig(token, r.id).catch(() => null);
+        return [r.id, scalarAttributes(cfg as Record<string, unknown> | null)] as const;
+      }),
+    ),
+  );
+  return rows.map((r) => (read.has(r.id) ? { ...r, attributes: read.get(r.id) ?? null } : r));
 }
