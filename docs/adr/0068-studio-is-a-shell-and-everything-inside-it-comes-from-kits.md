@@ -1,0 +1,251 @@
+---
+type: adr
+status: proposed
+date: 2026-11-06
+---
+
+# ADR-0068: Studio is a shell, and everything inside it comes from kits
+
+**ID**: `cpt-studio-adr-shell-and-kits`
+
+Status: **proposed** · Date: 2026-11-06 · Builds on ADR-0067 (a kit brings model, events, workflows, functions and screens), ADR-0066 (domain objects and Studio's own model), ADR-0050 (FrontX micro-frontends), ADR-0008 (the navigation shell) · Extends the kits of `docs/design/studio-kits.md`
+
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+  - [1. What the shell is](#1-what-the-shell-is)
+  - [2. What a kit brings](#2-what-a-kit-brings)
+  - [3. One manifest](#3-one-manifest)
+  - [4. The kit library](#4-the-kit-library)
+  - [5. The installer works on a level](#5-the-installer-works-on-a-level)
+  - [6. The Inbox takes items from kits](#6-the-inbox-takes-items-from-kits)
+  - [7. Today's tabs become built-in kits](#7-todays-tabs-become-built-in-kits)
+- [Phases](#phases)
+- [Consequences](#consequences)
+- [Confirmation](#confirmation)
+- [Open questions](#open-questions)
+
+<!-- /toc -->
+
+## Context and Problem Statement
+
+Studio's portal grew by adding tabs: Specs, Domain model, Product, Releases,
+Tests, Issues, Artifacts, Activity, Research. Each one is written into the
+portal and the backend, is shown to every project whether it needs it or not,
+and changes only with a Studio release. An organization cannot add a screen,
+a type or a reaction of its own. A project that does not build software still
+gets Product and Releases.
+
+ADR-0067 decided that a kit brings model, events, workflows, functions and
+screens, and that the model part of a kit is the organization's. It did not
+say what stays in Studio itself, where a kit is installed besides the
+organization, how kits are found, or how today's features get there. Today's
+kits (`studio-kits`) are still files that `cfs` writes into a checkout, chosen
+per project.
+
+The question: **what is Studio without its features, and how does everything
+else arrive?**
+
+## Considered Options
+
+1. **Keep features in the portal, and let kits add to them.** Kits bring only
+   what Studio lacks. Simple, but every built-in feature stays a special case
+   that no kit can replace, hide or version, and two ways to build a feature
+   live side by side.
+2. **A shell, and everything inside it from kits, Studio's own features
+   included.** Studio ships a small shell and a set of built-in kits that use
+   the same manifest, installer and contribution points as any other kit.
+3. **Separate apps per feature, linked from a launcher.** Strong isolation,
+   but the levels, the people and the Inbox would be rebuilt in every app.
+
+**Chosen: 2.** A feature that Studio ships is a kit like any other, so the
+contribution points are proven by Studio's own use before anyone else depends
+on them.
+
+## Decision Outcome
+
+### 1. What the shell is
+
+The shell is what is the same for every organization and every kind of work:
+
+| The shell holds | Because |
+|---|---|
+| The levels: organization → workspace → project, and the Components level above them | Every kit hangs off a level |
+| People, membership, roles and the PDP | Every kit's objects are authorized the same way (ADR-0035) |
+| The person: profile, preferences, pins, and the **Inbox** | Attention crosses every kit |
+| Sources (repositories and connections) | Most kits read them; none owns them |
+| Settings, the kit library and the installer | How kits arrive |
+| The generic mechanisms: tab bars and their per-level settings, filters over object fields, search, the generic list, card, form and history screens (ADR-0067 §7) | A kit contributes data to them, not its own copy |
+| The domain model's core and its journal (ADR-0066, ADR-0067) | What kits extend |
+
+Nothing else is the shell's. A screen, a type, a field, a rule or an Inbox
+source that only some organizations need is a kit's.
+
+### 2. What a kit brings
+
+ADR-0067 §6 lists what a kit brings into the model. Against the shell, a kit
+contributes at named points:
+
+| Contribution point | What a kit gives | Where it shows |
+|---|---|---|
+| `tab` on a level | a `shows` relation, and a FrontX micro-frontend or nothing (the generic screens) | the level's tab bar |
+| `section` in a screen | a micro-frontend and the screen and slot it goes in | inside another kit's or the shell's screen |
+| `field` / `type` | a model overlay | cards, forms, filters, the generic list |
+| `inbox-source` | a query over its objects that says what waits on whom | the person's Inbox (§6) |
+| `rule` / `function` | `automation-rule` and `function` objects | run by `studio-tasks` (ADR-0067 §4–5) |
+| `mcp-tool` | tools over its REST routes | `studio-mcp`, for agents |
+| working material | files `cfs` writes into a checkout | the project's repository, as today |
+
+Every contribution carries the kit's origin (`meta.origin = "kit"`, the kit
+and its version), so uninstalling removes exactly what the kit brought.
+
+### 3. One manifest
+
+A kit is described by one manifest, `.cf-studio-kit.toml` at its repository
+root, today's file extended with one section per contribution point:
+
+```toml
+[kit]
+slug = "project-lifecycle"
+name = "Project lifecycle"
+version = "1.0.0"
+levels = ["organization", "workspace", "project"]   # where it may be installed
+
+[model]                      # ADR-0067 §6: an overlay, as an upload has it
+overlay = "model/overlay.json"
+
+[[tab]]
+level = "project"
+shows = "project-lifecycle"
+mfe = "mfe/lifecycle"        # optional: without it, the generic screens
+
+[[inbox-source]]
+id = "phase-waiting"
+query = "inbox/phase-waiting.json"
+
+[[mcp-tool]]
+name = "set_project_phase"
+
+[material]                   # today's: what cfs writes into a checkout
+paths = ["skills/", "templates/"]
+```
+
+A built-in kit has the same manifest, compiled into Studio's image instead of
+fetched.
+
+### 4. The kit library
+
+The library is the catalogue `studio-kits` keeps, grown into three shelves:
+
+- **Built-in**: shipped in Studio's image, versioned with Studio, installed
+  by default where their `levels` say, and removable like any other.
+- **Official**: Constructor's kits in their own repositories (today's
+  `sdlc`, `compete`), pinned by version.
+- **Organization**: kits an organization publishes for itself, from a
+  repository it connects. They are visible to that organization only.
+
+The library screen lists every kit a person may install. For each it shows
+what the kit brings (§2) before it is installed, and where it is installed
+already.
+
+### 5. The installer works on a level
+
+A kit is installed on the level its contribution needs, which is the
+narrowest level that holds everything it brings:
+
+| A kit's part | Installed on |
+|---|---|
+| model overlay, rules, functions | the organization (ADR-0067 §6: the model is the organization's) |
+| tabs and sections | the level the tab names, and it is inherited below unless that level hides it |
+| inbox sources | the organization; each person sees the items the PDP lets them read |
+| working material | the project, as today |
+
+Installing, uninstalling and upgrading are runs in `studio-tasks`, so they
+are durable, retried, and shown in Activity. Each is a REST route and an MCP
+tool: an agent installs a kit the way a person does. An installation records
+the kit, its version, the level and who installed it. Uninstall keeps objects
+of a type the kit added until an administrator removes them (ADR-0067 §6).
+
+### 6. The Inbox takes items from kits
+
+The Inbox is the person's: everything that waits on them, across levels. It
+holds no items of its own. Each item comes from an `inbox-source`. The shell
+ships the sources that read shell objects: membership requests and mentions.
+Every other source comes from a kit, for example deploys awaiting approval
+from the Releases kit, review requests and pull requests from the Specs and
+Sources kits, and a phase waiting on its owner from Project lifecycle. A
+source says what an item is, whom it waits on, and which tool answers it. The
+Inbox renders them alike and offers the answer, Done and Snooze. The same
+list is an MCP tool, so an agent can work a person's Inbox on their behalf.
+
+### 7. Today's tabs become built-in kits
+
+Each of today's features moves into a built-in kit, one at a time, behind the
+same contribution points. The portal keeps working throughout, because a
+built-in kit is installed by default where the feature showed before.
+
+| Built-in kit | Takes from today's portal |
+|---|---|
+| Project lifecycle | project status and phases, their filters (first: proves the mechanism) |
+| Specs | Specs, spec quality, document types |
+| Domain model | the model editor (the model itself stays in the shell) |
+| Product & Releases | Product, Builds, Releases, Environments, Infrastructure |
+| Tests | Tests |
+| Issues | Issues |
+| Artifacts | Artifacts |
+| Activity | Activity, beyond the shell's own run list |
+| Research | Research |
+| Assistant | the chat assistant (mini-chat) |
+
+The tabs marked experimental today (Issues, Tests, Kits, Artifacts, Activity)
+are the first to leave the default set: installed only where someone asks for
+them.
+
+## Phases
+
+| Phase | Delivers | Depends on |
+|---|---|---|
+| 1 | The manifest's contribution sections; built-in kits declared in the image; installation records per level | ADR-0066 |
+| 2 | The installer for tabs and the model overlay (ADR-0067 phase 6), as runs, REST routes and MCP tools; the library screen | 1 |
+| 3 | Project lifecycle as the first built-in kit: type fields, tab, filters, inbox source | 2 |
+| 4 | Inbox sources as a contribution point; the shell's own sources; today's Inbox items moved into their kits | 2 |
+| 5 | Micro-frontends mounted for `shows` relations and sections | 2, ADR-0050 |
+| 6 | Today's tabs moved into built-in kits, one per change | 3, 5 |
+| 7 | Organization kits: publish from a connected repository | 2 |
+
+## Consequences
+
+- Good, because a project shows what its kits bring and nothing else. A
+  project that does not build software has no Product tab.
+- Good, because Studio's own features prove every contribution point before
+  an outside kit relies on it.
+- Good, because everything a person does in a kit's screen an agent can do
+  through the kit's MCP tools, and the Inbox is the same list for both.
+- Bad, because every feature moves once, behind an interface that is new.
+  Each move is its own change, and the portal must look the same before and
+  after it.
+- Bad, because a contribution point is a contract. Changing one later touches
+  every kit, so the first set is kept small.
+
+## Confirmation
+
+- A project whose organization has uninstalled Product & Releases shows no
+  Product, Builds or Releases tab, and its Inbox has no deploy approvals.
+- Project lifecycle can be installed, used, uninstalled and installed again
+  through MCP tools alone.
+- The portal has no tab that is not a `shows` relation of some kit or of the
+  shell.
+
+## Open questions
+
+1. **Ordering tabs from several kits** on one level: by kit priority, by the
+   level's own setting, or both.
+2. **A kit that needs another kit's types** (Releases needs Sources'
+   repositories): declared dependencies in the manifest, resolved by the
+   installer.
+3. **Kit code outside a gear** stays ADR-0067's open question 1. Until it is
+   answered, a kit that needs server code ships a gear.
