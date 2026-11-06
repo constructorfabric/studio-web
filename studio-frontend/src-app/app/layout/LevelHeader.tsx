@@ -13,6 +13,14 @@ import {
   DropdownMenuTrigger,
 } from '@gears-frontx/ui-kit/dropdown-menu';
 import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@gears-frontx/ui-kit/item';
+import {
+  PageHeader,
+  PageHeaderContent,
+  PageHeaderEyebrow,
+  PageHeaderLeading,
+  PageHeaderMeta,
+  PageHeaderTitle,
+} from '@gears-frontx/ui-kit/page-header';
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
 import { ArrowLeft, ArrowLeftRight, Building2 } from 'lucide-react';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
@@ -32,37 +40,39 @@ const OrganizationSwitch: React.FC<{ context: AppContextState }> = ({ context })
   if (!context.org || orgs.length < 2) return null;
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button variant="ghost" size="sm" icon={<ArrowLeftRight />} className={styles.switch} />
-        }
-      >
-        {t('level_switch_organization')}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className={SWITCH_MENU_CLASS}>
-        <DropdownMenuRadioGroup value={context.org.id} onValueChange={pickOrg}>
-          {orgs.map((org) => (
-            <DropdownMenuRadioItem key={org.id} value={org.id} closeOnClick className="group">
-              <ItemMedia
-                variant="icon"
-                className="text-muted-foreground group-focus:text-current group-data-[highlighted]:text-current"
-              >
-                <Building2 strokeWidth={1.5} aria-hidden="true" />
-              </ItemMedia>
-              <ItemContent className="!gap-0">
-                <ItemTitle className="!block !w-auto text-label">{org.name}</ItemTitle>
-                {org.count !== undefined && (
-                  <ItemDescription className="group-focus:text-current group-data-[highlighted]:text-current">
-                    {t.count('level_workspaces', org.count)}
-                  </ItemDescription>
-                )}
-              </ItemContent>
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <PageHeaderMeta>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button variant="ghost" size="sm" icon={<ArrowLeftRight />} className={styles.switch} />
+          }
+        >
+          {t('level_switch_organization')}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className={SWITCH_MENU_CLASS}>
+          <DropdownMenuRadioGroup value={context.org.id} onValueChange={pickOrg}>
+            {orgs.map((org) => (
+              <DropdownMenuRadioItem key={org.id} value={org.id} closeOnClick className="group">
+                <ItemMedia
+                  variant="icon"
+                  className="text-muted-foreground group-focus:text-current group-data-[highlighted]:text-current"
+                >
+                  <Building2 strokeWidth={1.5} aria-hidden="true" />
+                </ItemMedia>
+                <ItemContent className="!gap-0">
+                  <ItemTitle className="!block !w-auto text-label">{org.name}</ItemTitle>
+                  {org.count !== undefined && (
+                    <ItemDescription className="group-focus:text-current group-data-[highlighted]:text-current">
+                      {t.count('level_workspaces', org.count)}
+                    </ItemDescription>
+                  )}
+                </ItemContent>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </PageHeaderMeta>
   );
 };
 
@@ -79,56 +89,62 @@ export const LevelHeader: React.FC = () => {
 
   if (!context?.org) {
     return context?.loading ? (
-      <div className={styles.header} aria-hidden="true">
+      <PageHeader className={styles.header} size="lg" aria-hidden="true">
         <Skeleton className={styles.pending} />
-      </div>
+      </PageHeader>
     ) : null;
   }
 
   if (level === 'project' && context.project) {
     return (
-      <div className={`${styles.header} ${styles.project}`}>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<ArrowLeft />}
-          aria-label={t('level_back_to_projects')}
-          title={t('level_back_to_projects')}
-          onClick={backToProjects}
-        />
+      <PageHeader className={styles.header} size="sm">
+        <PageHeaderLeading>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ArrowLeft />}
+            aria-label={t('level_back_to_projects')}
+            title={t('level_back_to_projects')}
+            onClick={backToProjects}
+          />
+        </PageHeaderLeading>
         {context.project.name ? (
-          <h1 className={styles.name}>{context.project.name}</h1>
+          <PageHeaderContent>
+            <PageHeaderTitle>{context.project.name}</PageHeaderTitle>
+          </PageHeaderContent>
         ) : (
           // A linked project is open before its name is read (ADR-0028).
           <Skeleton className={styles.pending} data-testid="level-header-pending" />
         )}
-      </div>
+      </PageHeader>
     );
   }
 
   if (level !== 'organization') {
     if (!context.workspace) {
       return context.workspacesStatus === 'pending' ? (
-        <div className={styles.header} aria-hidden="true" data-testid="level-header-pending">
+        <PageHeader className={styles.header} size="lg" aria-hidden="true" data-testid="level-header-pending">
           <Skeleton className={styles.pending} />
-        </div>
+        </PageHeader>
       ) : null;
     }
     return (
-      <div className={styles.header}>
-        <div className={styles.stack}>
-          <span className={styles.eyebrow}>{context.org.name}</span>
-          <h1 className={`${styles.name} ${styles.display}`}>{context.workspace.name}</h1>
-        </div>
-      </div>
+      <PageHeader className={styles.header} size="lg">
+        <PageHeaderContent>
+          <PageHeaderEyebrow>{context.org.name}</PageHeaderEyebrow>
+          <PageHeaderTitle typography="display">{context.workspace.name}</PageHeaderTitle>
+        </PageHeaderContent>
+      </PageHeader>
     );
   }
 
   return (
-    <div className={`${styles.header} ${styles.organization}`}>
-      <h1 className={`${styles.name} ${styles.display}`}>{context.org.name}</h1>
-      <OrganizationSwitch context={context} />
-    </div>
+    <PageHeader className={styles.header} size="lg">
+      <PageHeaderContent>
+        <PageHeaderTitle typography="display">{context.org.name}</PageHeaderTitle>
+        <OrganizationSwitch context={context} />
+      </PageHeaderContent>
+    </PageHeader>
   );
 };
 

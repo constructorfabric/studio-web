@@ -95,6 +95,11 @@ one step further back.
 with the version that came out of the read: it succeeds. Do the same from two
 readers on one version: exactly one succeeds.
 
+**Status, weftgraph 0.3.0-rc.2 (#966): landed.** `ElementEnvelope.version`
+carries the node's stored version on every read (absent on an edge). The
+domain query's write path can now form a read-then-write CAS; it has not been
+moved onto it yet.
+
 **Status, 0.1.4.** Still open: `ElementEnvelope` carries `graph_revision`, the
 revision the read observed, and not the element's own version. The domain
 query's write path (step 5 of the migration plan in
@@ -380,6 +385,12 @@ Every environment would need a REST update of 18 types before the first ingest.
 and `$orderby` are there, with the GIN behind equality, and there is still no
 count and no offset. The deployment blocker is now item 8.
 
+**Status, weftgraph 0.3.0-rc.2 (#966).** Two of the gaps closed: a count
+(`count_nodes`, exact up to `projection_count_max`, 10 000 by default, then
+`capped`), and the in-process type update (item 8). Still open: no offset, no
+index behind a payload ordering, no field selection, and the artifact types
+declare no `index` paths or the typed properties an `index` path needs.
+
 **So: keep the index.** Delete it when the projection has a count (or the
 screens stop needing one), a payload ordering can use an index, and the client
 can update a stored type. The migration then is: declare `index` on the listed
@@ -480,6 +491,12 @@ that is already there. Returning `RegisteredType` rather than `TypeRecord`
 gives the caller the outcome and the verdict, which is also item 1's per-item
 report for free.
 
+**Status, weftgraph 0.3.0-rc.2 (#966): landed.**
+`GraphStorageClientV1::register_types_with` takes the options and returns
+`RegisteredType`. The artifact and catalog registrations pass
+`on_existing: Update`, and `scripts/graph-storage-update-edge-types.sh` is
+deleted. The batch is still atomic (item 1 stays open).
+
 **How we would know it works.** In process, register a node type with no
 `index`. Register it again with `index: ["/payload/status"]`, a string property
 at that path, `on_existing: Update` and `revalidate: true`. The outcome is
@@ -511,6 +528,9 @@ to every hop. `None` keeps `Either`, so no existing caller changes.
 
 **How we would know it works.** Edge A → B. Traverse from B with `Outgoing`:
 no edge. With `Incoming`: A. With `None`: A, as today.
+
+**Status, weftgraph 0.3.0-rc.2 (#966): landed.** `TraverseRequest.direction`
+(and on `NeighborhoodRequest`). The domain query walks `Outgoing`.
 
 ---
 
@@ -546,6 +566,11 @@ walk carries only the relation that was asked for.
 **How we would know it works.** Two edges of one type from A to B with
 discriminators `x` and `y`. A traversal from A returns both, each with its
 discriminator. With the filter `x`, only one comes back.
+
+**Status, weftgraph 0.3.0-rc.2 (#966): landed**, both halves:
+`EdgeRef.discriminator` and `TraverseRequest.edge_discriminators`. The domain
+query filters on the relation's name, so the warning now fires only for two
+relations with the same verb and the same name.
 
 ---
 
@@ -598,15 +623,15 @@ sooner.
 | | Ask | Have now | Costing us |
 |---|---|---|---|
 | 1 | Per-item outcomes on `register_types` | all-or-nothing batch | 145 fallback calls; one bad type stops every write |
-| 2 | Node version on the read path | write-only `expected_version` (still in 0.1.4) | every update is last-writer-wins |
+| 2 | Node version on the read path | landed in 0.3 (`ElementEnvelope.version`) | updates stay last-writer-wins until the write path uses it |
 | 3 | A published schema can change | landed in 0.1.4 over REST (update, revalidate, migrations, revision) | nothing in itself; the in-process half is item 8 |
 | 4 | Removing is possible and reversible | tombstones are permanent, scope replacement is inert, adjacency unpaged | the graph only grows |
 | 5 | `$filter`/`$orderby` on payload attributes | landed in weftgraph 0.1.1 for `index`-declared paths, without a count or an indexed payload ordering | nothing at runtime now (`studio_artifact_index` serves it); the mirror itself, until the gaps in item 5's status close |
 | 6 | A cursor over edges | adjacency capped at 1,000, traversal at 10,000, neither pages | the relation graph comes back incomplete and says it is complete — 5,944 of 79,184 relations unreachable |
 | 7 | A NUL in a payload is a validation error | landed in weftgraph 0.1.1 (refused at admission with the JSON path; G-3) | nothing |
-| 8 | Type update on the in-process client | REST only; `register_types` takes no options | domain query filters in-process over ≤5,000 objects; artifact and edge types cannot gain an `index` |
-| 9 | `direction` on `traverse` | always `Either` | half of every budget spent on edges thrown away; reverse relations unreadable |
-| 10 | `discriminator` on traversed edges | on `EdgeSpec`/`EdgeView`, not on `EdgeRef` | 50 of 300 domain relations come back mixed with another, with a warning |
+| 8 | Type update on the in-process client | landed in 0.3 (`register_types_with`) | nothing; declaring `index` paths on our types is our work now |
+| 9 | `direction` on `traverse` | landed in 0.3 | nothing |
+| 10 | `discriminator` on traversed edges | landed in 0.3, with a filter | nothing |
 | 11 | Per-seed filter, limit and count on a traversal | one `max_nodes` for the request | every neighbour fetched to show five per parent |
 
 Items 1 and 2 are small and independent — a per-item report and one integer.
