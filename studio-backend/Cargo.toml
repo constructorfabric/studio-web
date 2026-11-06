@@ -81,7 +81,7 @@ graph = [
 mimalloc = "0.1"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # ── studio-session gear (in-crate; per-workspace Theia IDE containers) ──
 bollard = "0.17"

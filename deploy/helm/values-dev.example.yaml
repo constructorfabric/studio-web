@@ -158,6 +158,13 @@ ingress:
   enabled: true
   className: traefik
 
+# Constructor Research DEV is not reachable from this cluster yet (the
+# restricted gateway is still being agreed), so the Research emulator stands
+# in at https://studio-dev.cfabric.org/research-emulator and replaces
+# `backend.research` above. Turn it off once the gateway is up.
+researchEmulator:
+  enabled: true
+
 # OFF, and not because the numbers are wrong.
 #
 # Studio owns this namespace, but owning it is not the same as being allowed to

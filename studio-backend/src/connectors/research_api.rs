@@ -1571,3 +1571,7 @@ fn walk(root: &Path) -> anyhow::Result<(Vec<String>, Vec<String>)> {
 #[cfg(test)]
 #[path = "research_api_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "research_emulator_tests.rs"]
+mod emulator_tests;

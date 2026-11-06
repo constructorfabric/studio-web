@@ -1,0 +1,81 @@
+{{- if .Values.researchEmulator.enabled }}
+{{- $e := .Values.researchEmulator }}
+# Constructor Research emulator (docs/research-emulator.md): the backend image
+# running `studio-backend research-emulator`, for a stand that cannot reach a
+# real Research yet. The backend's research settings point here while it is on.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "studio-web.fullname" . }}-research-emulator
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: research-emulator
+spec:
+  # Its state is in the process (and a file beside it): one replica.
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: research-emulator
+  template:
+    metadata:
+      labels: {{- include "studio-web.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: research-emulator
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        fsGroup: 1000
+      containers:
+        - name: research-emulator
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          args: ["research-emulator"]
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: RESEARCH_EMULATOR_LISTEN
+              value: "0.0.0.0:8095"
+            - name: RESEARCH_EMULATOR_PUBLIC_URL
+              value: {{ include "studio-web.researchEmulatorUrl" . | quote }}
+            - name: RESEARCH_EMULATOR_CLIENT_ID
+              value: "constructor-studio"
+            - name: RESEARCH_EMULATOR_CLIENT_SECRET
+              value: {{ $e.clientSecret | quote }}
+            - name: RESEARCH_EMULATOR_REDIRECT_URIS
+              value: {{ include "studio-web.researchRedirectUri" . | quote }}
+            - name: RESEARCH_EMULATOR_STATE_FILE
+              value: /var/lib/research-emulator/state.json
+            - name: RESEARCH_EMULATOR_DESK_SECONDS
+              value: {{ $e.deskSeconds | quote }}
+            - name: RESEARCH_EMULATOR_BUILD_SECONDS
+              value: {{ $e.buildSeconds | quote }}
+            - name: RESEARCH_EMULATOR_START_SECONDS
+              value: {{ $e.startSeconds | quote }}
+          ports:
+            - { name: http, containerPort: 8095 }
+          readinessProbe:
+            httpGet: { path: {{ printf "%s/healthz" ($e.path | trimSuffix "/") | quote }}, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: {{ printf "%s/healthz" ($e.path | trimSuffix "/") | quote }}, port: http }
+            periodSeconds: 30
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/research-emulator }
+          resources: {{- toYaml $e.resources | nindent 12 }}
+      volumes:
+        # Survives a container restart, not a new pod: members then sign in
+        # to Research again from Studio, which says so.
+        - name: state
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "studio-web.fullname" . }}-research-emulator
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "studio-web.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: research-emulator
+  ports:
+    - { name: http, port: 80, targetPort: http }
+{{- end }}

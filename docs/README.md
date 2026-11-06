@@ -87,6 +87,7 @@ not maintained.
 - [theia-bridge-local-docker.md](theia-bridge-local-docker.md) — running the Theia bridge locally in Docker.
 - [graph-storage-quickstart.md](graph-storage-quickstart.md) — local graph-storage experiments with docker compose.
 - [insight-quickstart.md](insight-quickstart.md) — integrating with Constructor Insight.
+- [research-emulator.md](research-emulator.md) — a stand-in for Constructor Research (ADR-0049) until a stand can reach a real one: what it answers, the gateway check, running it in compose and on Kubernetes.
 - [desktop-contributing.md](desktop-contributing.md) — the rules for changing the desktop Studio.
 - [deploy-k8s-cicd.md](deploy-k8s-cicd.md) — an earlier Kubernetes and CI/CD proposal; the current procedure is [`deploy/README.md`](../deploy/README.md) and [`deploy/PIPELINES.md`](../deploy/PIPELINES.md).
 - [verifying-the-collaboration-work.md](verifying-the-collaboration-work.md) — how to check the collaborative editing work end to end.

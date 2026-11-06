@@ -24,6 +24,13 @@ spec:
             pathType: Prefix
             backend: { service: { name: {{ include "studio-web.fullname" $ }}-backend, port: { name: file-storage } } }
           {{- end }}
+          {{- if $.Values.researchEmulator.enabled }}
+          # The Research emulator, same origin: the browser's sign-in and the
+          # backend's calls both come here (docs/research-emulator.md).
+          - path: {{ $.Values.researchEmulator.path | trimSuffix "/" }}
+            pathType: Prefix
+            backend: { service: { name: {{ include "studio-web.fullname" $ }}-research-emulator, port: { name: http } } }
+          {{- end }}
           - path: /cf
             pathType: Prefix
             backend: { service: { name: {{ include "studio-web.fullname" $ }}-backend, port: { name: http } } }

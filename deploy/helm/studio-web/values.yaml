@@ -560,6 +560,23 @@ capacity:
       cpu: 4
       memory: 8Gi
 
+# Constructor Research emulator (docs/research-emulator.md): a stand-in for
+# Research while the stand cannot reach a real one. The backend image runs
+# `studio-backend research-emulator`, the ingress sends `path` on the portal's
+# hostname to it, and the backend's `research` settings above are replaced by
+# the emulator's. Nothing is really built or run.
+researchEmulator:
+  enabled: false
+  path: /research-emulator
+  publicUrl: ""            # default https://<global.hostname><path>
+  clientSecret: "research-emulator"  # not a secret: the emulator guards nothing
+  deskSeconds: 5
+  buildSeconds: 20
+  startSeconds: 5
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
 ingress:
   enabled: true
   className: "nginx"

@@ -376,6 +376,21 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: credstore_key, optional: true } }
             # Constructor Research (ADR-0049). Without a client id the driver is
             # not registered; the secret is optional for the same reason.
+            {{- if .Values.researchEmulator.enabled }}
+            # The Research emulator stands in (docs/research-emulator.md); its
+            # client secret guards nothing, so it is a plain value.
+            {{- $emu := include "studio-web.researchEmulatorUrl" . }}
+            - name: STUDIO_RESEARCH_ISSUER
+              value: {{ printf "%s/idp" $emu | quote }}
+            - name: STUDIO_RESEARCH_CLIENT_ID
+              value: "constructor-studio"
+            - name: STUDIO_RESEARCH_REDIRECT_URI
+              value: {{ include "studio-web.researchRedirectUri" . | quote }}
+            - name: STUDIO_RESEARCH_API_URL
+              value: {{ printf "%s/api/platform-account/v1" $emu | quote }}
+            - name: STUDIO_RESEARCH_CLIENT_SECRET
+              value: {{ .Values.researchEmulator.clientSecret | quote }}
+            {{- else }}
             {{- with .Values.backend.research }}
             - name: STUDIO_RESEARCH_ISSUER
               value: {{ .issuer | default "" | quote }}
@@ -388,6 +403,7 @@ spec:
             {{- end }}
             - name: STUDIO_RESEARCH_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: research_client_secret, optional: true } }
+            {{- end }}
             # Keycloak Admin API for invites (keycloak-idp-plugin). Optional:
             # without the secret the plugin self-deprioritizes (invites off).
             {{- if .Values.backend.idpAdmin.baseUrl }}

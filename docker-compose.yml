@@ -259,6 +259,15 @@ services:
       # The kit catalogue (kit_registry/README.md), a JSON array of kits; unset
       # is Constructor's own kits.
       # STUDIO_KIT_CATALOGUE: '[{"slug":"sdlc","name":"SDLC","repository_url":"https://github.com/constructorfabric/studio-kit-sdlc","default_version":"main"}]'
+      # Constructor Research (ADR-0049): the `research-emulator` service below
+      # unless .env names a real stand. research.localhost is the emulator for
+      # both the browser (published port) and this container (network alias),
+      # as one hostname is on a real stand.
+      STUDIO_RESEARCH_ISSUER: ${STUDIO_RESEARCH_ISSUER:-http://research.localhost:8095/idp}
+      STUDIO_RESEARCH_API_URL: ${STUDIO_RESEARCH_API_URL:-http://research.localhost:8095/api/platform-account/v1}
+      STUDIO_RESEARCH_CLIENT_ID: ${STUDIO_RESEARCH_CLIENT_ID:-constructor-studio}
+      STUDIO_RESEARCH_CLIENT_SECRET: ${STUDIO_RESEARCH_CLIENT_SECRET:-research-emulator}
+      STUDIO_RESEARCH_REDIRECT_URI: ${STUDIO_RESEARCH_REDIRECT_URI:-http://localhost:8080/connections/oauth/callback,http://localhost:8081/connections/oauth/callback}
     volumes:
       # studio-session gear: launches sibling Theia containers via the host
       # Docker daemon. The workspaces path must be IDENTICAL on host and in
@@ -358,6 +367,38 @@ services:
     depends_on:
       graph-postgres:
         condition: service_healthy
+
+  # Constructor Research emulator (docs/research-emulator.md): the sign-in,
+  # account API, desk files and build logs Studio calls, with nothing really
+  # built or run. The backend's build exactly, so the image comes from its
+  # cache; it runs another subcommand. The browser reaches it at
+  # http://research.localhost:8095 (any *.localhost is the loopback); the
+  # backend reaches the same name through the network alias.
+  # Dashboard: http://research.localhost:8095/_emulator
+  research-emulator:
+    build:
+      context: .
+      dockerfile: studio-backend/Dockerfile.src
+      args:
+        CARGO_FEATURES: "--features theia-bridge"
+    container_name: studio-research-emulator
+    restart: unless-stopped
+    command: ["research-emulator"]
+    environment:
+      RESEARCH_EMULATOR_PUBLIC_URL: http://research.localhost:8095
+      RESEARCH_EMULATOR_CLIENT_ID: constructor-studio
+      RESEARCH_EMULATOR_CLIENT_SECRET: ${STUDIO_RESEARCH_CLIENT_SECRET:-research-emulator}
+      RESEARCH_EMULATOR_REDIRECT_URIS: http://localhost:8080/connections/oauth/callback,http://localhost:8081/connections/oauth/callback
+    ports:
+      - "127.0.0.1:8095:8095"
+    networks:
+      default:
+        aliases: [research.localhost]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8095/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # Embedding model for the graph-storage `onnx` provider — a one-shot fetch
   # into the `studio_models` volume, pinned by SHA-256 (see the script). Runs

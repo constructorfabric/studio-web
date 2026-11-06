@@ -825,6 +825,17 @@ gears:
   studio-notify:
     config: {}
 
+  # Constructor Research (ADR-0049). docker-compose points it at the Research
+  # emulator (`research-emulator` service, docs/research-emulator.md) unless
+  # .env names a real stand. Empty values leave Constructor Research out.
+  research-connector-plugin:
+    config:
+      issuer: "${STUDIO_RESEARCH_ISSUER:-}"
+      client_id: "${STUDIO_RESEARCH_CLIENT_ID:-}"
+      client_secret: "${STUDIO_RESEARCH_CLIENT_SECRET:-}"
+      redirect_uri: "${STUDIO_RESEARCH_REDIRECT_URI:-}"
+      api_url: "${STUDIO_RESEARCH_API_URL:-}"
+
   mini-chat:
     database:
       server: "pg_main"
