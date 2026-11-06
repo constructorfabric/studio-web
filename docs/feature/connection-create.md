@@ -108,7 +108,7 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 
 The flows stay unchecked for the reason `project-create` records: a checked flow
 obliges every CDSL instruction to carry a `@cpt-begin`/`@cpt-end` block, and
-these span the toolbar, the overlay plumbing, the form, the write effect and —
+these span the header, the overlay plumbing, the form, the write effect and —
 for "Abandon the form" — the shell's own dismissal code, which is outside this
 system's codebase scope. Their evidence is section 6, exercised against a running
 stack; the implementation claims they rest on are the Definitions of Done, which
@@ -134,7 +134,7 @@ still work.
 1. [ ] - `p1` - Member opens Connections - `inst-1`
 2. [ ] - `p1` - Run `cpt-studiofrontend-algo-connection-list-read` - `inst-2`
 3. [ ] - `p1` - Run `cpt-studiofrontend-algo-connection-list-health` for each row, independently - `inst-3`
-4. [ ] - `p1` - Member narrows the list by typing in the toolbar's search - `inst-4`
+4. [ ] - `p1` - Member narrows the list by typing in the search above it - `inst-4`
 5. [ ] - `p1` - **RETURN** the matching rows - `inst-5`
 
 ### Connect a source
@@ -151,7 +151,7 @@ still work.
 - The shell has published no organization; the primary action refuses and says so.
 
 **Steps**:
-1. [ ] - `p1` - Member activates "Connect source" in the list toolbar - `inst-1`
+1. [ ] - `p1` - Member activates "Connect source" in the list's header - `inst-1`
 2. [ ] - `p1` - Mount the overlay extension in the shell's overlay domain - `inst-2`
 3. [ ] - `p1` - Reset the draft so no earlier attempt is carried in - `inst-3`
 4. [ ] - `p1` - `API: GET /cf/studio-connector/v1/providers (the provider choices, and the labels for the credential field)` - `inst-4`
@@ -490,7 +490,7 @@ do share, because `queryCacheShared` retains the host's off `globalThis`.
 - [ ] A connection inherited from an ancestor tenant is listed alongside the organization's own.
 - [ ] Each row's status resolves on its own: the table is drawn before any check has answered, and a provider that never answers leaves only its own row unresolved.
 - [ ] A connection whose credential was rotated at the provider reads Needs attention, and its reason is readable on the cell.
-- [ ] Typing in the toolbar's search narrows the rows by name, account and provider, without a request.
+- [ ] Typing in the search above the list narrows the rows by name, account and provider, without a request.
 - [ ] A search that matches nothing says so, rather than claiming the organization has no connections, offers to clear the search, and the row count never contradicts the rows on screen.
 - [ ] Available data, Projects, Last sync and Actions render a placeholder in every row; no cell shows the record's creation time.
 - [ ] Activating "Connect source" opens the overlay; the list stays visible behind the scrim.

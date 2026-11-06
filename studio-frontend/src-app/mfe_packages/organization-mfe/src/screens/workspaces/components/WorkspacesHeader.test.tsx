@@ -20,13 +20,11 @@ vi.mock('../../../i18n', async () => {
   };
 });
 
-import { WorkspacesToolbar } from './WorkspacesToolbar';
+import { WorkspacesHeader } from './WorkspacesHeader';
 
-const renderToolbar = (props: { busy?: boolean; total?: number; projectTotal?: number }) =>
+const renderHeader = (props: { busy?: boolean; total?: number; projectTotal?: number }) =>
   render(
-    <WorkspacesToolbar
-      query=""
-      onQueryChange={() => {}}
+    <WorkspacesHeader
       canCreate
       busy={props.busy ?? false}
       total={props.total}
@@ -34,33 +32,33 @@ const renderToolbar = (props: { busy?: boolean; total?: number; projectTotal?: n
     />
   );
 
-describe('WorkspacesToolbar totals', () => {
+describe('WorkspacesHeader totals', () => {
   afterEach(() => {
     cleanup();
     text.language = 'en';
   });
 
   it('counts the workspaces and their projects in one line', () => {
-    renderToolbar({ total: 1, projectTotal: 3 });
+    renderHeader({ total: 1, projectTotal: 3 });
     expect(screen.getByText('1 workspace · 3 projects')).toBeTruthy();
   });
 
   it('takes each count in the form its language gives it', () => {
     text.language = 'ru';
-    renderToolbar({ total: 2, projectTotal: 5 });
+    renderHeader({ total: 2, projectTotal: 5 });
     expect(screen.getByText('2 воркспейса · 5 проектов')).toBeTruthy();
   });
 
   it('says nothing while the list is being read', () => {
-    renderToolbar({ busy: true, total: 1, projectTotal: 3 });
+    renderHeader({ busy: true, total: 1, projectTotal: 3 });
     expect(screen.queryByText(/·/)).toBeNull();
   });
 
   it('says nothing until both totals are in', () => {
-    renderToolbar({ total: 1 });
+    renderHeader({ total: 1 });
     expect(screen.queryByText(/·/)).toBeNull();
     cleanup();
-    renderToolbar({ projectTotal: 3 });
+    renderHeader({ projectTotal: 3 });
     expect(screen.queryByText(/·/)).toBeNull();
   });
 });

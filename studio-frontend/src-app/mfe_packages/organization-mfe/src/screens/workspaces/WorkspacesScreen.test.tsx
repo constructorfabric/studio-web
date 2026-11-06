@@ -25,18 +25,7 @@ vi.mock('../../i18n', () => ({
   useWorkspacesText: () => (key: string) => key,
 }));
 
-vi.mock('./components/WorkspacesToolbar', () => ({
-  WorkspacesToolbar: ({
-    onQueryChange,
-  }: {
-    onQueryChange: (value: string) => void;
-  }) => (
-    <input
-      aria-label="search"
-      onChange={(event) => onQueryChange(event.currentTarget.value)}
-    />
-  ),
-}));
+vi.mock('./components/WorkspacesHeader', () => ({ WorkspacesHeader: () => null }));
 
 // Stubbed to read what the screen hands it: the caption's own wording is the
 // table's business and is covered in WorkspacesTable.test.tsx.
@@ -84,7 +73,9 @@ describe('WorkspacesScreen', () => {
   it('narrows the rows but keeps the organization count when a search runs', () => {
     render(<WorkspacesScreen />);
 
-    fireEvent.change(screen.getByLabelText('search'), { target: { value: 'Platform' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'search_placeholder' }), {
+      target: { value: 'Platform' },
+    });
 
     expect(tableProps.current?.rows).toHaveLength(1);
     expect(tableProps.current?.total).toBe(10);

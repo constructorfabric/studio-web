@@ -145,9 +145,10 @@ describe('connections-mfe lifecycle', () => {
       </FrontXProvider>
     );
 
-    // The scaffold's HomeScreen is gone; the toolbar and the empty state are
-    // what prove the lifecycle now mounts the connections list instead.
-    expect(screen.getByRole('heading', { name: en.title })).toBeTruthy();
+    // The scaffold's HomeScreen is gone; the header, the search and the empty
+    // state are what prove the lifecycle now mounts the connections list instead.
+    expect(screen.getByRole('heading', { level: 2, name: en.title })).toBeTruthy();
+    expect(screen.getByRole('button', { name: en.connect_source })).toBeTruthy();
     expect(screen.getByRole('searchbox', { name: en.search_placeholder })).toBeTruthy();
     expect(screen.getByText(en.empty_title)).toBeTruthy();
   });

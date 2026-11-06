@@ -120,7 +120,7 @@ describe('organization-mfe lifecycle', () => {
       </FrontXProvider>
     );
 
-    expect(await screen.findByRole('toolbar', { name: 'Workspaces' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'New workspace' })).toBeTruthy();
   });
 
   it('renders the settings screen when the shell relays that section', async () => {
