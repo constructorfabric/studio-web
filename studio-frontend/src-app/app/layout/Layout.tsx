@@ -37,9 +37,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       <Header />
 
       {/* The level: its name, its tabs, then the screen they mount. */}
-      {!noOrganization && <LevelHeader />}
-      {!noOrganization && <LevelTabs />}
-      <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card">
+        {!noOrganization && <LevelHeader />}
+        {!noOrganization && <LevelTabs />}
+        <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
+      </main>
 
       {/* Out of the flow, over everything: dialogs and overlays. */}
       <OverlayDialog />

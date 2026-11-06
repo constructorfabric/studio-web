@@ -64,6 +64,9 @@ pub struct EdgeView {
     pub type_id: String,
     pub from: String,
     pub to: String,
+    /// Which declared relation the edge is, when it was written with one (see
+    /// [`EdgeUpsert::discriminator`]).
+    pub discriminator: Option<String>,
 }
 
 /// The objects one hop out of a set of seeds along one edge type, with the
@@ -206,6 +209,10 @@ pub trait DomainStore: Send + Sync {
     /// relation and nesting level of a query, for every row at once, rather
     /// than one read per row.
     ///
+    /// `discriminator`, when given, keeps only the edges of that declared
+    /// relation: two relations of one verb share an edge type, and the
+    /// discriminator is what tells them apart.
+    ///
     /// The default reads the edges and then each endpoint. The graph backend
     /// answers it with one typed traversal, which returns the payloads too.
     async fn neighbours(
@@ -213,6 +220,7 @@ pub trait DomainStore: Send + Sync {
         ctx: &SecurityContext,
         seeds: &[String],
         edge_type_id: &str,
+        discriminator: Option<&str>,
         node_type_ids: &[String],
     ) -> anyhow::Result<Neighbourhood> {
         let from: std::collections::HashSet<&str> = seeds.iter().map(String::as_str).collect();
@@ -221,6 +229,7 @@ pub trait DomainStore: Send + Sync {
             .await?
             .into_iter()
             .filter(|e| e.type_id == edge_type_id && from.contains(e.from.as_str()))
+            .filter(|e| discriminator.is_none_or(|d| e.discriminator.as_deref() == Some(d)))
             .collect();
         let mut nodes: Vec<ObjectNode> = Vec::new();
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -253,8 +262,9 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct InMemoryDomainStore {
     nodes: Mutex<HashMap<String, ObjectNode>>,
-    /// Keyed by `type|from|to` so a re-create upserts rather than duplicates.
-    edges: Mutex<HashMap<String, (String, String, String)>>,
+    /// Keyed by `type|from|to|discriminator` so a re-create upserts rather
+    /// than duplicates.
+    edges: Mutex<HashMap<String, EdgeView>>,
 }
 
 #[async_trait]
@@ -296,7 +306,12 @@ impl DomainStore for InMemoryDomainStore {
                 super::gts::edge_key(edge_type_id, from, to),
                 discriminator.unwrap_or("")
             ),
-            (edge_type_id.to_string(), from.to_string(), to.to_string()),
+            EdgeView {
+                type_id: edge_type_id.to_string(),
+                from: from.to_string(),
+                to: to.to_string(),
+                discriminator: discriminator.map(str::to_string),
+            },
         );
         Ok(())
     }
@@ -384,7 +399,15 @@ impl DomainStore for InMemoryDomainStore {
                 super::gts::edge_key(&e.type_id, &e.from, &e.to),
                 e.discriminator.as_deref().unwrap_or("")
             );
-            map.insert(key, (e.type_id.clone(), e.from.clone(), e.to.clone()));
+            map.insert(
+                key,
+                EdgeView {
+                    type_id: e.type_id.clone(),
+                    from: e.from.clone(),
+                    to: e.to.clone(),
+                    discriminator: e.discriminator.clone(),
+                },
+            );
         }
         Ok(edges.len() as u64)
     }
@@ -400,12 +423,8 @@ impl DomainStore for InMemoryDomainStore {
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
         Ok(map
             .values()
-            .filter(|(_, from, _)| seeds.iter().any(|s| s == from))
-            .map(|(type_id, from, to)| EdgeView {
-                type_id: type_id.clone(),
-                from: from.clone(),
-                to: to.clone(),
-            })
+            .filter(|e| seeds.contains(&e.from))
+            .cloned()
             .collect())
     }
 }
@@ -422,7 +441,8 @@ mod graph_backend {
 
     use graph_storage_sdk::GraphStorageClientV1;
     use graph_storage_sdk::models::{
-        EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TraverseRequest, TypeRegistration,
+        Direction, EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TraverseRequest,
+        TypeRegistration,
     };
     use toolkit_odata::ODataQuery;
 
@@ -796,6 +816,7 @@ mod graph_backend {
                         type_id: gts::our_type_from_graph(&e.edge_type_id),
                         from: e.src,
                         to: e.dst,
+                        discriminator: e.discriminator,
                     };
                     if seen.insert((view.type_id.clone(), view.from.clone(), view.to.clone())) {
                         out.push(view);
@@ -805,14 +826,17 @@ mod graph_backend {
             Ok(out)
         }
 
-        /// One traversal per chunk of seeds, restricted to the edge type and
-        /// the target node types, so the graph walks only the relation asked
-        /// for and hands the payloads back with it.
+        /// One traversal per chunk of seeds, restricted to the edge type, its
+        /// discriminator, the outgoing direction and the target node types, so
+        /// the graph walks only the relation asked for and hands the payloads
+        /// back with it. The edges it leaves out spend none of the walk's
+        /// budget.
         async fn neighbours(
             &self,
             ctx: &SecurityContext,
             seeds: &[String],
             edge_type_id: &str,
+            discriminator: Option<&str>,
             node_type_ids: &[String],
         ) -> anyhow::Result<Neighbourhood> {
             let edge_pattern = gts::graph_type_id(edge_type_id);
@@ -826,8 +850,6 @@ mod graph_backend {
             let mut seen_nodes: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             for chunk in seeds.chunks(TRAVERSE_SEEDS) {
-                let from: std::collections::HashSet<&str> =
-                    chunk.iter().map(String::as_str).collect();
                 let res = self
                     .client
                     .traverse(
@@ -837,20 +859,21 @@ mod graph_backend {
                             depth: 1,
                             edge_type_patterns: vec![edge_pattern.clone()],
                             node_type_patterns: node_patterns.clone(),
+                            // A relation is read from its declaring side.
+                            direction: Some(Direction::Outgoing),
+                            edge_discriminators: discriminator
+                                .map(|d| vec![d.to_string()])
+                                .unwrap_or_default(),
                             ..Default::default()
                         },
                     )
                     .await
                     .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
                 out.truncated |= res.truncated.is_some();
-                // The walk follows an edge either way; a relation is read from
-                // its source, so only edges leaving a seed count.
                 let mut reached: std::collections::HashSet<String> =
                     std::collections::HashSet::new();
                 for e in res.edges {
-                    if gts::our_type_from_graph(&e.edge_type_id) != edge_type_id
-                        || !from.contains(e.src.as_str())
-                    {
+                    if gts::our_type_from_graph(&e.edge_type_id) != edge_type_id {
                         continue;
                     }
                     reached.insert(e.dst.clone());
@@ -859,6 +882,7 @@ mod graph_backend {
                             type_id: edge_type_id.to_string(),
                             from: e.src,
                             to: e.dst,
+                            discriminator: e.discriminator,
                         });
                     }
                 }

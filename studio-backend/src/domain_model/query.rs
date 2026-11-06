@@ -16,16 +16,19 @@
 //! What it cannot do yet, and why:
 //!
 //! * **Filtering and ordering run in the gear.** Domain types declare no
-//!   payload indexes — graph-storage fixes a type's indexes at its first
-//!   registration, and a domain type has to stay open to new fields — so a
-//!   type is read up to [`SCAN_LIMIT`] objects and filtered here. `complete`
-//!   says whether that read saw every object.
+//!   payload indexes yet — graph-storage 0.3 can add one to a registered type,
+//!   but each indexed path also needs a typed property in the type's schema —
+//!   so a type is read up to [`SCAN_LIMIT`] objects and filtered here.
+//!   `complete` says whether that read saw every object.
 //! * **A relation is followed from its source only.** The edge is stored on
-//!   the declaring side; following it backwards is a later step.
-//! * **The graph does not say which declared relation an edge is.** Two
-//!   relations of one verb between overlapping types share an edge type, so
-//!   asking for one returns the other's edges too. The plan reports that as a
-//!   warning instead of answering wrongly in silence.
+//!   the declaring side, and the traversal walks outgoing edges alone;
+//!   following it backwards is a later step.
+//! * **A relation is told apart by its name, not its declaring type.** Two
+//!   relations of one verb share an edge type, and the edge's discriminator
+//!   (the relation's name) is what the traversal filters on. Two relations
+//!   with the same verb AND the same name, declared on different types a row
+//!   can be, still share edges; the plan reports that as a warning instead of
+//!   answering wrongly in silence.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -384,6 +387,8 @@ struct Plan {
 struct IncludePlan {
     name: String,
     edge_type_id: String,
+    /// The declared relation's name: the discriminator its edges carry.
+    discriminator: String,
     node_type_ids: Vec<String>,
     plan: Plan,
 }
@@ -509,8 +514,14 @@ fn plan(
         };
         let targets = extending(ontology, &target);
         for other in &declared {
+            // The traversal filters on the relation's name, so only a relation
+            // with the same verb and the same name can bring its edges along.
             let same = other.source == d.source && other.name == d.name;
-            if same || other.verb != d.verb || !chains.contains(&other.source) {
+            if same
+                || other.verb != d.verb
+                || other.name != d.name
+                || !chains.contains(&other.source)
+            {
                 continue;
             }
             let overlaps = other
@@ -519,8 +530,8 @@ fn plan(
                 .is_some_and(|t| extending(ontology, t).iter().any(|x| targets.contains(x)));
             if overlaps {
                 warnings.push(format!(
-                    "`{name}` and `{}.{}` are both stored as `{}` edges, and the graph does \
-                     not say which relation an edge is, so `{name}` also returns the other's",
+                    "`{name}` and `{}.{}` are both stored as `{}` edges with the same name, \
+                     so `{name}` also returns the other's",
                     other.source, other.name, d.verb
                 ));
             }
@@ -528,6 +539,7 @@ fn plan(
         include.push(IncludePlan {
             name: name.clone(),
             edge_type_id: gts::edge_type_id(&d.verb),
+            discriminator: d.name.clone(),
             node_type_ids: targets.iter().map(|t| gts::node_type_id(t)).collect(),
             plan: plan(ontology, &targets, &target, child, depth + 1, warnings)?,
         });
@@ -626,7 +638,13 @@ fn expand<'a>(
                 .map(|r| r.id.clone())
                 .collect();
             let hood = store
-                .neighbours(ctx, &seeds, &inc.edge_type_id, &inc.node_type_ids)
+                .neighbours(
+                    ctx,
+                    &seeds,
+                    &inc.edge_type_id,
+                    Some(&inc.discriminator),
+                    &inc.node_type_ids,
+                )
                 .await?;
             // Every level, not only the root: a relation must not carry a
             // caller into rows they may not read (ADR-0035 §5).
@@ -1091,6 +1109,39 @@ mod tests {
         let out = s.query(&ctx(), &query("project", json!({}))).await.unwrap();
         assert_eq!(names(&out.rows), ["apollo"]);
         assert_eq!(out.rows.total, 1, "a hidden row is not counted either");
+    }
+
+    /// `project.uses` (→ repository) and `project.includes_3` (→ managed-object)
+    /// are both `references` edges, and a repository is a managed-object. The
+    /// edge's discriminator is what keeps one out of the other.
+    #[tokio::test]
+    async fn two_relations_of_one_verb_do_not_answer_for_each_other() {
+        let s = DomainModelService::new(Arc::new(InMemoryDomainStore::default()));
+        let project = object(&s, "project", "apollo", json!({"name": "Apollo"})).await;
+        let repo = object(
+            &s,
+            "repository",
+            "studio-web",
+            json!({"name": "studio-web"}),
+        )
+        .await;
+        s.create_relation(&ctx(), "project.uses", &project, &repo)
+            .await
+            .unwrap();
+
+        let q = query(
+            "project",
+            json!({ "include": { "uses": {}, "includes_3": {} } }),
+        );
+        let out = s.query(&ctx(), &q).await.unwrap();
+        let row = &out.rows.items[0];
+        assert_eq!(names(&row.relations["uses"]), ["studio-web"]);
+        assert_eq!(row.relations["includes_3"].total, 0);
+        assert!(
+            out.warnings.iter().all(|w| !w.contains("includes_3")),
+            "{:?}",
+            out.warnings
+        );
     }
 
     #[tokio::test]

@@ -1157,104 +1157,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-gears-graph-storage"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07030d57131855f5e7f6ea6547e3c9cca1575877711ba97e73bb2c92b28553e6"
-dependencies = [
- "anyhow",
- "async-trait",
- "aws-lc-rs",
- "axum",
- "cf-gears-authz-resolver",
- "cf-gears-authz-resolver-sdk",
- "cf-gears-graph-storage-onnx-embedding-plugin",
- "cf-gears-graph-storage-remote-embedding-plugin",
- "cf-gears-graph-storage-sdk",
- "cf-gears-toolkit",
- "cf-gears-toolkit-canonical-errors",
- "cf-gears-toolkit-db",
- "cf-gears-toolkit-db-macros",
- "cf-gears-toolkit-gts",
- "cf-gears-toolkit-http",
- "cf-gears-toolkit-macros",
- "cf-gears-toolkit-odata",
- "cf-gears-toolkit-security",
- "gts",
- "hex",
- "http",
- "jsonschema 0.40.2",
- "sea-orm",
- "sea-orm-migration",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "utoipa",
- "uuid",
-]
-
-[[package]]
-name = "cf-gears-graph-storage-onnx-embedding-plugin"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "171a6aa2c4bb67684bc6cfdac5267d36a383d3be4f3dac43c588e024c0868bf4"
-dependencies = [
- "async-trait",
- "aws-lc-rs",
- "cf-gears-graph-storage-sdk",
- "cf-gears-toolkit-onnx-runtime",
- "hex",
- "serde_json",
- "thiserror 2.0.21",
- "tokenizers",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "cf-gears-graph-storage-remote-embedding-plugin"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b786b9768a4cd9e7b2263ea42099068d4e5486d17ad68f90c28e750f3f432c3"
-dependencies = [
- "async-trait",
- "cf-gears-graph-storage-sdk",
- "reqwest 0.13.5",
- "secrecy",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "cf-gears-graph-storage-sdk"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75d3559dd2bdddfb5ae5257ccc6f53b0b2367b32c56e9e3f92979c39e521193"
-dependencies = [
- "async-trait",
- "aws-lc-rs",
- "cf-gears-toolkit-canonical-errors",
- "cf-gears-toolkit-gts",
- "cf-gears-toolkit-odata",
- "cf-gears-toolkit-odata-macros",
- "cf-gears-toolkit-security",
- "hex",
- "serde_json",
- "thiserror 2.0.21",
- "time",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
 name = "cf-gears-grpc-hub"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2500,8 +2402,6 @@ dependencies = [
  "cf-gears-credstore-sdk",
  "cf-gears-event-broker-sdk",
  "cf-gears-file-storage",
- "cf-gears-graph-storage",
- "cf-gears-graph-storage-sdk",
  "cf-gears-grpc-hub",
  "cf-gears-keycloak-idp-plugin",
  "cf-gears-mini-chat",
@@ -2564,6 +2464,8 @@ dependencies = [
  "tracing",
  "utoipa",
  "uuid",
+ "weftgraph",
+ "weftgraph-sdk",
  "zip",
 ]
 
@@ -3828,7 +3730,7 @@ checksum = "289c22c51cf505ecca932eb353f1520433601880f3280ce703d3e9a1a6d860e2"
 dependencies = [
  "gts-id",
  "jsonschema 0.58.6",
- "jsonschema-regex",
+ "jsonschema-regex 0.58.6",
  "num-cmp",
  "referencing 0.58.6",
  "regex",
@@ -4657,12 +4559,40 @@ dependencies = [
  "fraction 0.17.0",
  "getrandom 0.3.4",
  "itoa",
- "jsonschema-regex",
- "jsonschema-value",
+ "jsonschema-regex 0.58.6",
+ "jsonschema-value 0.58.6",
  "num-cmp",
  "num-traits",
  "percent-encoding",
  "referencing 0.58.6",
+ "regex",
+ "serde",
+ "serde_json",
+ "strum",
+ "unicode-general-category",
+ "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a42a11b47492e6a2cc76e9c7bcc8077776cb31dac444e0795d7f61bcc6441c08"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "data-encoding",
+ "email_address",
+ "fancy-regex 0.19.2",
+ "fraction 0.17.0",
+ "getrandom 0.3.4",
+ "itoa",
+ "jsonschema-regex 0.60.2",
+ "jsonschema-value 0.60.2",
+ "num-cmp",
+ "num-traits",
+ "percent-encoding",
+ "referencing 0.60.2",
  "regex",
  "serde",
  "serde_json",
@@ -4681,6 +4611,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonschema-regex"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "107aeb6ff14b8deb5610096a8ce5c554ec89806b521147eaeb3cae05b07edb7a"
+dependencies = [
+ "regex-syntax",
+]
+
+[[package]]
 name = "jsonschema-value"
 version = "0.58.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4690,6 +4629,23 @@ dependencies = [
  "bytecount",
  "fraction 0.17.0",
  "getrandom 0.3.4",
+ "num-cmp",
+ "num-traits",
+ "serde_json",
+ "zmij",
+]
+
+[[package]]
+name = "jsonschema-value"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e281d6b177bb4834f2ffd6f92aa0443cffe29c996b251c8d94eb6f456186feba"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "fraction 0.17.0",
+ "getrandom 0.3.4",
+ "memchr",
  "num-cmp",
  "num-traits",
  "serde_json",
@@ -6523,6 +6479,23 @@ name = "referencing"
 version = "0.58.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "558f3855529c0a7e78a48e409fa653456e55f1b167eab4109c16a255b7727e3f"
+dependencies = [
+ "ahash",
+ "fluent-uri",
+ "getrandom 0.3.4",
+ "hashbrown 0.17.1",
+ "itoa",
+ "micromap",
+ "parking_lot",
+ "percent-encoding",
+ "serde_json",
+]
+
+[[package]]
+name = "referencing"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f42818036d3b37cda6bd4c494543158a36e431cb717015ef7c93acc6ba214d3b"
 dependencies = [
  "ahash",
  "fluent-uri",
@@ -9004,6 +8977,104 @@ name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
+
+[[package]]
+name = "weftgraph"
+version = "0.3.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ce2018fddaa46fc9967883c3195ca0622f73a214777797955f0dfdfdef8bd63"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aws-lc-rs",
+ "axum",
+ "cf-gears-authz-resolver",
+ "cf-gears-authz-resolver-sdk",
+ "cf-gears-toolkit",
+ "cf-gears-toolkit-canonical-errors",
+ "cf-gears-toolkit-db",
+ "cf-gears-toolkit-db-macros",
+ "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-http",
+ "cf-gears-toolkit-macros",
+ "cf-gears-toolkit-odata",
+ "cf-gears-toolkit-security",
+ "gts",
+ "hex",
+ "http",
+ "jsonschema 0.60.2",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "utoipa",
+ "uuid",
+ "weftgraph-onnx-embedding-plugin",
+ "weftgraph-remote-embedding-plugin",
+ "weftgraph-sdk",
+]
+
+[[package]]
+name = "weftgraph-onnx-embedding-plugin"
+version = "0.3.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecdfa486b248fd4b9c35bdc54a8ceca0c7658e814da35066a18659f07ccb0f24"
+dependencies = [
+ "async-trait",
+ "aws-lc-rs",
+ "cf-gears-toolkit-onnx-runtime",
+ "hex",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokenizers",
+ "tokio",
+ "tracing",
+ "weftgraph-sdk",
+]
+
+[[package]]
+name = "weftgraph-remote-embedding-plugin"
+version = "0.3.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6728a8f928b8e2eb0302e5d577d11f9b8cb1f3d166c06d14f5470a52419857bd"
+dependencies = [
+ "async-trait",
+ "reqwest 0.13.5",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "weftgraph-sdk",
+]
+
+[[package]]
+name = "weftgraph-sdk"
+version = "0.3.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "810a5b0a146308e0b583c698c17467ad1e5d8ffce504fefb28c99f79fb9ef45c"
+dependencies = [
+ "async-trait",
+ "aws-lc-rs",
+ "cf-gears-toolkit-canonical-errors",
+ "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-odata",
+ "cf-gears-toolkit-odata-macros",
+ "cf-gears-toolkit-security",
+ "hex",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "tokio-util",
+ "uuid",
+]
 
 [[package]]
 name = "whoami"
