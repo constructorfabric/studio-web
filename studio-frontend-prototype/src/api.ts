@@ -1749,6 +1749,16 @@ export interface OwnImage {
   dockerfile: string;
   /** From the repository's root; `.` by default. */
   context?: string | null;
+  /** Where the chart reads the image's repository; default `<app>.image.repository`. */
+  repository_path?: string | null;
+  /** Where it reads the tag; default `<app>.image.tag`. */
+  tag_path?: string | null;
+  /** For a chart that reads the image as one string: where, in place of repository and tag. */
+  image_path?: string | null;
+  /** Where it reads the configuration secret's name; default `<app>.existingSecret`. */
+  secret_name_path?: string | null;
+  /** Where it reads the secret's keys; default `<app>.secretKeys`. */
+  secret_keys_path?: string | null;
 }
 
 /** What an administrator sends for an environment. */

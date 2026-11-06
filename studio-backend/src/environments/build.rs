@@ -1799,6 +1799,35 @@ pub struct Prepared {
     /// What the lock says of the product's infra services (ADR-0065 §3).
     #[serde(default)]
     pub infra: Vec<super::infra::LockedService>,
+    /// The description revision Studio laid over the checkout, when it did:
+    /// with the lock, what tells two builds of one commit apart.
+    #[serde(default)]
+    pub description_revision: Option<i64>,
+}
+
+/// The version a build publishes its chart at: `{base}-sha.{commit:12}`,
+/// then `.r{revision}` and `.l{lock:8}` when the build has them, so two
+/// builds of one commit with another description or lock never push over
+/// each other's chart. SemVer, as Helm wants: each of them a pre-release
+/// identifier of letters and digits.
+pub fn chart_version(
+    base: &str,
+    commit: &str,
+    description_revision: Option<i64>,
+    lock_hash: Option<&str>,
+) -> String {
+    let short: String = commit.chars().take(12).collect();
+    let mut version = format!("{base}-sha.{short}");
+    if let Some(r) = description_revision {
+        version.push_str(&format!(".r{r}"));
+    }
+    if let Some(lock) = lock_hash.filter(|l| l.bytes().all(|b| b.is_ascii_hexdigit())) {
+        let lock: String = lock.chars().take(8).collect();
+        if !lock.is_empty() {
+            version.push_str(&format!(".l{}", lock.to_ascii_lowercase()));
+        }
+    }
+    version
 }
 
 /// The applications `docker/build.sh` builds, `(app, image)`, and its build
@@ -2307,6 +2336,7 @@ pub fn prepare_own(
         apps: named,
         sources: Vec::new(),
         infra: Vec::new(),
+        description_revision: None,
     };
     std::fs::write(
         work.join("build.json"),
@@ -2572,6 +2602,10 @@ pub fn prepare_as(
         apps: named,
         sources: fetched,
         infra,
+        description_revision: match description {
+            DescriptionFrom::Text { revision, .. } => *revision,
+            _ => None,
+        },
     };
     std::fs::write(
         work.join("build.json"),
@@ -2665,7 +2699,12 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
             image: format!("{prefix}/{name}:{tag}@{digest}"),
         });
     }
-    let version = format!("{}-sha.{short}", prepared.chart_base);
+    let version = chart_version(
+        &prepared.chart_base,
+        &prepared.commit,
+        prepared.description_revision,
+        prepared.lock_hash.as_deref(),
+    );
     let charts = work.join("charts");
     std::fs::create_dir_all(&charts)?;
     let home = work.join("helm");
@@ -3255,6 +3294,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     }
 
     #[test]
+    fn two_builds_of_one_commit_publish_their_charts_at_two_versions() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let lock = "DEADBEEF00112233445566778899aabbccddeeff00112233445566778899aabb";
+        assert_eq!(
+            chart_version("0.1.0", commit, None, None),
+            "0.1.0-sha.0123456789ab"
+        );
+        let r4 = chart_version("0.1.0", commit, Some(4), Some(lock));
+        let r5 = chart_version("0.1.0", commit, Some(5), Some(lock));
+        assert_eq!(r4, "0.1.0-sha.0123456789ab.r4.ldeadbeef");
+        assert_ne!(r4, r5, "another description revision, another chart");
+        assert_ne!(
+            chart_version("0.1.0", commit, None, Some(lock)),
+            chart_version("0.1.0", commit, None, Some("aa")),
+            "another lock, another chart"
+        );
+        // SemVer as Helm reads it: pre-release identifiers of [0-9A-Za-z-].
+        let pre = r4.split_once('-').unwrap().1;
+        assert!(
+            pre.split('.')
+                .all(|id| !id.is_empty()
+                    && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        );
+        // A lock that is not hex is not written into the version.
+        assert_eq!(
+            chart_version("1.0.0", commit, None, Some("x/y")),
+            "1.0.0-sha.0123456789ab"
+        );
+    }
+
+    #[test]
     fn the_chart_version_and_the_digest_are_read_from_what_tools_wrote() {
         assert_eq!(
             chart_base_version("apiVersion: v2\nname: shop\nversion: \"0.1.0\"\n"),
@@ -3284,6 +3354,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
                 name: "csharp-hello".into(),
                 dockerfile: "Dockerfile".into(),
                 context: ".".into(),
+                values: Default::default(),
             }],
             chart: "chart/csharp-hello".into(),
         });

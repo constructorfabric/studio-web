@@ -19,6 +19,17 @@ describe("how a project builds", () => {
     expect(ownBuildProblem({ ...ok, images: [ok.images[0], { ...ok.images[0], dockerfile: "x/Dockerfile" }] })).toMatch(/twice/);
   });
 
+  it("says where its chart reads an image and its secret, when not Gearbox's way", () => {
+    const image = firstImage("shop");
+    const ok = { kind: "own" as const, images: [image], chart: "chart/shop" };
+    const withPaths = (p: Partial<typeof image>) => ({ ...ok, images: [{ ...image, ...p }] });
+    expect(ownBuildProblem(withPaths({ repository_path: "backend.image.repo", secret_keys_path: "backend.env.keys" }))).toBeNull();
+    expect(ownBuildProblem(withPaths({ image_path: "frontend.image" }))).toBeNull();
+    expect(ownBuildProblem(withPaths({ repository_path: "a..b" }))).toMatch(/not a values path/);
+    expect(ownBuildProblem(withPaths({ image_path: "x.image", tag_path: "x.tag" }))).toMatch(/not both/);
+    expect(ownBuildProblem(withPaths({ tag_path: "app.image.repository" }))).toMatch(/twice/);
+  });
+
   it("keeps paths in the repository", () => {
     expect(isRepoPath("./api/Dockerfile")).toBe(true);
     expect(isRepoPath("/etc/passwd")).toBe(false);
