@@ -69,12 +69,10 @@ pub struct EdgeView {
     pub from: String,
     pub to: String,
     /// Which declared relation the edge is (`delivers`), from its
-    /// discriminator. `None` when it is not known — written without one, or
-    /// read by a traversal, which does not report it — and then it answers
-    /// for every relation of its verb.
+    /// discriminator. `None` when it was written without one, and then it
+    /// answers for every relation of its verb.
     pub relation: Option<String>,
-    /// The graph's key for the edge, when it came from the graph: with
-    /// [`super::gts::relation_of_key`] it tells which relation the edge is.
+    /// The graph's key for the edge, when it came from the graph.
     pub key: Option<String>,
 }
 
@@ -268,6 +266,10 @@ pub trait DomainStore: Send + Sync {
     /// The objects of the hop's node types reached from `seeds` by one edge
     /// of the hop, with those edges. One call per relation and nesting level
     /// of a query, for every row at once, rather than one read per row.
+    ///
+    /// The hop's `relation`, when given, keeps only the edges of that
+    /// declared relation: two relations of one verb share an edge type, and
+    /// the discriminator is what tells them apart.
     ///
     /// The default reads the edges and then each endpoint. The graph backend
     /// answers it with one typed traversal, which returns the payloads too.
@@ -571,7 +573,8 @@ mod graph_backend {
 
     use graph_storage_sdk::GraphStorageClientV1;
     use graph_storage_sdk::models::{
-        EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TraverseRequest, TypeRegistration,
+        Direction, EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TraverseRequest,
+        TypeRegistration,
     };
     use toolkit_odata::ODataQuery;
 
@@ -783,6 +786,8 @@ mod graph_backend {
                         seeds: vec![from.to_string()],
                         depth: 1,
                         edge_type_patterns: vec![gts::graph_type_id(edge_type_id)],
+                        // The edge leaves `from`; graph-storage 0.3 walks one way.
+                        direction: Some(Direction::Outgoing),
                         ..Default::default()
                     },
                 )
@@ -791,11 +796,9 @@ mod graph_backend {
             let mut removed = false;
             for e in res.edges {
                 // The named relation, or an edge that names none.
-                let same_relation = match relation {
-                    None => true,
-                    Some(r) => {
-                        gts::relation_of_key(edge_type_id, from, to, &e.edge_key, [r]).is_some()
-                    }
+                let same_relation = match (relation, e.discriminator.as_deref()) {
+                    (None, _) | (_, None | Some("")) => true,
+                    (Some(want), Some(is)) => want == is,
                 };
                 if e.src != from || e.dst != to || !same_relation {
                     continue;
@@ -995,15 +998,15 @@ mod graph_backend {
                         "studio-domain-model: traversal truncated; some edges not shown"
                     );
                 }
-                // The relation is left unknown: the key says which one an
-                // edge is, for whoever has the candidates to try.
+                // graph-storage 0.3 reports each edge's discriminator: the
+                // declared relation it is.
                 for e in res.edges {
                     if seen.insert(e.edge_key.clone()) {
                         out.push(EdgeView {
                             type_id: gts::our_type_from_graph(&e.edge_type_id),
                             from: e.src,
                             to: e.dst,
-                            relation: None,
+                            relation: e.discriminator.filter(|d| !d.is_empty()),
                             key: Some(e.edge_key),
                         });
                     }
@@ -1043,9 +1046,11 @@ mod graph_backend {
             Ok(out)
         }
 
-        /// One traversal per chunk of seeds, restricted to the edge type and
-        /// the target node types, so the graph walks only the relation asked
-        /// for and hands the payloads back with it.
+        /// One traversal per chunk of seeds, restricted to the edge type, the
+        /// relation's discriminator, the hop's direction and the target node
+        /// types, so the graph walks only the relation asked for and hands the
+        /// payloads back with it. The edges it leaves out spend none of the
+        /// walk's budget.
         async fn neighbours(
             &self,
             ctx: &SecurityContext,
@@ -1065,8 +1070,6 @@ mod graph_backend {
             let mut seen_nodes: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             for chunk in seeds.chunks(TRAVERSE_SEEDS) {
-                let from: std::collections::HashSet<&str> =
-                    chunk.iter().map(String::as_str).collect();
                 let res = self
                     .client
                     .traverse(
@@ -1076,42 +1079,36 @@ mod graph_backend {
                             depth: 1,
                             edge_type_patterns: vec![edge_pattern.clone()],
                             node_type_patterns: node_patterns.clone(),
+                            // Only the way the hop goes, and only the relation
+                            // asked for: edges left out spend none of the
+                            // walk's budget.
+                            direction: Some(if hop.reverse {
+                                Direction::Incoming
+                            } else {
+                                Direction::Outgoing
+                            }),
+                            edge_discriminators: hop
+                                .relation
+                                .map(|r| vec![r.to_string()])
+                                .unwrap_or_default(),
                             ..Default::default()
                         },
                     )
                     .await
                     .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
                 out.truncated |= res.truncated.is_some();
-                // The walk follows an edge either way; the hop says which end
-                // the seed has to be on, and which relation the edge has to be.
+                // The walk already went one way along one relation; the hop
+                // still checks each edge, and turns a reverse one round.
+                let from: std::collections::HashSet<&str> =
+                    chunk.iter().map(String::as_str).collect();
                 let mut reached: std::collections::HashSet<String> =
                     std::collections::HashSet::new();
                 for e in res.edges {
-                    let type_id = gts::our_type_from_graph(&e.edge_type_id);
-                    // Which relation the edge is, from its key: the wanted one,
-                    // none (an edge written without a discriminator answers
-                    // for every relation of its verb), or another one.
-                    let relation = match hop.relation {
-                        None => None,
-                        Some(want) => {
-                            match gts::relation_of_key(
-                                &type_id,
-                                &e.src,
-                                &e.dst,
-                                &e.edge_key,
-                                [want],
-                            ) {
-                                Some("") => None,
-                                Some(r) => Some(r.to_string()),
-                                None => Some(String::new()),
-                            }
-                        }
-                    };
                     let view = EdgeView {
-                        type_id,
+                        type_id: gts::our_type_from_graph(&e.edge_type_id),
                         from: e.src,
                         to: e.dst,
-                        relation,
+                        relation: e.discriminator.filter(|d| !d.is_empty()),
                         key: Some(e.edge_key),
                     };
                     let Some(far) = hop.reaches(&view, &from) else {

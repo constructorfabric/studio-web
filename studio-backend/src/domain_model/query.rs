@@ -21,8 +21,9 @@
 //!   indexed read per level. No bound on the size of a type.
 //! * **The graph**, while the mirror fills or where there is none: a type is
 //!   read up to [`SCAN_LIMIT`] objects and filtered here, because domain types
-//!   declare no payload indexes in graph-storage. `complete` says whether that
-//!   read saw every object.
+//!   declare no payload indexes yet (graph-storage 0.3 can add one to a
+//!   registered type, but each indexed path also needs a typed property in the
+//!   type's schema). `complete` says whether that read saw every object.
 //!
 //! A relation is followed from its source, or with `~name` from its target
 //! back to its source. Each edge carries the declared relation it is, so two
@@ -1595,6 +1596,39 @@ mod tests {
         let out = s.query(&ctx(), &query("project", json!({}))).await.unwrap();
         assert_eq!(names(&out.rows), ["apollo"]);
         assert_eq!(out.rows.total, 1, "a hidden row is not counted either");
+    }
+
+    /// `project.uses` (→ repository) and `project.includes_3` (→ managed-object)
+    /// are both `references` edges, and a repository is a managed-object. The
+    /// edge's discriminator is what keeps one out of the other.
+    #[tokio::test]
+    async fn two_relations_of_one_verb_do_not_answer_for_each_other() {
+        let s = DomainModelService::new(Arc::new(InMemoryDomainStore::default()));
+        let project = object(&s, "project", "apollo", json!({"name": "Apollo"})).await;
+        let repo = object(
+            &s,
+            "repository",
+            "studio-web",
+            json!({"name": "studio-web"}),
+        )
+        .await;
+        s.create_relation(&ctx(), "project.uses", &project, &repo)
+            .await
+            .unwrap();
+
+        let q = query(
+            "project",
+            json!({ "include": { "uses": {}, "includes_3": {} } }),
+        );
+        let out = s.query(&ctx(), &q).await.unwrap();
+        let row = &out.rows.items[0];
+        assert_eq!(names(&row.relations["uses"]), ["studio-web"]);
+        assert_eq!(row.relations["includes_3"].total, 0);
+        assert!(
+            out.warnings.iter().all(|w| !w.contains("includes_3")),
+            "{:?}",
+            out.warnings
+        );
     }
 
     #[tokio::test]

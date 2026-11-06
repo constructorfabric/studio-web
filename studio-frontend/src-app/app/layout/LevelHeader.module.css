@@ -1,51 +1,5 @@
 .header {
   flex: none;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  block-size: 5rem;
-  padding-inline: var(--space-6);
-  border-block-end: var(--border-width) solid var(--border);
-  background-color: var(--card);
-}
-
-.organization {
-  gap: var(--space-5);
-}
-
-.project {
-  block-size: 3.5rem;
-}
-
-.stack {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.name {
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--foreground);
-  font-size: var(--text-heading-1-size);
-  line-height: var(--text-heading-1-line-height);
-  font-weight: var(--text-heading-1-weight);
-}
-
-.display {
-  font-size: var(--text-display-size);
-  line-height: var(--text-display-line-height);
-  font-weight: var(--text-display-weight);
-}
-
-.eyebrow {
-  color: var(--muted-foreground);
-  font-size: var(--text-meta-size);
-  line-height: var(--text-meta-line-height);
 }
 
 .header .switch {
