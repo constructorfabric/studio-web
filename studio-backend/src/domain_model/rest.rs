@@ -1441,7 +1441,8 @@ pub fn register_routes(
              a 400 that lists what the type has. Filtering runs in the gear over at \
              most 5 000 objects of the type; `complete` says whether that saw them all. \
              A relation is followed from its declaring side only, and `warnings` names \
-             relations that share an edge type, since their edges come back together. \
+             relations that share both a verb and a name, since their edges come back \
+             together. \
              A read: answers 200.",
         )
         .tag("StudioDomainModel")

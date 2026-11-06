@@ -27,8 +27,8 @@ use super::graph::{
 use super::gts;
 use graph_storage_sdk::GraphStorageClientV1;
 use graph_storage_sdk::models::{
-    EdgeRef, EdgeSpec, IngestOptions, IngestRequest, NodeSpec, SearchMode, SearchRequest,
-    TraversalResponse, TraverseRequest, TypeRegistration,
+    EdgeRef, EdgeSpec, IngestOptions, IngestRequest, NodeSpec, OnExisting, SearchMode,
+    SearchRequest, TraversalResponse, TraverseRequest, TypeRegistration, TypeRegistrationOptions,
 };
 
 /// Nodes per ingest batch.
@@ -262,6 +262,8 @@ impl GraphStorageBackend {
                     edge_type_patterns: edge_patterns.to_vec(),
                     node_type_patterns: Vec::new(),
                     max_nodes: Some(TRAVERSE_NODE_BUDGET),
+                    direction: None,
+                    edge_discriminators: Vec::new(),
                 },
             )
             .await
@@ -373,6 +375,10 @@ impl GraphStorageBackend {
     }
 
     /// The registration itself, unconditional.
+    ///
+    /// `on_existing: Update`, so a stored type whose schema this build changed
+    /// compatibly is brought up to date here rather than answering 409 until
+    /// somebody updates it over REST. An incompatible change is still refused.
     async fn register_types_now(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
         let batch: Vec<TypeRegistration> = gts::graph_node_type_schemas()
             .into_iter()
@@ -387,12 +393,19 @@ impl GraphStorageBackend {
                 schema,
             })
             .collect();
-        self.client.register_types(ctx, batch).await.map_err(|e| {
-            anyhow::anyhow!(
-                "register artifact types: {}",
-                crate::graph_error::explain(&e)
-            )
-        })?;
+        let options = TypeRegistrationOptions {
+            on_existing: OnExisting::Update,
+            ..Default::default()
+        };
+        self.client
+            .register_types_with(ctx, batch, options)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "register artifact types: {}",
+                    crate::graph_error::explain(&e)
+                )
+            })?;
         Ok(())
     }
 
