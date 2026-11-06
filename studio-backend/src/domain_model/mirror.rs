@@ -46,7 +46,6 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::entity::{edge, fill, object};
-use super::gts;
 use super::ontology::{EdgeType, NodeType, Ontology};
 use super::store::{
     DomainStore, EdgeUpsert, EdgeView, Hop, Neighbourhood, NodeUpsert, ObjectNode, is_live,
