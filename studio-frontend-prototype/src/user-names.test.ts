@@ -43,4 +43,14 @@ describe("peopleOf", () => {
     expect(list).toHaveBeenCalledTimes(1);
     expect((await peopleOf("t", "denied", list)).size).toBe(0);
   });
+
+  it("asks again under another token: who signed in may have changed", async () => {
+    const list = vi.fn(async (token: string) => ({
+      items: [{ id: ID, username: token === "a" ? "alice-view" : "bob-view" } as User],
+    }));
+    expect((await peopleOf("a", "org", list)).get(ID)).toBe("alice-view");
+    expect((await peopleOf("b", "org", list)).get(ID)).toBe("bob-view");
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenLastCalledWith("b", "org");
+  });
 });

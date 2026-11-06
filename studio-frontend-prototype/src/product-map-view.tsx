@@ -657,7 +657,8 @@ function ScreenPreview({
 /** The pictures of one build: one screen large, every screen as a tab that
  *  shows it on hover. */
 function BuiltPreview({ name, build, screen, bare }: { name: string; build: PreviewBuild; screen: string | null; bare: boolean }) {
-  const [on, setOn] = useState(() => Math.max(0, build.screens.findIndex((s) => s.label === screen || s.route === screen)));
+  // Only a screen asked for is looked for: `null` would match one with no label.
+  const [on, setOn] = useState(() => (screen === null ? 0 : Math.max(0, build.screens.findIndex((s) => s.label === screen || s.route === screen))));
   const shot = build.screens[Math.min(on, build.screens.length - 1)];
   return (
     <span className="pmap-preview-hold" onClick={(e) => e.stopPropagation()}>

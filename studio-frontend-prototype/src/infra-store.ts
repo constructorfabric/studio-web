@@ -9,7 +9,7 @@
  * passport for builds made before the description said infra (ADR-0064). */
 
 import { api, type InfraPassport, type InfraService } from "./api";
-import { homeSource, readInfra, writeInfra, type UseService } from "./infra-gdl";
+import { homeSource, readInfra, useServiceText, writeInfra, type UseService } from "./infra-gdl";
 import { offeredInfra } from "./infra-services";
 
 /** Where the list was read from: said on screen, so a member knows what a
@@ -64,21 +64,31 @@ export function serviceOf(u: UseService, offered: readonly InfraPassport[], reco
 
 /** The call that says `s`: only what differs from the catalogue's passport,
  *  so a passport's later default reaches the product. Without the catalogue's
- *  passport to compare with, what the description said before is kept. */
-export function useOf(s: InfraService, offered: readonly InfraPassport[], was: UseService | undefined, home: string): UseService {
+ *  passport to compare with, what the description said before is kept, and
+ *  an edit is told from the passport the project kept (`kept`, what the view
+ *  showed beneath it): a value left as shown is not made the product's. */
+export function useOf(
+  s: InfraService,
+  offered: readonly InfraPassport[],
+  was: UseService | undefined,
+  home: string,
+  kept?: InfraPassport,
+): UseService {
   const p = s.passport;
   const base = offered.find((o) => o.name === p.name);
   const differs = <T>(mine: T | null | undefined, theirs: T | null | undefined) =>
     mine && mine !== theirs ? mine : undefined;
+  const said = <T>(mine: T | null | undefined, before: T | undefined, shown: T | null | undefined) =>
+    mine === (before ?? shown) ? before : mine || undefined;
   const config = base
     ? Object.fromEntries(Object.entries(p.config).filter(([k, v]) => k in base.config && base.config[k] !== v))
-    : (was?.config ?? {});
+    : Object.fromEntries(Object.entries(p.config).filter(([k, v]) => (was && k in was.config) || kept?.config[k] !== v));
   return {
     name: p.name,
     source: was?.source ?? home,
-    image: base ? differs(p.image, base.image) : was?.image,
-    chart: base ? differs(p.chart, base.chart) : was?.chart,
-    chart_version: base ? differs(p.chart_version, base.chart_version) : was?.chart_version,
+    image: base ? differs(p.image, base.image) : said(p.image, was?.image, kept?.image),
+    chart: base ? differs(p.chart, base.chart) : said(p.chart, was?.chart, kept?.chart),
+    chart_version: base ? differs(p.chart_version, base.chart_version) : said(p.chart_version, was?.chart_version, kept?.chart_version),
     config,
     profileConfigText: was?.profileConfigText,
   };
@@ -109,14 +119,28 @@ export function descriptionStore(token: string, projectId: string): InfraStore {
     source: "product-description",
     load,
     save: async (items, base) => {
-      const { latest, offered } = await read();
+      const { latest, records, offered } = await read();
       if (!latest) return projectListStore(token, projectId).save(items, null);
       const chosen = readInfra(latest.text) ?? [];
       const home = homeSource(latest.text) ?? "";
-      const text = writeInfra(
-        latest.text,
-        items.map((s) => useOf(s, offered, chosen.find((u) => u.name === s.passport.name), home)),
-      );
+      const next = items.map((s) => {
+        const name = s.passport.name;
+        const was = chosen.find((u) => u.name === name);
+        if (was?.text) {
+          // A call that says more than Studio reads goes back as written.
+          if (sameJson(serviceOf(was, offered, records).passport, s.passport)) return was;
+          throw new Error(`use_service("${name}") in product.gdl says more than Studio reads: change it in product.gdl`);
+        }
+        if (!was?.source && !home) {
+          throw new Error(
+            `product.gdl names no source of the product's own repository (source(id = "…", at = path("…"))) to take ${name} from: add one, or add ${name} in product.gdl`,
+          );
+        }
+        return useOf(s, offered, was, home, records.find((r) => r.passport.name === name)?.passport);
+      });
+      // Services as the description says them are not written again.
+      const same = next.length === chosen.length && next.every((u, i) => useServiceText(u) === useServiceText(chosen[i]));
+      const text = same ? latest.text : writeInfra(latest.text, next);
       if (text !== latest.text) {
         await api.saveProductDescription(token, projectId, { base_revision: base ?? latest.revision, text });
       }
@@ -124,6 +148,22 @@ export function descriptionStore(token: string, projectId: string): InfraStore {
       return load();
     },
   };
+}
+
+/** Whether `a` and `b` are the same JSON, whatever their keys' order. */
+function sameJson(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(norm)
+      : v && typeof v === "object"
+        ? Object.fromEntries(
+            Object.entries(v)
+              .filter(([, x]) => x !== undefined)
+              .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))
+              .map(([k, x]) => [k, norm(x)]),
+          )
+        : v;
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
 }
 
 /** The store the product's views use. */

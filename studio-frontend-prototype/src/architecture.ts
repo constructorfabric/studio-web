@@ -755,7 +755,7 @@ export const SURFACES: Surface[] = [
     title: "Publication requests",
     does: "Answer the organizations' requests to give a gear to the platform: preview and publish it as a pull request into the platform's gear repository, or decline it; name the platform's gear curators.",
     components: ["PublicationRequests", "Curators"],
-    gears: ["studio-components-catalog", "studio-user"],
+    gears: ["account-management", "studio-components-catalog", "studio-user"],
   },
   {
     id: "platform-sources",

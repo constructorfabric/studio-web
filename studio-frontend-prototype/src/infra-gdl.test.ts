@@ -46,6 +46,28 @@ describe("a product's infra in product.gdl", () => {
     expect(again.match(/infra = \[/g)).toHaveLength(1);
   });
 
+  it("keeps a call it does not read whole as it is written", () => {
+    const call = `use_service("keycloak", source = "shop-repo", image = KEYCLOAK_IMAGE, config = {"A": PORT})`;
+    const text = PRODUCT.replace("    gears = [", `    infra = [
+        ${call},
+    ],
+    gears = [`);
+    const [read] = readInfra(text)!;
+    expect(read.text).toBe(call);
+    expect(useServiceText(read)).toBe(call);
+    expect(writeInfra(text, [read, { name: "postgresql", source: "shop-repo", config: {} }])).toContain(call);
+    expect(readInfra(writeInfra(PRODUCT, [keycloak]))![0].text).toBeUndefined();
+  });
+
+  it("is not rewritten when it holds more than use_service calls", () => {
+    const text = PRODUCT.replace("    gears = [", `    infra = [KEYCLOAK],
+    gears = [`);
+    expect(() => writeInfra(text, [keycloak])).toThrow(/does not rewrite/);
+    const named = PRODUCT.replace("    gears = [", `    infra = INFRA,
+    gears = [`);
+    expect(() => writeInfra(named, [keycloak])).toThrow(/does not rewrite/);
+  });
+
   it("is taken out with its line when the list is empty", () => {
     const text = writeInfra(writeInfra(PRODUCT, [keycloak]), []);
     expect(readInfra(text)).toBeNull();

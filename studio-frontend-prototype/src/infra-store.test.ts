@@ -123,8 +123,66 @@ describe("an infra service between product.gdl and the project's records", () =>
 
   it("keeps what the description said when the catalogue no longer offers the passport", () => {
     const was = { name: "keycloak", source: "shop", image: "quay.io/keycloak/keycloak:26.0.8", config: { KC_PROXY_HEADERS: "xforwarded" } };
-    const u = useOf(record, [], was, "shop");
+    const u = useOf(serviceOf(was, [], [record]), [], was, "shop", record.passport);
     expect(u.image).toBe(was.image);
     expect(u.config).toEqual(was.config);
+  });
+
+  it("keeps an edit when the catalogue does not offer the passport, and makes no default the product's", () => {
+    const was = { name: "keycloak", source: "shop", config: {} };
+    const shown = serviceOf(was, [], [record]);
+    expect(useOf(shown, [], was, "shop", record.passport)).toMatchObject({ image: undefined, config: {} });
+    const edited: InfraService = {
+      ...shown,
+      passport: { ...shown.passport, image: "quay.io/keycloak/keycloak:26.0.9", config: { ...shown.passport.config, KC_PROXY_HEADERS: "forwarded" } },
+    };
+    expect(useOf(edited, [], was, "shop", record.passport)).toMatchObject({
+      image: "quay.io/keycloak/keycloak:26.0.9",
+      config: { KC_PROXY_HEADERS: "forwarded" },
+    });
+  });
+});
+
+describe("a save of the description's infra", () => {
+  const revision = (n: number, text: string) =>
+    ({ revision: n, text, author: "a", created_at: "", sha256: "", source: "studio" }) as ProductDescriptionRevision;
+  const stub = (text: string) => {
+    vi.spyOn(api, "productDescription").mockResolvedValue({ latest: revision(5, text) });
+    vi.spyOn(api, "infraServices").mockResolvedValue({ items: [record], total: 1 });
+    vi.spyOn(api, "listComponents").mockResolvedValue({ nodes: [] });
+    vi.spyOn(api, "putInfraServices").mockResolvedValue({ items: [record], total: 1 });
+    return vi.spyOn(api, "saveProductDescription").mockImplementation(async (_t, _p, body) => ({ revision: revision(6, body.text), created: true }));
+  };
+  const postgres = { ...record, passport: { ...passport, name: "postgresql", image: "postgres:16", config: {} } };
+
+  it("is refused when a new service has no source to come from", async () => {
+    const saved = stub(`product(
+    id = "shop",
+    gears = [],
+)
+`);
+    const store = infraStore("t", "p");
+    await expect(store.save([postgres], 5)).rejects.toThrow(/names no source/);
+    expect(saved).not.toHaveBeenCalled();
+  });
+
+  it("writes back a call it does not read whole, and refuses to change it", async () => {
+    const call = `use_service("keycloak", source = "shop", image = KEYCLOAK_IMAGE)`;
+    const saved = stub(`product(
+    id = "shop",
+    sources = [source(id = "shop", at = path("."))],
+    infra = [
+        ${call},
+    ],
+    gears = [],
+)
+`);
+    const store = infraStore("t", "p");
+    const [keycloak] = (await store.load()).items;
+    await store.save([keycloak, postgres], 5);
+    expect(saved.mock.calls[0][2].text).toContain(call);
+    expect(saved.mock.calls[0][2].text).toContain(`use_service("postgresql", source = "shop"`);
+    const edited = { ...keycloak, passport: { ...keycloak.passport, image: "quay.io/keycloak/keycloak:27" } };
+    await expect(store.save([edited], 5)).rejects.toThrow(/says more than Studio reads/);
   });
 });

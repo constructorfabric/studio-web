@@ -1516,7 +1516,9 @@ impl EnvironmentService {
                 return Err(Refusal::Precondition(
                     "BUILD_INFRA_NOT_KEPT",
                     format!(
-                        "the project keeps no infra services for build {b}: it is older than the                          {} it keeps, or from before it kept them; build the product again to                          deploy it",
+                        "the project keeps no infra services for build {b}: it is older than the \
+                         {} it keeps, from before it kept them, or built outside Studio (a CI \
+                         build keeps none); build the product again in Studio to deploy it",
                         super::infra::MAX_LOCKED_BUILDS
                     ),
                 ));
