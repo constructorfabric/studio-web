@@ -2120,6 +2120,8 @@ export interface Deployment {
   outcome?: string | null;
   /** A preview (ADR-0055); absent for a deploy of what runs there. */
   preview?: DeploymentPreview | null;
+  /** What the deploy said when asked and goes on with, `CODE: message` each. */
+  warnings?: string[];
 }
 
 /** A release as its cluster reports it now. */

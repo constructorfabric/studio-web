@@ -36,6 +36,7 @@
 pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
 mod database;
 mod deploy;
+mod gear_overrides; // a configuration secret that sets a gear's field the description sets
 mod image_tasks; // delete, copy (promote, import) and sweep of image records
 pub(crate) mod images; // a project's images and charts as records (ADR-0062 §4)
 pub(crate) mod images_sink; // a pipeline's published images, recorded (ADR-0062 §4)

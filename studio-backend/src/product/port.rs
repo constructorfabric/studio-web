@@ -23,6 +23,8 @@ use toolkit::client_hub::ClientHub;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+/// Each gear's `config` in a description, as JSON, by gear or plugin id.
+pub use super::description_edit::gear_configs;
 use super::gearbox::Gearbox;
 /// Where a product's description goes when nothing recorded another path:
 /// `products/<id>/product.gdl`.

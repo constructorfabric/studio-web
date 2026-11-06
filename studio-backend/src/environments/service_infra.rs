@@ -20,6 +20,10 @@ pub struct InfraPlan {
     /// The namespace they run in with the product.
     pub namespace: String,
     pub items: Vec<PlanItem>,
+    /// The configuration secrets of the environment that set a gear's
+    /// config field the description also sets, and what a deploy does about
+    /// each (a warning, or the refusal of an install).
+    pub configuration: Vec<crate::environments::gear_overrides::Clash>,
 }
 
 /// Is `reference` (an image, or an `oci://` chart) under the project's path
@@ -112,6 +116,7 @@ impl EnvironmentService {
                 placement: placement.placement,
                 namespace: String::new(),
                 items: Vec::new(),
+                configuration,
             });
         }
         let place = self.place(ctx, org, project, &env).await?;
@@ -124,6 +129,7 @@ impl EnvironmentService {
             placement: placement.placement,
             namespace: place.namespace,
             items,
+            configuration,
         })
     }
 

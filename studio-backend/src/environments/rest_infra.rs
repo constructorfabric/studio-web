@@ -329,6 +329,9 @@ pub struct InfraPlanDto {
     /// The namespace they run in with the product.
     pub namespace: String,
     pub items: Vec<InfraPlanItemDto>,
+    /// Configuration secrets the description also sets, and what a deploy
+    /// does about each.
+    pub configuration: Vec<ConfigClashDto>,
 }
 
 fn plan_dto(p: InfraPlan) -> InfraPlanDto {

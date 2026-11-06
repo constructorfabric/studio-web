@@ -117,8 +117,11 @@ pub fn tools() -> Vec<Tool> {
                 `key` is an environment-variable name (SMTP_PASSWORD), `value` its value. The \
                 value is a secret: it is kept in credstore and never echoed back, by this tool \
                 or any other; the answer names the key only. Replaces an existing value. Takes \
-                effect at the next deploy there. Do not put the value in your own messages or \
-                files; ask your person for it.",
+                effect at the next deploy there. A key `APP__GEARS__<GEAR>__CONFIG__<FIELD>` \
+                replaces that gear's config field: refused (CONFIG_SECRET_SHADOWED_BY_DESCRIPTION, \
+                CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION) when the product description already \
+                sets the field; set the `${VAR}` it reads instead. Never invent a value: ask \
+                your person for it, and do not put it in your own messages or files.",
             input_schema: || {
                 object(
                     json!({

@@ -88,6 +88,10 @@ pub struct DeployPayload {
     /// read from credstore by the run and written into the namespace.
     #[serde(default)]
     pub secret_keys: Vec<String>,
+    /// What the deploy goes on with and says, `CODE: message` each: the run
+    /// writes them in its progress and its outcome.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     /// How the environment gives the product its database.
     #[serde(default)]
     pub database: DatabaseMode,
@@ -398,6 +402,10 @@ impl TaskHandler for DeployTask {
             ));
         }
         let mut notes = Vec::new();
+        for w in &payload.warnings {
+            ctx.progress(format!("warning: {w}")).await;
+            notes.push(w.clone());
+        }
         if let Some(why) = secret_unread(&rendered, &payload) {
             ctx.progress(format!("warning: {why}")).await;
             notes.push(why);
@@ -1549,6 +1557,7 @@ mod tests {
             research: None,
             build_namespace: None,
             preview: None,
+            warnings: Vec::new(),
             infra: Vec::new(),
             images: Vec::new(),
         }

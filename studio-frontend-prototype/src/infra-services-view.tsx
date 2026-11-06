@@ -377,8 +377,9 @@ export function InfraPlanView({ token, projectId, environmentId }: { token: stri
   }, [token, projectId, environmentId]);
   if (error) return <p className="hint">What the infra services will do could not be read: {error}</p>;
   if (!plan || plan.items.length === 0) return null;
-  const refusals = planRefusals(plan);
+  const refusals = planAllRefusals(plan);
   const notes = planNotes(plan);
+  const warnings = planWarnings(plan);
   return (
     <details className="build-plan" data-infra-plan open={refusals.length > 0}>
       <summary>
@@ -400,6 +401,13 @@ export function InfraPlanView({ token, projectId, environmentId }: { token: stri
         <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }} data-infra-plan-notes>
           {notes.map((n) => (
             <li key={n}>{n}</li>
+          ))}
+        </ul>
+      )}
+      {warnings.length > 0 && (
+        <ul className="warn" style={{ margin: "6px 0 0", paddingLeft: 18 }} data-infra-plan-warnings>
+          {warnings.map((w) => (
+            <li key={w}>{w}</li>
           ))}
         </ul>
       )}

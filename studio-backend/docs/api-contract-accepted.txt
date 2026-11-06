@@ -2787,6 +2787,7 @@ response	GET /studio-environments/v1/deployments	items.requested_by	String	alway
 response	GET /studio-environments/v1/deployments	items.requested_by_name	String	always
 response	GET /studio-environments/v1/deployments	items.run_id	Uuid	optional
 response	GET /studio-environments/v1/deployments	items.state	String	always
+response	GET /studio-environments/v1/deployments	items.warnings	Vec<String>	always
 response	GET /studio-environments/v1/deployments	total	u32	always
 response	GET /studio-environments/v1/deployments/{}/logs	containers	Vec<{}>	always
 response	GET /studio-environments/v1/deployments/{}/logs	containers.container	String	always
@@ -2829,6 +2830,7 @@ response	GET /studio-environments/v1/deployments/{}/status	deployment.requested_
 response	GET /studio-environments/v1/deployments/{}/status	deployment.requested_by_name	String	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment.run_id	Uuid	optional
 response	GET /studio-environments/v1/deployments/{}/status	deployment.state	String	always
+response	GET /studio-environments/v1/deployments/{}/status	deployment.warnings	Vec<String>	always
 response	GET /studio-environments/v1/deployments/{}/status	hosts	Vec<String>	always
 response	GET /studio-environments/v1/deployments/{}/status	problems	Vec<String>	always
 response	GET /studio-environments/v1/deployments/{}/status	workloads	Vec<{}>	always
@@ -2883,6 +2885,13 @@ response	GET /studio-environments/v1/environments	may_manage	bool	always
 response	GET /studio-environments/v1/environments	open_clusters	{}	always
 response	GET /studio-environments/v1/environments	open_clusters.connection_ids	Vec<Uuid>	always
 response	GET /studio-environments/v1/environments	total	u32	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	configuration	Vec<{}>	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	configuration.code	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	configuration.field	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	configuration.gear	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	configuration.key	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	configuration.message	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	configuration.refuses	bool	always
 response	GET /studio-environments/v1/environments/{}/infra-plan	environment_id	Uuid	always
 response	GET /studio-environments/v1/environments/{}/infra-plan	environment_name	String	always
 response	GET /studio-environments/v1/environments/{}/infra-plan	items	Vec<{}>	always
@@ -2898,6 +2907,9 @@ response	GET /studio-environments/v1/environments/{}/infra-plan	items.refusal	St
 response	GET /studio-environments/v1/environments/{}/infra-plan	items.refusal_code	String	optional
 response	GET /studio-environments/v1/environments/{}/infra-plan	items.route	String	optional
 response	GET /studio-environments/v1/environments/{}/infra-plan	items.service	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.warnings	Vec<{}>	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.warnings.code	String	always
+response	GET /studio-environments/v1/environments/{}/infra-plan	items.warnings.message	String	always
 response	GET /studio-environments/v1/environments/{}/infra-plan	namespace	String	always
 response	GET /studio-environments/v1/environments/{}/infra-plan	placement	String	always
 response	GET /studio-environments/v1/environments/{}/readiness	bootstrap_version	String	optional
@@ -2996,6 +3008,17 @@ response	GET /studio-environments/v1/infra-services	items.passport.storage	Strin
 response	GET /studio-environments/v1/infra-services	items.passport.version	String	optional
 response	GET /studio-environments/v1/infra-services	items.public_url	String	optional
 response	GET /studio-environments/v1/infra-services	total	u32	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	args	Vec<String>	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	clients	Vec<{}>	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	clients.client_id	String	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	clients.gear	String	optional
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	clients.kind	String	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	clients.secret	String	optional
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	content	String	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	notes	Vec<String>	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	path	String	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	root_tenant_from	String	always
+response	GET /studio-environments/v1/infra-services/{}/keycloak-realm	root_tenant_id	String	always
 response	GET /studio-environments/v1/namespace-assignments	items	Vec<{}>	always
 response	GET /studio-environments/v1/namespace-assignments	items.assigned_at	String	optional
 response	GET /studio-environments/v1/namespace-assignments	items.assigned_by	String	optional
@@ -5248,6 +5271,7 @@ response	POST /studio-environments/v1/deployments	requested_by	String	always
 response	POST /studio-environments/v1/deployments	requested_by_name	String	always
 response	POST /studio-environments/v1/deployments	run_id	Uuid	optional
 response	POST /studio-environments/v1/deployments	state	String	always
+response	POST /studio-environments/v1/deployments	warnings	Vec<String>	always
 response	POST /studio-environments/v1/deployments/{}/decisions	action	String	always
 response	POST /studio-environments/v1/deployments/{}/decisions	build	String	optional
 response	POST /studio-environments/v1/deployments/{}/decisions	chart_ref	String	optional
@@ -5283,6 +5307,7 @@ response	POST /studio-environments/v1/deployments/{}/decisions	requested_by	Stri
 response	POST /studio-environments/v1/deployments/{}/decisions	requested_by_name	String	always
 response	POST /studio-environments/v1/deployments/{}/decisions	run_id	Uuid	optional
 response	POST /studio-environments/v1/deployments/{}/decisions	state	String	always
+response	POST /studio-environments/v1/deployments/{}/decisions	warnings	Vec<String>	always
 response	POST /studio-environments/v1/environments	allow_broad_registry_token	bool	always
 response	POST /studio-environments/v1/environments	build_namespace	String	optional
 response	POST /studio-environments/v1/environments	builder_image	String	optional
@@ -6606,6 +6631,7 @@ route	GET /studio-environments/v1/image-retention
 route	GET /studio-environments/v1/images
 route	GET /studio-environments/v1/images/{}
 route	GET /studio-environments/v1/infra-services
+route	GET /studio-environments/v1/infra-services/{}/keycloak-realm
 route	GET /studio-environments/v1/namespace-assignments
 route	GET /studio-environments/v1/project-build
 route	GET /studio-environments/v1/project-environments
