@@ -47,6 +47,7 @@ import { OrgMembersView, OrganizationsTable } from "./org-admin";
 import { BackgroundWork } from "./tasks";
 import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./work-inbox";
 import { Notifications } from "./notifications";
+import { InboxButton, InboxView, useInbox } from "./inbox-view";
 import { StudioAI } from "./studio-ai";
 import { runRepoSync, pruneDetached, findRepoNode, type SyncProgress } from "./artifact-sync";
 import {
@@ -652,6 +653,7 @@ type View =
   | "org"
   | "reports"
   | "tasks"
+  | "inbox"
   | "system"
   | "profile";
 
@@ -1792,6 +1794,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const activeOrg = orgOptions.find((o) => o.id === activeOrgResolvedId) ?? null;
   // Workspaces of the active org — the path picker's workspace options.
   const orgWorkspaces = workspaces.filter((w) => w.orgId === activeOrgResolvedId);
+  // The person's inbox (inbox-view.tsx): everything that waits for them in
+  // the organization in view, read once for the top bar's count and the page.
+  const inbox = useInbox(token, activeOrg, orgWorkspaces);
 
   // When a project is open, the sidebar gains its tab nav (Overview / Artifacts
   // / Spec Quality / Team) so the tabs live on the panel rather than the page.
@@ -2205,6 +2210,16 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               <SparkleIcon />
             </button>
           )}
+          <InboxButton
+            count={inbox.results === null ? null : inbox.open.length}
+            active={view === "inbox" && !adminOpen && !activeSpace}
+            onOpen={() => {
+              setInboxOpen(false);
+              setAdminOpen(false);
+              setActiveSpace(null);
+              setView("inbox");
+            }}
+          />
           <WorkInbox
             runs={completed.runs}
             unread={completed.unread}
@@ -3013,6 +3028,18 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
+        {view === "inbox" && (
+          <InboxView
+            inbox={inbox}
+            onOpenProject={(workspaceId, projectId) => {
+              setProjectLabel(undefined);
+              setCrumb({ projectId: workspaceId, nestedId: projectId });
+              setProjectTab("overview");
+              setView("projects");
+            }}
+            onOpenView={(v) => setView(v as View)}
+          />
+        )}
         {/* The deployment's own console -- raw types, JSON, test notifications
             -- is the platform administrator's, not every member's. */}
         {view === "system" && showPlatform && (

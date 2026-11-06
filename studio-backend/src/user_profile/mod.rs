@@ -19,6 +19,8 @@ mod entity;
 mod grants_tests;
 mod invitations;
 mod leaving;
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 mod migrations;
 mod org_requests;
 mod rest;

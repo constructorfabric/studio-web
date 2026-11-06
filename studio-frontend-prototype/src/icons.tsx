@@ -82,6 +82,15 @@ export const MoreIcon = icon(
   </>,
 );
 
+/** The inbox: a tray with what came in. */
+export const InboxIcon = icon(
+  "Inbox",
+  <>
+    <path d="M2.5 9.5 4.2 3.5h7.6l1.7 6v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
+    <path d="M2.5 9.5h3l1 1.5h3l1-1.5h3" />
+  </>,
+);
+
 /** Pinned to the rail: a push pin. */
 export const PinIcon = icon("Pin", <path d="M6 2.5h4M7 2.5v4L4.5 9h7L9 6.5v-4M8 9v4.5" />);
 

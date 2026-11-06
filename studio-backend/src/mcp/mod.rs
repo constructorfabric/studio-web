@@ -53,6 +53,11 @@ pub fn tools() -> Vec<sdk::Tool> {
     all.extend(crate::environments::mcp_tools());
     all.extend(crate::artifact_ingest::mcp_tools());
     all.extend(crate::tasks::mcp_tools());
+    // The person's inbox: what waits for them across the organization, the
+    // marks they keep on it, and the review verdict that answers one kind of
+    // item (the others are answered by the pipeline's tools above).
+    all.extend(crate::user_profile::mcp_tools());
+    all.extend(crate::documents::mcp_tools());
     all
 }
 
@@ -260,6 +265,20 @@ mod tests {
             "deployment_status",
         ] {
             assert!(names.contains(step), "no tool {step}");
+        }
+    }
+
+    #[test]
+    fn the_inbox_can_be_read_and_acted_on() {
+        let names: BTreeSet<&str> = tools().iter().map(|t| t.name).collect();
+        for tool in [
+            "inbox",
+            "inbox_mark",
+            "deployment_decide",
+            "review_verdict",
+            "task_run",
+        ] {
+            assert!(names.contains(tool), "no tool {tool}");
         }
     }
 

@@ -3564,3 +3564,17 @@ button.mb-value:focus-visible { outline: 2px solid var(--ring, var(--primary)); 
 .mb-row-off .mb-row-title { margin: 0; }
 .mb-row-off-line { font-size: 13px; color: var(--muted-foreground); }
 .mb-row-gone { margin: 6px 0 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); }
+
+/* ── Inbox (inbox-view.tsx): the organization overview's attention rows, with
+   their actions on the row. ── */
+.inbox-list { margin-top: 8px; }
+.inbox-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.inbox-actions button { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.inbox-error { color: var(--destructive); }
+.inbox .att-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.inbox .att-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 6px 10px; min-height: 40px; border-radius: 8px; border: 1px solid var(--border); border-left: 3px solid var(--border); }
+.inbox .att-row.tone-danger { border-left-color: var(--destructive); }
+.inbox .att-row.tone-warn { border-left-color: var(--warning); }
+.inbox .att-row.tone-info { border-left-color: var(--primary); }
+.inbox .att-row[data-hidden-item] { opacity: 0.6; }
+.inbox .att-text { flex: 1; min-width: 240px; font-size: 13px; }

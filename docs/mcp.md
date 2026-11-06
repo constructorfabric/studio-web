@@ -197,6 +197,21 @@ without the portal; each step is the REST route the portal calls for it.
 | | `deployment_logs` | the end of each container's log |
 | Runs | `task_run` | the background run an import, build or deploy started |
 
+**The inbox.** Everything that waits for you in one organization, as the
+portal's Inbox lists it, and how to act on each item.
+
+| Tool | What it answers or does |
+| --- | --- |
+| `inbox` | deploys awaiting approval, reviews asked of you, pull requests whose next move is yours, your failed background work (an undelivered notification among it); each item's `act` names the tool that answers it |
+| `inbox_mark` | *changes:* marks an item done, snoozes it, or opens it again; the portal shows the same marks |
+| `review_requests` | a project's or workspace's review requests; `waiting_on: "me"` for yours |
+| `review_verdict` | *changes:* approves a review request or asks for changes |
+
+A deploy is answered with `deployment_decide`, a failed run read with
+`task_run`, a pull request on its provider. Each kind of item is one source
+in `src/user_profile/mcp.rs`; a new kind is one more source there and one in
+the portal's `inbox-sources.ts`.
+
 There is no tool that checks a saved description revision's text for a
 profile: Studio has no route for it. `product_check` composes the description
 from the picked gears; the kept verdicts are in `product_record`.
