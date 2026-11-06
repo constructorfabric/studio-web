@@ -23,6 +23,7 @@ import { repoPathsOf } from "./builds";
 import {
   FRONTX_SHELL_TEMPLATE,
   assemblySteps,
+  stepsSummary,
   chosenShell,
   coverage,
   fitOf,
@@ -946,8 +947,7 @@ function BuildSteps({
 }) {
   const [unfolded, setUnfolded] = useState(false);
   const refs = shells.map((s) => ({ shell: s, ref: shellRefOf(s) })).filter((x): x is { shell: Shell; ref: string } => !!x.ref);
-  const ready = steps.filter((s) => s.state === "ok").length;
-  const worst = steps.some((s) => s.state === "bad") ? "danger" : steps.some((s) => s.state === "warn") ? "warn" : ready === steps.length ? "ok" : "neutral";
+  const summary = stepsSummary(steps);
   const flow: FlowStep[] = steps.map((s) => ({
     id: s.id,
     title: s.title,
@@ -1009,16 +1009,32 @@ function BuildSteps({
         <span className="pm-h" style={{ margin: 0 }}>
           How it gets built
         </span>
-        <StatusChip
-          tone={worst}
-          onClick={() => setUnfolded((u) => !u)}
-          expanded={unfolded}
-          title={unfolded ? "Fold the steps" : "Show the steps"}
-          data-build-steps-count
-        >
-          {ready}/{steps.length} ready {unfolded ? "▴" : "▾"}
+        <StatusChip tone={summary.tone} data-build-steps-count>
+          {summary.text}
         </StatusChip>
+        <button type="button" className="ghost" onClick={() => setUnfolded((u) => !u)} aria-expanded={unfolded} data-build-steps-toggle>
+          {unfolded ? "Hide the steps" : `Show all ${steps.length} steps`}
+        </button>
       </div>
+      {summary.fix.length > 0 && (
+        <ul className="fc-fix" data-build-steps-fix>
+          {summary.fix.map((s) => (
+            <li key={s.id} data-build-step-fix={s.id} data-state={s.state}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setUnfolded(true);
+                  onOpen(s.id);
+                }}
+              >
+                {steps.indexOf(s) + 1}. {s.title}
+              </button>
+              <span className="sub"> — {s.detail}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {unfolded && (
         <StepFlow
           steps={flow}

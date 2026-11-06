@@ -4,7 +4,9 @@
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-pub(crate) use super::rollups::ORGANIZATION_TENANT_TYPE;
+pub(crate) use super::rollups::{
+    ORGANIZATION_TENANT_TYPE, PROJECT_TENANT_TYPE, WORKSPACE_TENANT_TYPE,
+};
 
 /// The organization a project or workspace hangs under (project → workspace →
 /// organization), read as the caller, so a caller learns nothing about an

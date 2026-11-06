@@ -229,3 +229,24 @@ fn orphans_are_told_apart_by_why() {
     );
     assert_eq!(repository_owner("acme", "other/shop/x", &slugs), None);
 }
+
+#[test]
+fn a_builds_chart_digest_is_its_chart_record_at_the_version() {
+    let mut chart = record("acme/shop/charts/shop", D2, 2);
+    chart.kind = ImageKind::Chart;
+    chart.tags = vec!["0.1.0-sha.abc.r4".into()];
+    let mut image = record("acme/shop/charts/shop", D1, 1);
+    image.tags = vec!["0.1.0-sha.abc.r4".into()];
+    let wanted = super::super::model::ChartRef {
+        reference: "oci://ghcr.io/acme/shop/charts/shop".into(),
+        version: "0.1.0-sha.abc.r4".into(),
+        digest: None,
+    };
+    let records = [image, chart];
+    assert_eq!(chart_digest(&records, &wanted).as_deref(), Some(D2));
+    let other = super::super::model::ChartRef {
+        version: "0.1.0-sha.abc.r5".into(),
+        ..wanted.clone()
+    };
+    assert_eq!(chart_digest(&records, &other), None, "another version");
+}

@@ -10,11 +10,15 @@
 //! type is open, so an object may carry fields the ontology has not (yet)
 //! declared — which is what makes extending a type a pure ontology edit.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
 use toolkit_security::SecurityContext;
 
-use super::ontology::{EdgeType, NodeType};
+use super::mirror::DomainMirror;
+use super::ontology::{EdgeType, NodeType, Ontology};
 
 /// An object read back out of the store.
 #[derive(Debug, Clone)]
@@ -64,16 +68,71 @@ pub struct EdgeView {
     pub type_id: String,
     pub from: String,
     pub to: String,
-    /// Which declared relation the edge is, when it was written with one (see
-    /// [`EdgeUpsert::discriminator`]).
-    pub discriminator: Option<String>,
+    /// Which declared relation the edge is (`delivers`), from its
+    /// discriminator. `None` when it was written without one, and then it
+    /// answers for every relation of its verb.
+    pub relation: Option<String>,
+    /// The graph's key for the edge, when it came from the graph.
+    pub key: Option<String>,
+}
+
+/// One step of a query along a relation: what [`DomainStore::neighbours`]
+/// follows.
+#[derive(Debug, Clone, Copy)]
+pub struct Hop<'a> {
+    /// Our edge type id (`gts.cf.studio.domainrel.owns.v1~`).
+    pub edge_type_id: &'a str,
+    /// The declared relation's name. An edge naming another relation of the
+    /// same verb is not followed; one naming none is.
+    pub relation: Option<&'a str>,
+    /// The types the far end may be.
+    pub node_type_ids: &'a [String],
+    /// Follow the edge from its target back to its source.
+    pub reverse: bool,
+}
+
+impl Hop<'_> {
+    /// Does `e` belong to this hop, leaving one of `seeds` in its direction?
+    /// Answers the neighbour it reaches.
+    pub fn reaches<'e>(&self, e: &'e EdgeView, seeds: &HashSet<&str>) -> Option<&'e str> {
+        if e.type_id != self.edge_type_id {
+            return None;
+        }
+        if let (Some(want), Some(is)) = (self.relation, e.relation.as_deref())
+            && want != is
+        {
+            return None;
+        }
+        let (near, far) = if self.reverse {
+            (&e.to, &e.from)
+        } else {
+            (&e.from, &e.to)
+        };
+        seeds.contains(near.as_str()).then_some(far.as_str())
+    }
+}
+
+/// The payload field a deleted object carries. Graph-storage never lets a
+/// deleted node's key be written again (its tombstone is permanent until a
+/// purge that is not built), and an object's key is derived from its type and
+/// key, so deleting the node would forbid ever creating that object again.
+/// Deleting marks it instead, and every read leaves it out.
+pub const DELETED_FIELD: &str = "_deleted";
+
+/// False for an object marked deleted.
+pub fn is_live(value: &Value) -> bool {
+    !value
+        .get(DELETED_FIELD)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// The objects one hop out of a set of seeds along one edge type, with the
 /// edges that reach them — what [`DomainStore::neighbours`] answers.
 #[derive(Debug, Clone, Default)]
 pub struct Neighbourhood {
-    /// Edges leaving a seed, of the asked type, deduplicated.
+    /// The hop's edges, deduplicated, each turned to run from the seed to the
+    /// neighbour (so a reverse hop's edges read target → source).
     pub edges: Vec<EdgeView>,
     /// The objects those edges reach, of the asked node types only.
     pub nodes: Vec<ObjectNode>,
@@ -204,14 +263,13 @@ pub trait DomainStore: Send + Sync {
         seeds: &[String],
     ) -> anyhow::Result<Vec<EdgeView>>;
 
-    /// The objects of `node_type_ids` reached from `seeds` by one outgoing
-    /// edge of `edge_type_id` (our ids), with those edges. One call per
-    /// relation and nesting level of a query, for every row at once, rather
-    /// than one read per row.
+    /// The objects of the hop's node types reached from `seeds` by one edge
+    /// of the hop, with those edges. One call per relation and nesting level
+    /// of a query, for every row at once, rather than one read per row.
     ///
-    /// `discriminator`, when given, keeps only the edges of that declared
-    /// relation: two relations of one verb share an edge type, and the
-    /// discriminator is what tells them apart.
+    /// The hop's `relation`, when given, keeps only the edges of that
+    /// declared relation: two relations of one verb share an edge type, and
+    /// the discriminator is what tells them apart.
     ///
     /// The default reads the edges and then each endpoint. The graph backend
     /// answers it with one typed traversal, which returns the payloads too.
@@ -219,26 +277,34 @@ pub trait DomainStore: Send + Sync {
         &self,
         ctx: &SecurityContext,
         seeds: &[String],
-        edge_type_id: &str,
-        discriminator: Option<&str>,
-        node_type_ids: &[String],
+        hop: Hop<'_>,
     ) -> anyhow::Result<Neighbourhood> {
-        let from: std::collections::HashSet<&str> = seeds.iter().map(String::as_str).collect();
-        let edges: Vec<EdgeView> = self
-            .read_edges(ctx, seeds)
-            .await?
-            .into_iter()
-            .filter(|e| e.type_id == edge_type_id && from.contains(e.from.as_str()))
-            .filter(|e| discriminator.is_none_or(|d| e.discriminator.as_deref() == Some(d)))
-            .collect();
+        let from: HashSet<&str> = seeds.iter().map(String::as_str).collect();
+        let mut edges: Vec<EdgeView> = Vec::new();
+        let mut seen_edges: HashSet<(String, String)> = HashSet::new();
+        for e in self.read_edges(ctx, seeds).await? {
+            let Some(far) = hop.reaches(&e, &from) else {
+                continue;
+            };
+            let near = if hop.reverse { &e.to } else { &e.from };
+            if seen_edges.insert((near.clone(), far.to_string())) {
+                edges.push(EdgeView {
+                    type_id: e.type_id.clone(),
+                    from: near.clone(),
+                    to: far.to_string(),
+                    relation: e.relation.clone(),
+                    key: e.key.clone(),
+                });
+            }
+        }
         let mut nodes: Vec<ObjectNode> = Vec::new();
-        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut seen: HashSet<&str> = HashSet::new();
         for e in &edges {
             if !seen.insert(e.to.as_str()) {
                 continue;
             }
             if let Some(n) = self.get_object(ctx, &e.to).await?
-                && node_type_ids.contains(&n.type_id)
+                && hop.node_type_ids.contains(&n.type_id)
             {
                 nodes.push(n);
             }
@@ -248,6 +314,44 @@ pub trait DomainStore: Send + Sync {
             nodes,
             truncated: false,
         })
+    }
+
+    /// Remove the relation `from` → `to` of `edge_type_id`. With `relation`,
+    /// only the edge naming that declared relation (or naming none). Answers
+    /// whether an edge was there to remove.
+    async fn delete_relation(
+        &self,
+        _ctx: &SecurityContext,
+        _edge_type_id: &str,
+        _from: &str,
+        _to: &str,
+        _relation: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        anyhow::bail!("this domain store cannot remove relations")
+    }
+
+    /// Objects of `type_ids` the text finds, best first. The graph runs its
+    /// hybrid search; a store without one finds nothing.
+    async fn search(
+        &self,
+        _ctx: &SecurityContext,
+        _text: &str,
+        _type_ids: &[String],
+        _limit: u32,
+    ) -> anyhow::Result<Vec<ObjectNode>> {
+        Ok(Vec::new())
+    }
+
+    /// The Postgres mirror that answers queries for the caller's tenant, when
+    /// one is there and complete (ADR-0066). `None` means "read the graph";
+    /// a store with a mirror starts filling it then, from the objects of
+    /// `ontology` (the tenant's model), so a later read finds it.
+    async fn read_model(
+        &self,
+        _ctx: &SecurityContext,
+        _ontology: &Ontology,
+    ) -> Option<Arc<DomainMirror>> {
+        None
     }
 }
 
@@ -262,9 +366,33 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct InMemoryDomainStore {
     nodes: Mutex<HashMap<String, ObjectNode>>,
-    /// Keyed by `type|from|to|discriminator` so a re-create upserts rather
-    /// than duplicates.
+    /// Keyed by `type|from|to|relation` so a re-create upserts rather than
+    /// duplicates.
     edges: Mutex<HashMap<String, EdgeView>>,
+}
+
+impl InMemoryDomainStore {
+    fn edge_entry(
+        type_id: &str,
+        from: &str,
+        to: &str,
+        relation: Option<&str>,
+    ) -> (String, EdgeView) {
+        (
+            format!(
+                "{}|{}",
+                super::gts::edge_key(type_id, from, to),
+                relation.unwrap_or("")
+            ),
+            EdgeView {
+                type_id: type_id.to_string(),
+                from: from.to_string(),
+                to: to.to_string(),
+                relation: relation.map(str::to_string),
+                key: None,
+            },
+        )
+    }
 }
 
 #[async_trait]
@@ -296,24 +424,36 @@ impl DomainStore for InMemoryDomainStore {
         discriminator: Option<&str>,
         _payload: Option<Value>,
     ) -> anyhow::Result<()> {
+        let (key, edge) = Self::edge_entry(edge_type_id, from, to, discriminator);
+        self.edges
+            .lock()
+            .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?
+            .insert(key, edge);
+        Ok(())
+    }
+
+    async fn delete_relation(
+        &self,
+        _ctx: &SecurityContext,
+        edge_type_id: &str,
+        from: &str,
+        to: &str,
+        relation: Option<&str>,
+    ) -> anyhow::Result<bool> {
         let mut map = self
             .edges
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
-        map.insert(
-            format!(
-                "{}|{}",
-                super::gts::edge_key(edge_type_id, from, to),
-                discriminator.unwrap_or("")
-            ),
-            EdgeView {
-                type_id: edge_type_id.to_string(),
-                from: from.to_string(),
-                to: to.to_string(),
-                discriminator: discriminator.map(str::to_string),
-            },
-        );
-        Ok(())
+        let before = map.len();
+        map.retain(|_, e| {
+            !(e.type_id == edge_type_id
+                && e.from == from
+                && e.to == to
+                && (relation.is_none()
+                    || e.relation.is_none()
+                    || e.relation.as_deref() == relation))
+        });
+        Ok(map.len() != before)
     }
 
     async fn get_object(
@@ -326,6 +466,7 @@ impl DomainStore for InMemoryDomainStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?
             .get(instance_id)
+            .filter(|n| is_live(&n.value))
             .cloned())
     }
 
@@ -343,7 +484,7 @@ impl DomainStore for InMemoryDomainStore {
         let rows = map
             .values()
             .filter(|n| type_ids.iter().any(|t| t == &n.type_id))
-            .filter(|n| in_scope(&n.value, scope))
+            .filter(|n| in_scope(&n.value, scope) && is_live(&n.value))
             .cloned();
         Ok(match limit {
             Some(n) => rows.take(n).collect(),
@@ -394,36 +535,27 @@ impl DomainStore for InMemoryDomainStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
         for e in edges {
-            let key = format!(
-                "{}|{}",
-                super::gts::edge_key(&e.type_id, &e.from, &e.to),
-                e.discriminator.as_deref().unwrap_or("")
-            );
-            map.insert(
-                key,
-                EdgeView {
-                    type_id: e.type_id.clone(),
-                    from: e.from.clone(),
-                    to: e.to.clone(),
-                    discriminator: e.discriminator.clone(),
-                },
-            );
+            let (key, edge) =
+                Self::edge_entry(&e.type_id, &e.from, &e.to, e.discriminator.as_deref());
+            map.insert(key, edge);
         }
         Ok(edges.len() as u64)
     }
 
+    /// Incident either way, as the graph's depth-1 traversal is.
     async fn read_edges(
         &self,
         _ctx: &SecurityContext,
         seeds: &[String],
     ) -> anyhow::Result<Vec<EdgeView>> {
+        let seeds: HashSet<&str> = seeds.iter().map(String::as_str).collect();
         let map = self
             .edges
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
         Ok(map
             .values()
-            .filter(|e| seeds.contains(&e.from))
+            .filter(|e| seeds.contains(e.from.as_str()) || seeds.contains(e.to.as_str()))
             .cloned()
             .collect())
     }
@@ -635,6 +767,51 @@ mod graph_backend {
             Ok(())
         }
 
+        /// The edge is found by a depth-1 walk from its source, because a
+        /// delete names the edge's key and only a read reports it. A deleted
+        /// edge comes back when the same relation is created again.
+        async fn delete_relation(
+            &self,
+            ctx: &SecurityContext,
+            edge_type_id: &str,
+            from: &str,
+            to: &str,
+            relation: Option<&str>,
+        ) -> anyhow::Result<bool> {
+            let res = self
+                .client
+                .traverse(
+                    ctx,
+                    TraverseRequest {
+                        seeds: vec![from.to_string()],
+                        depth: 1,
+                        edge_type_patterns: vec![gts::graph_type_id(edge_type_id)],
+                        // The edge leaves `from`; graph-storage 0.3 walks one way.
+                        direction: Some(Direction::Outgoing),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
+            let mut removed = false;
+            for e in res.edges {
+                // The named relation, or an edge that names none.
+                let same_relation = match (relation, e.discriminator.as_deref()) {
+                    (None, _) | (_, None | Some("")) => true,
+                    (Some(want), Some(is)) => want == is,
+                };
+                if e.src != from || e.dst != to || !same_relation {
+                    continue;
+                }
+                self.client
+                    .delete_edge(ctx, &e.edge_key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("graph-storage edge delete: {e}"))?;
+                removed = true;
+            }
+            Ok(removed)
+        }
+
         async fn get_object(
             &self,
             ctx: &SecurityContext,
@@ -647,11 +824,14 @@ mod graph_backend {
                 .get_node(ctx, &instance_id.to_string(), Some(1))
                 .await
             {
+                // Only this tenant's, as in `list_objects`.
+                Ok(view) if view.envelope.tenant_id != ctx.subject_tenant_id() => Ok(None),
                 Ok(view) => Ok(Some(ObjectNode {
                     type_id: gts::our_type_from_graph(&view.type_id),
                     instance_id: view.node_key,
                     value: view.payload.unwrap_or_else(|| serde_json::json!({})),
-                })),
+                })
+                .filter(|n| super::is_live(&n.value))),
                 Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => Ok(None),
                 Err(e) => Err(anyhow::anyhow!("graph-storage node read: {e}")),
             }
@@ -698,12 +878,20 @@ mod graph_backend {
                     .await
                     .map_err(|e| anyhow::anyhow!("graph-storage domain projection: {e}"))?;
                 for row in page.items {
+                    // The projection answers every tenant the caller reaches
+                    // (a platform administrator reaches them all, a member of
+                    // two organizations both), but a tenant's model and records
+                    // are its own: another tenant's node with the same key
+                    // would stand in for this one's.
+                    if row.envelope.tenant_id != ctx.subject_tenant_id() {
+                        continue;
+                    }
                     let Some((_, our_type)) = reverse.iter().find(|(g, _)| *g == row.type_id)
                     else {
                         continue;
                     };
                     let value = row.payload.unwrap_or_else(|| serde_json::json!({}));
-                    if !super::in_scope(&value, scope) {
+                    if !super::in_scope(&value, scope) || !super::is_live(&value) {
                         continue;
                     }
                     out.push(ObjectNode {
@@ -789,8 +977,7 @@ mod graph_backend {
             let mut out: Vec<EdgeView> = Vec::new();
             // An edge between two seeds is reachable from both, and two seeds
             // can land in different chunks, so identical edges are collapsed.
-            let mut seen: std::collections::HashSet<(String, String, String)> =
-                std::collections::HashSet::new();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             for chunk in seeds.chunks(TRAVERSE_SEEDS) {
                 let res = self
                     .client
@@ -811,34 +998,67 @@ mod graph_backend {
                         "studio-domain-model: traversal truncated; some edges not shown"
                     );
                 }
+                // graph-storage 0.3 reports each edge's discriminator: the
+                // declared relation it is.
                 for e in res.edges {
-                    let view = EdgeView {
-                        type_id: gts::our_type_from_graph(&e.edge_type_id),
-                        from: e.src,
-                        to: e.dst,
-                        discriminator: e.discriminator,
-                    };
-                    if seen.insert((view.type_id.clone(), view.from.clone(), view.to.clone())) {
-                        out.push(view);
+                    if seen.insert(e.edge_key.clone()) {
+                        out.push(EdgeView {
+                            type_id: gts::our_type_from_graph(&e.edge_type_id),
+                            from: e.src,
+                            to: e.dst,
+                            relation: e.discriminator.filter(|d| !d.is_empty()),
+                            key: Some(e.edge_key),
+                        });
                     }
                 }
             }
             Ok(out)
         }
 
-        /// One traversal per chunk of seeds, restricted to the edge type, its
-        /// discriminator, the outgoing direction and the target node types, so
-        /// the graph walks only the relation asked for and hands the payloads
-        /// back with it. The edges it leaves out spend none of the walk's
-        /// budget.
+        async fn search(
+            &self,
+            ctx: &SecurityContext,
+            text: &str,
+            type_ids: &[String],
+            limit: u32,
+        ) -> anyhow::Result<Vec<ObjectNode>> {
+            use graph_storage_sdk::models::{SearchMode, SearchRequest};
+            let response = self
+                .client
+                .search(
+                    ctx,
+                    SearchRequest {
+                        mode: SearchMode::Hybrid,
+                        query: Some(text.to_owned()),
+                        arm_limit: limit.max(50),
+                        limit,
+                        type_patterns: type_ids.iter().map(|t| gts::graph_type_id(t)).collect(),
+                    },
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("graph-storage search: {e}"))?;
+            let mut out = Vec::with_capacity(response.hits.len());
+            for hit in response.hits {
+                if let Some(node) = self.get_object(ctx, &hit.node_key).await? {
+                    out.push(node);
+                }
+            }
+            Ok(out)
+        }
+
+        /// One traversal per chunk of seeds, restricted to the edge type, the
+        /// relation's discriminator, the hop's direction and the target node
+        /// types, so the graph walks only the relation asked for and hands the
+        /// payloads back with it. The edges it leaves out spend none of the
+        /// walk's budget.
         async fn neighbours(
             &self,
             ctx: &SecurityContext,
             seeds: &[String],
-            edge_type_id: &str,
-            discriminator: Option<&str>,
-            node_type_ids: &[String],
+            hop: super::Hop<'_>,
         ) -> anyhow::Result<Neighbourhood> {
+            let edge_type_id = hop.edge_type_id;
+            let node_type_ids = hop.node_type_ids;
             let edge_pattern = gts::graph_type_id(edge_type_id);
             let node_patterns: Vec<String> = node_type_ids
                 .iter()
@@ -859,10 +1079,17 @@ mod graph_backend {
                             depth: 1,
                             edge_type_patterns: vec![edge_pattern.clone()],
                             node_type_patterns: node_patterns.clone(),
-                            // A relation is read from its declaring side.
-                            direction: Some(Direction::Outgoing),
-                            edge_discriminators: discriminator
-                                .map(|d| vec![d.to_string()])
+                            // Only the way the hop goes, and only the relation
+                            // asked for: edges left out spend none of the
+                            // walk's budget.
+                            direction: Some(if hop.reverse {
+                                Direction::Incoming
+                            } else {
+                                Direction::Outgoing
+                            }),
+                            edge_discriminators: hop
+                                .relation
+                                .map(|r| vec![r.to_string()])
                                 .unwrap_or_default(),
                             ..Default::default()
                         },
@@ -870,19 +1097,37 @@ mod graph_backend {
                     .await
                     .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
                 out.truncated |= res.truncated.is_some();
+                // The walk already went one way along one relation; the hop
+                // still checks each edge, and turns a reverse one round.
+                let from: std::collections::HashSet<&str> =
+                    chunk.iter().map(String::as_str).collect();
                 let mut reached: std::collections::HashSet<String> =
                     std::collections::HashSet::new();
                 for e in res.edges {
-                    if gts::our_type_from_graph(&e.edge_type_id) != edge_type_id {
+                    let view = EdgeView {
+                        type_id: gts::our_type_from_graph(&e.edge_type_id),
+                        from: e.src,
+                        to: e.dst,
+                        relation: e.discriminator.filter(|d| !d.is_empty()),
+                        key: Some(e.edge_key),
+                    };
+                    let Some(far) = hop.reaches(&view, &from) else {
                         continue;
-                    }
-                    reached.insert(e.dst.clone());
-                    if seen_edges.insert((e.src.clone(), e.dst.clone())) {
+                    };
+                    let far = far.to_string();
+                    let near = if hop.reverse {
+                        view.to.clone()
+                    } else {
+                        view.from.clone()
+                    };
+                    reached.insert(far.clone());
+                    if seen_edges.insert((near.clone(), far.clone())) {
                         out.edges.push(EdgeView {
                             type_id: edge_type_id.to_string(),
-                            from: e.src,
-                            to: e.dst,
-                            discriminator: e.discriminator,
+                            from: near,
+                            to: far,
+                            relation: view.relation,
+                            key: view.key,
                         });
                     }
                 }
@@ -895,10 +1140,14 @@ mod graph_backend {
                     {
                         continue;
                     }
+                    let value = n.payload.unwrap_or_else(|| serde_json::json!({}));
+                    if !super::is_live(&value) {
+                        continue;
+                    }
                     out.nodes.push(ObjectNode {
                         type_id: gts::our_type_from_graph(&n.type_id),
                         instance_id: n.node_key,
-                        value: n.payload.unwrap_or_else(|| serde_json::json!({})),
+                        value,
                     });
                 }
             }

@@ -281,6 +281,9 @@ interface CommonProps<T> {
   onOpen?: (row: T) => void;
   /** Which rows have something to open; the rest do not look clickable. */
   canOpen?: (row: T) => boolean;
+  /** The row the pointer or focus is on, `null` once it leaves the table:
+   *  for a screen that previews a row before it is opened. */
+  onPeek?: (row: T | null) => void;
   actions?: (row: T) => RowAction[];
   /** An inline action beside the menu, when the row exists for one. */
   inline?: (row: T) => ReactNode;
@@ -602,7 +605,17 @@ export function DataTable<T>(props: DataTableProps<T>) {
               {hasActions && <th className="pactions" aria-label="Actions" />}
             </tr>
           </thead>
-          <tbody>
+          <tbody
+            onMouseLeave={props.onPeek ? () => props.onPeek!(null) : undefined}
+            onBlur={
+              props.onPeek
+                ? (e) => {
+                    // Focus moving to another row peeks that one.
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) props.onPeek!(null);
+                  }
+                : undefined
+            }
+          >
             {visible.map((row) => {
               const key = props.rowKey(row);
               const open = expanded.has(key);
@@ -614,6 +627,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   aria-expanded={toggles ? open : undefined}
                   onClick={openFrom(row)}
                   onKeyDown={keyOpen(row)}
+                  onMouseEnter={props.onPeek ? () => props.onPeek!(row) : undefined}
+                  onFocus={props.onPeek ? () => props.onPeek!(row) : undefined}
                 >
                   {props.expand && (
                     <td className="dt-twisty-col">

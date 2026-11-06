@@ -17,6 +17,7 @@ import type { ProjTab } from "./project-overview";
 import { BUILTIN_TEMPLATES, PRESETS, keyFor, parseTemplates, templateFills, templatesProblem } from "./project-types";
 import type { ProjectTemplate } from "./project-types";
 import type { RepoRoad } from "./project-form";
+import { useDomainRefresh } from "./domain-live";
 
 const ROAD_WORDS: Record<RepoRoad, string> = {
   none: "no repository yet",
@@ -46,6 +47,7 @@ export function ProjectTypesTab({
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
+  useDomainRefresh(["project-type"], () => setReload((n) => n + 1));
 
   useEffect(() => {
     let alive = true;
@@ -90,7 +92,10 @@ export function ProjectTypesTab({
     setErr(null);
     setNote(null);
     try {
-      await api.putProjectTypes(token, target === "workspace" ? workspace.id : workspace.orgId, { types: types! });
+      // The phases share this document (project-phases.ts): kept as they are.
+      const tenant = target === "workspace" ? workspace.id : workspace.orgId;
+      const doc = ((await api.ownProjectTypes(token, tenant)) ?? {}) as Record<string, unknown>;
+      await api.putProjectTypes(token, tenant, { ...doc, types: types! });
       setNote(target === "workspace" ? "Saved for this workspace." : `Saved for ${workspace.orgName}.`);
       setReload((n) => n + 1);
     } catch (e) {

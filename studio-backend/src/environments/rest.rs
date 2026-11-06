@@ -30,6 +30,9 @@ mod images_routes;
 #[path = "rest_infra.rs"]
 mod infra_routes;
 
+#[path = "rest_pipeline.rs"]
+mod pipeline_routes;
+
 /// Errors attributable to an environment or a deployment as a resource.
 #[resource_error(gts_id!("cf.studio.environments.environment.v1~"))]
 pub struct StudioEnvironmentsError;
@@ -138,6 +141,10 @@ pub struct EnvironmentDto {
     /// What should be fixed but does not stop a build or a deploy, e.g. "the
     /// cluster gets a credential that can write".
     pub warnings: Vec<String>,
+    /// The code of each of `warnings`, in its order: `PULL_USES_PUSH_LOGIN`
+    /// while the cluster pulls with the push login. Ignored in a request.
+    #[serde(default)]
+    pub warning_codes: Vec<String>,
     pub updated_by: String,
     pub updated_at: String,
 }
@@ -199,6 +206,7 @@ fn kind_str(k: EnvironmentKind) -> &'static str {
 fn env_dto(e: Environment) -> EnvironmentDto {
     let strictness = e.strictness().as_str().to_owned();
     let warnings = e.warnings();
+    let warning_codes = e.warning_codes();
     let b = e.boundaries;
     EnvironmentDto {
         builder_image: b.builder_image,
@@ -209,6 +217,7 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         allow_broad_registry_token: b.allow_broad_registry_token,
         infra: infra_routes::placement_dto(b.infra),
         warnings,
+        warning_codes,
         id: e.id,
         name: e.name,
         description: e.description,
@@ -273,7 +282,8 @@ pub struct ProjectBuildDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request, response)]
 pub struct OwnImageDto {
-    /// The chart's values key: a deploy sets `<app>.image.repository` and `.tag`.
+    /// The application: by default a deploy sets `<app>.image.repository`
+    /// and `.tag`, `<app>.existingSecret` and `.secretKeys`.
     pub app: String,
     /// The image's name under the environment's registry.
     pub name: String,
@@ -282,6 +292,25 @@ pub struct OwnImageDto {
     /// From the repository's root; `.` by default.
     #[serde(default)]
     pub context: Option<String>,
+    /// The values path the chart reads the image's repository at
+    /// (`backend.image.repository`); default `<app>.image.repository`.
+    #[serde(default)]
+    pub repository_path: Option<String>,
+    /// The values path of its tag; default `<app>.image.tag`.
+    #[serde(default)]
+    pub tag_path: Option<String>,
+    /// For a chart that reads the image as one string: its values path, in
+    /// place of `repository_path` and `tag_path`.
+    #[serde(default)]
+    pub image_path: Option<String>,
+    /// The values path of the configuration secret's name; default
+    /// `<app>.existingSecret`.
+    #[serde(default)]
+    pub secret_name_path: Option<String>,
+    /// The values path of the configuration secret's keys; default
+    /// `<app>.secretKeys`.
+    #[serde(default)]
+    pub secret_keys_path: Option<String>,
 }
 
 fn build_dto(b: Option<super::model::OwnBuild>) -> ProjectBuildDto {
@@ -301,6 +330,11 @@ fn build_dto(b: Option<super::model::OwnBuild>) -> ProjectBuildDto {
                     name: i.name,
                     dockerfile: i.dockerfile,
                     context: Some(i.context),
+                    repository_path: i.values.repository,
+                    tag_path: i.values.tag,
+                    image_path: i.values.image,
+                    secret_name_path: i.values.secret_name,
+                    secret_keys_path: i.values.secret_keys,
                 })
                 .collect(),
             chart: Some(b.chart),
@@ -320,6 +354,13 @@ fn own_build(r: ProjectBuildDto) -> Result<Option<super::model::OwnBuild>, Canon
                     name: i.name,
                     dockerfile: i.dockerfile,
                     context: i.context.unwrap_or_else(|| ".".into()),
+                    values: super::model::ValuesPaths {
+                        repository: i.repository_path,
+                        tag: i.tag_path,
+                        image: i.image_path,
+                        secret_name: i.secret_name_path,
+                        secret_keys: i.secret_keys_path,
+                    },
                 })
                 .collect(),
             chart: r.chart.unwrap_or_default(),
@@ -533,7 +574,8 @@ pub struct StudioBuildRequest {
     /// The environment whose cluster builds it and whose registry gets it.
     #[schema(value_type = String)]
     pub environment_id: Uuid,
-    /// The `kubernetes` profile it builds; default `prod`.
+    /// The `kubernetes` profile it builds; absent or blank, the profile the
+    /// project binds to the environment, else `prod`.
     #[serde(default)]
     pub profile: Option<String>,
     /// The product's description in the repository; default where the
@@ -584,7 +626,8 @@ pub struct BuildWorkflowRequest {
     /// The environment whose registry the workflow publishes to.
     #[schema(value_type = String)]
     pub environment_id: Uuid,
-    /// The `kubernetes` profile it builds; default `prod`.
+    /// The `kubernetes` profile it builds; absent or blank, the profile the
+    /// project binds to the environment, else `prod`.
     #[serde(default)]
     pub profile: Option<String>,
     /// The product's description in the repository; default where the
@@ -728,6 +771,10 @@ pub struct DeploymentDto {
     pub outcome: Option<String>,
     /// A preview (ADR-0055); absent for a deploy of what runs there.
     pub preview: Option<PreviewDto>,
+    /// What the deploy said when it was asked and goes on with, `CODE:
+    /// message` each (`CONFIG_SECRET_SHADOWED_BY_DESCRIPTION`,
+    /// `INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`).
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -787,6 +834,7 @@ fn deployment_dto(d: Deployment) -> DeploymentDto {
             removed_at: p.removed_at,
             removal_error: p.removal_error,
         }),
+        warnings: d.warnings,
     }
 }
 
@@ -1280,13 +1328,21 @@ async fn start_build(
     Query(q): Query<ProjectQuery>,
     Json(body): Json<StudioBuildRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<StudioBuildDto>)> {
+    let profile = match body.profile.filter(|p| !p.trim().is_empty()) {
+        Some(p) => p,
+        None => {
+            envs.0
+                .profile_for(&ctx, q.project_id, body.environment_id)
+                .await
+        }
+    };
     let started = envs
         .0
         .request_build(
             &ctx,
             q.project_id,
             body.environment_id,
-            body.profile.as_deref().unwrap_or("prod"),
+            &profile,
             body.product_file.as_deref(),
             body.git_ref,
             false,
@@ -1341,7 +1397,14 @@ async fn scaffold_build_workflow(
     Query(q): Query<ProjectQuery>,
     Json(body): Json<BuildWorkflowRequest>,
 ) -> ApiResult<JsonBody<BuildWorkflowDto>> {
-    let profile = body.profile.unwrap_or_else(|| "prod".to_owned());
+    let profile = match body.profile.filter(|p| !p.trim().is_empty()) {
+        Some(p) => p,
+        None => {
+            envs.0
+                .profile_for(&ctx, q.project_id, body.environment_id)
+                .await
+        }
+    };
     let w = envs
         .0
         .propose_workflow(
@@ -1720,7 +1783,9 @@ pub fn register_routes(
         .operation_id("studio_environments.list_research_projects")
         .summary("The Research projects a connection may run products in")
         .description(
-            "For `?connection_id=` (an organization's `research` connection): the Constructor              Research projects its user owns or collaborates on, as Research's integration              service lists them (ADR-0049). What a Research environment is created from.",
+            "For `?connection_id=` (an organization's `research` connection): the Constructor \
+             Research projects its user owns or collaborates on, as Research's integration \
+             service lists them (ADR-0049). What a Research environment is created from.",
         )
         .tag(TAG)
         .authenticated()
@@ -1728,7 +1793,11 @@ pub fn register_routes(
         .query_param_typed("connection_id", true, "The research connection", "string")
         .query_param_typed("organization_id", false, "The organization", "string")
         .handler(list_research_projects)
-        .json_response_with_schema::<ResearchProjectListDto>(openapi, StatusCode::OK, "Its projects")
+        .json_response_with_schema::<ResearchProjectListDto>(
+            openapi,
+            StatusCode::OK,
+            "Its projects",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
@@ -1739,7 +1808,8 @@ pub fn register_routes(
         .operation_id("studio_environments.list_research_hardware")
         .summary("The hardware a Research project's services may run on")
         .description(
-            "For `?connection_id=`: the hardware configurations of the Research project its              user may use, trial ones marked (ADR-0049).",
+            "For `?connection_id=`: the hardware configurations of the Research project its \
+             user may use, trial ones marked (ADR-0049).",
         )
         .tag(TAG)
         .authenticated()
@@ -1748,7 +1818,11 @@ pub fn register_routes(
         .query_param_typed("connection_id", true, "The research connection", "string")
         .query_param_typed("organization_id", false, "The organization", "string")
         .handler(list_research_hardware)
-        .json_response_with_schema::<ResearchHardwareListDto>(openapi, StatusCode::OK, "Its hardware")
+        .json_response_with_schema::<ResearchHardwareListDto>(
+            openapi,
+            StatusCode::OK,
+            "Its hardware",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
@@ -1781,7 +1855,8 @@ pub fn register_routes(
         .operation_id("studio_environments.get_project_build")
         .summary("How a project builds")
         .description(
-            "For `?project_id=` (ADR-0054 §7): `gears`, from its product description, or              `own`, from the repository's own Dockerfiles and Helm chart.",
+            "For `?project_id=` (ADR-0054 §7): `gears`, from its product description, or \
+             `own`, from the repository's own Dockerfiles and Helm chart.",
         )
         .tag(TAG)
         .authenticated()
@@ -1798,7 +1873,9 @@ pub fn register_routes(
         .operation_id("studio_environments.update_project_build")
         .summary("Set how a project builds")
         .description(
-            "For `?project_id=`, by a member who may write the project's settings. A build in              Studio then generates the product on gears, or builds the Dockerfiles named and              publishes the chart folder named, each path from the repository's root.",
+            "For `?project_id=`, by a member who may write the project's settings. A build in \
+             Studio then generates the product on gears, or builds the Dockerfiles named and \
+             publishes the chart folder named, each path from the repository's root.",
         )
         .tag(TAG)
         .authenticated()
@@ -2036,33 +2113,42 @@ pub fn register_routes(
         .error_503(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::post("/studio-environments/v1/environments/{environment_id}/push-tokens")
-        .operation_id("studio_environments.create_push_token")
-        .summary("Get a token that pushes a build's images and chart to an environment's registry")
-        .description(
-            "For `?project_id=`, a member of a project the environment takes. The registry's              own token service issues a short-lived bearer token scoped to pull and push the              named repositories under the environment's prefix (ADR-0048 §1); the stored              login never leaves the server. Refused for a registry without a token service.",
-        )
-        .tag(TAG)
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("environment_id", "Environment id")
-        .query_param_typed("project_id", true, "The project", "string")
-        .json_request::<PushTokenRequest>(openapi, "What to push")
-        .handler(create_push_token)
-        .json_response_with_schema::<PushTokenDto>(openapi, StatusCode::CREATED, "Issued")
-        .error_400(openapi)
-        .error_401(openapi)
-        .error_403(openapi)
-        .error_404(openapi)
-        .error_500(openapi)
-        .error_503(openapi)
-        .register(router, openapi);
+    router =
+        OperationBuilder::post("/studio-environments/v1/environments/{environment_id}/push-tokens")
+            .operation_id("studio_environments.create_push_token")
+            .summary(
+                "Get a token that pushes a build's images and chart to an environment's registry",
+            )
+            .description(
+                "For `?project_id=`, a member of a project the environment takes. The registry's \
+             own token service issues a short-lived bearer token scoped to pull and push the \
+             named repositories under the environment's prefix (ADR-0048 §1); the stored \
+             login never leaves the server. Refused for a registry without a token service.",
+            )
+            .tag(TAG)
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("environment_id", "Environment id")
+            .query_param_typed("project_id", true, "The project", "string")
+            .json_request::<PushTokenRequest>(openapi, "What to push")
+            .handler(create_push_token)
+            .json_response_with_schema::<PushTokenDto>(openapi, StatusCode::CREATED, "Issued")
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_403(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .error_503(openapi)
+            .register(router, openapi);
 
     router = OperationBuilder::put("/studio-environments/v1/config-secrets/{key}")
         .operation_id("studio_environments.upsert_config_secret")
         .summary("Set a secret of a project's configuration in an environment")
         .description(
-            "For `?project_id=` and `?environment_id=`: the value of `key`, an environment              variable name, kept in credstore and never returned (ADR-0048 §7). Each deploy              there writes the project's secrets into the release's `<release>-config`              secret, which every application of the chart reads.",
+            "For `?project_id=` and `?environment_id=`: the value of `key`, an environment \
+             variable name, kept in credstore and never returned (ADR-0048 §7). Each deploy \
+             there writes the project's secrets into the release's `<release>-config` \
+             secret, which every application of the chart reads.",
         )
         .tag(TAG)
         .authenticated()
@@ -2085,7 +2171,8 @@ pub fn register_routes(
         .operation_id("studio_environments.delete_config_secret")
         .summary("Remove a secret of a project's configuration in an environment")
         .description(
-            "For `?project_id=` and `?environment_id=`. The next deploy there writes the              release's configuration secret without it.",
+            "For `?project_id=` and `?environment_id=`. The next deploy there writes the \
+             release's configuration secret without it.",
         )
         .tag(TAG)
         .authenticated()
@@ -2246,6 +2333,8 @@ pub fn register_routes(
     // namespace assignments and a build's plan (ADR-0062).
     router = images_routes::register(router, openapi);
     router = infra_routes::register(router, openapi);
+    // One build, one deployment, an environment's secret keys (docs/mcp.md).
+    router = pipeline_routes::register(router, openapi);
 
     router.layer(Extension(Environments(service)))
 }

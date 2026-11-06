@@ -254,6 +254,12 @@ jobs:
           short="$(echo "$GITHUB_SHA" | cut -c1-12)"
           base="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' ".gearbox/out/helm/$PRODUCT/Chart.yaml" | head -1)"
           version="${base:-0.1.0}-sha.$short"
+          # Unique per build, so a later build of the same commit never pushes
+          # over this one's chart: the lock it resolved, and the run.
+          if [ -f .gearbox/out/product.lock ]; then
+            version="$version.l$(sha256sum .gearbox/out/product.lock | cut -c1-8)"
+          fi
+          version="$version.n$GITHUB_RUN_NUMBER"
           helm package ".gearbox/out/helm/$PRODUCT" --version "$version" -d .gearbox/charts
           helm push ".gearbox/charts/$PRODUCT-$version.tgz" "oci://$PREFIX/charts"
           echo "CHART_VERSION=$version" >> "$GITHUB_ENV"
@@ -329,6 +335,11 @@ mod tests {
         assert!(y.contains("GEARBOX_REV: \"cf639255c2e63002bfb76764f3e397a5c61877de\""));
         assert!(y.contains("name: studio-build"));
         assert!(y.contains("PRODUCT_FILE: \"products/sample/product.gdl\""));
+        // Two runs of one commit publish two charts, not one over the other.
+        assert!(
+            y.contains("version=\"$version.l$(sha256sum .gearbox/out/product.lock | cut -c1-8)\"")
+        );
+        assert!(y.contains("version=\"$version.n$GITHUB_RUN_NUMBER\""));
         for placeholder in [
             "@PRODUCT_FILE@",
             "@PRODUCT@",

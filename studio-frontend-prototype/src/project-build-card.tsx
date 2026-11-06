@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { api, type OwnImage, type ProjectBuildSetting } from "./api";
 import { errText } from "./format";
-import { ON_GEARS, firstImage, ownBuildProblem } from "./project-build";
+import { ON_GEARS, VALUES_PATHS, firstImage, ownBuildProblem } from "./project-build";
 
 export function HowItBuilds({
   token,
@@ -78,7 +78,9 @@ export function HowItBuilds({
         <div data-own-build>
           <p className="sub">
             Paths are from the repository&apos;s root. A deploy sets <code>{"<values key>.image.repository"}</code> and{" "}
-            <code>.tag</code> for each image, so the chart reads its images from those keys. A build in your own CI that uploads{" "}
+            <code>.tag</code> for each image, and the configuration secret at <code>.existingSecret</code> and{" "}
+            <code>.secretKeys</code>, unless you say where the chart reads them; a chart that names none of the built images is
+            refused rather than run on its defaults. A build in your own CI that uploads{" "}
             <code>studio-build.json</code> shows here as well.
           </p>
           <table className="own-images">
@@ -92,7 +94,7 @@ export function HowItBuilds({
               </tr>
             </thead>
             <tbody>
-              {shown.images.map((i, n) => (
+              {shown.images.map((i, n) => [
                 <tr key={n}>
                   <td>
                     <input value={i.app} onChange={(e) => setImage(n, { app: e.target.value })} aria-label="Values key" />
@@ -125,8 +127,28 @@ export function HowItBuilds({
                       </button>
                     )}
                   </td>
-                </tr>
-              ))}
+                </tr>,
+                <tr key={`${n}-values`}>
+                  <td colSpan={5}>
+                    <details data-values-paths={i.app}>
+                      <summary>Where the chart reads it</summary>
+                      <div className="row">
+                        {VALUES_PATHS.map(({ key, label, fallback }) => (
+                          <label className="field" key={key}>
+                            {label}
+                            <input
+                              value={i[key] ?? ""}
+                              onChange={(e) => setImage(n, { [key]: e.target.value })}
+                              placeholder={fallback(i.app.trim() || "<values key>") || "one string, e.g. app.image"}
+                              aria-label={`${label} values path`}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </details>
+                  </td>
+                </tr>,
+              ])}
             </tbody>
           </table>
           <button

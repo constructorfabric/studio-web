@@ -280,9 +280,39 @@ pub struct GearboxCatalogueDto {
     /// calls only its own roots' gears "this project's".
     #[serde(default)]
     pub project_source_owners: std::collections::BTreeMap<String, Vec<String>>,
+    /// The organization's project sources the last read could not read, and
+    /// why: their gears are missing from the catalogue (or are the last ones
+    /// read), not absent.
+    #[serde(default)]
+    pub unreadable: Vec<UnreadableSourceDto>,
     /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
     /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
     pub catalogue: Value,
+}
+
+/// A project source the server could not read, and why ("the token for
+/// connection 'X' is not readable -- it may belong to another user").
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct UnreadableSourceDto {
+    /// The project it belongs to; absent when the organization's projects
+    /// could not be read at all.
+    #[schema(value_type = Option<String>)]
+    pub project_id: Option<Uuid>,
+    /// `owner/repo`, or `project config` when the project's list of sources
+    /// itself could not be read.
+    pub source: String,
+    pub reason: String,
+}
+
+impl From<super::project_roots::UnreadableSource> for UnreadableSourceDto {
+    fn from(u: super::project_roots::UnreadableSource) -> Self {
+        Self {
+            project_id: u.project_id,
+            source: u.source,
+            reason: u.reason,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -308,6 +338,10 @@ pub struct GearboxStatusDto {
     /// The organization's repositories left out because a platform
     /// repository has the same source id, by source id.
     pub shadowed: Vec<String>,
+    /// The organization's project sources the last read could not read, and
+    /// why.
+    #[serde(default)]
+    pub unreadable: Vec<UnreadableSourceDto>,
     /// Where a product's frontend starts in this deployment
     /// (`STUDIO_FRONTX_*`); filled whether or not Gearbox is.
     pub frontx: FrontxDefaultsDto,
@@ -444,6 +478,28 @@ pub struct ContractOverlapDto {
     pub already: Vec<String>,
     /// Crate names the candidate brings that provide it too.
     pub brought: Vec<String>,
+}
+
+/// A component's description file, as the server's checkout holds it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GdlFileDto {
+    /// The repository it was read from: a source id of the product, or a
+    /// gear repository of the corpus.
+    pub source: String,
+    /// Its path in that repository (`gears/x/gear.gdl`).
+    pub path: String,
+    pub text: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct GdlFileQuery {
+    pub project_id: Uuid,
+    /// A gear, by engine id or crate name: its `gear.gdl`.
+    pub gear: Option<String>,
+    /// A `.gdl` path in a repository: a micro-frontend's `frontx.gdl`, a
+    /// service's `service.gdl`.
+    pub path: Option<String>,
 }
 
 /// What adding a candidate would bring with it.
@@ -692,6 +748,10 @@ pub struct ProductPreviewDto {
     /// `ok` is false). The check carries on and is kept under the product's
     /// `checks.<profile>` when it finishes.
     pub checking: bool,
+    /// The project's sources the check could not read, and why: it ran
+    /// without them (its home repository's own gears are then missing).
+    #[serde(default)]
+    pub unreadable: Vec<UnreadableSourceDto>,
 }
 
 /// Where the scaffold landed, and what it wrote.
@@ -1006,6 +1066,76 @@ async fn scaffold_gear(
     }))
 }
 
+async fn get_gdl_file(
+    OrgCtx(ctx): OrgCtx,
+    Extension(product): Extension<Product>,
+    Query(q): Query<GdlFileQuery>,
+) -> ApiResult<JsonBody<GdlFileDto>> {
+    let project_id = q.project_id;
+    let gear = q.gear.as_deref().map(str::trim).filter(|g| !g.is_empty());
+    let path = q.path.as_deref().map(str::trim).filter(|p| !p.is_empty());
+    if gear.is_some() == path.is_some() {
+        return Err(StudioProductError::invalid_argument()
+            .with_constraint("name a `gear` or a `path`, one of them".to_string())
+            .create());
+    }
+    let gearbox = product.gearbox()?;
+    let (scope, home) = tokio::join!(
+        product.scope(&ctx, project_id, false),
+        product.home(&ctx, project_id),
+    );
+    // A repository still being cloned is read on the next ask; the corpus
+    // answers meanwhile. One that cannot be read is said when nothing else
+    // has the file, not taken for no repository.
+    let (home, missed) = match home {
+        Ok(home) => (home, None),
+        Err(e) => (None, Some(e)),
+    };
+    let still_reading = |e: &anyhow::Error| {
+        e.downcast_ref::<super::gearbox::HomeStillReading>()
+            .is_some()
+    };
+    let found = gearbox
+        .gdl_file(scope, home.as_ref(), gear, path)
+        .await
+        .map_err(|e| {
+            if still_reading(&e) {
+                CanonicalError::service_unavailable()
+                    .with_detail(format!("{e:#}"))
+                    .create()
+            } else {
+                CanonicalError::internal(format!("{e:#}")).create()
+            }
+        })?;
+    let Some(found) = found else {
+        let what = gear.map_or_else(
+            || path.unwrap_or_default().to_owned(),
+            |g| format!("gear.gdl of {g}"),
+        );
+        return Err(match missed {
+            Some(e) if still_reading(&e) => CanonicalError::service_unavailable()
+                .with_detail(format!("no gear repository has {what}, and {e:#}"))
+                .create(),
+            Some(e) => StudioProductError::not_found(format!(
+                "no repository the server reads has {what}; the project's own repository \
+                 could not be read: {e:#}"
+            ))
+            .with_resource(what)
+            .create(),
+            None => {
+                StudioProductError::not_found(format!("no repository the server reads has {what}"))
+                    .with_resource(what)
+                    .create()
+            }
+        });
+    };
+    Ok(Json(GdlFileDto {
+        source: found.source,
+        path: found.path,
+        text: found.text,
+    }))
+}
+
 async fn get_project_product(
     OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
@@ -1108,11 +1238,8 @@ async fn save_project_product(
         patch.insert("gears".into(), serde_json::json!(gears));
     }
     if let Some(profile) = body.profile {
-        if !PROFILES.contains(&profile.as_str()) {
-            return Err(invalid(format!(
-                "profile `{profile}` is not one of {}",
-                PROFILES.join(", ")
-            )));
+        if !super::gearbox::is_profile_id(&profile) {
+            return Err(invalid(format!("`{profile}` is not a profile id")));
         }
         patch.insert("profile".into(), profile.into());
     }
@@ -1365,6 +1492,12 @@ async fn gearbox_catalogue(
         roots,
         project_sources,
         project_source_owners,
+        unreadable: scope
+            .map(|org| gearbox.unreadable_sources_of(org))
+            .unwrap_or_default()
+            .into_iter()
+            .map(UnreadableSourceDto::from)
+            .collect(),
         // Written from the shared copy below instead of cloned into here.
         catalogue: Value::Null,
     };
@@ -1703,6 +1836,7 @@ async fn gearbox_status(
             problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
             sources: Vec::new(),
             shadowed: Vec::new(),
+            unreadable: Vec::new(),
             frontx: FrontxDefaultsDto::from_env(),
         }));
     };
@@ -1724,6 +1858,12 @@ async fn gearbox_status(
         profiles,
         problem: status.problem,
         shadowed: status.shadowed,
+        unreadable: scope
+            .map(|org| gearbox.unreadable_sources_of(org))
+            .unwrap_or_default()
+            .into_iter()
+            .map(UnreadableSourceDto::from)
+            .collect(),
         frontx: FrontxDefaultsDto::from_env(),
         sources: status
             .sources
@@ -1807,6 +1947,18 @@ async fn preview_product(
     );
     // The project's own repository is read as a build reads it (ADR-0060
     // §6): a description of its gears without it would leave them out.
+    // A home source the server cannot read is checked without, and said in
+    // the answer rather than left out silently.
+    let (home, unreadable) = match home {
+        Err(e) => match e.downcast::<super::project_roots::HomeUnreadable>() {
+            Ok(why) => {
+                tracing::warn!(%project_id, source = %why.0.source, reason = %why.0.reason, "studio-product: the check runs without the project's home source");
+                (Ok(None), vec![UnreadableSourceDto::from(why.0)])
+            }
+            Err(e) => (Err(e), Vec::new()),
+        },
+        ok => (ok, Vec::new()),
+    };
     let home = home.map_err(|e| {
         if e.downcast_ref::<super::gearbox::HomeStillReading>()
             .is_some()
@@ -1843,7 +1995,62 @@ async fn preview_product(
     } else {
         None
     };
+    // What the caller changed against the record: the latest revision is
+    // edited by that alone (ADR-0060 §4), never written over by a render.
+    let kept = product.service.descriptions().is_some();
+    let write = body.write.unwrap_or(false);
+    let latest = if kept {
+        product
+            .service
+            .latest_description(&ctx, project_id)
+            .await
+            .map_err(|e| descriptions_rest::internal(&e))?
+    } else {
+        None
+    };
+    let latest_text = match &latest {
+        Some(l) => Some(l.text.clone()),
+        // Without kept revisions, the repository's file is the latest. A
+        // read that failed is no missing file: written over by a render, the
+        // description would lose what the record does not hold.
+        None if write && !kept => product
+            .service
+            .read_project_file(&ctx, &project, &product_path)
+            .await
+            .map_err(|e| write_problem("the description could not be read", &e))?,
+        None => None,
+    };
+    let record_value = record.as_ref().map(|n| &n.value);
+    let removed: Vec<String> = record_value
+        .and_then(super::port::picks_of)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| !composed.gears.contains(p))
+        .collect();
+    let config_before =
+        super::gearbox::gear_config_from(record_value.and_then(|r| r.get("config")))
+            .unwrap_or_default();
+    let config_changed: Vec<String> = config
+        .iter()
+        .filter(|(k, v)| config_before.get(*k) != Some(*v))
+        .map(|(k, _)| k.clone())
+        .chain(
+            config_before
+                .keys()
+                .filter(|k| !config.contains_key(*k))
+                .cloned(),
+        )
+        .collect();
+    let frontend_change = match record_value.and_then(|r| r.get("frontend")) {
+        Some(Value::Null) => super::description_edit::FrontendChange::Remove,
+        Some(_) if frontend.is_some() => super::description_edit::FrontendChange::Write,
+        _ => super::description_edit::FrontendChange::Keep,
+    };
     let input = PreviewInput {
+        latest: latest_text,
+        removed,
+        config_changed,
+        frontend_change,
         product_id: body.product_id.clone(),
         product_path: product_path.clone(),
         name,
@@ -1863,7 +2070,16 @@ async fn preview_product(
     // never waits on a check to be kept (the check of a product of sixty
     // gears outlasted the gateway, and the save was lost with it).
     let described = gearbox.describe(scope, &input).await.map_err(|e| {
-        if e.downcast_ref::<super::gearbox::HomeStillReading>()
+        if let Some(drop) = e.downcast_ref::<super::description_edit::WouldDrop>() {
+            StudioProductError::failed_precondition()
+                .with_precondition_violation(
+                    "product_description",
+                    drop.to_string(),
+                    super::description_edit::DESCRIPTION_WOULD_DROP,
+                )
+                .create()
+        } else if e
+            .downcast_ref::<super::gearbox::HomeStillReading>()
             .is_some()
         {
             CanonicalError::service_unavailable()
@@ -1882,14 +2098,7 @@ async fn preview_product(
     // written only when the person publishes (§3). A deployment whose gear
     // has no database keeps writing branches, as before.
     let mut description_revision = None;
-    let kept = product.service.descriptions().is_some();
-    let write = body.write.unwrap_or(false);
     if write && kept {
-        let latest = product
-            .service
-            .latest_description(&ctx, project_id)
-            .await
-            .map_err(|e| descriptions_rest::internal(&e))?;
         // Nothing the latest revision had and the product still wants is
         // dropped without a word (ADR-0060 §4).
         if let Some(latest) = &latest {
@@ -2116,6 +2325,7 @@ async fn preview_product(
                 written,
                 description_revision,
                 checking: false,
+                unreadable,
             },
             verdict,
         ),
@@ -2449,6 +2659,31 @@ pub fn register_routes(
             StatusCode::OK,
             "Project product",
         )
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-product/v1/gdl-file")
+        .operation_id("studio_product.get_gdl_file")
+        .summary("A component's description file, as the server's checkout holds it")
+        .description(
+            "The `gear.gdl` of a gear (`gear`, engine id or crate name), or a `.gdl` \
+             file at `path` (a micro-frontend's `frontx.gdl`, a service's \
+             `service.gdl`), read from the project's own repository first and then \
+             from the gear repositories its product reads. 404 when none has it. \
+             Writes nothing.",
+        )
+        .tag("StudioProduct")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "Project tenant id")
+        .query_param("gear", false, "A gear's engine id or crate name")
+        .query_param("path", false, "A .gdl path relative to a repository's root")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(get_gdl_file)
+        .json_response_with_schema::<GdlFileDto>(openapi, StatusCode::OK, "The file")
+        .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)

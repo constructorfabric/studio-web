@@ -2467,7 +2467,11 @@ pub fn register_routes(
     .operation_id("studio_user.revoke_invitation")
     .summary("Withdraw an invitation")
     .description(
-        "Deletes it outright rather than marking it spent: an invitation nobody may use again          has nothing left to record, and a withdrawn row left behind would keep appearing in          the organization's list. Answers 404 when there is no such invitation in this          organization — the organization is part of the lookup, so one organization's owner          cannot withdraw another's.",
+        "Deletes it outright rather than marking it spent: an invitation nobody may use again \
+         has nothing left to record, and a withdrawn row left behind would keep appearing in \
+         the organization's list. Answers 404 when there is no such invitation in this \
+         organization — the organization is part of the lookup, so one organization's owner \
+         cannot withdraw another's.",
     )
     .tag("StudioUser")
     .authenticated()

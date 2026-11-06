@@ -23,6 +23,7 @@ Status: **proposed** · Date: 2026-11-04 · Amends `cpt-studio-adr-component-pas
   - [4. Images and charts come from the project's own path](#4-images-and-charts-come-from-the-projects-own-path)
   - [5. Install: a ready chart, or one generated from the passport](#5-install-a-ready-chart-or-one-generated-from-the-passport)
   - [6. The plan says it before the deploy](#6-the-plan-says-it-before-the-deploy)
+  - [Amendment 2026-11-05 — files, and an address that answers](#amendment-2026-11-05--files-and-an-address-that-answers)
 - [Consequences](#consequences)
 - [More Information](#more-information)
 - [Traceability](#traceability)
@@ -132,7 +133,9 @@ into a generated chart is needed.
 
 A project's infra services are a list on the project
 (`GET`/`PUT /infra-services?project_id=`). No two of them may provide the
-same capability. The engine's needs bind to capabilities: `postgres` to
+same capability.
+
+> Amended by ADR-0065 ([a product's infra services are said by its description and placed by the environment](0065-a-products-infra-services-are-said-by-its-description-and-placed-by-the-environment.md)): which services the product runs, their image and their configuration are `product(infra = [use_service(...)])` in `product.gdl`, and a deploy runs the services its build's lock resolved. The list keeps the environment's side: the copy of the image, a ready chart and its values, the public address. The engine's needs bind to capabilities: `postgres` to
 `postgres`, `oidc` to `oidc.issuer`, `keycloak` to `keycloak.admin_url`,
 `clickhouse` to `clickhouse.url`, `timescaledb` to `timescaledb.url`. The
 product map shows each need with the service that meets it, or the catalogue
@@ -203,6 +206,45 @@ uninstall of the service too.
 how it comes, from which image or chart, the variables it gives, and the code
 a deploy would be refused with now. The deploy screen shows it beside each
 environment. The environment form has the placement.
+
+### Amendment 2026-11-05 — files, and an address that answers
+
+A product's own Keycloak came up with no realm, and its issuer named
+`http://keycloak:8080` -- an address only the cluster reaches -- so sign-in
+broke after a deploy that succeeded. Two changes, both passport-agnostic.
+
+- **Files.** A service's record (the environment side, ADR-0065 §3) may carry
+  `files`: absolute path in the container → text, at most 20 files and
+  256 KiB together, no `.`/`..` names. The text may say the `provides`
+  template names (`{secret.KEY}`, `{host}`, `{public_url}`, `{namespace}`,
+  `{port.x}`, `{config.K}`), each checked against the passport; any other
+  brace is the file's own, so a JSON document needs no escaping. `args` are
+  appended to the passport's. The generated chart keeps the files in a
+  ConfigMap -- a Secret when one says `{secret.*}` -- mounts each read-only
+  by `subPath` at its path, and puts their sha-256 on the pod
+  (`studio.constructor.tech/files-sha256`) so a change restarts it. A ready
+  chart, the database step and a shared place do not apply them: the plan
+  says so in its `notes`. For Keycloak: a realm JSON at
+  `/opt/keycloak/data/import/<realm>.json` and `--import-realm`; the
+  prototype writes one from the passport's issuer path, with a public client
+  for the portal and a confidential one whose secret is
+  `{secret.OIDC_CLIENT_SECRET}`, which the passport now declares and
+  provides as `oidc.client_secret`.
+- **`{public_url}` is never the cluster's address.** When a capability or a
+  file of a service Studio installs (`generated` or `chart`) says
+  `{public_url}` and the project gives none, the plan and the deploy refuse
+  with `INFRA_PUBLIC_URL_MISSING`, naming what to set. With a `public_url`,
+  a generated chart carries an Ingress for the service's http port at that
+  host and path: TLS for `https://` with the placement's `ingress.tls_secret`
+  (else the controller's default certificate), its `ingress.annotations`,
+  and its `ingress.class`, else the environment's preview class. The plan's
+  `route` says the address. A ready chart routes itself through its values.
+
+This supersedes the Consequences' "a realm is not made" and "no Ingress for
+an infra service is made yet". Traceability: `infra.rs` `InfraIngress`,
+`check_ingress`, `files`, `PUBLIC_URL_MISSING`, `infra_ingress`,
+`FILES_HASH_ANNOTATION`; `rest_infra.rs` `InfraIngressDto`; the prototype's
+`keycloakRealm`, `withKeycloakRealm`, `FilesEditor`.
 
 ## Consequences
 

@@ -143,7 +143,9 @@ fn scope_check(scopes: anyhow::Result<TokenScopes>) -> DriverCheck {
                     String::new()
                 } else {
                     format!(
-                        "the token may also {}: a build Studio runs refuses it                          (REGISTRY_TOKEN_TOO_BROAD). Use a token with write:packages and                          read:packages only, and a read-only one for pulls",
+                        "the token may also {}: a build Studio runs refuses it \
+                         (REGISTRY_TOKEN_TOO_BROAD). Use a token with write:packages and \
+                         read:packages only, and a read-only one for pulls",
                         broad.join(", ")
                     )
                 },

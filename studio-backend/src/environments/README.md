@@ -250,8 +250,9 @@ once the run ends.
   watch runs, and the Job's own steps (`studio-backend build-prepare`,
   `build-publish`), which run in the builder image `builder_for` picks: the
   environment's `builder_image`, else `STUDIO_BUILDER_IMAGE` (the chart's
-  `backend.builds.builderImage`, `studio-builder@sha256:…` from CI), by
-  digest, never the server's own. The watch mints the push token once
+  `backend.builds.builderImage`, `studio-builder@sha256:…` from CI), else
+  `STUDIO_BUILDER_IMAGE_BUILT` (the builder CI baked into the backend image
+  of the same commit), by digest, never the server's own. The watch mints the push token once
   `prepare` names its images, and writes each published image as a record.
   The image must start as uid 1000, since the Job's pod is `runAsNonRoot` with every
   capability dropped: the published image does, and so does

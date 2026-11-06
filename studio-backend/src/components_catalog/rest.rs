@@ -80,7 +80,8 @@ impl Catalog {
             .map_err(|_| {
                 CanonicalError::service_unavailable()
                     .with_detail(
-                        "delivery activity is not available in this deployment                          (studio-insight is not configured)",
+                        "delivery activity is not available in this deployment \
+                         (studio-insight is not configured)",
                     )
                     .create()
             })
@@ -503,6 +504,38 @@ pub struct ProjectComponentListDto {
     pub total: u32,
     /// Repositories read.
     pub repos: u32,
+    /// The project's sources that could not be read, and why: their
+    /// components are missing from `items`, not absent. An object beside the
+    /// collection, so `items` stays the one array of the envelope.
+    #[serde(default)]
+    pub unreadable: UnreadableProjectSourcesDto,
+}
+
+/// The sources a read of a project's repositories left out.
+#[derive(Debug, Default)]
+#[toolkit_macros::api_dto(response)]
+pub struct UnreadableProjectSourcesDto {
+    pub sources: Vec<UnreadableProjectSourceDto>,
+}
+
+/// A project source a read left out, and why ("its connection … is not
+/// visible here: it was deleted, or it belongs to another user").
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct UnreadableProjectSourceDto {
+    /// `owner/repo`, or `project config` when the project's list of sources
+    /// itself could not be read.
+    pub source: String,
+    pub reason: String,
+}
+
+impl From<super::service::SkippedSource> for UnreadableProjectSourceDto {
+    fn from(s: super::service::SkippedSource) -> Self {
+        Self {
+            source: s.source,
+            reason: s.reason,
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -548,19 +581,21 @@ async fn list_project_components(
             items: Vec::new(),
             total: 0,
             repos: 0,
+            unreadable: UnreadableProjectSourcesDto::default(),
         }));
     };
     let now = time::OffsetDateTime::now_utc();
     let mut items = Vec::new();
     let mut repos_read = 0u32;
     let mut history_left = COMPONENT_HISTORY_MAX;
-    for source in catalog
+    let project_id = project.to_string();
+    let (sources, mut skipped) = catalog
         .service
-        .source_repos(&ctx, &project.to_string())
-        .await
-    {
+        .source_repos_checked(&ctx, &project_id)
+        .await;
+    for source in sources {
         let branch = (!source.branch.trim().is_empty()).then(|| source.branch.clone());
-        let Ok(repo) = crate::connectors::sdk::Repository::open(
+        let repo = match crate::connectors::sdk::Repository::open(
             &connectors,
             &ctx,
             source.tenant,
@@ -570,11 +605,27 @@ async fn list_project_components(
             branch.as_deref(),
         )
         .await
-        else {
-            continue;
+        {
+            Ok(repo) => repo,
+            Err(e) => {
+                skipped.push(super::service::SkippedSource::new(
+                    &project_id,
+                    &source.repo,
+                    format!("{e:#}"),
+                ));
+                continue;
+            }
         };
-        let Ok(tree) = repo.tree().await else {
-            continue;
+        let tree = match repo.tree().await {
+            Ok(tree) => tree,
+            Err(e) => {
+                skipped.push(super::service::SkippedSource::new(
+                    &project_id,
+                    &source.repo,
+                    format!("its files could not be listed: {e:#}"),
+                ));
+                continue;
+            }
         };
         repos_read += 1;
         let paths: Vec<String> = tree
@@ -690,6 +741,12 @@ async fn list_project_components(
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
         repos: repos_read,
+        unreadable: UnreadableProjectSourcesDto {
+            sources: skipped
+                .into_iter()
+                .map(UnreadableProjectSourceDto::from)
+                .collect(),
+        },
     }))
 }
 

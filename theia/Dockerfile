@@ -198,18 +198,18 @@ RUN --mount=type=secret,id=github_token \
 # tags versions, pin a `v<version>` release the same way.
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS gearbox
 # Until constructorfabric/gearbox#17 (GDL 1.5, `frontend = frontx_product(...)`)
-# merges, the engine is the snapshot of that PR's branch on its author's fork;
-# move back to a constructorfabric/gearbox release once it does.
+# and the GDL 1.6 infra services on top of it (`feat/product-infra`) merge, the
+# engine is a snapshot of that branch on its author's fork; move back to a
+# constructorfabric/gearbox release once they do.
 ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-c6bcfe5
-ARG STUDIO_GEARBOX_VERSION=0.1.0-c6bcfe5
-ARG STUDIO_GEARBOX_REF=c6bcfe58b40b00e94286cc4a3fa2734d5f8eaf3d
-ARG STUDIO_GEARBOX_SHA256=b886e945b83fd423ffca3dde6fa28796500063313ab842d7abae9342d0d5c0b7
+ARG STUDIO_GEARBOX_RELEASE=snapshot-f2deac5
+ARG STUDIO_GEARBOX_VERSION=0.1.0-f2deac5
+ARG STUDIO_GEARBOX_REF=f2deac58fee0144ad418abdd36abbc5d378e1474
+ARG STUDIO_GEARBOX_SHA256=acc86bffdde0417c91dfad0e3358ac14cd65953599ca72ca18c056110b62b305
 # Not used here: gearbox-engine.yml reads them for the desktop's archives.
 # Empty when the release has no archive for that platform: the workflow then
-# packs no engine for it (snapshot-c6bcfe5 has no macOS build; its runner
-# never came). Fill it in with the next release that has one.
-ARG STUDIO_GEARBOX_SHA256_WIN32_X64=912720b3265384916b95bccd30b21421dac8a2a31446bbd50b15eefa156770ba
+# packs no engine for it.
+ARG STUDIO_GEARBOX_SHA256_WIN32_X64=
 ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \

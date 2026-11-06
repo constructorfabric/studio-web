@@ -743,6 +743,21 @@ export interface Step {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** The steps the build itself does: nothing to check before it runs. */
+export const BUILD_DOES: readonly Step["id"][] = ["build", "ship"];
+
+/** What the steps add up to before a build: what to fix, how many steps
+ *  wait on it, and whether the rest is ready. */
+export function stepsSummary(steps: readonly Step[]): { tone: "ok" | "warn" | "danger" | "neutral"; text: string; fix: Step[] } {
+  const checks = steps.filter((s) => !BUILD_DOES.includes(s.id));
+  const fix = checks.filter((s) => s.state === "bad" || s.state === "warn");
+  const waiting = checks.filter((s) => s.state === "todo").length;
+  if (fix.length > 0)
+    return { tone: fix.some((s) => s.state === "bad") ? "danger" : "warn", text: `${plural(fix.length, "thing")} to fix`, fix };
+  if (waiting > 0) return { tone: "neutral", text: `${plural(waiting, "step")} not ready`, fix };
+  return { tone: "ok", text: "Ready to build", fix };
+}
+
 /** The steps a build takes, in order, each judged from what the catalogue and
  *  the product say. A step nothing automates yet says so. */
 export function assemblySteps(input: {
@@ -796,7 +811,7 @@ export function assemblySteps(input: {
     title: "Align FrontX versions",
     state: !shell || picked.length === 0 ? "todo" : differs > 0 ? "warn" : "ok",
     detail: !shell
-      ? "Needs a shell the catalogue knows"
+      ? "Waits for step 1: the versions are checked against a shell the catalogue knows"
       : picked.length === 0
         ? "Nothing to align"
         : [
@@ -825,8 +840,9 @@ export function assemblySteps(input: {
     id: "backend",
     title: "Reach the backend",
     state: !shell ? "todo" : shell.runtimeEnv === false ? "warn" : "ok",
-    detail:
-      shell?.runtimeEnv === false
+    detail: !shell
+      ? "Waits for step 1: how the shell finds the backend is read from the catalogue"
+      : shell.runtimeEnv === false
         ? "/cf goes to the product's api-gateway; the shell takes its addresses at build, so one image serves one environment"
         : "/cf goes to the product's api-gateway; the shell reads the issuer and client id from /env.js at start",
   });

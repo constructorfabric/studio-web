@@ -26,21 +26,16 @@ spec:
     name: studio-postgres-images
     major: 19
   primaryUpdateStrategy: unsupervised
-  # The ceiling every consumer is counted against. PostgreSQL's own default is
-  # also 100, so this changes nothing today — it is written down because the
-  # number is load-bearing: studio-backend/config/k8s.yaml sizes fourteen gear
-  # pools against it, and the Keycloak chart caps its pool against it too. An
-  # implicit default is not a budget anybody can check.
-  #
-  # 160 rather than PostgreSQL's default 100, and the number is load-bearing:
-  # studio-backend/config/k8s.yaml sizes sixteen gear pools against it and the
-  # Keycloak chart caps its pool against it. Two backend replicas need 134 for
-  # the backend alone and 154 with everyone else — which is what this headroom
-  # is for. The table in README.md shows why lowering the per-gear pools
-  # instead does not work.
-  #
-  # No `resources` change here, unlike dev: this cluster already has 4 Gi, and
-  # 160 backends at saturation is roughly 450 MB more than 100.
+  # The ceiling every consumer is counted against: 160 rather than
+  # PostgreSQL's default 100, and the number is load-bearing.
+  # studio-backend/config/k8s.yaml sizes its gear pools against it (62 per
+  # replica) and the Keycloak chart caps its pool against it. Two backend
+  # replicas need 124, and 144 with Keycloak, the bootstrap Job, the operator
+  # and the superuser reserve; README.md carries the table. When a new gear
+  # pool does not fit, lower the shared pool or give the gear a small one of
+  # its own before raising this: every backend is a process, so 160 of them
+  # is roughly 450 MB more resident memory at saturation (this cluster's 4 Gi
+  # already covers it; dev needed a bump).
   #
   # NOT RELOADABLE — changing it restarts PostgreSQL.
   postgresql:

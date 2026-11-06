@@ -215,7 +215,8 @@ async fn assign_identity(
         return Err(IdentityDirectoryError::failed_precondition()
             .with_precondition_violation(
                 identity_id.clone(),
-                "a platform administrator is not assigned from the directory;                  add them on the organization's People screen instead",
+                "a platform administrator is not assigned from the directory; \
+                 add them on the organization's People screen instead",
                 "PLATFORM_ADMIN_NOT_ASSIGNABLE",
             )
             .create());
@@ -302,7 +303,10 @@ pub fn register_routes(
         .operation_id("studio_identity.assign_user")
         .summary("Assign an identity to an organization")
         .description(
-            "Platform-admin-only onboarding action. Updates the Keycloak tenant membership and the              organization-level Owner/Admin/Member designation, and records the Studio membership.              A platform administrator is refused (400 `PLATFORM_ADMIN_NOT_ASSIGNABLE`): their              place in an organization is a membership made on its People screen.",
+            "Platform-admin-only onboarding action. Updates the Keycloak tenant membership and the \
+             organization-level Owner/Admin/Member designation, and records the Studio membership. \
+             A platform administrator is refused (400 `PLATFORM_ADMIN_NOT_ASSIGNABLE`): their \
+             place in an organization is a membership made on its People screen.",
         )
         .tag("StudioIdentity")
         .authenticated()

@@ -2050,7 +2050,9 @@ pub fn register_routes(
         .operation_id("studio_artifact_ingest.sync")
         .summary("Enqueue a background sync of a connector source into the graph")
         .description(
-            "Checks the connector token -- it must be held by a connection of the              organization the sync is for, its workspaces or projects, else 400              `CONNECTION_NOT_OWNED` -- then queues a durable `artifact.ingest` \
+            "Checks the connector token -- it must be held by a connection of the \
+             organization the sync is for, its workspaces or projects, else 400 \
+             `CONNECTION_NOT_OWNED` -- then queues a durable `artifact.ingest` \
              run: issues and pull requests from the API, and files from a \
              shallow git clone (or the tree API when no volume is mounted). \
              Answers 202 with the `run_id`: follow it at \

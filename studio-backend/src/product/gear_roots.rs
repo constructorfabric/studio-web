@@ -183,6 +183,27 @@ fn org_roots(listed: Vec<GearRepositorySource>, project_roots: Vec<GearRoot>) ->
     roots
 }
 
+/// What stands when organization `org`'s projects cannot be read at all: the
+/// roots and product files read last time -- not none, which would drop
+/// every project's gears -- and the reason, logged and said beside them.
+fn projects_not_read(
+    gearbox: &Gearbox,
+    org: Uuid,
+    e: &anyhow::Error,
+) -> super::project_roots::OrgProjects {
+    let reason = format!("the organization's projects could not be read: {e:#}");
+    warn!(organization_id = %org, %reason, "studio-product: the organization's project roots were not read");
+    super::project_roots::OrgProjects {
+        roots: gearbox.org_project_roots(org),
+        files: gearbox.project_files_of(org),
+        unreadable: vec![super::project_roots::UnreadableSource {
+            project_id: None,
+            source: super::project_roots::ORGANIZATION_PROJECTS.to_owned(),
+            reason,
+        }],
+    }
+}
+
 /// Read organization `org`'s gear repositories and its projects' own roots
 /// and product files into the engine: the slow part is the projects', a
 /// clone or fetch of each repository (bounded by `project_roots`' deadline).
@@ -203,11 +224,13 @@ async fn read_org(
     };
     // Its projects' own gears too: the directories their product.gdl
     // names, read from the repositories they are already connected by.
-    let (project_roots, files) = match acting_in(ctx, org) {
+    let read = match acting_in(ctx, org) {
         Ok(octx) => super::project_roots::read(gearbox, connectors, hub, &octx, org).await,
-        Err(_) => Default::default(),
+        Err(e) => projects_not_read(gearbox, org, &e),
     };
-    gearbox.use_project_files(org, files);
+    let project_roots = read.roots;
+    gearbox.use_project_files(org, read.files);
+    gearbox.use_unreadable_sources(org, read.unreadable);
     match listed {
         Ok(list) => gearbox.use_org_repositories(org, org_roots(list, project_roots)),
         Err(e) => {
@@ -365,16 +388,46 @@ mod tests {
         assert_eq!(ids, [("acme-gears", false), ("shop-backend", true)]);
     }
 
-    #[test]
-    fn one_read_of_an_organizations_roots_runs_at_a_time() {
-        let gearbox = Arc::new(Gearbox::new(super::super::gearbox::GearboxConfig {
+    fn gearbox() -> Arc<Gearbox> {
+        Arc::new(Gearbox::new(super::super::gearbox::GearboxConfig {
             bin: "gearbox".into(),
             workdir: std::env::temp_dir(),
             corpus_url: String::new(),
             corpus_ref: "main".into(),
             corpus_id: "gears-rust".into(),
             refresh: Duration::from_secs(600),
-        }));
+        }))
+    }
+
+    #[test]
+    fn projects_not_read_keep_their_roots_and_say_why() {
+        let gearbox = gearbox();
+        let org = Uuid::from_u128(0x0b);
+        let project_root = GearRoot {
+            subdir: Some("shop-backend".to_owned()),
+            ..root_of(repository("shop-backend"))
+        };
+        gearbox.use_org_repositories(org, vec![project_root]);
+        let read = projects_not_read(&gearbox, org, &anyhow::anyhow!("no scope for {org}"));
+        assert_eq!(read.roots.len(), 1, "the last roots stand, not none");
+        assert_eq!(read.unreadable.len(), 1);
+        assert_eq!(
+            read.unreadable[0].source,
+            super::super::project_roots::ORGANIZATION_PROJECTS
+        );
+        assert!(read.unreadable[0].reason.contains("no scope for"));
+        gearbox.use_unreadable_sources(org, read.unreadable.clone());
+        assert_eq!(gearbox.unreadable_sources_of(org), read.unreadable);
+        assert!(
+            gearbox
+                .unreadable_sources_of(Uuid::from_u128(0x0c))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn one_read_of_an_organizations_roots_runs_at_a_time() {
+        let gearbox = gearbox();
         let org = Uuid::from_u128(0x0a);
         assert!(!gearbox.org_roots_ever_read(org));
         gearbox.use_org_repositories(org, vec![root_of(repository("acme-gears"))]);

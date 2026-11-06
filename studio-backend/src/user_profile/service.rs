@@ -818,7 +818,8 @@ impl IdentityService {
             tracing::warn!(
                 user = %user_id,
                 organization = %org_id,
-                "studio-user: could not join the new person to the configured organization:                  {error:#}"
+                "studio-user: could not join the new person to the configured organization: \
+                 {error:#}"
             );
         }
         Ok(user_id)

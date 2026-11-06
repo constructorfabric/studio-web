@@ -97,10 +97,7 @@ fn registry_src() -> Option<PathBuf> {
 /// Names declared twice that never meet in the registry, each with why. A
 /// type a handler returns but no operation registers a schema for is not in
 /// the registry; it would clash the day one does.
-const KNOWN: &[(&str, &str)] = &[(
-    "AnalyzeEnqueuedDto",
-    "spec_quality's is returned but registered by no operation; documents' is",
-)];
+const KNOWN: &[(&str, &str)] = &[];
 
 /// Each schema type name to the places that declare it.
 fn declarations(crate_root: &Path) -> (BTreeMap<String, BTreeSet<String>>, usize, usize) {

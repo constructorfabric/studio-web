@@ -138,6 +138,14 @@ fn default_pattern() -> String {
 /// (ADR-0062 §7): one per project, beside its runtime namespaces.
 pub const DEFAULT_BUILD_NAMESPACE_PATTERN: &str = "{project}-build";
 
+/// The warning an environment carries while the cluster pulls with the push
+/// login: it names no read-only pull identity (ADR-0062 §2).
+pub const PULL_USES_PUSH_LOGIN: &str = "PULL_USES_PUSH_LOGIN";
+
+/// What [`PULL_USES_PUSH_LOGIN`] says.
+pub const PULL_USES_PUSH_LOGIN_MESSAGE: &str = "the cluster gets a credential that can write: give \
+     the environment a read-only pull connection";
+
 /// What separates a project's build from Studio and from its runtime, per
 /// environment (ADR-0062): the builder image, the registry identities, the
 /// build namespace, and the namespaces a cluster gives when Studio may not
@@ -540,7 +548,8 @@ pub fn checked_for_project(
     if input.protected {
         return Err(invalid(
             "protected",
-            "an environment whose deploys need approval is the organization's: ask an              organization administrator for one",
+            "an environment whose deploys need approval is the organization's: ask an \
+             organization administrator for one",
         ));
     }
     let visible = EnvironmentList {
@@ -692,17 +701,34 @@ impl Environment {
     /// What is not wrong enough to refuse but should be fixed, in a
     /// sentence each.
     pub fn warnings(&self) -> Vec<String> {
+        self.coded_warnings()
+            .into_iter()
+            .map(|(_, message)| message.to_owned())
+            .collect()
+    }
+
+    /// The codes of [`Self::warnings`], in the same order: what a screen
+    /// keys a warning on.
+    pub fn warning_codes(&self) -> Vec<String> {
+        self.coded_warnings()
+            .into_iter()
+            .map(|(code, _)| code.to_owned())
+            .collect()
+    }
+
+    fn coded_warnings(&self) -> Vec<(&'static str, &'static str)> {
         let mut out = Vec::new();
-        if self.registry_connection_id.is_some()
-            && self.boundaries.registry_pull_connection_id.is_none()
-        {
-            out.push(
-                "the cluster gets a credential that can write: give the environment a read-only \
-                 pull connection"
-                    .to_owned(),
-            );
+        if self.pulls_with_push_login() {
+            out.push((PULL_USES_PUSH_LOGIN, PULL_USES_PUSH_LOGIN_MESSAGE));
         }
         out
+    }
+
+    /// The cluster pulls with the push login: no pull identity is named, so
+    /// [`Self::pull_connection`] falls back to the registry connection.
+    pub fn pulls_with_push_login(&self) -> bool {
+        self.registry_connection_id.is_some()
+            && self.boundaries.registry_pull_connection_id.is_none()
     }
 
     /// The namespace builds of a project with `slug` run in here.
@@ -793,6 +819,10 @@ pub struct BindingList {
     /// The infra services the product runs beside its gears (ADR-0064).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub infra: Vec<super::infra::InfraService>,
+    /// The infra services each recent build's lock resolved (ADR-0065 §3),
+    /// newest first: what a deploy of that build runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub built_infra: Vec<super::infra::BuiltInfra>,
 }
 
 /// A project built without a product description (ADR-0054 §7): the
@@ -807,8 +837,8 @@ pub struct OwnBuild {
 /// One image of an [`OwnBuild`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwnImage {
-    /// The chart's values key for it: a deploy sets `<app>.image.repository`
-    /// and `<app>.image.tag`.
+    /// The application: unless [`Self::values`] says otherwise, a deploy
+    /// sets `<app>.image.repository` and `<app>.image.tag`.
     pub app: String,
     /// The image's name under the environment's registry (`shop-api`).
     pub name: String,
@@ -817,10 +847,137 @@ pub struct OwnImage {
     /// The build context, from the repository's root; `.` by default.
     #[serde(default = "default_context")]
     pub context: String,
+    /// Where the repository's chart reads this image and its configuration
+    /// secret; each path not given is the Gearbox convention.
+    #[serde(default, skip_serializing_if = "ValuesPaths::is_default")]
+    pub values: ValuesPaths,
 }
 
 fn default_context() -> String {
     ".".to_owned()
+}
+
+/// Where a chart reads one application's image and configuration secret, as
+/// dotted values paths (`backend.image.repository`). A path not given is the
+/// convention Gearbox's charts follow: `<app>.image.repository`,
+/// `<app>.image.tag`, `<app>.existingSecret`, `<app>.secretKeys`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValuesPaths {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// The whole image as one string (`host/repo:tag@digest`), for a chart
+    /// that reads it so; in place of `repository` and `tag`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// The configuration secret's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_name: Option<String>,
+    /// The configuration secret's keys, a list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_keys: Option<String>,
+}
+
+impl ValuesPaths {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn repository_at(&self, app: &str) -> String {
+        self.repository
+            .clone()
+            .unwrap_or_else(|| format!("{app}.image.repository"))
+    }
+
+    fn tag_at(&self, app: &str) -> String {
+        self.tag
+            .clone()
+            .unwrap_or_else(|| format!("{app}.image.tag"))
+    }
+
+    fn secret_name_at(&self, app: &str) -> String {
+        self.secret_name
+            .clone()
+            .unwrap_or_else(|| format!("{app}.existingSecret"))
+    }
+
+    fn secret_keys_at(&self, app: &str) -> String {
+        self.secret_keys
+            .clone()
+            .unwrap_or_else(|| format!("{app}.secretKeys"))
+    }
+
+    /// Trimmed, empty ones dropped, each a values path; `image` alone or
+    /// `repository` and `tag`; no path named twice.
+    fn checked(self, app: &str) -> Result<Self, Invalid> {
+        let clean = |p: Option<String>| -> Result<Option<String>, Invalid> {
+            match p.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()) {
+                None => Ok(None),
+                Some(p) if is_values_path(&p) => Ok(Some(p)),
+                Some(p) => Err(invalid(
+                    "images",
+                    format!(
+                        "'{p}' ({app}) is not a values path: keys of letters, digits, '_' and \
+                         '-' joined by '.', e.g. backend.image.repository"
+                    ),
+                )),
+            }
+        };
+        let v = Self {
+            repository: clean(self.repository)?,
+            tag: clean(self.tag)?,
+            image: clean(self.image)?,
+            secret_name: clean(self.secret_name)?,
+            secret_keys: clean(self.secret_keys)?,
+        };
+        if v.image.is_some() && (v.repository.is_some() || v.tag.is_some()) {
+            return Err(invalid(
+                "images",
+                format!(
+                    "{app}: the chart reads its image as one string or as repository and tag, \
+                     not both"
+                ),
+            ));
+        }
+        let image_paths = match &v.image {
+            Some(i) => vec![i.clone()],
+            None => vec![v.repository_at(app), v.tag_at(app)],
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for p in image_paths
+            .into_iter()
+            .chain([v.secret_name_at(app), v.secret_keys_at(app)])
+        {
+            if !seen.insert(p.clone()) {
+                return Err(invalid(
+                    "images",
+                    format!("{app}: values path '{p}' is named twice"),
+                ));
+            }
+        }
+        Ok(v)
+    }
+}
+
+/// A dotted values path: at most 12 keys of `[A-Za-z0-9_-]`.
+pub fn is_values_path(p: &str) -> bool {
+    p.len() <= 200
+        && p.split('.').count() <= 12
+        && p.split('.').all(|k| {
+            !k.is_empty()
+                && k.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        })
+}
+
+/// `v` laid at the dotted `path` of `values`.
+fn set_path(values: &mut serde_json::Value, path: &str, v: serde_json::Value) {
+    let mut over = v;
+    for key in path.rsplit('.') {
+        over = serde_json::json!({ key: over });
+    }
+    merge(values, over);
 }
 
 /// A path inside the repository: relative, no `..`, no backslash.
@@ -895,6 +1052,7 @@ pub fn checked_own_build(mut b: OwnBuild) -> Result<OwnBuild, Invalid> {
                 format!("'{}' is not a folder in the repository", i.context),
             ));
         }
+        i.values = std::mem::take(&mut i.values).checked(&i.app)?;
     }
     b.chart = b
         .chart
@@ -954,30 +1112,43 @@ pub fn merge(base: &mut serde_json::Value, over: serde_json::Value) {
 /// and the pull secret over them, then each application pointed at the
 /// release's configuration secret when it has keys (`existingSecret`,
 /// `secretKeys`, which a generated chart turns into environment variables).
+/// A repository's own build (`own`) names where its chart reads them.
 pub fn deploy_values(
     env: &Environment,
     images: &[DeployImage],
     binding: Option<&serde_json::Value>,
     secret_keys: &[String],
     release: &str,
+    own: Option<&OwnBuild>,
 ) -> serde_json::Value {
     let mut values = binding
         .filter(|v| v.is_object())
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
-    merge(&mut values, image_values(env, images));
+    merge(&mut values, image_values(env, images, own));
     if !secret_keys.is_empty() {
         for i in images.iter().filter(|i| !is_generated_ui(i)) {
-            merge(
+            let paths = paths_of(&i.app, own);
+            set_path(
                 &mut values,
-                serde_json::json!({ i.app.clone(): {
-                    "existingSecret": config_secret_name(release),
-                    "secretKeys": secret_keys,
-                }}),
+                &paths.secret_name_at(&i.app),
+                config_secret_name(release).into(),
+            );
+            set_path(
+                &mut values,
+                &paths.secret_keys_at(&i.app),
+                serde_json::json!(secret_keys),
             );
         }
     }
     values
+}
+
+/// Where `own`'s chart reads application `app`; the convention otherwise.
+fn paths_of(app: &str, own: Option<&OwnBuild>) -> ValuesPaths {
+    own.and_then(|o| o.images.iter().find(|i| i.app == app))
+        .map(|i| i.values.clone())
+        .unwrap_or_default()
 }
 
 /// Bindings as written: each environment once (it runs one profile), each a
@@ -1024,6 +1195,7 @@ pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
         environments: Vec::new(),
         build: None,
         infra: Vec::new(),
+        built_infra: Vec::new(),
     })
 }
 
@@ -1110,6 +1282,11 @@ pub fn push_paths(prefix: &str, names: &[String]) -> Result<Vec<String>, Invalid
 pub struct ChartRef {
     pub reference: String,
     pub version: String,
+    /// The digest the build pushed it as (`sha256:…`): a deploy of the build
+    /// installs exactly that, whatever the version names by then. Absent for
+    /// a chart a person names, and a build that recorded none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
 }
 
 /// The chart reference a deploy request names, checked against the
@@ -1177,6 +1354,7 @@ pub fn check_chart_ref(
     Ok(ChartRef {
         reference: reference.to_owned(),
         version: version.to_owned(),
+        digest: None,
     })
 }
 
@@ -1213,8 +1391,10 @@ pub struct Deployment {
     #[serde(default)]
     pub images: Vec<DeployImage>,
     pub namespace: String,
-    /// The chart's sha256, so a record says which chart it installed; empty
-    /// for a chart named by reference, which [`Self::chart_ref`] says.
+    /// The chart's sha256, so a record says which chart it installed: an
+    /// uploaded chart's, or the digest a build pushed its published chart as
+    /// (hex, without `sha256:`); empty for a chart named by reference alone,
+    /// which [`Self::chart_ref`] says.
     #[serde(default)]
     pub chart_sha256: String,
     /// The published chart it installs (ADR-0048 §3), when it named one
@@ -1251,6 +1431,12 @@ pub struct Deployment {
     /// gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<Preview>,
+    /// What the deploy said when it was asked and goes on with, `CODE:
+    /// message` each: a configuration secret the description wins over
+    /// (`CONFIG_SECRET_SHADOWED_BY_DESCRIPTION`), an issuer pods may not
+    /// reach (`INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 impl Deployment {
@@ -1336,7 +1522,7 @@ fn default_preview_max_live() -> u32 {
 }
 
 /// Is `s` a DNS name: dot-separated labels, at most 253 characters?
-fn is_dns_name(s: &str) -> bool {
+pub(super) fn is_dns_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 253 && s.split('.').all(is_dns_label)
 }
 
@@ -1534,6 +1720,24 @@ pub struct DeploymentList {
 }
 
 impl DeploymentList {
+    /// The deployment already waiting for a decision that `d` would repeat:
+    /// the same project, environment and action, a preview or not alike,
+    /// and the same release (the same build, when both name one).
+    pub fn waiting_like(&self, d: &Deployment) -> Option<Uuid> {
+        self.items
+            .iter()
+            .find(|x| {
+                x.id != d.id
+                    && x.state == DeploymentState::AwaitingApproval
+                    && x.project_id == d.project_id
+                    && x.environment_id == d.environment_id
+                    && x.action == d.action
+                    && x.preview.is_some() == d.preview.is_some()
+                    && x.same_release(d)
+            })
+            .map(|x| x.id)
+    }
+
     /// Put `d` first and trim the history to [`HISTORY`], keeping the latest
     /// deployment of every project and environment (a preview is not what
     /// runs there), every one still waiting for a decision, and every
@@ -1563,31 +1767,33 @@ impl DeploymentList {
 /// `global.imagePullSecrets`, which a generated chart puts on every pod --
 /// its applications run as service accounts of their own, so the namespace's
 /// `default` account alone would not reach them (ADR-0048 §2).
-pub fn image_values(env: &Environment, images: &[DeployImage]) -> serde_json::Value {
-    let mut values = serde_json::Map::new();
+pub fn image_values(
+    env: &Environment,
+    images: &[DeployImage],
+    own: Option<&OwnBuild>,
+) -> serde_json::Value {
+    let mut values = serde_json::json!({});
     if env.registry_connection_id.is_some() {
-        values.insert(
-            "global".into(),
-            serde_json::json!({ "imagePullSecrets": [PULL_SECRET_NAME] }),
-        );
+        values["global"] = serde_json::json!({ "imagePullSecrets": [PULL_SECRET_NAME] });
     }
     for i in images {
+        let full = env.image(&i.image);
         if is_generated_ui(i) {
-            values.insert(
-                i.app.clone(),
-                serde_json::json!({ "image": env.image(&i.image) }),
-            );
+            set_path(&mut values, &format!("{}.image", i.app), full.into());
             continue;
         }
-        let (repository, tag) = split_image(&env.image(&i.image));
-        let mut image = serde_json::Map::new();
-        image.insert("repository".into(), repository.into());
-        if let Some(tag) = tag {
-            image.insert("tag".into(), tag.into());
+        let paths = paths_of(&i.app, own);
+        if let Some(at) = &paths.image {
+            set_path(&mut values, at, full.into());
+            continue;
         }
-        values.insert(i.app.clone(), serde_json::json!({ "image": image }));
+        let (repository, tag) = split_image(&full);
+        set_path(&mut values, &paths.repository_at(&i.app), repository.into());
+        if let Some(tag) = tag {
+            set_path(&mut values, &paths.tag_at(&i.app), tag.into());
+        }
     }
-    serde_json::Value::Object(values)
+    values
 }
 
 /// A generated product's UI image: Gearbox's chart reads it as one string,
@@ -1747,11 +1953,13 @@ mod tests {
         let chart = ChartRef {
             reference: "oci://ghcr.io/acme/charts/shop".into(),
             version: "1".into(),
+            digest: None,
         };
         assert!(check_chart_in_project(&chart, own).is_err());
         let chart = ChartRef {
             reference: "oci://ghcr.io/acme/shop/charts/shop".into(),
             version: "1".into(),
+            digest: None,
         };
         assert!(check_chart_in_project(&chart, own).is_ok());
     }
@@ -1766,9 +1974,13 @@ mod tests {
         e.registry_connection_id = Some(Uuid::from_u128(1));
         assert_eq!(e.pull_connection(), Some(Uuid::from_u128(1)));
         assert!(e.warnings()[0].contains("can write"));
+        assert_eq!(e.warning_codes(), [PULL_USES_PUSH_LOGIN]);
+        assert!(e.pulls_with_push_login());
         e.boundaries.registry_pull_connection_id = Some(Uuid::from_u128(2));
         assert_eq!(e.pull_connection(), Some(Uuid::from_u128(2)));
         assert!(e.warnings().is_empty());
+        assert!(e.warning_codes().is_empty());
+        assert!(!e.pulls_with_push_login());
         assert_eq!(e.build_namespace_for("shop").unwrap(), "shop-build");
     }
 
@@ -1908,11 +2120,40 @@ mod tests {
     }
 
     #[test]
+    fn a_release_waits_for_a_decision_once_per_environment() {
+        let waiting = |n: u128, build: &str| {
+            let mut d = deployment(n, 1, DeploymentState::AwaitingApproval);
+            d.build = Some(build.into());
+            d
+        };
+        let mut list = DeploymentList::default();
+        list.record(waiting(1, "b-1"));
+        assert_eq!(
+            list.waiting_like(&waiting(2, "b-1")),
+            Some(Uuid::from_u128(1))
+        );
+        assert_eq!(list.waiting_like(&waiting(1, "b-1")), None, "not itself");
+        assert_eq!(list.waiting_like(&waiting(2, "b-2")), None, "another build");
+        let mut elsewhere = waiting(2, "b-1");
+        elsewhere.environment_id = Uuid::from_u128(10);
+        assert_eq!(list.waiting_like(&elsewhere), None, "another environment");
+        let mut other_project = waiting(2, "b-1");
+        other_project.project_id = Uuid::from_u128(3);
+        assert_eq!(list.waiting_like(&other_project), None);
+        // Once decided, the release may be asked for again.
+        let mut decided = waiting(1, "b-1");
+        decided.state = DeploymentState::Succeeded;
+        list.record(decided);
+        assert_eq!(list.waiting_like(&waiting(2, "b-1")), None);
+    }
+
+    #[test]
     fn without_builds_a_release_is_its_chart_and_images() {
         let mut a = placed(DeploymentState::Succeeded, Uuid::from_u128(2));
         a.chart_ref = Some(ChartRef {
             reference: "oci://r/p".into(),
             version: "1".into(),
+            digest: None,
         });
         let mut b = a.clone();
         assert!(a.same_release(&b));
@@ -1936,6 +2177,7 @@ mod tests {
             Some(&binding),
             &["SMTP_PASSWORD".into()],
             "shop",
+            None,
         );
         assert_eq!(v["api"]["replicaCount"], 2);
         assert_eq!(
@@ -1948,7 +2190,7 @@ mod tests {
         );
         assert_eq!(v["api"]["existingSecret"], "shop-config");
         assert_eq!(v["api"]["secretKeys"][0], "SMTP_PASSWORD");
-        let plain = deploy_values(&e, &images, None, &[], "shop");
+        let plain = deploy_values(&e, &images, None, &[], "shop", None);
         assert!(plain["api"].get("existingSecret").is_none());
     }
 
@@ -2008,10 +2250,10 @@ mod tests {
         );
         assert_eq!(e.image("ghcr.io/acme/gbx-api:1"), "ghcr.io/acme/gbx-api:1");
         assert_eq!(e.image("gbx-api:1"), "ghcr.io/acme/gbx-api:1");
-        let v = image_values(&e, &[]);
+        let v = image_values(&e, &[], None);
         assert!(v.get("global").is_none(), "no login, no pull secret");
         e.registry_connection_id = Some(Uuid::from_u128(9));
-        let v = image_values(&e, &[]);
+        let v = image_values(&e, &[], None);
         assert_eq!(v["global"]["imagePullSecrets"][0], PULL_SECRET_NAME);
     }
 
@@ -2138,7 +2380,7 @@ mod tests {
                 image: "studio/gbx-shop-frontend:sha-1".into(),
             },
         ];
-        let v = deploy_values(&e, &images, None, &["K".into()], "shop");
+        let v = deploy_values(&e, &images, None, &["K".into()], "shop", None);
         assert_eq!(
             v["ui"],
             serde_json::json!({ "image": "ghcr.io/acme/studio/gbx-shop-frontend:sha-1" })
@@ -2151,8 +2393,121 @@ mod tests {
                 app: "ui".into(),
                 image: "studio/web:1".into(),
             }],
+            None,
         );
         assert_eq!(own["ui"]["image"]["repository"], "ghcr.io/acme/studio/web");
+    }
+
+    fn own_image(app: &str, values: ValuesPaths) -> OwnImage {
+        OwnImage {
+            app: app.into(),
+            name: format!("shop-{app}"),
+            dockerfile: "Dockerfile".into(),
+            context: ".".into(),
+            values,
+        }
+    }
+
+    #[test]
+    fn an_own_build_lays_images_and_its_secret_where_its_chart_reads_them() {
+        let e = env("prod");
+        let own = OwnBuild {
+            images: vec![
+                own_image(
+                    "api",
+                    ValuesPaths {
+                        repository: Some("backend.container.repo".into()),
+                        tag: Some("backend.container.version".into()),
+                        secret_name: Some("backend.envFrom.secret".into()),
+                        secret_keys: Some("backend.envFrom.keys".into()),
+                        ..ValuesPaths::default()
+                    },
+                ),
+                own_image(
+                    "web",
+                    ValuesPaths {
+                        image: Some("frontend.image".into()),
+                        ..ValuesPaths::default()
+                    },
+                ),
+                own_image("worker", ValuesPaths::default()),
+            ],
+            chart: "chart/shop".into(),
+        };
+        let images = [
+            DeployImage {
+                app: "api".into(),
+                image: "shop/api:sha-1@sha256:aa".into(),
+            },
+            DeployImage {
+                app: "web".into(),
+                image: "shop/web:sha-1".into(),
+            },
+            DeployImage {
+                app: "worker".into(),
+                image: "shop/worker:sha-1".into(),
+            },
+        ];
+        let v = deploy_values(&e, &images, None, &["K".into()], "shop", Some(&own));
+        assert_eq!(v["backend"]["container"]["repo"], "ghcr.io/acme/shop/api");
+        assert_eq!(v["backend"]["container"]["version"], "sha-1@sha256:aa");
+        assert_eq!(v["backend"]["envFrom"]["secret"], "shop-config");
+        assert_eq!(v["backend"]["envFrom"]["keys"][0], "K");
+        assert!(v.get("api").is_none(), "nothing at the convention's keys");
+        assert_eq!(v["frontend"]["image"], "ghcr.io/acme/shop/web:sha-1");
+        assert_eq!(v["web"]["existingSecret"], "shop-config");
+        // An image that names no paths keeps Gearbox's convention.
+        assert_eq!(v["worker"]["image"]["tag"], "sha-1");
+        assert_eq!(v["worker"]["secretKeys"][0], "K");
+    }
+
+    #[test]
+    fn an_own_builds_values_paths_are_checked() {
+        let build = |values: ValuesPaths| OwnBuild {
+            images: vec![own_image("api", values)],
+            chart: "chart".into(),
+        };
+        let ok = checked_own_build(build(ValuesPaths {
+            repository: Some(" backend.image.repo ".into()),
+            tag: Some("  ".into()),
+            ..ValuesPaths::default()
+        }))
+        .unwrap();
+        assert_eq!(
+            ok.images[0].values.repository.as_deref(),
+            Some("backend.image.repo")
+        );
+        assert_eq!(
+            ok.images[0].values.tag, None,
+            "an empty path is the default"
+        );
+        for bad in [
+            ValuesPaths {
+                repository: Some("a..b".into()),
+                ..ValuesPaths::default()
+            },
+            ValuesPaths {
+                image: Some("a.b".into()),
+                tag: Some("a.c".into()),
+                ..ValuesPaths::default()
+            },
+            ValuesPaths {
+                repository: Some("x.y".into()),
+                tag: Some("x.y".into()),
+                ..ValuesPaths::default()
+            },
+            ValuesPaths {
+                secret_name: Some("a b".into()),
+                ..ValuesPaths::default()
+            },
+        ] {
+            assert!(checked_own_build(build(bad.clone())).is_err(), "{bad:?}");
+        }
+        // Written without paths, an image reads as it always did.
+        let old: OwnImage =
+            serde_json::from_str(r#"{"app":"api","name":"x","dockerfile":"Dockerfile"}"#).unwrap();
+        assert!(old.values.is_default());
+        assert!(!serde_json::to_string(&old).unwrap().contains("values"));
     }
 
     #[test]
@@ -2164,6 +2519,7 @@ mod tests {
                 app: "api".into(),
                 image: "studio/api:0.1.0".into(),
             }],
+            None,
         );
         assert_eq!(v["api"]["image"]["repository"], "ghcr.io/acme/studio/api");
         assert_eq!(v["api"]["image"]["tag"], "0.1.0");
@@ -2236,6 +2592,7 @@ mod tests {
             pending_chart: None,
             research: None,
             preview: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -2441,6 +2798,7 @@ mod tests {
             name: "shop-api".into(),
             dockerfile: dockerfile.into(),
             context: context.into(),
+            values: ValuesPaths::default(),
         };
         let ok = checked_own_build(OwnBuild {
             images: vec![image("api", "./api/Dockerfile", "./")],

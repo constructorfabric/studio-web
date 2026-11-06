@@ -20,6 +20,9 @@ import { errText } from "./format";
 import { Modal } from "./modal";
 import { growthText, quietText, reasonLine, workspaceDescription, workspaceLine, workspaceStatus } from "./org-dashboard-model";
 import { kindLine, teamText } from "./project-rows";
+import { useListState } from "./list-state";
+import { FieldChips, fieldFilters, useProjectFields } from "./project-fields-view";
+import { anyFieldSet, factsOf, matchesFields, projectFields, type ProjectField } from "./project-filters";
 import { portfolioRollups, rollupText, type WorkspaceRollup } from "./rollups";
 import { TenantMark } from "./tenant-icon-view";
 import { EmptyState, PageHeader, StatusChip } from "./ui-standard";
@@ -272,6 +275,20 @@ export function ProjectsPortfolio({
 
   const byName = [...roots].sort((a, b) => a.name.localeCompare(b.name));
 
+  // The project fields (project-fields-view.tsx) over the tree: a workspace
+  // stays when one of its projects matches, and its tree shows only those.
+  // The fields are the organization's; a workspace with a list of its own is
+  // filtered in the organization's words for it.
+  const registered = useProjectFields(token, null, org?.id ?? null);
+  const [listState] = useListState();
+  const allKids = Object.values(children).flat();
+  const fields = projectFields(registered, allKids.map((k) => factsOf(k.row)));
+  const fieldsOn = anyFieldSet(fields, listState.filters);
+  const projectFilters = fieldFilters(registered, allKids, (k) => factsOf(k.row)).map((f) => ({
+    ...f,
+    match: (r: RootProject, value: string) => (children[r.id] ?? []).some((k) => f.match(k, value)),
+  }));
+
   return (
     <>
       <PageHeader
@@ -357,6 +374,7 @@ export function ProjectsPortfolio({
               ],
               match: (r, v) => (v === "self" ? !!r.self_managed : !r.self_managed),
             },
+            ...projectFilters,
           ]}
           primary={
             <button className="primary" disabled={!homeOrgId} onClick={() => setCreating((v) => !v)}>
@@ -432,7 +450,12 @@ export function ProjectsPortfolio({
             <NestedProjects
               token={token}
               wsId={r.id}
-              kids={children[r.id]}
+              kids={
+                fieldsOn
+                  ? children[r.id]?.filter((k) => matchesFields(fields, factsOf(k.row), listState.filters))
+                  : children[r.id]
+              }
+              fields={registered}
               ws={health(r.id)}
               stuckDays={stuckDays}
               cash={cash}
@@ -608,6 +631,7 @@ function NestedProjects({
   token,
   wsId,
   kids,
+  fields,
   ws,
   stuckDays,
   cash,
@@ -617,6 +641,8 @@ function NestedProjects({
   token: string;
   wsId: string;
   kids: Kid[] | undefined;
+  /** The project fields whose chips a row shows (its status). */
+  fields: ProjectField[];
   ws: OrgWorkspace | undefined;
   stuckDays: number;
   cash: (n: number) => string;
@@ -686,6 +712,7 @@ function NestedProjects({
                       >
                         {p.name}
                       </a>
+                      <FieldChips fields={fields} facts={factsOf(p.row)} />
                       {chip && (
                         <StatusChip
                           tone={chip.tone}

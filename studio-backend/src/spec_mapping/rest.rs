@@ -856,7 +856,7 @@ async fn read_reachable_project(
     let (vocabulary, (needs, requirements), recorded, (mut components, mut profiles), entries) =
         tokio::try_join!(
             docs.vocabulary(ctx, workspace_id),
-            docs.needs(workspace_id, project_id),
+            docs.needs(ctx, workspace_id, project_id),
             // Past decisions only rank the proposals; without the store the
             // plan still stands.
             async {
@@ -1046,7 +1046,7 @@ async fn list_project_capabilities(
     let docs = ports.documents()?;
     let workspace_id = project_workspace(&docs, &ctx, project_id).await?;
     let (needs, _) = docs
-        .needs(workspace_id, project_id)
+        .needs(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?;
     let items: Vec<DeclaredCapabilityDto> = needs.into_iter().map(declared_dto).collect();
@@ -1064,7 +1064,7 @@ async fn list_project_requirements(
     let docs = ports.documents()?;
     let workspace_id = project_workspace(&docs, &ctx, project_id).await?;
     let (_, requirements) = docs
-        .needs(workspace_id, project_id)
+        .needs(&ctx, workspace_id, project_id)
         .await
         .map_err(internal)?;
     let items: Vec<DeclaredRequirementDto> = requirements

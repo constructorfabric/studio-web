@@ -70,9 +70,16 @@ pub enum Run {
         path: &'static str,
         query: &'static [&'static str],
     },
+    /// `PUT path`, the arguments as the JSON body, except those named in
+    /// `query`, which go in the query string.
+    Put {
+        path: &'static str,
+        query: &'static [&'static str],
+    },
     /// `PATCH path`, `{name}`s from the arguments, the rest as the JSON body.
     Patch(&'static str),
-    /// `DELETE path`, `{name}`s from the arguments; nothing else is sent.
+    /// `DELETE path`, `{name}`s from the arguments, every other argument a
+    /// query parameter; no body is sent.
     Delete(&'static str),
     /// Anything that is more than one request (a submit and its wait).
     Custom(fn(Api, Map<String, Value>) -> ToolFuture),
@@ -159,13 +166,47 @@ impl Api {
             .await
     }
 
+    pub async fn put(
+        &self,
+        path: &str,
+        query: &[(String, String)],
+        body: &Value,
+    ) -> Result<Value, ToolError> {
+        self.send(self.client.put(self.url(path)).query(query).json(body))
+            .await
+    }
+
     pub async fn patch(&self, path: &str, body: &Value) -> Result<Value, ToolError> {
         self.send(self.client.patch(self.url(path)).json(body))
             .await
     }
 
-    pub async fn delete(&self, path: &str) -> Result<Value, ToolError> {
-        self.send(self.client.delete(self.url(path))).await
+    pub async fn delete(&self, path: &str, query: &[(String, String)]) -> Result<Value, ToolError> {
+        self.send(self.client.delete(self.url(path)).query(query))
+            .await
+    }
+
+    /// `GET`, answering the status with the body whatever the status: for a
+    /// tool to which a refusal is an answer (404: nothing there yet).
+    pub async fn get_answer(
+        &self,
+        path: &str,
+        query: &[(String, String)],
+    ) -> Result<Answer, ToolError> {
+        self.exchange(self.client.get(self.url(path)).query(query))
+            .await
+    }
+
+    /// `POST`, answering the status with the body whatever the status: for a
+    /// tool to which a refusal is an answer (409: saved against a stale base).
+    pub async fn post_answer(
+        &self,
+        path: &str,
+        query: &[(String, String)],
+        body: &Value,
+    ) -> Result<Answer, ToolError> {
+        self.exchange(self.client.post(self.url(path)).query(query).json(body))
+            .await
     }
 
     fn url(&self, path: &str) -> String {
@@ -173,6 +214,14 @@ impl Api {
     }
 
     async fn send(&self, req: reqwest::RequestBuilder) -> Result<Value, ToolError> {
+        let answer = self.exchange(req).await?;
+        if !answer.ok() {
+            return Err(answer.refusal());
+        }
+        Ok(answer.body)
+    }
+
+    async fn exchange(&self, req: reqwest::RequestBuilder) -> Result<Answer, ToolError> {
         let req = match &self.auth {
             Some(auth) => req.header(axum::http::header::AUTHORIZATION, auth.clone()),
             None => req,
@@ -181,15 +230,38 @@ impl Api {
             .send()
             .await
             .map_err(|e| ToolError::new(format!("Studio did not answer: {e}")))?;
-        let status = res.status();
+        let status = res.status().as_u16();
         let text = res.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(ToolError::new(refusal(status.as_u16(), &text)));
-        }
-        if text.trim().is_empty() {
-            return Ok(Value::Null);
-        }
-        Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+        Ok(Answer::new(status, text))
+    }
+}
+
+/// A route's answer, refusal or not.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Answer {
+    pub status: u16,
+    /// The body as JSON; a body that is not JSON as a string; none as null.
+    pub body: Value,
+    text: String,
+}
+
+impl Answer {
+    pub fn new(status: u16, text: String) -> Self {
+        let body = if text.trim().is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&text).unwrap_or_else(|_| Value::String(text.clone()))
+        };
+        Self { status, body, text }
+    }
+
+    pub fn ok(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+
+    /// The refusal, in the words the route used, as any tool reports it.
+    pub fn refusal(&self) -> ToolError {
+        ToolError::new(refusal(self.status, &self.text))
     }
 }
 
@@ -222,32 +294,75 @@ fn refusal(status: u16, body: &str) -> String {
 
 /// Run one tool with the arguments the agent sent.
 pub async fn call(tool: &Tool, api: Api, args: Map<String, Value>) -> Result<Value, ToolError> {
-    match &tool.run {
-        Run::Get(path) => {
-            let (path, rest) = fill_path(path, args)?;
-            api.get(&path, &query_pairs(&rest)).await
-        }
-        Run::Post { path, query } => {
-            let (path, mut rest) = fill_path(path, args)?;
-            let mut q = Map::new();
-            for name in *query {
-                if let Some(v) = rest.remove(*name) {
-                    q.insert((*name).to_owned(), v);
-                }
-            }
-            api.post(&path, &query_pairs(&q), &Value::Object(rest))
-                .await
-        }
-        Run::Patch(path) => {
-            let (path, rest) = fill_path(path, args)?;
-            api.patch(&path, &Value::Object(rest)).await
-        }
-        Run::Delete(path) => {
-            let (path, _) = fill_path(path, args)?;
-            api.delete(&path).await
-        }
-        Run::Custom(run) => run(api, args).await,
+    if let Run::Custom(run) = &tool.run {
+        return run(api, args).await;
     }
+    let req = request(&tool.run, args)?;
+    match req.method {
+        Method::Get => api.get(&req.path, &req.query).await,
+        Method::Post => api.post(&req.path, &req.query, &req.body).await,
+        Method::Put => api.put(&req.path, &req.query, &req.body).await,
+        Method::Patch => api.patch(&req.path, &req.body).await,
+        Method::Delete => api.delete(&req.path, &req.query).await,
+    }
+}
+
+/// The method of the request a [`Run`] sends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+/// The one request a [`Run`] other than `Custom` makes of the arguments.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Request {
+    pub method: Method,
+    pub path: String,
+    pub query: Vec<(String, String)>,
+    /// `null` for a request without a body.
+    pub body: Value,
+}
+
+/// What `run` sends for `args`, without sending it. `Custom` makes no one
+/// request and is refused.
+pub fn request(run: &Run, args: Map<String, Value>) -> Result<Request, ToolError> {
+    let (method, template, in_query): (Method, &str, Option<&[&str]>) = match run {
+        Run::Get(path) => (Method::Get, path, None),
+        Run::Delete(path) => (Method::Delete, path, None),
+        Run::Post { path, query } => (Method::Post, path, Some(query)),
+        Run::Put { path, query } => (Method::Put, path, Some(query)),
+        Run::Patch(path) => (Method::Patch, path, Some(&[])),
+        Run::Custom(_) => {
+            return Err(ToolError::new("this tool makes more than one request"));
+        }
+    };
+    let (path, mut rest) = fill_path(template, args)?;
+    // Without a body every other argument is a query parameter; with one,
+    // only those named.
+    let Some(names) = in_query else {
+        return Ok(Request {
+            method,
+            path,
+            query: query_pairs(&rest),
+            body: Value::Null,
+        });
+    };
+    let mut q = Map::new();
+    for name in names {
+        if let Some(v) = rest.remove(*name) {
+            q.insert((*name).to_owned(), v);
+        }
+    }
+    Ok(Request {
+        method,
+        path,
+        query: query_pairs(&q),
+        body: Value::Object(rest),
+    })
 }
 
 /// How many of a kind of call one person may make in an hour, counted per
@@ -298,7 +413,7 @@ impl Limits {
 }
 
 /// `/types/{id}` with `id` taken out of the arguments and put in the path.
-fn fill_path(
+pub fn fill_path(
     template: &str,
     mut args: Map<String, Value>,
 ) -> Result<(String, Map<String, Value>), ToolError> {
@@ -329,7 +444,7 @@ fn fill_path(
 
 /// Arguments as query parameters: a list repeats its key, an object is sent
 /// as JSON, null is left out.
-fn query_pairs(args: &Map<String, Value>) -> Vec<(String, String)> {
+pub fn query_pairs(args: &Map<String, Value>) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (key, value) in args {
         match value {
@@ -362,6 +477,38 @@ fn encode_segment(s: &str) -> String {
         }
     }
     out
+}
+
+/// A text argument that must be there and not blank.
+pub fn required_text(args: &Map<String, Value>, name: &str) -> Result<String, ToolError> {
+    optional_text(args, name).ok_or_else(|| ToolError::new(format!("`{name}` is required")))
+}
+
+/// A text argument, when it is given and not blank.
+pub fn optional_text(args: &Map<String, Value>, name: &str) -> Option<String> {
+    match args.get(name)? {
+        Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_owned()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// The `project_id` argument, as every project tool describes it.
+pub fn project_id() -> Value {
+    json!({ "type": "string",
+        "description": "The project: the id in the portal's address of that project (its tenant id)." })
+}
+
+/// For a gear's tests: the request the tool called `name` in `tools` sends
+/// for `args`.
+#[cfg(test)]
+pub fn request_of(tools: &[Tool], name: &str, args: Value) -> Request {
+    let tool = tools
+        .iter()
+        .find(|t| t.name == name)
+        .unwrap_or_else(|| panic!("no tool {name}"));
+    let args = args.as_object().cloned().unwrap_or_default();
+    request(&tool.run, args).unwrap_or_else(|e| panic!("{name}: {}", e.0))
 }
 
 /// A poll interval and a deadline, for a tool that waits.
@@ -398,6 +545,55 @@ mod tests {
         .unwrap();
         assert_eq!(path, "/studio-domain-model/v1/types/a%2Fb%20c");
         assert_eq!(rest, map(json!({"x": 1})));
+    }
+
+    #[test]
+    fn a_put_sends_the_named_arguments_in_the_query_and_the_rest_as_the_body() {
+        let req = request(
+            &Run::Put {
+                path: "/s/{key}",
+                query: &["project_id"],
+            },
+            map(json!({"key": "K", "project_id": "p", "value": "v"})),
+        )
+        .unwrap();
+        assert_eq!(req.method, Method::Put);
+        assert_eq!(req.path, "/s/K");
+        assert_eq!(req.query, vec![("project_id".to_owned(), "p".to_owned())]);
+        assert_eq!(req.body, json!({"value": "v"}));
+    }
+
+    #[test]
+    fn a_delete_sends_what_is_not_in_the_path_as_the_query() {
+        let req = request(
+            &Run::Delete("/s/{key}"),
+            map(json!({"key": "K", "project_id": "p"})),
+        )
+        .unwrap();
+        assert_eq!(req.method, Method::Delete);
+        assert_eq!(req.query, vec![("project_id".to_owned(), "p".to_owned())]);
+        assert_eq!(req.body, Value::Null);
+    }
+
+    #[test]
+    fn an_answer_reads_its_body_and_says_its_refusal() {
+        let a = Answer::new(409, r#"{"message":"stale"}"#.to_owned());
+        assert!(!a.ok());
+        assert_eq!(a.body["message"], "stale");
+        assert_eq!(a.refusal(), ToolError::new("Studio answered 409: stale"));
+        assert_eq!(Answer::new(204, String::new()).body, Value::Null);
+    }
+
+    #[test]
+    fn a_text_argument_is_trimmed_and_blank_is_absent() {
+        let args = map(json!({"a": " x ", "b": "  ", "n": 3}));
+        assert_eq!(optional_text(&args, "a").as_deref(), Some("x"));
+        assert_eq!(optional_text(&args, "b"), None);
+        assert_eq!(optional_text(&args, "n").as_deref(), Some("3"));
+        assert_eq!(
+            required_text(&args, "b").unwrap_err(),
+            ToolError::new("`b` is required")
+        );
     }
 
     #[test]

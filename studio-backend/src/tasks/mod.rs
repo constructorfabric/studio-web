@@ -37,6 +37,8 @@
 
 mod dispatch;
 mod entity;
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 mod migrations;
 mod registry;
 mod rest;

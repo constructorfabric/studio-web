@@ -136,6 +136,15 @@ pub const PROFILES: [&str; 3] = ["dev", "local", "prod"];
 /// say, so checking another profile must not make a new revision.
 pub const DEFAULT_PROFILE: &str = "dev";
 
+/// A profile id as a description may declare one: `[A-Za-z0-9_-]{1,63}`.
+pub fn is_profile_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 63
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 #[derive(Debug, Clone)]
 pub struct GearboxConfig {
     pub bin: PathBuf,
@@ -251,6 +260,10 @@ impl EngineCatalogue {
 pub struct EngineGear {
     pub id: String,
     pub package: EnginePackage,
+    /// Where its `gear.gdl` is, relative to the root of its `source`.
+    /// Absent from an engine before it was recorded.
+    #[serde(default)]
+    pub gdl_path: Option<String>,
     /// Set on a plugin: the extension point it fills, named by its SDK crate.
     ///
     /// The engine calls it `implements` since gearbox#2 (`fills` renamed, no
@@ -1280,6 +1293,92 @@ pub fn gear_brief(
     })
 }
 
+/// How much of a description file is read.
+pub const MAX_GDL_BYTES: usize = 256 * 1024;
+
+/// A component's description file as one of the roots holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GdlFile {
+    /// The root's id: a source of the product, or the corpus repository.
+    pub source: String,
+    /// Relative to that root.
+    pub path: String,
+    pub text: String,
+}
+
+/// The description file `rel` (a `.gdl` path relative to a root) under the
+/// first of `roots` that has it, at most `max` bytes. `None` for a path that
+/// is not a description file, leaves its root, or is in none of them.
+pub fn read_gdl(roots: &[(String, PathBuf)], rel: &str, max: usize) -> Option<GdlFile> {
+    let rel = rel.trim().trim_start_matches("./");
+    let path = Path::new(rel);
+    if !rel.ends_with(".gdl")
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    roots.iter().find_map(|(id, dir)| {
+        let file = contained_file(dir, path)?;
+        let mut buf = Vec::new();
+        std::fs::File::open(&file)
+            .ok()?
+            .take(max as u64)
+            .read_to_end(&mut buf)
+            .ok()?;
+        Some(GdlFile {
+            source: id.clone(),
+            path: rel.replace('\\', "/"),
+            text: String::from_utf8_lossy(&buf).into_owned(),
+        })
+    })
+}
+
+/// `rel` under `dir` as a file that may be read: what it resolves to once
+/// links are followed must stay inside `dir`. The path checks judge the text
+/// only, and a checkout holds committed symlinks -- `x.gdl -> /proc/self/environ`
+/// or `docs -> /` would otherwise hand out a server file.
+fn contained_file(dir: &Path, rel: &Path) -> Option<PathBuf> {
+    let base = dir.canonicalize().ok()?;
+    let file = dir.join(rel).canonicalize().ok()?;
+    (file.starts_with(&base) && file.is_file()).then_some(file)
+}
+
+/// The checkout `dir` is a folder of: its outermost directory under
+/// `workdir` that is a Git repository. `None` when `dir` is that already, or
+/// is not under `workdir`.
+pub fn repository_top(workdir: &Path, dir: &Path) -> Option<PathBuf> {
+    let rel = dir.strip_prefix(workdir).ok()?;
+    let mut at = workdir.to_path_buf();
+    for part in rel.components() {
+        at.push(part);
+        if at.join(".git").exists() {
+            return (at != dir).then_some(at);
+        }
+    }
+    None
+}
+
+/// Where the `gear.gdl` of a gear whose package is at `package_path` is: in
+/// its crate's directory, beside its manifest.
+pub fn gear_gdl_path(package_path: &str) -> String {
+    let rel = Path::new(package_path.trim());
+    let dir = if rel.extension().is_some_and(|e| e == "toml") {
+        rel.parent().unwrap_or(rel)
+    } else {
+        rel
+    };
+    let dir = dir.to_string_lossy().replace('\\', "/");
+    let dir = dir.trim_end_matches('/');
+    if dir.is_empty() || dir == "." {
+        "gear.gdl".to_owned()
+    } else {
+        format!("{dir}/gear.gdl")
+    }
+}
+
 /// The README of the crate at `path` (relative to the corpus at `dir`), at
 /// most `max` bytes; `None` when there is none or the path leaves the corpus.
 pub fn read_readme(dir: &Path, path: &str, max: usize) -> Option<String> {
@@ -1299,8 +1398,7 @@ pub fn read_readme(dir: &Path, path: &str, max: usize) -> Option<String> {
     };
     ["README.md", "readme.md", "README"]
         .iter()
-        .map(|f| dir.join(crate_dir).join(f))
-        .find(|f| f.is_file())
+        .find_map(|f| contained_file(dir, &crate_dir.join(f)))
         .and_then(|f| std::fs::File::open(f).ok())
         .and_then(|f| {
             let mut buf = Vec::new();
@@ -2455,6 +2553,17 @@ pub struct PreviewInput {
     /// Check the profile as a development one (`development = True`): an
     /// environment of dev strictness (ADR-0060 §5). The text is unchanged.
     pub development: bool,
+    /// The latest revision's text, when the product has one: the
+    /// description is that text edited by what the caller changed, never a
+    /// fresh render over it (ADR-0060 §4, [`super::description_edit`]).
+    pub latest: Option<String>,
+    /// Gears and plugins, as picked, the caller took out against the record.
+    pub removed: Vec<String>,
+    /// Gears and plugins, as configured, whose configuration the caller
+    /// changed against the record.
+    pub config_changed: Vec<String>,
+    /// What the save does to the latest revision's `frontend` block.
+    pub frontend_change: super::description_edit::FrontendChange,
 }
 
 /// A project's home repository, checked out on the server at its branch.
@@ -3275,6 +3384,10 @@ pub struct Gearbox {
     /// The `product.gdl` each project keeps in its repository, read with its
     /// organization's roots (`project_roots`), by project.
     project_files: std::sync::Mutex<HashMap<uuid::Uuid, ProjectFile>>,
+    /// The project sources each organization's last read could not read,
+    /// and why, by organization.
+    unreadable_sources:
+        std::sync::Mutex<HashMap<uuid::Uuid, Vec<super::project_roots::UnreadableSource>>>,
     /// `gearbox --version`, asked once: the binary does not change under a
     /// running process, and the status page asked it on every load.
     version: std::sync::OnceLock<String>,
@@ -3370,6 +3483,7 @@ impl Gearbox {
             org_reads: InFlight::new(),
             checkouts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             project_files: std::sync::Mutex::new(HashMap::new()),
+            unreadable_sources: std::sync::Mutex::new(HashMap::new()),
             version: std::sync::OnceLock::new(),
             evaluations: Arc::new(std::sync::Mutex::new(Evaluations::default())),
             home_catalogues: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -3536,6 +3650,38 @@ impl Gearbox {
         let mut map = self.project_files.lock().expect("gearbox project files");
         map.retain(|_, f| f.organization != org);
         map.extend(files);
+    }
+
+    /// Replace what organization `org`'s last read of its projects could not
+    /// read.
+    pub fn use_unreadable_sources(
+        &self,
+        org: uuid::Uuid,
+        unreadable: Vec<super::project_roots::UnreadableSource>,
+    ) {
+        let mut map = self
+            .unreadable_sources
+            .lock()
+            .expect("gearbox unreadable sources");
+        if unreadable.is_empty() {
+            map.remove(&org);
+        } else {
+            map.insert(org, unreadable);
+        }
+    }
+
+    /// The project sources organization `org`'s last read could not read,
+    /// and why.
+    pub fn unreadable_sources_of(
+        &self,
+        org: uuid::Uuid,
+    ) -> Vec<super::project_roots::UnreadableSource> {
+        self.unreadable_sources
+            .lock()
+            .expect("gearbox unreadable sources")
+            .get(&org)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// The product file project `project` keeps, when its organization's
@@ -4034,6 +4180,75 @@ impl Gearbox {
         Ok(Some(brief))
     }
 
+    /// The description file of a component (ADR-0061): the `gear.gdl` of
+    /// the gear `gear` (engine id or crate name), or the `.gdl` at `path`.
+    /// Looked for in the project's own repository first (`home`), then in
+    /// each of `scope`'s gear repositories. `None` when none has it.
+    ///
+    /// A gear of the home repository alone is found in its own catalogue, as
+    /// a description reads it ([`with_home`]); a `path` in the home
+    /// repository is read even when `scope` has no corpus to load.
+    pub async fn gdl_file(
+        &self,
+        scope: Scope,
+        home: Option<&HomeCheckout>,
+        gear: Option<&str>,
+        path: Option<&str>,
+    ) -> anyhow::Result<Option<GdlFile>> {
+        let (corpus, missed) = match self.ensure_corpus(scope).await {
+            Ok((roots, _, catalogue)) => (Some((roots, catalogue)), None),
+            Err(e) if gear.is_none() && home.is_some() => (None, Some(e)),
+            Err(e) => return Err(e),
+        };
+        // A gear says where its description is and in which source; an
+        // older engine leaves it beside the crate's manifest.
+        let (from, rel) = match (gear, path) {
+            (Some(g), _) => {
+                let g = g.trim();
+                let mut found = corpus.as_ref().and_then(|(_, c)| c.find(g).cloned());
+                if let (None, Some(h)) = (&found, home) {
+                    found = self.home_catalogue(h).await?.find(g).cloned().map(|mut g| {
+                        g.source = Some(h.id.clone());
+                        g
+                    });
+                }
+                match found {
+                    Some(g) => match (&g.gdl_path, &g.package.path) {
+                        (Some(at), _) => (g.source.clone(), at.clone()),
+                        (None, Some(p)) => (g.source.clone(), gear_gdl_path(p)),
+                        (None, None) => return Ok(None),
+                    },
+                    None => return Ok(None),
+                }
+            }
+            (None, Some(p)) => (None, p.to_owned()),
+            (None, None) => return Ok(None),
+        };
+        let mut roots: Vec<(String, PathBuf)> = home
+            .map(|h| (h.id.clone(), h.dir.clone()))
+            .into_iter()
+            .chain(corpus.into_iter().flat_map(|(roots, _)| roots))
+            .collect();
+        // The gear's own source first; then each root's repository as a
+        // whole, since a source may be a folder of it (`studio-backend`) and a
+        // path is written from the repository's root.
+        if let Some(from) = from {
+            roots.sort_by_key(|(id, _)| *id != from);
+        }
+        let tops: Vec<(String, PathBuf)> = roots
+            .iter()
+            .filter_map(|(id, dir)| repository_top(self.workdir(), dir).map(|t| (id.clone(), t)))
+            .collect();
+        roots.extend(tops);
+        let found =
+            tokio::task::spawn_blocking(move || read_gdl(&roots, &rel, MAX_GDL_BYTES)).await?;
+        // Not in the home repository, and the corpus could not be asked.
+        match (found, missed) {
+            (None, Some(e)) => Err(e),
+            (found, _) => Ok(found),
+        }
+    }
+
     /// [`complete`] against `scope`'s corpus.
     pub async fn complete(
         &self,
@@ -4126,31 +4341,14 @@ impl Gearbox {
                 input.product_id
             );
         }
-        if !PROFILES.contains(&input.profile.as_str()) {
-            bail!(
-                "profile `{}` is not one of {}",
-                input.profile,
-                PROFILES.join(", ")
-            );
+        // Any profile the description declares (a saved one may declare
+        // more than the three a new one starts with); the engine refuses one
+        // it does not.
+        if !is_profile_id(&input.profile) {
+            bail!("`{}` is not a profile id", input.profile);
         }
         let started = Instant::now();
-        let mut loaded = self.ensure(scope).await?;
-        // The project's own repository, read as a build reads it (ADR-0060
-        // §6): its gears are the product's, and the corpus's roots inside it
-        // give way to it, so one repository is one source.
-        let inside: BTreeSet<String> = match &input.home {
-            Some(home) => loaded
-                .roots
-                .iter()
-                .filter(|r| inside_home(&r.dir, &home.dir))
-                .map(|r| r.id.clone())
-                .collect(),
-            None => BTreeSet::new(),
-        };
-        if let Some(home) = &input.home {
-            let own = self.home_catalogue(home).await?;
-            loaded.catalogue = Arc::new(with_home(&loaded.catalogue, &own, &home.id, &inside));
-        }
+        let (loaded, inside) = self.loaded_with_home(scope, input.home.as_ref()).await?;
         let corpus_ms = started.elapsed().as_millis();
         let catalogue = &loaded.catalogue;
         let composition = compose(catalogue, &input.gears);
@@ -4237,12 +4435,96 @@ impl Gearbox {
             &by_id,
             frontend.as_ref().map(|pick| (pick, input.repo.as_deref())),
         );
+        // The latest revision edited, not replaced: only what the caller
+        // changed is written, the rest stays as it is written there.
+        let product_gdl = match &input.latest {
+            None => product_gdl,
+            Some(latest) => {
+                let ids = |names: &[String]| -> BTreeSet<String> {
+                    names
+                        .iter()
+                        .flat_map(|n| {
+                            std::iter::once(n.clone())
+                                .chain(catalogue.find(n).map(|g| g.id.clone()))
+                        })
+                        .collect()
+                };
+                let (removed, config_changed) = (ids(&input.removed), ids(&input.config_changed));
+                super::description_edit::onto_latest(
+                    latest,
+                    &product_gdl,
+                    &super::description_edit::Change {
+                        removed: &removed,
+                        config_changed: &config_changed,
+                        frontend: input.frontend_change,
+                        product_path: &input.product_path,
+                        repo: input.repo.as_deref(),
+                    },
+                )?
+            }
+        };
         Ok(Described {
             corpus_commit: loaded.commit(),
             product_gdl,
             composition,
             loaded,
             corpus_ms,
+        })
+    }
+
+    /// The corpus `scope` reads, with the project's own repository read as a
+    /// build reads it (ADR-0060 §6): its gears are the product's, and the
+    /// corpus's roots inside it give way to it, so one repository is one
+    /// source. With the ids of the roots that gave way.
+    async fn loaded_with_home(
+        &self,
+        scope: Scope,
+        home: Option<&HomeCheckout>,
+    ) -> anyhow::Result<(Loaded, BTreeSet<String>)> {
+        let mut loaded = self.ensure(scope).await?;
+        let inside: BTreeSet<String> = match home {
+            Some(home) => loaded
+                .roots
+                .iter()
+                .filter(|r| inside_home(&r.dir, &home.dir))
+                .map(|r| r.id.clone())
+                .collect(),
+            None => BTreeSet::new(),
+        };
+        if let Some(home) = home {
+            let own = self.home_catalogue(home).await?;
+            loaded.catalogue = Arc::new(with_home(&loaded.catalogue, &own, &home.id, &inside));
+        }
+        Ok((loaded, inside))
+    }
+
+    /// A saved description revision as it is written, for [`Gearbox::check`]
+    /// to check: the corpus loaded as [`Gearbox::describe`] loads it, and
+    /// `text` untouched -- a revision is what a build lays down (ADR-0053),
+    /// so it is checked as it is, not composed again from the picks.
+    pub async fn as_written(
+        &self,
+        scope: Scope,
+        input: &PreviewInput,
+        text: String,
+    ) -> anyhow::Result<Described> {
+        if !is_profile_id(&input.profile) {
+            bail!("`{}` is not a profile id", input.profile);
+        }
+        if !is_product_path(&input.product_path) {
+            bail!(
+                "`{}` is not a place for a product description: a relative path to a `product.gdl`",
+                input.product_path
+            );
+        }
+        let started = Instant::now();
+        let (loaded, _) = self.loaded_with_home(scope, input.home.as_ref()).await?;
+        Ok(Described {
+            corpus_commit: loaded.commit(),
+            product_gdl: text,
+            composition: Composition::default(),
+            loaded,
+            corpus_ms: started.elapsed().as_millis(),
         })
     }
 
@@ -4859,6 +5141,76 @@ mod tests {
         assert_eq!(plugin.host.as_deref(), Some("Sign-in"));
         assert_eq!(plugin.maturity.as_deref(), Some("beta"));
         assert!(gear_brief(&c, &raw, "nothing").is_none());
+    }
+
+    #[test]
+    fn a_source_that_is_a_folder_is_read_from_its_repository_too() {
+        let work = std::env::temp_dir().join(format!("studio-top-{}", uuid::Uuid::new_v4()));
+        let repo = work.join("catalogue_x__acme_shop");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("studio-backend")).unwrap();
+        assert_eq!(
+            repository_top(&work, &repo.join("studio-backend")),
+            Some(repo.clone())
+        );
+        assert_eq!(repository_top(&work, &repo), None);
+        assert_eq!(repository_top(&work, Path::new("/elsewhere")), None);
+        let _ = std::fs::remove_dir_all(work);
+    }
+
+    #[test]
+    fn a_gears_description_is_beside_its_manifest() {
+        assert_eq!(gear_gdl_path("gears/x/Cargo.toml"), "gears/x/gear.gdl");
+        assert_eq!(gear_gdl_path("gears/x"), "gears/x/gear.gdl");
+        assert_eq!(gear_gdl_path("Cargo.toml"), "gear.gdl");
+    }
+
+    #[test]
+    fn a_description_file_is_read_from_the_first_root_that_has_it() {
+        let base = std::env::temp_dir().join(format!("studio-gdl-{}", uuid::Uuid::new_v4()));
+        let (home, corpus) = (base.join("home"), base.join("corpus"));
+        std::fs::create_dir_all(home.join("mfe")).unwrap();
+        std::fs::create_dir_all(corpus.join("mfe")).unwrap();
+        std::fs::write(corpus.join("mfe/frontx.gdl"), "corpus").unwrap();
+        std::fs::write(corpus.join("Cargo.toml"), "").unwrap();
+        let roots = vec![
+            ("shop".to_owned(), home.clone()),
+            ("gears-rust".to_owned(), corpus.clone()),
+        ];
+        let f = read_gdl(&roots, "mfe/frontx.gdl", 100).expect("in the corpus");
+        assert_eq!(
+            (f.source.as_str(), f.text.as_str()),
+            ("gears-rust", "corpus")
+        );
+        std::fs::write(home.join("mfe/frontx.gdl"), "home").unwrap();
+        assert_eq!(
+            read_gdl(&roots, "./mfe/frontx.gdl", 100).unwrap().source,
+            "shop"
+        );
+        // Only description files, and only inside a root.
+        assert_eq!(read_gdl(&roots, "Cargo.toml", 100), None);
+        assert_eq!(read_gdl(&roots, "../corpus/mfe/frontx.gdl", 100), None);
+        assert_eq!(read_gdl(&roots, "/etc/x.gdl", 100), None);
+        #[cfg(unix)]
+        {
+            // A committed link out of the checkout is not followed, be it the
+            // file or a directory on the way.
+            std::fs::write(base.join("secret.gdl"), "secret").unwrap();
+            std::os::unix::fs::symlink(base.join("secret.gdl"), home.join("link.gdl")).unwrap();
+            assert_eq!(read_gdl(&roots, "link.gdl", 100), None);
+            std::os::unix::fs::symlink(&base, home.join("up")).unwrap();
+            assert_eq!(read_gdl(&roots, "up/secret.gdl", 100), None);
+            std::os::unix::fs::symlink(&base, corpus.join("gears")).unwrap();
+            std::fs::write(base.join("README.md"), "secret").unwrap();
+            assert_eq!(read_readme(&corpus, "gears", 100), None);
+            // A link that stays inside is fine.
+            std::os::unix::fs::symlink(home.join("mfe"), home.join("inner")).unwrap();
+            assert_eq!(
+                read_gdl(&roots, "inner/frontx.gdl", 100).unwrap().text,
+                "home"
+            );
+        }
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

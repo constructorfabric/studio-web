@@ -165,12 +165,21 @@ impl RunnableCapability for StudioEventsGear {
 impl RestApiCapability for StudioEventsGear {
     fn register_rest(
         &self,
-        _ctx: &GearCtx,
+        ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
         let hub = self.hub.get().cloned().flatten();
         let store = self.store.get().cloned().flatten();
-        Ok(rest::register_routes(router, openapi, hub, store))
+        let access = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+            .ok()
+            .map(|am| {
+                crate::org_scope::OrgAccess(Arc::new(
+                    crate::studio_session::sdk::TenantMembership::new(am),
+                ))
+            });
+        Ok(rest::register_routes(router, openapi, hub, store, access))
     }
 }

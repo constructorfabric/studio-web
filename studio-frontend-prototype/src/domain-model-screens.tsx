@@ -694,6 +694,12 @@ export function ModelMapView({
   const [layer, setLayer] = useState<Layer>("domain");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  // The entity the pointer is on: the panel shows it until one is picked.
+  const [peek, setPeek] = useState<string | null>(null);
+  // Where the panel came from, newest last, for its Back.
+  const [back, setBack] = useState<string[]>([]);
+  // A cut of the layer the overview offers.
+  const [only, setOnly] = useState<Only | null>(null);
   // A table first: thousands of entities read as rows, not as a drawing.
   const [mode, setMode] = useState<"diagram" | "list">("list");
   const [show, setShow] = useState<number>(25);
@@ -706,20 +712,7 @@ export function ModelMapView({
     for (const l of layerOfKey.values()) l ? c[l]++ : hidden++;
     return { ...c, hidden };
   }, [layerOfKey]);
-  const pool = useMemo(
-    () => findEntities(entities, query).filter((e) => layerOfKey.get(e.key) === layer),
-    [entities, query, layer, layerOfKey],
-  );
-  const shown = useMemo(() => [...pool].sort((a, b) => weight(b) - weight(a)).slice(0, show), [pool, show]);
   const relations = useMemo(() => relationEdges(entities), [entities]);
-  const allMentions = useMemo(() => (mentions ? mapEdges(entities).filter((e) => e.kind === "mentions") : []), [entities, mentions]);
-  const edges = useMemo(() => {
-    const keep = new Set(shown.map((e) => e.key));
-    const rel = relations.filter((e) => keep.has(e.from) && keep.has(e.to));
-    const men = allMentions.filter((e) => keep.has(e.from) && keep.has(e.to) && !rel.some((r) => (r.from === e.from && r.to === e.to) || (r.from === e.to && r.to === e.from)));
-    return { rel, men };
-  }, [shown, relations, allMentions]);
-  const sel = entities.find((e) => e.key === selected) ?? null;
   const relationCount = useMemo(() => {
     const out = new Map<string, number>();
     for (const r of relations) {
@@ -734,6 +727,55 @@ export function ModelMapView({
     () => (gears ? entityGears(entities.filter((e) => layerOfKey.get(e.key) === "domain"), gears).byEntity : null),
     [entities, gears, layerOfKey],
   );
+  const inLayer = useMemo(() => entities.filter((e) => layerOfKey.get(e.key) === layer), [entities, layer, layerOfKey]);
+  const pool = useMemo(
+    () =>
+      findEntities(entities, query).filter(
+        (e) =>
+          layerOfKey.get(e.key) === layer &&
+          (only !== "unrelated" || !relationCount.get(e.key)) &&
+          (only !== "unkept" || (keepers !== null && !keepers.get(e.key))),
+      ),
+    [entities, query, layer, layerOfKey, only, relationCount, keepers],
+  );
+  const shown = useMemo(() => [...pool].sort((a, b) => weight(b) - weight(a)).slice(0, show), [pool, show]);
+  const allMentions = useMemo(() => (mentions ? mapEdges(entities).filter((e) => e.kind === "mentions") : []), [entities, mentions]);
+  const edges = useMemo(() => {
+    const keep = new Set(shown.map((e) => e.key));
+    const rel = relations.filter((e) => keep.has(e.from) && keep.has(e.to));
+    const men = allMentions.filter((e) => keep.has(e.from) && keep.has(e.to) && !rel.some((r) => (r.from === e.from && r.to === e.to) || (r.from === e.to && r.to === e.from)));
+    return { rel, men };
+  }, [shown, relations, allMentions]);
+  const sel = entities.find((e) => e.key === (selected ?? peek)) ?? null;
+  const pinned = !!selected && sel?.key === selected;
+  /** Show `l`; a cut is the layer's own (`keepers` holds Domain alone). */
+  const toLayer = (l: Layer | null | undefined) => {
+    if (!l || l === layer) return;
+    setLayer(l);
+    setOnly(null);
+  };
+  /** Open `k` in the panel, keeping where it came from for Back; `null`
+   *  unpins, and forgets the way back as Unpin does. Either way the panel
+   *  leaves what the pointer last showed: the element that showed it may be
+   *  gone without a `mouseleave`. */
+  const open = (k: string | null) => {
+    setPeek(null);
+    if (!k) {
+      setSelected(null);
+      setBack([]);
+      return;
+    }
+    if (selected && k !== selected) setBack((b) => [...b.slice(-19), selected]);
+    toLayer(layerOfKey.get(k));
+    setSelected(k);
+  };
+  const goBack = () => {
+    const prev = back[back.length - 1];
+    setBack((b) => b.slice(0, -1));
+    if (!prev) return;
+    toLayer(layerOfKey.get(prev));
+    setSelected(prev);
+  };
 
   if (entities.length === 0) return <EmptyState title="Nothing read yet." body="Build the model to read the documents." />;
 
@@ -754,6 +796,8 @@ export function ModelMapView({
             onClick={() => {
               setLayer(l);
               setSelected(null);
+              setOnly(null);
+              setBack([]);
             }}
           >
             <i />
@@ -793,12 +837,17 @@ export function ModelMapView({
                 Diagram
               </button>
             </span>
+            {only && (
+              <button type="button" className="dm-only" onClick={() => setOnly(null)} title="Show the whole layer again">
+                {ONLY_TITLE[only]} ×
+              </button>
+            )}
             <span className="hint" style={{ marginLeft: "auto" }}>
               {shown.length} of {pool.length} · {edges.rel.length} declared relation{edges.rel.length === 1 ? "" : "s"}
             </span>
           </div>
           {mode === "diagram" ? (
-            <Diagram entities={shown} layer={layer} relations={edges.rel} mentions={edges.men} selected={selected} onSelect={setSelected} />
+            <Diagram entities={shown} layer={layer} relations={edges.rel} mentions={edges.men} selected={selected} onSelect={open} onPeek={setPeek} />
           ) : (
             <DataTable<Entity>
               list="dm-entities"
@@ -807,8 +856,9 @@ export function ModelMapView({
               rowKey={(e) => e.key}
               rowLabel={(e) => e.name}
               pageSize={20}
-              onOpen={(e) => setSelected(e.key)}
-              empty={{ title: "No entity in this layer matches." }}
+              onOpen={(e) => open(e.key)}
+              onPeek={(e) => setPeek(e?.key ?? null)}
+              empty={{ title: only ? `No entity in this layer is ${ONLY_TITLE[only].toLowerCase()}.` : "No entity in this layer matches." }}
               columns={[
                 {
                   id: "name",
@@ -860,7 +910,34 @@ export function ModelMapView({
             </div>
           )}
         </div>
-        <aside className="card dm-card" aria-label="The selected entity">
+        <aside className={`card dm-card${sel && !pinned ? " peek" : ""}`} aria-label="The selected entity">
+          {sel && (
+            <div className="dm-cardbar">
+              {pinned ? (
+                <>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={back.length === 0}
+                    onClick={goBack}
+                    title={back.length ? `Back to ${entities.find((e) => e.key === back[back.length - 1])?.name ?? ""}` : "Nothing to go back to"}
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => open(null)}
+                    title="Unpin: the panel follows the pointer again"
+                  >
+                    Unpin ×
+                  </button>
+                </>
+              ) : (
+                <span className="hint">Preview · click to pin it</span>
+              )}
+            </div>
+          )}
           {sel ? (
             <EntityCard
               key={sel.key}
@@ -874,23 +951,19 @@ export function ModelMapView({
                 .filter((r) => r.from === sel.key || r.to === sel.key)
                 .map((r) => ({ other: entities.find((e) => e.key === (r.from === sel.key ? r.to : r.from)), verbs: r.verbs }))
                 .filter((r): r is { other: Entity; verbs: string[] } => !!r.other)}
-              onSelect={(k) => {
-                const l = layerOfKey.get(k);
-                if (l && l !== layer) setLayer(l);
-                setSelected(k);
-              }}
+              onSelect={open}
               onOpenFile={onOpenFile}
             />
           ) : (
-            <>
-              <div className="dm-h">{LAYER_TITLE[layer]}</div>
-              <p style={{ margin: 0 }}>{LAYER_WHAT[layer]}.</p>
-              <p className="hint" style={{ margin: 0 }}>
-                The entities the documents say most about and relate most come first. A line is a relation a document
-                declares, named by its verb. Pick a card to see what it holds, how it relates, what must always be true of
-                it and which passages say so.
-              </p>
-            </>
+            <LayerOverview
+              layer={layer}
+              entities={inLayer}
+              relationCount={relationCount}
+              keepers={keepers}
+              only={only}
+              onOnly={setOnly}
+              onSelect={open}
+            />
           )}
         </aside>
       </div>
@@ -905,6 +978,7 @@ function Diagram({
   mentions,
   selected,
   onSelect,
+  onPeek,
   gaps,
 }: {
   entities: Entity[];
@@ -913,6 +987,8 @@ function Diagram({
   mentions: MapEdge[];
   selected: string | null;
   onSelect: (k: string | null) => void;
+  /** The card the pointer is on, `null` once it leaves. */
+  onPeek?: (k: string | null) => void;
   /** Entities no gear keeps: marked with a small hollow dot. */
   gaps?: Set<string>;
 }) {
@@ -1021,6 +1097,8 @@ function Diagram({
             transform={`translate(${c.x - c.w / 2},${c.y - c.h / 2})`}
             className={`dm-cardnode dm-layer-${layer}${c.key === selected ? " sel" : ""}${cold ? " cold" : ""}`}
             onPointerDown={(ev) => ev.stopPropagation()}
+            onMouseEnter={() => onPeek?.(c.key)}
+            onMouseLeave={() => onPeek?.(null)}
             onClick={(ev) => {
               ev.stopPropagation();
               onSelect(c.key === selected ? null : c.key);
@@ -1136,6 +1214,7 @@ function EntityCard({
           <small>{keeper.why}</small>
         </div>
       )}
+      {related.length > 0 && <Neighbourhood entity={entity} related={related} onSelect={onSelect} />}
       {related.length > 0 && (
         <section className="dm-rels">
           <div className="dm-h">How it relates</div>
@@ -1151,14 +1230,7 @@ function EntityCard({
           ))}
         </section>
       )}
-      {factsByKind(entity.facts.filter((f) => f !== definition && f.kind !== "relation")).map((g) => (
-        <section key={g.kind} className="sm-kind">
-          <h3>{KIND_TITLE[g.kind] ?? g.kind}</h3>
-          {g.facts.map((f, i) => (
-            <FactRow key={i} fact={f} onOpenFile={onOpenFile} />
-          ))}
-        </section>
-      ))}
+      <FactsFiltered facts={entity.facts.filter((f) => f !== definition && f.kind !== "relation")} onOpenFile={onOpenFile} />
       {review && rejected.length > 0 && (
         <details className="sm-kind dm-rejected">
           <summary>
@@ -1179,6 +1251,197 @@ function EntityCard({
         </details>
       )}
     </>
+  );
+}
+
+/** What the overview can narrow a layer to. */
+type Only = "unrelated" | "unkept";
+
+const ONLY_TITLE: Record<Only, string> = {
+  unrelated: "Related to nothing",
+  unkept: "Kept by no gear",
+};
+
+/** The layer at a glance, while nothing is picked: what is most described
+ *  and most related, and what is loose -- each a way into the table. */
+function LayerOverview({
+  layer,
+  entities,
+  relationCount,
+  keepers,
+  only,
+  onOnly,
+  onSelect,
+}: {
+  layer: Layer;
+  entities: Entity[];
+  relationCount: Map<string, number>;
+  /** Null when what keeps an entity is not known. */
+  keepers: Map<string, Keeper | null> | null;
+  only: Only | null;
+  onOnly: (o: Only | null) => void;
+  onSelect: (k: string) => void;
+}) {
+  const top = (by: (e: Entity) => number) => [...entities].sort((a, b) => by(b) - by(a) || a.name.localeCompare(b.name)).slice(0, 6);
+  const connected = top((e) => relationCount.get(e.key) ?? 0).filter((e) => relationCount.get(e.key));
+  const described = top((e) => e.facts.length);
+  const unrelated = entities.filter((e) => !relationCount.get(e.key)).length;
+  const unkept = layer === "domain" && keepers ? entities.filter((e) => !keepers.get(e.key)).length : null;
+  const chips = (list: Entity[], n: (e: Entity) => number) => (
+    <div className="dm-ov-chips">
+      {list.map((e) => (
+        <button
+          key={e.key}
+          type="button"
+          className="dm-ov-chip"
+          onClick={() => onSelect(e.key)}
+        >
+          {e.name} <span className="sub">{n(e)}</span>
+        </button>
+      ))}
+    </div>
+  );
+  const cut = (o: Only, count: number, what: string) => (
+    <button type="button" className={`dm-ov-cut${only === o ? " on" : ""}`} aria-pressed={only === o} onClick={() => onOnly(only === o ? null : o)} disabled={count === 0}>
+      <b>{count}</b> {what}
+    </button>
+  );
+  return (
+    <div className="dm-overview" data-dm-overview={layer}>
+      <span className={`dm-layer-pill dm-layer-${layer}`}>{LAYER_TITLE[layer]}</span>
+      <p style={{ margin: "4px 0 0" }}>{LAYER_WHAT[layer]}.</p>
+      <div className="dm-h">Most related</div>
+      {connected.length ? chips(connected, (e) => relationCount.get(e.key) ?? 0) : <p className="hint">No relation is declared in this layer yet.</p>}
+      <div className="dm-h">Most described</div>
+      {chips(described, (e) => e.facts.length)}
+      <div className="dm-h">Loose ends</div>
+      <div className="dm-ov-cuts">
+        {cut("unrelated", unrelated, "related to nothing: a document has to declare how")}
+        {unkept !== null && cut("unkept", unkept, "kept by no gear of the product")}
+      </div>
+      <p className="hint" style={{ margin: "8px 0 0" }}>Point at a row to see it here; click it to keep it.</p>
+    </div>
+  );
+}
+
+/** The entity in the middle and what it relates to around it, each line
+ *  named by its verb. A neighbour opens on click. */
+function Neighbourhood({
+  entity,
+  related,
+  onSelect,
+}: {
+  entity: Entity;
+  related: { other: Entity; verbs: string[] }[];
+  onSelect: (k: string) => void;
+}) {
+  const [on, setOn] = useState<string | null>(null);
+  const shown = related.slice(0, 10);
+  const W = 300;
+  const H = shown.length > 6 ? 220 : 180;
+  const cx = W / 2;
+  const cy = H / 2;
+  const rx = W / 2 - 52;
+  const ry = H / 2 - 22;
+  const at = shown.map((r, i) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / shown.length;
+    return { ...r, x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) };
+  });
+  const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+  return (
+    <svg className="dm-ego" viewBox={`0 0 ${W} ${H}`} role="group" aria-label={`What ${entity.name} relates to`}>
+      {at.map((n) => (
+        <g key={`l:${n.other.key}`} className={`dm-ego-edge${on === n.other.key ? " on" : ""}`}>
+          <line x1={cx} y1={cy} x2={n.x} y2={n.y} />
+          {(on === n.other.key || shown.length <= 4) && n.verbs[0] && (
+            <text x={(cx + n.x) / 2} y={(cy + n.y) / 2 - 3} textAnchor="middle">
+              {clip(n.verbs[0], 18)}
+            </text>
+          )}
+        </g>
+      ))}
+      <g className="dm-ego-me">
+        <rect x={cx - 56} y={cy - 13} width={112} height={26} rx={13} />
+        <text x={cx} y={cy + 4} textAnchor="middle">
+          {clip(entity.name, 16)}
+        </text>
+      </g>
+      {at.map((n) => (
+        <g
+          key={n.other.key}
+          className={`dm-ego-node${on === n.other.key ? " on" : ""}`}
+          role="button"
+          tabIndex={0}
+          aria-label={`${n.verbs[0] ?? "relates to"} ${n.other.name}`}
+          onMouseEnter={() => setOn(n.other.key)}
+          onMouseLeave={() => setOn(null)}
+          onFocus={() => setOn(n.other.key)}
+          onBlur={() => setOn(null)}
+          onClick={() => onSelect(n.other.key)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onSelect(n.other.key);
+            }
+          }}
+        >
+          <title>{`${n.verbs.join(" / ") || "relates to"} ${n.other.name}`}</title>
+          <rect x={n.x - 46} y={n.y - 11} width={92} height={22} rx={11} />
+          <text x={n.x} y={n.y + 4} textAnchor="middle">
+            {clip(n.other.name, 14)}
+          </text>
+        </g>
+      ))}
+      {related.length > shown.length && (
+        <text className="dm-ego-more" x={W - 4} y={H - 4} textAnchor="end">
+          +{related.length - shown.length} more below
+        </text>
+      )}
+    </svg>
+  );
+}
+
+/** An entity's facts by kind, narrowed by a word and by kind. */
+function FactsFiltered({ facts, onOpenFile }: { facts: SpecModelFact[]; onOpenFile: OpenFile }) {
+  const [q, setQ] = useState("");
+  const [kind, setKind] = useState<string | null>(null);
+  const groups = factsByKind(facts);
+  const needle = q.trim().toLowerCase();
+  const matches = (f: SpecModelFact) =>
+    !needle || [f.text, f.value, f.aspect, f.source.path].some((t) => (t ?? "").toLowerCase().includes(needle));
+  if (facts.length === 0) return null;
+  const visible = groups
+    .filter((g) => !kind || g.kind === kind)
+    .map((g) => ({ ...g, facts: g.facts.filter(matches) }))
+    .filter((g) => g.facts.length > 0);
+  return (
+    <div className="dm-facts">
+      {facts.length > 6 && (
+        <div className="dm-facts-bar">
+          <input type="search" placeholder="Find in its facts" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find in its facts" />
+          <span className="dm-facts-kinds">
+            {groups.map((g) => (
+              <button key={g.kind} type="button" aria-pressed={kind === g.kind} onClick={() => setKind(kind === g.kind ? null : g.kind)}>
+                {KIND_TITLE[g.kind] ?? g.kind} <span className="sub">{g.facts.length}</span>
+              </button>
+            ))}
+          </span>
+        </div>
+      )}
+      {visible.map((g) => (
+        <section key={g.kind} className="sm-kind">
+          <h3>{KIND_TITLE[g.kind] ?? g.kind}</h3>
+          {g.facts.map((f, i) => (
+            <FactRow key={i} fact={f} onOpenFile={onOpenFile} />
+          ))}
+        </section>
+      ))}
+      {needle && visible.length === 0 && (
+        <p className="hint">
+          No {kind ? `${(KIND_TITLE[kind] ?? kind).toLowerCase()} ` : ""}fact says “{q.trim()}”.
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -105,7 +105,8 @@ impl TaskHandler for RetentionSweep {
 
         TaskOutcome::done_with(
             format!(
-                "kept {keep_days} days: pruned {pruned} run(s),                  {dead_letters} resolved dead letter(s)"
+                "kept {keep_days} days: pruned {pruned} run(s), \
+                 {dead_letters} resolved dead letter(s)"
             ),
             serde_json::json!({
                 "keep_days": keep_days,

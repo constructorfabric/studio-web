@@ -17,7 +17,7 @@ use crate::user_profile::{OrganizationRequest, RequestRefusal};
 #[resource_error(gts_id!("cf.studio._.organizations.v1~"))]
 pub struct OrganizationError;
 
-struct License;
+pub(super) struct License;
 impl AsRef<str> for License {
     fn as_ref(&self) -> &'static str {
         CORE_GLOBAL_BASE_LICENSE_FEATURE
@@ -678,6 +678,15 @@ pub struct RollupDto {
     pub project_kind: Option<String>,
     /// Projects: what the project is for, in its owner's words.
     pub brief: Option<String>,
+    /// Projects: the short top-level values of the project's configuration
+    /// (`project.config`), by name -- text up to 120 characters, numbers and
+    /// booleans; objects, lists and long text left out. Carried as they are
+    /// stored, without meaning: the portal filters a list by them (`status`,
+    /// the phase a person put the project in; `type`, the template it was
+    /// created from; whatever a kit adds). Null when the configuration could
+    /// not be read.
+    #[schema(value_type = Option<Object>)]
+    pub attributes: Option<serde_json::Value>,
     /// Projects: findings placed in the text — the items of each verdict's
     /// `details.findings`, and one for a failed verdict (`high`,
     /// `gate-failed`) recorded without items. The Specs list's per-row
@@ -761,6 +770,7 @@ fn rollup_dto(r: super::rollups::Rollup) -> RollupDto {
     RollupDto {
         project_kind: r.project_kind,
         brief: r.brief,
+        attributes: r.attributes.map(serde_json::Value::Object),
         open_findings: r.signals.as_ref().map(|s| s.open_findings),
         open_comments: r.signals.as_ref().and_then(|s| s.open_comments),
         specs: r.specs.map(|s| s.specs),
@@ -1421,11 +1431,18 @@ pub fn register_routes(
         .operation_id("studio_organizations.get_access_catalogue")
         .summary("The privileges a role may carry, and the seeded ladder")
         .description(
-            "What the policy decision point understands, from the side that evaluates it. A              screen that edits roles needs both: the privileges to offer, and the ladder a              fresh organization already has.
+            "What the policy decision point understands, from the side that evaluates it. A \
+             screen that edits roles needs both: the privileges to offer, and the ladder a \
+             fresh organization already has.
 
-The prototype kept its own copy of both, under              a comment saying they must match the backend. They did. The point is that nothing              made them — a privilege named where the document is WRITTEN but not where it is              READ goes into a role and carries nothing, silently.
+The prototype kept its own copy of both, under \
+             a comment saying they must match the backend. They did. The point is that nothing \
+             made them — a privilege named where the document is WRITTEN but not where it is \
+             READ goes into a role and carries nothing, silently.
 
-Labels are deliberately              absent: what a privilege is called belongs to whoever draws the screen. What              cannot differ between them is the set of identifiers.",
+Labels are deliberately \
+             absent: what a privilege is called belongs to whoever draws the screen. What \
+             cannot differ between them is the set of identifiers.",
         )
         .tag("StudioOrganizations")
         .authenticated()
@@ -1443,7 +1460,8 @@ Labels are deliberately              absent: what a privilege is called belongs 
             "One call for the whole portfolio: every workspace under the caller's tenant, \
              or under an organization in it, with the number of projects it holds, and every \
              project with what its row in a projects table shows: documents, detector findings \
-             and attached repositories; its kind and brief; open findings and open comments; \
+             and attached repositories; its kind and brief; the short values of its \
+             configuration (`attributes`), to filter by; open findings and open comments; \
              its specs, checked and failing; pull requests over the last `activity_days` days; \
              its team; and the last event the Activity feed lists. `?project_id=` narrows it to \
              one project, `?workspace_id=` to one workspace and its projects.\n\n\
@@ -1516,9 +1534,18 @@ Labels are deliberately              absent: what a privilege is called belongs 
         .operation_id("studio_organizations.get_organization_metrics")
         .summary("An organization's delivery, quality, money and people, over a range")
         .description(
-            "The leaders' metrics board for an organization -- or, with `workspace_id` or              `project_id`, for one workspace or project in it -- over `range` (`7d`, `30d`              or `90d`, default `30d`) against the same number of days before it, bucketed              by day (7d) or Monday week.
+            "The leaders' metrics board for an organization -- or, with `workspace_id` or \
+             `project_id`, for one workspace or project in it -- over `range` (`7d`, `30d` \
+             or `90d`, default `30d`) against the same number of days before it, bucketed \
+             by day (7d) or Monday week.
 
-             Studio's part is the spend (null unless the caller holds `cost.view`; people's              own keys never count), per bucket and per workspace. Insight's part is git, CI              and task figures for the repositories the scope's projects are made of, built              and aggregated on the server; `insight.state` says when there is none and why              (`unconfigured`, `unreachable`, `failed`, `absent`, `no_repositories`), and              the Studio part answers regardless. 404 when the organization is not the              caller's, or the workspace or project is not in it.",
+             Studio's part is the spend (null unless the caller holds `cost.view`; people's \
+             own keys never count), per bucket and per workspace. Insight's part is git, CI \
+             and task figures for the repositories the scope's projects are made of, built \
+             and aggregated on the server; `insight.state` says when there is none and why \
+             (`unconfigured`, `unreachable`, `failed`, `absent`, `no_repositories`), and \
+             the Studio part answers regardless. 404 when the organization is not the \
+             caller's, or the workspace or project is not in it.",
         )
         .tag("StudioOrganizations")
         .authenticated()

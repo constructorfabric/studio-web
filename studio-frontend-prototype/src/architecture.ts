@@ -55,6 +55,39 @@ export interface Manifest {
   sessions_enabled: boolean;
   session_image?: string | null;
   gears: ManifestGear[];
+  /** Where each gear keeps its records (ADR-0066 §8a); absent on a backend
+   *  older than the domain-model move. */
+  data?: ManifestData[];
+}
+
+/** One gear's records: each kind and its `storage.<kind>` setting, and the
+ *  domain-model types only it writes. */
+export interface ManifestData {
+  gear: string;
+  stores: { kind: string; store: string }[];
+  types: string[];
+}
+
+/** The design the data section explains. */
+export const DATA_DESIGN_DOC = "docs/adr/0066-domain-objects-are-read-from-a-postgres-mirror-of-the-graph.md";
+
+/** What the data section counts: gears keeping records, kinds in the model and
+ *  kinds still kept elsewhere, and the types gears hold. */
+export function dataSummary(data: ManifestData[]): {
+  gears: number;
+  inModel: number;
+  elsewhere: { gear: string; kind: string; store: string }[];
+  types: number;
+} {
+  const elsewhere = data.flatMap((d) =>
+    d.stores.filter((s) => s.store !== "model").map((s) => ({ gear: d.gear, ...s })),
+  );
+  return {
+    gears: data.length,
+    inModel: data.reduce((n, d) => n + d.stores.filter((s) => s.store === "model").length, 0),
+    elsewhere,
+    types: new Set(data.flatMap((d) => d.types)).size,
+  };
 }
 
 /** The part of `prototype-map.json` the page still reads: its build commit. */
@@ -505,18 +538,23 @@ export const SURFACES: Surface[] = [
   {
     id: "shell",
     area: "portal",
-    title: "Sign-in, navigation and notifications",
-    does: "Sign in, switch organization and workspace, get notified, see who is online, open a project in the IDE or the desktop app.",
-    components: ["App", "Login", "Shell", "ContextPane", "ChatNotifier", "EditorNotifier", "OpenInDesktop", "StudioLauncher", "WhoIsOnline", "OrgMark", "TenantMark", "IconPicker"],
+    title: "Sign-in, navigation, notifications and the inbox",
+    does: "Sign in, switch organization and workspace, get notified, see who is online, open a project in the IDE or the desktop app; and the Inbox: deploys to approve, reviews and pull requests waiting on you, your failed background work and undelivered notifications, each to act on, mark done or snooze.",
+    components: ["App", "Login", "Shell", "ContextPane", "ChatNotifier", "EditorNotifier", "OpenInDesktop", "StudioLauncher", "WhoIsOnline", "OrgMark", "TenantMark", "IconPicker", "InboxView"],
     gears: [
       "account-management",
+      "studio-artifact-ingest",
       "studio-connector",
+      "studio-documents",
+      "studio-domain-model",
+      "studio-environments",
       "studio-events",
       "studio-notify",
       "studio-organizations",
       "studio-presence",
       "studio-product",
       "studio-session",
+      "studio-tasks",
       "studio-theia",
       "studio-user",
     ],
@@ -533,8 +571,8 @@ export const SURFACES: Surface[] = [
     id: "workspaces",
     area: "portal",
     title: "Workspaces and their projects",
-    does: "Browse workspaces, create a project -- optionally from a template that fills in its sources, brief and kits; a new repository, one attached or none yet, with a starter gear if asked -- and see the portfolio. Attaching or detaching a repository has the project's catalogue read its sources again.",
-    components: ["WorkspacesView", "WorkspaceProjects", "ProjectsPortfolio", "WorkspaceStatusLine", "ProjectScreen"],
+    does: "Browse workspaces, create a project -- optionally from a template that fills in its sources, brief and kits; a new repository, one attached or none yet, with a starter gear if asked -- and see the portfolio, filtered by what each project's config carries (its phase, its template, its repositories, any other short value). A project's status -- the phase it is in -- shows on its row and card and in its tab bar, where a member moves it. Attaching or detaching a repository has the project's catalogue read its sources again.",
+    components: ["WorkspacesView", "WorkspaceProjects", "ProjectsPortfolio", "WorkspaceStatusLine", "ProjectScreen", "ProjectFieldControls"],
     gears: [
       "account-management",
       "studio-components-catalog",
@@ -556,10 +594,10 @@ export const SURFACES: Surface[] = [
   {
     id: "project-types",
     area: "portal",
-    title: "Project templates",
-    does: "Decide which templates an organization or a workspace offers a new project, each optional and only filling in the card -- the sources it starts with and whether a starter gear goes there, a brief, the kits ticked -- and which tabs its projects show; or offer none.",
-    components: ["ProjectTypesTab"],
-    gears: ["account-management", "studio-kits"],
+    title: "Project templates and phases",
+    does: "Decide which templates an organization or a workspace offers a new project, each optional and only filling in the card -- the sources it starts with and whether a starter gear goes there, a brief, the kits ticked -- and which tabs its projects show; or offer none. Beside them, the phases its projects move through, in order.",
+    components: ["ProjectTypesTab", "PhasesEditor"],
+    gears: ["studio-kits", "studio-organizations"],
   },
   {
     id: "project-overview",
@@ -653,7 +691,7 @@ export const SURFACES: Surface[] = [
     area: "project",
     title: "Product: its header, the way to running, Infrastructure and Frontend",
     does: "Decide what the product is -- Studio proposes a full product on gears, a gear service, a FrontX app or one built from its own source, with the reasons it read in the brief, the declared capabilities and requirements, the project's own components and the product, and a member confirms it or picks another (experimental) -- then follow the product from configured to running in four steps -- configure its infrastructure, backend and frontend, save it to product.gdl after seeing what changes against the kept revision, read its history and restore an earlier revision, build it, deploy it -- each with where it stands and what comes next; see the product in a header -- whether it resolves, the revision kept and whether it is published, and one action that follows the state (show the fixes, save to product.gdl, build) -- and switch between its parts on tabs, each with a dot for where it stands; see the whole product on its map -- the shell and its micro-frontends, the gears grouped by subsystem, what they run on, and the links between them, each screen card showing the pictures the last build took of its screens (a schematic until a build has), with a screen that calls a gear the product lacks, a database an environment does not give and a gear no screen uses marked -- and build it there: add screens and gears from a palette by dragging or Add, take the gears the engine says they also need, remove one, and read the same product as the product.gdl the next save would write, selected together with the map; see what it needs to run, and the environments it runs in as chips that open Releases; add a frontend from FrontX's shell template, or leave the product gears alone; compose the UI from micro-frontends in the shell, with how it gets built folded to how many steps are ready, see whether the product has the gears each screen calls, read the project's own repository into the catalogue when it has no micro-frontend, and find FrontX's templates to start a new one.",
-    components: ["FrontendConstructor", "GdlView", "InfraLane", "Palette", "ProductFlow", "ProductFrontend", "ProductInfrastructure", "ProductKindStep", "ProductInfraServices", "ProductMap", "ProductPage", "ProductSources", "Revisions", "SaveStep", "ScreenPreview"],
+    components: ["FrontendConstructor", "GdlSection", "GdlView", "InfraLane", "Palette", "ProductFlow", "ProductFrontend", "ProductInfrastructure", "ProductKindStep", "ProductInfraServices", "ProductMap", "ProductPage", "ProductSources", "Revisions", "SaveStep", "ScreenPreview"],
     gears: ["account-management", "studio-artifact-ingest", "studio-components-catalog", "studio-environments", "studio-product", "studio-spec-mapping"],
   },
   {
@@ -676,6 +714,8 @@ export const SURFACES: Surface[] = [
       "DeployProgress",
       "PendingDecisions",
       "ProjectEnvironments",
+      "DeployHistory",
+      "StepDetail",
       "StatusButton",
       "EnvironmentActions",
       "InfraPlanView",
@@ -753,7 +793,7 @@ export const SURFACES: Surface[] = [
     title: "Publication requests",
     does: "Answer the organizations' requests to give a gear to the platform: preview and publish it as a pull request into the platform's gear repository, or decline it; name the platform's gear curators.",
     components: ["PublicationRequests", "Curators"],
-    gears: ["studio-components-catalog", "studio-user"],
+    gears: ["account-management", "studio-components-catalog", "studio-user"],
   },
   {
     id: "platform-sources",
@@ -833,9 +873,9 @@ export const SURFACES: Surface[] = [
   {
     id: "domain-model",
     area: "organization",
-    title: "Objects and views",
-    does: "Explore the domain model: object types, their relations, saved views.",
-    components: ["ObjectTypes", "ViewsScreen", "ViewGraph", "ViewTable", "DomainModelGraph"],
+    title: "Domain model, objects and views",
+    does: "Edit the domain model (types and their fields), explore it, keep saved views, and record the attributes it gives projects and workspaces.",
+    components: ["DomainModelAdmin", "Relations", "LinkList", "GtsIds", "TypeObjectsTab", "LevelGenericTab", "ObjectAttributes", "ModelFields", "ProjectTimeline", "MilestoneDialog", "ObjectTypes", "ViewsScreen", "ViewGraph", "ViewTable", "DomainModelGraph"],
     gears: ["studio-components-catalog", "studio-domain-model", "types-registry"],
   },
   {

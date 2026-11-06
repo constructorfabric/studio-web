@@ -21,7 +21,16 @@ pub mod doc_type {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_document_types")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -41,7 +50,9 @@ pub mod doc_type {
         /// it. Defaults to false, so rows written before ADR-0014 keep meaning
         /// exactly what they meant.
         pub hidden: bool,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "crate::documents::stamp")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -61,7 +72,16 @@ pub mod stage {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_process_stages")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -85,7 +105,9 @@ pub mod stage {
         pub checks: String,
         /// A tombstone: hides the key this row overrides.
         pub hidden: bool,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "crate::documents::stamp")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -104,7 +126,16 @@ pub mod capability {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_process_capabilities")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -122,7 +153,9 @@ pub mod capability {
         pub nonfunctional: bool,
         /// A tombstone: hides the key this row overrides.
         pub hidden: bool,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "crate::documents::stamp")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -140,7 +173,16 @@ pub mod analysis {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_document_analyses")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -162,7 +204,9 @@ pub mod analysis {
         pub state: String,
         pub task_id: Option<String>,
         pub summary: String,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "crate::documents::stamp")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -179,7 +223,16 @@ pub mod spec_extraction {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_spec_model_extractions")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -203,6 +256,7 @@ pub mod spec_extraction {
         pub error: Option<String>,
         pub provider: String,
         pub model: String,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
     }
 
@@ -219,7 +273,16 @@ pub mod spec_judgement {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_spec_model_judgements")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -237,6 +300,7 @@ pub mod spec_judgement {
         pub conflict: bool,
         /// `finding::Finding` as JSON when `conflict`.
         pub finding: Option<String>,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
     }
 
@@ -253,7 +317,16 @@ pub mod spec_decision {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_spec_model_decisions")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -267,6 +340,7 @@ pub mod spec_decision {
         /// `confirmed` (a real problem) or `dismissed` (not one).
         pub decision: String,
         pub decided_by: Uuid,
+        #[serde(with = "crate::documents::stamp")]
         pub decided_at: OffsetDateTime,
         /// Why, in the member's words.
         pub note: Option<String>,
@@ -288,7 +362,16 @@ pub mod spec_review {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_spec_model_reviews")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -309,6 +392,7 @@ pub mod spec_review {
         /// Why, in the member's words: the reason an obligation is excluded.
         pub note: Option<String>,
         pub decided_by: Uuid,
+        #[serde(with = "crate::documents::stamp")]
         pub decided_at: OffsetDateTime,
     }
 
@@ -325,7 +409,16 @@ pub mod spec_term {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_spec_model_terms")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -345,6 +438,7 @@ pub mod spec_term {
         /// this one, as a JSON array: never offered as one thing again.
         pub distinct_from: String,
         pub decided_by: Uuid,
+        #[serde(with = "crate::documents::stamp")]
         pub decided_at: OffsetDateTime,
     }
 
@@ -361,7 +455,16 @@ pub mod document {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_documents")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -390,7 +493,9 @@ pub mod document {
         pub inferred_capabilities: String,
         /// Creator subject id (string principal).
         pub created_by: String,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "crate::documents::stamp")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -413,7 +518,9 @@ pub mod document_binding {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone, Debug, PartialEq, DeriveEntityModel, Scopable, serde::Serialize, serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_document_bindings")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -452,7 +559,9 @@ pub mod document_binding {
         pub inferred_capabilities: String,
         /// Digest of the content the verdicts above were computed from.
         pub content_sha: String,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "crate::documents::stamp")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -469,7 +578,16 @@ pub mod review_request {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_review_requests")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -492,10 +610,12 @@ pub mod review_request {
         /// `[{person, name, required}]`.
         #[sea_orm(column_type = "JsonBinary")]
         pub reviewers: serde_json::Value,
+        #[serde(with = "crate::documents::stamp::option")]
         pub due_at: Option<OffsetDateTime>,
         /// `open`, `approved`, `superseded` (a later request on the same
         /// document) or `withdrawn`.
         pub state: String,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
         /// The text asked about, kept at request time (at most 256 KiB).
         pub reviewed_text: Option<String>,
@@ -521,7 +641,16 @@ pub mod approval {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_approvals")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -545,6 +674,7 @@ pub mod approval {
         /// was given.
         #[sea_orm(column_type = "JsonBinary")]
         pub checks: serde_json::Value,
+        #[serde(with = "crate::documents::stamp")]
         pub decided_at: OffsetDateTime,
     }
 
@@ -562,7 +692,16 @@ pub mod decision {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_decisions")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -582,6 +721,7 @@ pub mod decision {
         pub path: Option<String>,
         pub decided_by: String,
         pub decided_by_name: Option<String>,
+        #[serde(with = "crate::documents::stamp")]
         pub decided_at: OffsetDateTime,
     }
 
@@ -598,7 +738,16 @@ pub mod delivery_scope {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_delivery_scopes")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -618,8 +767,10 @@ pub mod delivery_scope {
         pub acceptance: String,
         pub state: String,
         pub created_by: String,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
         pub updated_by: String,
+        #[serde(with = "crate::documents::stamp")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -636,7 +787,16 @@ pub mod delivery_limit {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_delivery_limits")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -651,8 +811,10 @@ pub mod delivery_limit {
         pub depends_on: Option<String>,
         pub resolution: Option<String>,
         pub resolved_by: Option<String>,
+        #[serde(with = "crate::documents::stamp::option")]
         pub resolved_at: Option<OffsetDateTime>,
         pub created_by: String,
+        #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
     }
 
@@ -669,7 +831,16 @@ pub mod delivery_history {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_delivery_scope_history")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -680,6 +851,7 @@ pub mod delivery_history {
         #[sea_orm(column_type = "JsonBinary")]
         pub snapshot: serde_json::Value,
         pub changed_by: String,
+        #[serde(with = "crate::documents::stamp")]
         pub changed_at: OffsetDateTime,
     }
 
@@ -696,7 +868,16 @@ pub mod application_part {
     use toolkit_db::secure::Scopable;
     use uuid::Uuid;
 
-    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     #[sea_orm(table_name = "studio_application_parts")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
@@ -718,6 +899,7 @@ pub mod application_part {
         #[sea_orm(column_type = "JsonBinary")]
         pub related: serde_json::Value,
         pub updated_by: String,
+        #[serde(with = "crate::documents::stamp")]
         pub updated_at: OffsetDateTime,
     }
 

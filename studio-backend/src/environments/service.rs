@@ -35,6 +35,12 @@ pub use images_service::{RetentionOf, RetentionScope, RunsIn};
 mod infra_service;
 pub use infra_service::InfraPlan;
 
+// One build, one deployment and an environment's secret keys, read one at a
+// time by an agent following the pipeline (`docs/mcp.md`).
+#[path = "service_pipeline.rs"]
+mod pipeline_service;
+pub use pipeline_service::{BuildView, SecretKeys};
+
 /// The privilege that manages an organization's environments and decides
 /// about deploys to its protected ones (ADR-0043 §1, §3).
 pub const MANAGE_PRIVILEGE: &str = "environment.manage";
@@ -170,6 +176,9 @@ pub struct BuildPlan {
     pub chart_repository: String,
     pub sources: Vec<PlanSource>,
     pub warnings: Vec<String>,
+    /// The codes of the environment's warnings among `warnings`, e.g.
+    /// `PULL_USES_PUSH_LOGIN`.
+    pub warning_codes: Vec<String>,
     /// The refusal a build would meet now: its code and why.
     pub refusal: Option<(String, String)>,
 }
@@ -211,6 +220,29 @@ struct Config {
     build_namespace: Option<String>,
     /// The product's infra services, as the run brings them (ADR-0064).
     infra: Vec<super::infra::InfraInstall>,
+    /// The repository's own build (ADR-0054 §7): where its chart reads the
+    /// images and the configuration secret.
+    own: Option<model::OwnBuild>,
+    /// What the deploy says and goes on with, `CODE: message` each: a
+    /// configuration secret the description wins over, an issuer pods may
+    /// not reach.
+    warnings: Vec<String>,
+    /// Why an install is refused: a configuration secret and the
+    /// description both set a field ([`super::gear_overrides::CONFLICT`]).
+    conflict: Option<String>,
+}
+
+impl Config {
+    /// Refuse an install the configuration contradicts.
+    fn check(&self, action: DeploymentAction) -> Result<()> {
+        match (&self.conflict, action) {
+            (Some(why), DeploymentAction::Install) => Err(Refusal::Precondition(
+                super::gear_overrides::CONFLICT,
+                why.clone(),
+            )),
+            _ => Ok(()),
+        }
+    }
 }
 
 pub struct EnvironmentService {
@@ -224,10 +256,29 @@ pub struct EnvironmentService {
 
 /// A build or deploy that names no description, of a project whose product
 /// was never saved: there is nothing to say which `product.gdl` it means.
+/// The saved product description could not be read: the store's answer, not
+/// "the project has no product".
+fn saved_description_unreadable(e: anyhow::Error) -> Refusal {
+    Refusal::Unavailable(format!(
+        "the project's saved product description could not be read: {e:#}"
+    ))
+}
+
+/// The project's name could not be read, and a namespace is made of it: a
+/// deploy or a build is refused rather than placed in a namespace named
+/// after nothing.
+fn project_name_unreadable(project: Uuid, e: anyhow::Error) -> Refusal {
+    Refusal::Unavailable(format!(
+        "the name of project {project} could not be read, and its namespace is made of it: \
+         {e:#}"
+    ))
+}
+
 fn no_saved_product() -> Refusal {
     Refusal::Precondition(
         "PRODUCT_NOT_SAVED",
-        "the project has no product yet: save one in the Product step first, or name its          product.gdl"
+        "the project has no product yet: save one in the Product step first, or name its \
+         product.gdl"
             .into(),
     )
 }
@@ -248,6 +299,17 @@ fn check_hash(field: &'static str, v: Option<String>) -> Result<Option<String>> 
     } else {
         Err(Refusal::Invalid(format!("{field} '{v}' is not a hex hash")))
     }
+}
+
+/// A deploy refused for repeating one that waits for a decision.
+fn already_waiting(waiting: Uuid) -> Refusal {
+    Refusal::Conflict(
+        "DEPLOY_ALREADY_WAITING",
+        format!(
+            "deployment {waiting} of this release already waits for a decision in this \
+             environment: approve or decline it rather than asking again"
+        ),
+    )
 }
 
 /// A build id as the IDE makes one: 8 to 64 letters, digits and hyphens.
@@ -295,6 +357,15 @@ impl EnvironmentService {
         })
     }
 
+    /// The project's name, which its namespaces are made of: refused with
+    /// the cause when account-management does not answer it.
+    async fn project_name(&self, ctx: &SecurityContext, project: Uuid) -> Result<String> {
+        self.store
+            .tenant_name(ctx, project)
+            .await
+            .map_err(|e| project_name_unreadable(project, e))
+    }
+
     /// The project's immutable slug (ADR-0062 §3): recorded the first time,
     /// from its name; without the tables, its name as a slug.
     pub(super) async fn slug(
@@ -303,7 +374,7 @@ impl EnvironmentService {
         org: Uuid,
         project: Uuid,
     ) -> Result<String> {
-        let name = self.store.tenant_name(ctx, project).await;
+        let name = self.project_name(ctx, project).await?;
         match self.records() {
             Some(r) => r
                 .slug(org, project, &name)
@@ -765,7 +836,7 @@ impl EnvironmentService {
         org: Uuid,
         project: Option<Uuid>,
         environment: Uuid,
-    ) -> Result<connectors::ReadinessReport> {
+    ) -> Result<(connectors::ReadinessReport, Vec<String>, Vec<String>)> {
         let env = match project {
             Some(p) => self.project_environment(ctx, org, p, environment).await?,
             None => self.environment(ctx, org, environment).await?,
@@ -778,7 +849,7 @@ impl EnvironmentService {
         }
         let client = self.cluster_client(org, &env).await?;
         let given = env.boundaries.namespaces.clone().unwrap_or_default();
-        tokio::time::timeout(
+        let report = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             connectors::cluster_readiness(&client, &given),
         )
@@ -794,7 +865,10 @@ impl EnvironmentService {
                 "ENVIRONMENT_CLUSTER_UNREACHABLE",
                 format!("{}: {e:#}", env.name),
             )
-        })
+        })?;
+        // How the environment is set up says the rest: the cluster may be
+        // ready while it pulls with the push login.
+        Ok((report, env.warnings(), env.warning_codes()))
     }
 
     /* ── a project's own environments (ADR-0054) ── */
@@ -1156,7 +1230,8 @@ impl EnvironmentService {
                 None => Err(Refusal::Precondition(
                     "ENVIRONMENT_RESEARCH_PROJECT_UNKNOWN",
                     format!(
-                        "'{project}' is not one of your Research projects: its owner adds you                          to it in Research"
+                        "'{project}' is not one of your Research projects: its owner adds you \
+                         to it in Research"
                     ),
                 )),
             };
@@ -1181,9 +1256,33 @@ impl EnvironmentService {
 
     /* ── a project's bindings and targets ── */
 
+    /// The profile a build for `environment` takes when the caller names
+    /// none: the one the project binds to it, else `prod` (the profile a new
+    /// description's cluster starts with). Any profile the description
+    /// declares may be bound.
+    pub async fn profile_for(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        environment: Uuid,
+    ) -> String {
+        let bound = self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await
+            .ok()
+            .and_then(|(list, ..)| {
+                list.items
+                    .into_iter()
+                    .find(|b| b.environment_id == environment)
+                    .map(|b| b.profile)
+            });
+        bound.unwrap_or_else(|| "prod".to_owned())
+    }
+
     pub async fn targets(&self, ctx: &SecurityContext, project: Uuid) -> Result<Targets> {
         let org = self.organization_of_project(ctx, project).await?;
-        let project_name = self.store.tenant_name(ctx, project).await;
+        let project_name = self.project_name(ctx, project).await?;
         let (admitted, own) = self.visible(ctx, org, project).await?;
         let mut environments = Vec::new();
         for e in admitted.into_iter().chain(own) {
@@ -1290,6 +1389,36 @@ impl EnvironmentService {
                     return Err(Refusal::Invalid(
                         "a secret's value is between 1 byte and 64 KiB".into(),
                     ));
+                }
+                // A value for a gear's field the description already fills
+                // would be ignored, or contradict it: not kept.
+                if super::gear_overrides::field_of(&key).is_some() {
+                    let (list, _) = self
+                        .store
+                        .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+                        .await?;
+                    let installs =
+                        super::infra::installs(env.boundaries.infra.as_ref(), &list.infra, None);
+                    let mut keys: Vec<String> = list
+                        .secrets
+                        .iter()
+                        .filter(|s| s.environment_id == env.id && s.key != key)
+                        .map(|s| s.key.clone())
+                        .chain(super::infra::produced_variables(&installs))
+                        .chain(super::infra::file_variables(&installs))
+                        .collect();
+                    keys.push(key.clone());
+                    if let Some(c) = self
+                        .config_clashes(ctx, project, &keys)
+                        .await
+                        .into_iter()
+                        .find(|c| c.key == key)
+                    {
+                        return Err(Refusal::Precondition(
+                            c.code,
+                            format!("{key} is not set: {}", c.message),
+                        ));
+                    }
                 }
                 let bytes = value.into_bytes();
                 // Overwrite whatever is there; create when nothing is.
@@ -1418,23 +1547,52 @@ impl EnvironmentService {
         }
     }
 
-    /// The project's configuration for a release in `env`: the bound
-    /// profile's values, and the keys of its secrets there.
+    /// The project's configuration for a release of `build` in `env`: the
+    /// bound profile's values, and the keys of its secrets there.
     async fn project_config(
         &self,
         ctx: &SecurityContext,
         project: Uuid,
         env: &Environment,
         profile: &str,
+        build: Option<&str>,
     ) -> Result<Config> {
         let (list, _) = self
             .store
             .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
             .await?;
+        // The services the build's lock resolved, placed by the project's
+        // records (ADR-0065 §3). A build from before the project kept them
+        // runs the records as they are (ADR-0064); one whose services are no
+        // longer kept is refused rather than run with today's.
+        let built = build.and_then(|b| list.built_infra.iter().find(|x| x.build == b));
+        let services = match (built, build) {
+            (Some(built), _) => super::infra::built_services(built, &list.infra),
+            (None, Some(b))
+                if !list.built_infra.is_empty() && env.kind == EnvironmentKind::Kubernetes =>
+            {
+                return Err(Refusal::Precondition(
+                    "BUILD_INFRA_NOT_KEPT",
+                    format!(
+                        "the project keeps no infra services for build {b}: it is older than the \
+                         {} it keeps, from before it kept them, or built outside Studio (a CI \
+                         build keeps none); build the product again in Studio to deploy it",
+                        super::infra::MAX_LOCKED_BUILDS
+                    ),
+                ));
+            }
+            (None, _) => list.infra.clone(),
+        };
         // Infra services run on a cluster (ADR-0064); a Research
         // environment brings its own services.
         let infra = if env.kind == EnvironmentKind::Kubernetes {
-            super::infra::installs(env.boundaries.infra.as_ref(), &list.infra)
+            super::infra::installs(
+                env.boundaries.infra.as_ref(),
+                &services,
+                env.previews
+                    .as_ref()
+                    .and_then(|s| s.ingress_class.as_deref()),
+            )
         } else {
             Vec::new()
         };
@@ -1446,11 +1604,33 @@ impl EnvironmentService {
             .collect();
         // What the infra services provide reaches the product as more of
         // its configuration secrets, written by the run before the release.
-        for v in super::infra::produced_variables(&infra) {
+        for v in super::infra::produced_variables(&infra)
+            .into_iter()
+            .chain(super::infra::file_variables(&infra))
+        {
             if !secret_keys.contains(&v) {
                 secret_keys.push(v);
             }
         }
+        let mut warnings: Vec<String> = infra
+            .iter()
+            .flat_map(|i| super::infra::issuer_warnings(&i.service, i.install, i.shared.as_ref()))
+            .map(|(code, why)| format!("{code}: {why}"))
+            .collect();
+        // A configuration secret that would set a gear's field over the
+        // description: the description wins, or the deploy is refused.
+        let clashes = self.config_clashes(ctx, project, &secret_keys).await;
+        let conflict = clashes
+            .iter()
+            .find(|c| c.refuses())
+            .map(|c| c.message.clone());
+        warnings.extend(
+            clashes
+                .iter()
+                .filter(|c| !c.refuses())
+                .map(super::gear_overrides::Clash::line),
+        );
+        let secret_keys = super::gear_overrides::injected(secret_keys, &clashes);
         Ok(Config {
             infra,
             values: list
@@ -1460,7 +1640,42 @@ impl EnvironmentService {
                 .and_then(|b| b.values),
             secret_keys,
             build_namespace: None,
+            own: list.build,
+            warnings,
+            conflict,
         })
+    }
+
+    /// The configuration secrets in `secret_keys` that set a gear's config
+    /// field the project's latest description also sets, and what a deploy
+    /// does about each. Without a description to read there is nothing to
+    /// compare: none.
+    pub(super) async fn config_clashes(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        secret_keys: &[String],
+    ) -> Vec<super::gear_overrides::Clash> {
+        if !secret_keys
+            .iter()
+            .any(|k| super::gear_overrides::field_of(k).is_some())
+        {
+            return Vec::new();
+        }
+        let Ok(products) = self.hub.get::<dyn crate::product::port::ProjectProducts>() else {
+            return Vec::new();
+        };
+        let text = match products.latest_description(ctx, project).await {
+            Ok(Some(d)) => d.text,
+            Ok(None) => return Vec::new(),
+            Err(e) => {
+                tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description could not be read; configuration secrets are not compared with it");
+                return Vec::new();
+            }
+        };
+        let configs = crate::product::port::gear_configs(&text);
+        let provided: std::collections::BTreeSet<String> = secret_keys.iter().cloned().collect();
+        super::gear_overrides::clashes(&configs, secret_keys, &provided)
     }
 
     fn payload(
@@ -1477,12 +1692,14 @@ impl EnvironmentService {
             connection_id: env.connection_id,
             // The cluster pulls with the pull identity (ADR-0062 §2).
             registry_connection_id: env.pull_connection(),
+            pull_uses_push_login: env.pulls_with_push_login(),
             build_namespace: config.build_namespace.clone(),
             namespace: d.namespace.clone(),
             release: d.product.clone(),
             action: d.action,
             environment_id: env.id,
             secret_keys: config.secret_keys.clone(),
+            warnings: config.warnings.clone(),
             database: env.database,
             // The product's own database server runs the image its infra
             // service imported (ADR-0064 §5), else the environment's.
@@ -1498,13 +1715,47 @@ impl EnvironmentService {
                 config.values.as_ref(),
                 &config.secret_keys,
                 &d.product,
+                config.own.as_ref(),
             ),
+            images: d
+                .images
+                .iter()
+                .map(|i| DeployImage {
+                    app: i.app.clone(),
+                    image: env.image(&i.image),
+                })
+                .collect(),
             research: d.research.clone(),
             preview: d.preview.as_ref().map(|p| PreviewRoute {
                 expires_at: p.expires_at.clone(),
                 host: p.host.clone(),
                 ingress_class: env.previews.as_ref().and_then(|s| s.ingress_class.clone()),
             }),
+        }
+    }
+
+    /// The digest build `build` pushed `chart` as, from the project's image
+    /// records (ADR-0062 §4); `None` without records, or a build that
+    /// recorded none.
+    async fn chart_digest(
+        &self,
+        org: Uuid,
+        project: Uuid,
+        build: &str,
+        chart: &model::ChartRef,
+    ) -> Option<String> {
+        let records = self.records()?;
+        let filter = super::records::ImageFilter {
+            kind: Some(super::images::ImageKind::Chart),
+            build_id: Some(build.to_owned()),
+            ..Default::default()
+        };
+        match records.images(org, project, &filter, 0, 50).await {
+            Ok((found, _)) => super::images::chart_digest(&found, chart),
+            Err(e) => {
+                tracing::warn!(error = ?e, %build, "studio-environments: the build's chart digest could not be read; the chart installs by its version");
+                None
+            }
         }
     }
 
@@ -1579,7 +1830,7 @@ impl EnvironmentService {
             // An organization environment added after this one may give the
             // project the same namespace on the same cluster (ADR-0054 §6).
             let (admitted, _) = self.visible(ctx, org, project).await?;
-            let project_name = self.store.tenant_name(ctx, project).await;
+            let project_name = self.project_name(ctx, project).await?;
             if let Some(taken) = model::namespace_clash(&env, &admitted, &project_name) {
                 return Err(Refusal::Precondition(
                     "ENVIRONMENT_NAMESPACE_TAKEN",
@@ -1601,7 +1852,7 @@ impl EnvironmentService {
             req = self.what_build_published(ctx, project, &build, req).await?;
         }
         let product = Self::release_name(&req.product)?;
-        let project_name = self.store.tenant_name(ctx, project).await;
+        let project_name = self.project_name(ctx, project).await?;
         let place = self.place(ctx, org, project, &env).await?;
         let mut namespace = place.namespace.clone();
         let id = Uuid::new_v4();
@@ -1652,6 +1903,7 @@ impl EnvironmentService {
             pending_chart: None,
             research: None,
             preview: None,
+            warnings: Vec::new(),
         };
         let mut chart = None;
         if req.action == DeploymentAction::Install {
@@ -1682,6 +1934,18 @@ impl EnvironmentService {
             d.commit = check_hash("commit", req.commit)?;
             d.lock_hash = check_hash("lock_hash", req.lock_hash)?;
             d.build = check_build(req.build)?;
+            // A build's chart is installed by the digest it was pushed as,
+            // which the record keeps as its sha256: the version alone may
+            // since name another chart.
+            if let (Some(build), Some(chart)) = (d.build.clone(), d.chart_ref.clone())
+                && let Some(digest) = self.chart_digest(org, project, &build, &chart).await
+            {
+                d.chart_sha256 = digest.trim_start_matches("sha256:").to_owned();
+                d.chart_ref = Some(model::ChartRef {
+                    digest: Some(digest),
+                    ..chart
+                });
+            }
             // Only images under the project's own path (ADR-0062 §4).
             d.images = req
                 .images
@@ -1704,11 +1968,14 @@ impl EnvironmentService {
             self.check_cluster_ready(org, project, &env, &at, env.pull_connection(), false)
                 .await?;
         }
-        let mut config = self.project_config(ctx, project, &env, &d.profile).await?;
+        let mut config = self
+            .project_config(ctx, project, &env, &d.profile, d.build.as_deref())
+            .await?;
         config.build_namespace = Some(place.build_namespace.clone());
         if d.action == DeploymentAction::Install {
             self.check_infra(&env, &place.prefix, &config.infra)?;
         }
+        d.warnings = config.warnings.clone();
         let previewing = d.preview.is_some();
         let d = self.submit(org, &env, d, chart, config).await?;
         if previewing {
@@ -2121,11 +2388,12 @@ impl EnvironmentService {
             None => None,
         };
         let saved = match (&products, product_file.is_none()) {
+            // A read that failed is not "never saved": say why rather than
+            // answer PRODUCT_NOT_SAVED.
             (Some(products), true) => products
                 .saved_description(ctx, &project.to_string())
                 .await
-                .ok()
-                .flatten(),
+                .map_err(saved_description_unreadable)?,
             _ => None,
         };
         let product_file = product_file
@@ -2153,7 +2421,8 @@ impl EnvironmentService {
         if own.is_some() && research {
             return Err(Refusal::Precondition(
                 "OWN_BUILD_NOT_IN_RESEARCH",
-                "a build of the repository's own Dockerfiles runs in a cluster environment;                  Constructor Research builds a product on gears for now"
+                "a build of the repository's own Dockerfiles runs in a cluster environment; \
+                 Constructor Research builds a product on gears for now"
                     .into(),
             ));
         }
@@ -2216,7 +2485,9 @@ impl EnvironmentService {
                     return Err(Refusal::Precondition(
                         "REVISION_NOT_PINNED",
                         format!(
-                            "environment '{}' is protected: it builds only a description                              revision Studio keeps, with its sources pinned -- save the                              product first",
+                            "environment '{}' is protected: it builds only a description \
+                             revision Studio keeps, with its sources pinned -- save the \
+                             product first",
                             env.name
                         ),
                     ));
@@ -2283,6 +2554,7 @@ impl EnvironmentService {
                     warnings: vec![
                         "Constructor Research builds and keeps the images itself".into(),
                     ],
+                    warning_codes: Vec::new(),
                     refusal: None,
                 })));
             }
@@ -2449,6 +2721,7 @@ impl EnvironmentService {
                 image_repositories,
                 sources,
                 warnings,
+                warning_codes: env.warning_codes(),
                 refusal,
             })));
         }
@@ -2562,7 +2835,8 @@ impl EnvironmentService {
             .ok_or_else(|| {
                 Refusal::Precondition(
                     "ENVIRONMENT_RESEARCH_NOT_SIGNED_IN",
-                    "a Research environment runs with your own sign-in to Constructor                      Research: sign in under Connections, \"Sign in with Constructor\", first"
+                    "a Research environment runs with your own sign-in to Constructor \
+                     Research: sign in under Connections, \"Sign in with Constructor\", first"
                         .to_owned(),
                 )
             })
@@ -2653,7 +2927,9 @@ impl EnvironmentService {
         let build_id = format!("research-{}", &Uuid::new_v4().simple().to_string()[..12]);
         // The build bakes in what the chart mounts, so it renders the chart
         // with the values the deploy will (ADR-0049 §3).
-        let config = self.project_config(ctx, project, env, &profile).await?;
+        let config = self
+            .project_config(ctx, project, env, &profile, None)
+            .await?;
         let payload = research::ResearchBuildPayload {
             namespace: application.clone(),
             values: config.values,
@@ -2819,7 +3095,7 @@ impl EnvironmentService {
             lock_hash = b.lock_hash;
         }
         let product = Self::release_name(&product)?;
-        let project_name = self.store.tenant_name(ctx, project).await;
+        let project_name = self.project_name(ctx, project).await?;
         let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
         let person = self.person(ctx).await;
         let d = Deployment {
@@ -2851,6 +3127,7 @@ impl EnvironmentService {
             outcome: None,
             pending_chart: None,
             preview: None,
+            warnings: Vec::new(),
             research: Some(research::ResearchDeploy {
                 research_project: target.project,
                 hardware: target.hardware,
@@ -2865,7 +3142,9 @@ impl EnvironmentService {
         if d.action == DeploymentAction::Install {
             self.check_promoted(ctx, org, env, &d).await?;
         }
-        let config = self.project_config(ctx, project, env, &d.profile).await?;
+        let config = self
+            .project_config(ctx, project, env, &d.profile, d.build.as_deref())
+            .await?;
         self.submit(org, env, d, None, config).await
     }
 
@@ -2946,12 +3225,29 @@ impl EnvironmentService {
         chart: Option<String>,
         config: Config,
     ) -> Result<Deployment> {
+        config.check(d.action)?;
         if env.protected {
             d.state = DeploymentState::AwaitingApproval;
             // A published chart is named on the record; only an uploaded one
             // has to be kept until the decision.
             d.pending_chart = chart;
-            self.record(org, d.clone()).await?;
+            // One request waits for a decision; a second of the same release
+            // would be a second install once both are approved.
+            let svc = self.service(org)?;
+            self.store
+                .update::<DeploymentList, (), Refusal>(
+                    &svc,
+                    org,
+                    DEPLOYMENTS_METADATA_TYPE,
+                    |list| {
+                        if let Some(waiting) = list.waiting_like(&d) {
+                            return Err(already_waiting(waiting));
+                        }
+                        list.record(d.clone());
+                        Ok(())
+                    },
+                )
+                .await??;
         } else {
             // Recorded before it is queued, so the run never finishes before
             // the record of it exists.
@@ -3014,16 +3310,18 @@ impl EnvironmentService {
             // row whoever the administrator is.
             let svc = self.service(org)?;
             let config = match self
-                .project_config(&svc, d.project_id, &env, &d.profile)
+                .project_config(&svc, d.project_id, &env, &d.profile, d.build.as_deref())
                 .await
             {
                 Ok(c) => c,
                 Err(_) => {
-                    self.project_config(ctx, d.project_id, &env, &d.profile)
+                    self.project_config(ctx, d.project_id, &env, &d.profile, d.build.as_deref())
                         .await?
                 }
             };
+            config.check(d.action)?;
             d.state = DeploymentState::Queued;
+            d.warnings = config.warnings.clone();
             self.record(org, d.clone()).await?;
             let payload = Self::payload(org, &env, &d, chart, config);
             let run = self.queue_or_fail(org, &mut d, payload).await?;
@@ -3306,6 +3604,32 @@ pub struct BuildLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_description_that_cannot_be_read_is_not_a_product_never_saved() {
+        let r = saved_description_unreadable(anyhow::anyhow!("graph storage timed out"));
+        let Refusal::Unavailable(why) = r else {
+            panic!("a failed read is the store's answer, not PRODUCT_NOT_SAVED");
+        };
+        assert!(
+            why.contains("could not be read") && why.contains("graph storage timed out"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_project_name_that_cannot_be_read_refuses_with_its_cause() {
+        let project = Uuid::from_u128(3);
+        let Refusal::Unavailable(why) =
+            project_name_unreadable(project, anyhow::anyhow!("tenant {project} has no name"))
+        else {
+            panic!("refused as unavailable");
+        };
+        assert!(
+            why.contains("namespace") && why.contains("has no name"),
+            "{why}"
+        );
+    }
 
     #[test]
     fn a_build_that_failed_as_it_started_logs_its_reason_not_a_missing_pod() {

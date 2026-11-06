@@ -572,6 +572,8 @@ export function ProductMap({
           <GdlView token={token} projectId={projectId} product={product} profile={checkProfile} nodeIds={map.nodes.map((n) => n.id)} selected={selected} onSelect={select} />
         )}
         <Detail
+          token={token}
+          projectId={projectId}
           map={map}
           node={shown}
           params={shown ? paramsOf(shown, product, described, schemas, read.description?.revision ?? null) : null}
@@ -628,28 +630,35 @@ function usePictures(token: string, component: string | null): ScreenPicture[] |
 /** What a micro-frontend puts in the shell, as a small window: the picture a
  *  build took of each screen when the catalogue keeps one for this version
  *  (scripts/mfe-screen-previews.mjs), otherwise drawn from what its manifest
- *  declares (mfe.json) and labelled a schematic. */
+ *  declares (mfe.json) and labelled a schematic. `screen` opens that one;
+ *  `bare` leaves out the menu, for a page drawn inside the shell's window,
+ *  whose own menu lists the screens. */
 function ScreenPreview({
   name,
   screens,
   token,
   pictured,
+  screen,
+  bare = false,
 }: {
   name: string;
   screens: string[];
   token: string;
   pictured: { component: string; version: string | null } | null;
+  screen?: string | null;
+  bare?: boolean;
 }) {
   const items = usePictures(token, pictured?.component ?? null);
   const build = items ? previewBuild(items, pictured?.version ?? null) : null;
-  if (build) return <BuiltPreview name={name} build={build} />;
-  return <SchematicPreview name={name} screens={screens} />;
+  if (build) return <BuiltPreview key={screen ?? ""} name={name} build={build} screen={screen ?? null} bare={bare} />;
+  return <SchematicPreview name={name} screens={screens} screen={screen ?? null} bare={bare} />;
 }
 
 /** The pictures of one build: one screen large, every screen as a tab that
  *  shows it on hover. */
-function BuiltPreview({ name, build }: { name: string; build: PreviewBuild }) {
-  const [on, setOn] = useState(0);
+function BuiltPreview({ name, build, screen, bare }: { name: string; build: PreviewBuild; screen: string | null; bare: boolean }) {
+  // Only a screen asked for is looked for: `null` would match one with no label.
+  const [on, setOn] = useState(() => (screen === null ? 0 : Math.max(0, build.screens.findIndex((s) => s.label === screen || s.route === screen))));
   const shot = build.screens[Math.min(on, build.screens.length - 1)];
   return (
     <span className="pmap-preview-hold" onClick={(e) => e.stopPropagation()}>
@@ -665,7 +674,7 @@ function BuiltPreview({ name, build }: { name: string; build: PreviewBuild }) {
           </span>
         </span>
         <img className="pmap-preview-shot" src={shot.image} alt={shot.label ?? shot.route} />
-        {build.screens.length > 1 && (
+        {build.screens.length > 1 && !bare && (
           <span className="pmap-preview-thumbs">
             {build.screens.map((s, i) => (
               <span key={s.route} className={`pmap-preview-thumb${s === shot ? " on" : ""}`} onMouseEnter={() => setOn(i)} title={s.route}>
@@ -683,27 +692,28 @@ function BuiltPreview({ name, build }: { name: string; build: PreviewBuild }) {
 /** Drawn from what the manifest declares: the screens in the shell's
  *  navigation, the first one open. Not a picture of the running screen,
  *  which only a build can take. */
-function SchematicPreview({ name, screens }: { name: string; screens: string[] }) {
+function SchematicPreview({ name, screens, screen, bare }: { name: string; screens: string[]; screen: string | null; bare: boolean }) {
   const shown = screens.slice(0, 8);
+  const open = screen && screens.includes(screen) ? screen : (shown[0] ?? null);
   return (
     <span className="pmap-preview" role="img" aria-label={`${name}: ${screens.length ? screens.join(", ") : "no screens declared"}`}>
       <span className="pmap-preview-bar">
         <span className="pmap-preview-dots" />
-        <span className="pmap-preview-url">/{(shown[0] ?? name).toLowerCase().replace(/[^a-z0-9]+/g, "-")}</span>
+        <span className="pmap-preview-url">/{(open ?? name).toLowerCase().replace(/[^a-z0-9]+/g, "-")}</span>
         <span className="pmap-preview-tag">schematic</span>
       </span>
       <span className="pmap-preview-body">
-        <span className="pmap-preview-nav">
+        {!bare && <span className="pmap-preview-nav">
           {shown.length === 0 && <span className="pmap-preview-item muted">no screens</span>}
-          {shown.map((s, i) => (
-            <span key={s} className={`pmap-preview-item${i === 0 ? " on" : ""}`}>
+          {shown.map((s) => (
+            <span key={s} className={`pmap-preview-item${s === open ? " on" : ""}`}>
               {s}
             </span>
           ))}
           {screens.length > shown.length && <span className="pmap-preview-item muted">+{screens.length - shown.length} more</span>}
-        </span>
+        </span>}
         <span className="pmap-preview-page">
-          <span className="pmap-preview-title">{shown[0] ?? name}</span>
+          <span className="pmap-preview-title">{open ?? name}</span>
           <span className="pmap-preview-line" style={{ width: "80%" }} />
           <span className="pmap-preview-line" style={{ width: "95%" }} />
           <span className="pmap-preview-line" style={{ width: "60%" }} />
@@ -797,6 +807,8 @@ function Canvas({
   const [over, setOver] = useState<MapLayer | null>(null);
   /** The node the pointer is on: its links show as if it were selected. */
   const [hover, setHover] = useState<string | null>(null);
+  // The screen hovered in the app window's menu, which its page shows.
+  const [screenOn, setScreenOn] = useState<{ node: string; screen: string } | null>(null);
   const lanes = MAP_LAYERS.filter((l) => layers.has(l.id));
   const groupKey = (n: MapNode) => `${n.layer}:${n.group}`;
 
@@ -1033,7 +1045,7 @@ function Canvas({
         >
           {folded ? "▸" : "▾"} {kids.length} database{kids.length === 1 ? "" : "s"}
         </button>
-        {!folded && <div className="pmap-kids">{kids.map(chip)}</div>}
+        {!folded && <div className="pmap-kids">{kids.map((k) => chip(k))}</div>}
       </div>
     );
   };
@@ -1121,13 +1133,100 @@ function Canvas({
                       aria-expanded={selected === shell.id}
                       aria-controls="pmap-detail"
                     >
-                      shell: <b>{shell.label}</b> {shell.detail.facts[1]?.startsWith("It signs") ? "(signs in ✓)" : ""}
+                      <span className="pmap-app-url">
+                        <b>{shell.label}</b>
+                        {shell.detail.facts[1]?.startsWith("It signs") && <span className="pmap-app-lock"> · signs in</span>}
+                      </span>
                       {shell.state !== "ok" && <span className="pmap-node-state"> {STATE_WORDS[shell.state]}</span>}
                     </button>
-                    <div className="pmap-chips">
-                      {groups.flatMap((g) => g.nodes).filter((n) => n.id !== shell.id).map(chip)}
-                      {groups.flatMap((g) => g.nodes).length <= 1 && <span className="muted">No screens mounted: drag one here from the palette.</span>}
-                    </div>
+                    {(() => {
+                      // The shell drawn as the app it is. Its menu is the
+                      // screens, each group of them a micro-frontend: hovering
+                      // one outlines it and names it, and its links to the
+                      // gears start there. The page shows the screen hovered,
+                      // as a build took it, labelled with what draws it.
+                      const mounted = groups.flatMap((g) => g.nodes).filter((n) => n.id !== shell.id);
+                      if (mounted.length === 0) return <p className="muted pmap-app-empty">No screens mounted: drag one here from the palette.</p>;
+                      const screensOf = (n: MapNode) =>
+                        n.detail.facts.find((f) => f.startsWith("Shows "))?.replace(/^Shows /, "").replace(/\.$/, "").split(", ") ?? [];
+                      const pages = mounted.filter((n) => screensOf(n).length > 0);
+                      const shared = mounted.filter((n) => screensOf(n).length === 0);
+                      const shown = pages.find((n) => n.id === lit) ?? pages[0];
+                      const screen = screenOn && screenOn.node === shown?.id ? screenOn.screen : null;
+                      const MENU = 4;
+                      return (
+                        <>
+                          <div className="pmap-app-body">
+                            <nav className="pmap-app-nav" aria-label={`${shell.label}'s menu`}>
+                              {pages.map((n) => (
+                                <div
+                                  key={n.id}
+                                  ref={setRef(n.id)}
+                                  role="button"
+                                  tabIndex={0}
+                                  className={`pmap-app-menu ${n.state}${shown?.id === n.id ? " on" : ""}${selected === n.id ? " picked" : ""}${focus && !linked.has(n.id) && lit !== n.id ? " dim" : ""}`}
+                                  data-pmap-node={n.id}
+                                  data-pmap-state={n.state}
+                                  aria-expanded={selected === n.id}
+                                  aria-controls="pmap-detail"
+                                  onMouseEnter={() => setHover(n.id)}
+                                  onMouseLeave={() => setHover((h) => (h === n.id ? null : h))}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSelect(selected === n.id ? null : n.id);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      onSelect(selected === n.id ? null : n.id);
+                                    }
+                                  }}
+                                >
+                                  <span className="pmap-app-mfe">
+                                    {n.label}
+                                    {n.state !== "ok" && ` · ${STATE_WORDS[n.state]}`}
+                                  </span>
+                                  {/* A picked micro-frontend lists every screen; each is
+                                      reached by Tab as well as by the pointer. */}
+                                  {screensOf(n)
+                                    .slice(0, selected === n.id ? undefined : MENU)
+                                    .map((s) => (
+                                      <span
+                                        key={s}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-pressed={screen === s && shown?.id === n.id}
+                                        className={`pmap-app-item${screen === s && shown?.id === n.id ? " on" : ""}`}
+                                        onMouseEnter={() => setScreenOn({ node: n.id, screen: s })}
+                                        onFocus={() => setScreenOn({ node: n.id, screen: s })}
+                                      >
+                                        {s}
+                                      </span>
+                                    ))}
+                                  {selected !== n.id && screensOf(n).length > MENU && (
+                                    <span className="pmap-app-item muted" title="Pick it to list every screen">
+                                      +{screensOf(n).length - MENU} more
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </nav>
+                            {shown && (
+                              <div className="pmap-app-stage" data-pmap-stage={shown.id}>
+                                <span className="pmap-app-drawn">{shown.label}</span>
+                                <ScreenPreview name={shown.label} screens={screensOf(shown)} token={token} pictured={pictured.get(shown.id) ?? null} screen={screen} bare />
+                              </div>
+                            )}
+                          </div>
+                          {shared.length > 0 && (
+                            <div className="pmap-app-shared">
+                              <span className="sub">shared, no screens of its own</span>
+                              {shared.map((n) => chip(n))}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <p className={`pmap-empty${absence.tone === "warn" && !hasFrontend ? " warn" : " muted"}`} data-pmap-frontend-absence={hasFrontend ? "reading" : absence.tone}>
@@ -1397,7 +1496,62 @@ function ParamList({ params }: { params: Params }) {
   );
 }
 
+/** Which description file says a node: a gear's or a plugin's `gear.gdl`, a
+ *  micro-frontend's or the shell's `frontx.gdl`. */
+export function gdlOf(node: MapNode): { gear: string } | { path: string } | null {
+  const d = node.detail;
+  if ((d.kind === "gear" || d.kind === "plugin") && (d.gear ?? node.label)) return { gear: d.gear ?? node.label };
+  if (d.kind === "mfe" && d.path) return { path: `${d.path.replace(/\/$/, "")}/frontx.gdl` };
+  if (d.kind === "shell") {
+    const at = d.params?.find((p) => p.key === "path")?.value;
+    // Only a leading `./` or `/` goes: `.studio/shell` is a directory of its own.
+    return { path: at ? `${at.replace(/^(\.\/|\/)+/, "").replace(/\/$/, "")}/frontx.gdl`.replace(/^\//, "") : "frontx.gdl" };
+  }
+  return null;
+}
+
+/** A node's description file, read when asked: what the engine reads it
+ *  from, in the repository the server checked out. */
+function GdlSection({ token, projectId, what }: { token: string; projectId: string; what: { gear: string } | { path: string } }) {
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<{ source: string; path: string; text: string } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const name = "gear" in what ? "gear.gdl" : (what.path.split("/").pop() ?? what.path);
+  // The ask by value: the node's detail makes a new object each render.
+  const ask = JSON.stringify(what);
+  useEffect(() => {
+    if (!open || file || err) return;
+    let live = true;
+    api.gdlFile(token, projectId, JSON.parse(ask) as { gear: string } | { path: string }).then(
+      (f) => live && setFile(f),
+      (e: unknown) => live && setErr(e instanceof Error ? e.message : String(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, file, err, token, projectId, ask]);
+  return (
+    <div className="pmap-gdl" data-pmap-gdl={name}>
+      <button type="button" className="ghost pmap-gdl-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? "▾" : "▸"} {name}
+      </button>
+      {open && !file && !err && <p className="muted">Reading {name}…</p>}
+      {err && <p className="muted">{name} could not be read: {err}</p>}
+      {file && (
+        <>
+          <div className="sub">
+            {file.source}/{file.path}
+          </div>
+          <pre className="pmap-gdl-text">{file.text}</pre>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Detail({
+  token,
+  projectId,
   map,
   node,
   params,
@@ -1414,6 +1568,8 @@ function Detail({
   onRemoveGear,
   onRemoveScreen,
 }: {
+  token: string;
+  projectId: string;
   map: ReturnType<typeof productMap>;
   node: MapNode | null;
   /** Its parameters and configuration (`paramsOf`). */
@@ -1484,7 +1640,9 @@ function Detail({
           <li key={f}>{f}</li>
         ))}
       </ul>
-      {params && <ParamList key={node.id} params={params} />}
+      {params && <ParamList key={`params:${node.id}`} params={params} />}
+      {/* Keyed by what it reads: a shell keeps its id when its path changes. */}
+      {gdlOf(node) && <GdlSection key={`gdl:${projectId}:${JSON.stringify(gdlOf(node))}`} token={token} projectId={projectId} what={gdlOf(node)!} />}
       {its.length > 0 && (
         <>
           <div className="pmap-detail-kind" style={{ marginTop: 8 }}>

@@ -84,7 +84,8 @@ impl Sessions {
             Err(e) => {
                 tracing::warn!(
                     session = %session.id,
-                    "studio-session: could not queue the readiness probe ({e:#}) —                      the caller will have to ask for the session record itself"
+                    "studio-session: could not queue the readiness probe ({e:#}) — \
+                     the caller will have to ask for the session record itself"
                 );
                 None
             }

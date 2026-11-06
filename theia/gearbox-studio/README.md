@@ -10,10 +10,13 @@ The engine now lives at
 [`constructorfabric/gearbox`](https://github.com/constructorfabric/gearbox)
 under Apache-2.0, and the session image downloads it from the release
 `STUDIO_GEARBOX_RELEASE` names in `theia/Dockerfile`, at the commit
-`STUDIO_GEARBOX_REF`: `c6bcfe5`, a snapshot on its author's fork of
-constructorfabric/gearbox#17 (GDL 1.5, with `frontx.gdl` as a package
-passport) plus gears taken from crates.io at the versions the product's own
-Cargo.lock pins (`--gears-from`), until those merge; before it, `361e703`;
+`STUDIO_GEARBOX_REF`: `f2deac5`, a snapshot on its author's fork of
+`feat/product-infra` with the generator writing only what the locked gears
+read (`fix/generate-what-runtime-reads`) (GDL 1.6: a product's infra services, and `${VAR}`
+rendered when a process starts) over constructorfabric/gearbox#17 (GDL 1.5,
+with `frontx.gdl` as a package passport) plus gears taken from crates.io at
+the versions the product's own Cargo.lock pins (`--gears-from`), until those
+merge; before it, `bcaa7d6`, then `c6bcfe5`, then `361e703`;
 `cf63925` on `constructorfabric/gearbox` main from 2026-10-27. From 2026-10-19 until then it was a build of `6d60603` on
 `MikeFalcon77/gearbox` `feature/gdl-extensible`, because GDL 1.0 had not
 reached `constructorfabric/gearbox` yet. `src/common/generated/`,

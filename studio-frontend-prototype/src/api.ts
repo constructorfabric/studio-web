@@ -37,8 +37,9 @@ import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
 import { sectionBody, type MirrorSummary, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
 import type { DomainEntity } from "./domain-model.gen";
-import type { DomainQuery, DomainQueryResult } from "./domain-query";
+import type { DomainMutation, DomainMutationResult, DomainQuery, DomainQueryResult } from "./domain-query";
 import type { SpecModelBuildEstimate } from "./build-eta";
+import type { GtsCatalog } from "./domain-runtime";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -432,6 +433,23 @@ export const PROJECT_CONFIG_TYPE =
   "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
 /** The project types a workspace offers (`project-types.ts`). Inherited: the
  *  nearest tenant that sets it wins. */
+/** What `GET /studio-organizations/v1/project-types` answers. */
+interface ProjectTypesAnswer {
+  own?: { types?: unknown[] } | null;
+  resolved?: { types?: unknown[] } | null;
+  own_phases?: unknown[] | null;
+  resolved_phases?: unknown[] | null;
+}
+
+/** One side of the answer as the document the portal reads: the types and
+ *  the phases beside them (project-lifecycle.ts), each only when set. */
+function projectTypesDoc(a: ProjectTypesAnswer, side: "own" | "resolved"): Record<string, unknown> | null {
+  const types = a[side]?.types;
+  const phases = side === "own" ? a.own_phases : a.resolved_phases;
+  if (!Array.isArray(types) && !Array.isArray(phases)) return null;
+  return { ...(Array.isArray(types) ? { types } : {}), ...(Array.isArray(phases) ? { phases } : {}) };
+}
+
 export const PROJECT_TYPES_TYPE =
   "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.types.v1~";
 
@@ -967,6 +985,9 @@ export interface ProjectConfig {
   /** What the product is, as a member confirmed it after Studio proposed it
    *  from the specs (`product-kind.ts`); absent: not decided yet. */
   product_kind?: import("./product-kind").ProductKindChoice;
+  /** The tabs an administrator turned off for this project, on top of what its
+   *  template shows (`level-tabs.ts`). */
+  hidden_tabs?: string[];
 }
 
 /** Where a FrontX package is: `owner/name`, its directory there, the ref it is
@@ -998,12 +1019,10 @@ export const ACCESS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.c
  *  modernization has exactly one. Carried in a project's config metadata. */
 export type ProjectMode = "greenfield" | "modernize";
 
-/** Forward-only: draft -> active -> archived, and archived is terminal. */
-export type ProjectStatus = "draft" | "active" | "archived";
-
-/** The status ladder in order — used to enforce forward-only transitions in
- *  the UI now that the studio-project gear no longer guards them server-side. */
-export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
+/** The phase the project is in: the key of one of the phases its workspace
+ *  lists (`project-phases.ts`). A project from before phases may carry
+ *  `draft`, `active` or `archived`, which are read as the phases they meant. */
+export type ProjectStatus = string;
 
 /** One journey stage, as the catalogue serves it.
  *
@@ -1690,6 +1709,9 @@ export interface DeployEnvironment {
   infra?: InfraPlacement | null;
   /** What the server thinks is risky about how it is set up, one sentence each. */
   warnings?: string[];
+  /** The code of each of `warnings`, in order: `PULL_USES_PUSH_LOGIN` while
+   *  the cluster pulls with the push login. Absent from an older backend. */
+  warning_codes?: string[];
   updated_by: string;
   updated_at: string;
 }
@@ -1707,6 +1729,10 @@ export interface EnvironmentReadiness {
   /** The cluster enforces Studio's policy on what runs in its namespaces. */
   policy_enforced: boolean;
   detail?: string | null;
+  /** What the environment's own setup should fix, though the cluster is ready. */
+  warnings?: string[];
+  /** The code of each of `warnings` (`PULL_USES_PUSH_LOGIN`). */
+  warning_codes?: string[];
 }
 
 /** What an environment says of previews (ADR-0055). */
@@ -1749,6 +1775,16 @@ export interface OwnImage {
   dockerfile: string;
   /** From the repository's root; `.` by default. */
   context?: string | null;
+  /** Where the chart reads the image's repository; default `<app>.image.repository`. */
+  repository_path?: string | null;
+  /** Where it reads the tag; default `<app>.image.tag`. */
+  tag_path?: string | null;
+  /** For a chart that reads the image as one string: where, in place of repository and tag. */
+  image_path?: string | null;
+  /** Where it reads the configuration secret's name; default `<app>.existingSecret`. */
+  secret_name_path?: string | null;
+  /** Where it reads the secret's keys; default `<app>.secretKeys`. */
+  secret_keys_path?: string | null;
 }
 
 /** What an administrator sends for an environment. */
@@ -1787,6 +1823,17 @@ export interface InfraPlacement {
    *  (always so in a dev environment). `shared`: the organization's place. */
   placement: "with_product" | "shared";
   shared: InfraSharedService[];
+  /** The Ingress a generated chart routes a service's `public_url` with. */
+  ingress?: InfraIngress | null;
+}
+
+/** How a service placed with the product is reached at its `public_url`. */
+export interface InfraIngress {
+  /** `ingressClassName`; absent: the environment's preview class. */
+  class?: string | null;
+  /** The TLS secret of an `https://` address. */
+  tls_secret?: string | null;
+  annotations?: Record<string, string>;
 }
 
 /** One service the organization runs for every product of an environment. */
@@ -1827,8 +1874,15 @@ export interface InfraService {
   chart_ref?: string | null;
   chart_version?: string | null;
   chart_values?: Record<string, unknown> | null;
-  /** Where people reach it: `{public_url}`. */
+  /** Where people reach it: `{public_url}`. Placed with the product, its
+   *  generated chart routes it with an Ingress. */
   public_url?: string | null;
+  /** Files its container reads, by absolute path; text with the same
+   *  template names as `provides` (`{secret.KEY}`, `{public_url}`). Mounted
+   *  read-only by a generated chart. */
+  files?: Record<string, string>;
+  /** Arguments after the passport's (`--import-realm`). */
+  args?: string[];
 }
 
 /** What a deploy does with one infra service. */
@@ -1841,6 +1895,25 @@ export interface InfraPlanItem {
   provides: { capability: string; variable: string }[];
   refusal_code?: string | null;
   refusal?: string | null;
+  /** The address its generated chart routes to it with an Ingress. */
+  route?: string | null;
+  /** What the deploy does not apply of what the project says of it. */
+  notes?: string[];
+  /** What the deploy goes on with and says (`INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`). */
+  warnings?: { code: string; message: string }[];
+}
+
+/** A configuration secret of the environment that sets a gear's config
+ *  field the product description also sets. */
+export interface ConfigClash {
+  /** `CONFIG_SECRET_SHADOWED_BY_DESCRIPTION` (the description wins) or
+   *  `CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION` (an install is refused). */
+  code: string;
+  key: string;
+  gear: string;
+  field: string;
+  refuses: boolean;
+  message: string;
 }
 
 /** What a deploy of the project to one environment does with its infra services. */
@@ -1850,6 +1923,20 @@ export interface InfraPlan {
   placement: "with_product" | "shared";
   namespace: string;
   items: InfraPlanItem[];
+  /** Configuration secrets the description also sets. Absent from a server before it. */
+  configuration?: ConfigClash[];
+}
+
+/** The realm a project's Keycloak imports, made by the server from its
+ *  passport and the product description. */
+export interface KeycloakRealm {
+  path: string;
+  content: string;
+  args: string[];
+  clients: { client_id: string; kind: "public" | "confidential"; gear?: string | null; secret?: string | null }[];
+  root_tenant_id: string;
+  root_tenant_from: "description" | "platform";
+  notes: string[];
 }
 
 /** What a build would do, said before it is started (`POST /builds/plan`):
@@ -1874,6 +1961,9 @@ export interface BuildPlan {
   chart_repository: string;
   sources: BuildPlanSource[];
   warnings: string[];
+  /** The codes of the environment's warnings among `warnings`
+   *  (`PULL_USES_PUSH_LOGIN`); absent from an older backend. */
+  warning_codes?: string[];
   /** Why Studio would refuse to start it; absent: it would start. */
   refusal?: { code: string; message: string } | null;
 }
@@ -2078,6 +2168,8 @@ export interface Deployment {
   outcome?: string | null;
   /** A preview (ADR-0055); absent for a deploy of what runs there. */
   preview?: DeploymentPreview | null;
+  /** What the deploy said when asked and goes on with, `CODE: message` each. */
+  warnings?: string[];
 }
 
 /** A release as its cluster reports it now. */
@@ -2652,6 +2744,10 @@ export interface WorkspaceSettings {
   repos?: RepoEntry[];
   /** The icon somebody chose (`tenant-icon.ts`); absent: a folder. */
   icon?: import("./tenant-icon").TenantIcon;
+  /** The tabs an administrator turned off for this tenant's band
+   *  (`level-tabs.ts`). Kept here on a workspace and on an organization too:
+   *  the document is override_only, so neither inherits the other's. */
+  hidden_tabs?: string[];
 }
 
 /** A versioned capability bundle published in the Studio kit registry. */
@@ -3097,6 +3193,11 @@ export function apiUrl(path: string): string {
 /** The organization on screen, as App resolves it. */
 let currentOrganization: string | undefined;
 
+/** The organization requests are scoped to now (see `orgScoped`). */
+export function currentRequestOrganization(): string | undefined {
+  return currentOrganization;
+}
+
 /** Called by App whenever the organization on screen changes. */
 export function setCurrentOrganization(id: string | undefined): void {
   currentOrganization = id;
@@ -3105,7 +3206,15 @@ export function setCurrentOrganization(id: string | undefined): void {
 /** Gears that keep their data per organization and take `?organization_id=`. */
 // studio-product too: its engine reads the organization's corpus -- its gear
 // repositories and its projects' own gears -- not the caller's home tenant's.
-const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/", "/studio-spec-mapping/", "/studio-product/"];
+// studio-domain-model too: the records gears keep live in each organization's
+// model, and a platform administrator's home tenant is the root (ADR-0066).
+const ORG_SCOPED = [
+  "/studio-components-catalog/",
+  "/studio-reports/",
+  "/studio-spec-mapping/",
+  "/studio-product/",
+  "/studio-domain-model/",
+];
 
 /**
  * `path` with the organization on screen named, for a gear that keeps its
@@ -3487,6 +3596,18 @@ export interface ProjectGearRepo {
   branch?: string;
 }
 
+/** A project source the server could not read, and why: the components
+ *  list, the gearbox catalogue and status, and a product check carry these
+ *  rather than reading the source as absent. `source` is `owner/repo`, or
+ *  `project config` when the project's list of sources itself was not read. */
+export interface UnreadableSource {
+  /** Absent in the components list (it is about one project already), and
+   *  when the organization's projects could not be read at all. */
+  project_id?: string | null;
+  source: string;
+  reason: string;
+}
+
 /** Whether product previews run here (`product/gearbox.rs`), and
  *  the gear corpus they resolve against — which a product project's IDE
  *  session checks out beside the project under `source_id`. */
@@ -3505,6 +3626,8 @@ export interface GearboxStatus {
   /** The organization's repositories left out: a platform repository has
    *  the same source id. */
   shadowed?: string[];
+  /** The organization's project sources the last read could not read. */
+  unreadable?: UnreadableSource[];
   /** Where a product's frontend starts in this deployment (`STUDIO_FRONTX_*`);
    *  absent from a backend from before it said (`frontxDefaultsOf`). */
   frontx?: { shell_template: string; source_repo: string; source_ref: string } | null;
@@ -3711,6 +3834,9 @@ export interface ProductPreview {
    *  carries on and lands in the product's `checks[profile]`. Absent from an
    *  older backend. */
   checking?: boolean;
+  /** The project's sources the check could not read, and why: it ran
+   *  without them. Absent from an older backend. */
+  unreadable?: UnreadableSource[];
 }
 
 /** What `importDomainModel` loaded. */
@@ -3746,6 +3872,10 @@ export interface RollupRow {
   /** Projects: `new_gears` | `product` | `existing`, and the project's brief. */
   project_kind?: string | null;
   brief?: string | null;
+  /** Projects: the short top-level values of its config (`project.config`),
+   *  by name -- what a list filters by (project-filters.ts). Absent (not
+   *  null) from a server before them: rollups.ts then reads each config. */
+  attributes?: Record<string, unknown> | null;
   /** The icon chosen for it, both halves or neither; null: none chosen. */
   icon_glyph?: string | null;
   icon_color?: string | null;
@@ -4104,7 +4234,7 @@ export const api = {
     }),
   /** The services and applications of a project's repositories beyond its gears. */
   projectComponents: (token: string, projectId: string) =>
-    request<{ items: ProjectComponent[]; total: number; repos: number }>(
+    request<{ items: ProjectComponent[]; total: number; repos: number; unreadable?: { sources: UnreadableSource[] } }>(
       `/studio-components-catalog/v1/project-components?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
@@ -5266,6 +5396,13 @@ export const api = {
       `/studio-environments/v1/environments/${encodeURIComponent(environmentId)}/infra-plan?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
+  keycloakRealm: (token: string, projectId: string, service: string, portalUrl?: string | null) =>
+    request<KeycloakRealm>(
+      `/studio-environments/v1/infra-services/${encodeURIComponent(service)}/keycloak-realm?project_id=${encodeURIComponent(projectId)}${
+        portalUrl?.trim() ? `&portal_url=${encodeURIComponent(portalUrl.trim())}` : ""
+      }`,
+      token,
+    ),
   importImage: (
     token: string,
     projectId: string,
@@ -5696,41 +5833,45 @@ export const api = {
       { method: "PUT", body: JSON.stringify(value) },
     ),
 
-  /* ── Project types (AM tenant metadata, inherited) ── */
+  /* ── Project types (domain objects, inherited; ADR-0066) ── */
 
   /** The project types that apply at this tenant — its own, else the nearest
    *  ancestor's. `null`: nobody set any (the built-in types apply). */
-  projectTypes: async (token: string, tenantId: string): Promise<unknown | null> => {
-    const r = await request<{ resolved: boolean; value?: unknown }>(
-      `/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}/resolved`,
-      token,
-    );
-    return r.resolved ? (r.value ?? null) : null;
-  },
-
-  /** What this tenant itself sets, ignoring its ancestors. `null`: nothing. */
-  ownProjectTypes: async (token: string, tenantId: string): Promise<unknown | null> => {
-    try {
-      const entry = await request<{ value: unknown }>(
-        `/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`,
+  projectTypes: async (token: string, tenantId: string): Promise<unknown | null> =>
+    projectTypesDoc(
+      await request<ProjectTypesAnswer>(
+        `/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`,
         token,
-      );
-      return entry.value;
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) return null;
-      throw e;
-    }
-  },
+      ),
+      "resolved",
+    ),
 
-  putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTemplatesDoc) =>
-    request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
+  /** What this tenant itself sets, ignoring its ancestors: `{types?, phases?}`.
+   *  `null`: nothing. */
+  ownProjectTypes: async (token: string, tenantId: string): Promise<unknown | null> =>
+    projectTypesDoc(
+      await request<ProjectTypesAnswer>(
+        `/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`,
+        token,
+      ),
+      "own",
+    ),
+
+  /** The whole document: the templates (`types`) and the phases beside them
+   *  (`phases`, project-phases.ts). A writer of one keeps the other. */
+  putProjectTypes: (
+    token: string,
+    tenantId: string,
+    value: Partial<import("./project-types").ProjectTemplatesDoc> & { phases?: import("./project-lifecycle").ProjectPhase[] },
+  ) =>
+    request<unknown>(`/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`, token, {
       method: "PUT",
       body: JSON.stringify(value),
     }),
 
   /** Drop this tenant's own types, so what it inherits applies again. */
   deleteProjectTypes: (token: string, tenantId: string) =>
-    request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
+    request<unknown>(`/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`, token, {
       method: "DELETE",
     }),
 
@@ -5960,9 +6101,62 @@ export const api = {
       ontology: { entities: unknown[]; buckets?: unknown[] };
       /** Whether this caller may change the model (`domain.model`, ADR-0035). */
       can_edit_model: boolean;
+      /** The GTS ids each type and relation kind is registered under. */
+      gts?: GtsCatalog;
     }>(
       "/studio-domain-model/v1/types",
       token,
+    ),
+  /** How many objects of each type the organization holds; `complete: false`
+   *  while the read model is still being filled. */
+  domainTypeCounts: (token: string) =>
+    request<{ counts: Record<string, number>; complete: boolean }>("/studio-domain-model/v1/type-counts", token),
+  /** Add a type to the model (ADR-0066): it starts with no fields of its own. */
+  createDomainType: (
+    token: string,
+    body: { id: string; name?: string; description?: string; bucket?: string; extends?: string },
+  ) =>
+    request<{ entity: unknown; version: number }>("/studio-domain-model/v1/types", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** Add a field to a type; objects written from now on may carry it. */
+  addDomainField: (
+    token: string,
+    type: string,
+    field: { name: string; type: string; description?: string; required?: boolean },
+  ) =>
+    request<{ entity: unknown; version: number }>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(type)}/fields`,
+      token,
+      { method: "POST", body: JSON.stringify(field) },
+    ),
+  /** Rename, retype, require or describe a field the type itself declares. */
+  editDomainField: (
+    token: string,
+    type: string,
+    name: string,
+    edit: { rename_to?: string; type?: string; required?: boolean; description?: string },
+  ) =>
+    request<{ entity: unknown; version: number; migrated?: number | null }>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(type)}/fields/${encodeURIComponent(name)}`,
+      token,
+      { method: "PATCH", body: JSON.stringify(edit) },
+    ),
+  /** Drop a field the type itself declares. Stored values stay in the objects. */
+  /** Give a level (organization, workspace, project) a tab: a `shows`
+   *  relation to the type it lists. Removed like a field. */
+  addDomainTab: (token: string, level: string, body: { name: string; label?: string; target: string }) =>
+    request<{ entity: unknown; version: number }>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(level)}/tabs`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  removeDomainField: (token: string, type: string, name: string) =>
+    request<unknown>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(type)}/fields/${encodeURIComponent(name)}`,
+      token,
+      { method: "DELETE" },
     ),
   /** Materialize the model as a graph (object_type nodes + inherits/declares). */
   syncDomainModel: (token: string) =>
@@ -5977,6 +6171,13 @@ export const api = {
     request<DomainQueryResult<T>>("/studio-domain-model/v1/query", token, {
       method: "POST",
       body: JSON.stringify(query),
+    }),
+  /** Change domain objects and their relations in one batch, applied in order
+   *  and checked against the model and the caller's rights (ADR-0066). */
+  mutateDomain: (token: string, mutation: DomainMutation) =>
+    request<DomainMutationResult>("/studio-domain-model/v1/mutate", token, {
+      method: "POST",
+      body: JSON.stringify(mutation),
     }),
   /** Create or replace one domain object: the same `type` + `key` (+ project)
    *  is the same object, so saving again updates it. */
@@ -6716,6 +6917,15 @@ export const api = {
     );
     return r.nodes?.[0]?.value ?? null;
   },
+  /** A component's description file from the server's checkout: a gear's
+   *  `gear.gdl` (`gear`), or the `.gdl` at `path` (`frontx.gdl`, `service.gdl`). */
+  gdlFile: (token: string, projectId: string, what: { gear: string } | { path: string }) =>
+    request<{ source: string; path: string; text: string }>(
+      `/studio-product/v1/gdl-file?project_id=${encodeURIComponent(projectId)}&${
+        "gear" in what ? `gear=${encodeURIComponent(what.gear)}` : `path=${encodeURIComponent(what.path)}`
+      }`,
+      token,
+    ),
   /** The project's product description as Studio keeps it (ADR-0053). */
   productDescription: (token: string, projectId: string) =>
     request<ProductDescription>(`/studio-product/v1/product-description?project_id=${encodeURIComponent(projectId)}`, token),

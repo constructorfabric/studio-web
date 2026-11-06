@@ -8,6 +8,7 @@
 import type {
   CatalogNode,
   InfraPassport,
+  KeycloakRealm,
   InfraPlacement,
   InfraPlan,
   InfraPlanItem,
@@ -140,12 +141,89 @@ const INSTALL_WORDS: Record<InfraPlanItem["install"], string> = {
 /** One plan item as a line. */
 export function planItemText(i: InfraPlanItem): string {
   const from = i.chart ?? i.image;
-  return `${i.service}: ${INSTALL_WORDS[i.install]}${from ? ` (${from})` : ""}`;
+  return `${i.service}: ${INSTALL_WORDS[i.install]}${from ? ` (${from})` : ""}${i.route ? `, reached at ${i.route}` : ""}`;
 }
 
 /** The plan's refusals, the first of which stops a deploy. */
 export function planRefusals(p: InfraPlan | null): string[] {
   return (p?.items ?? []).filter((i) => i.refusal).map((i) => `${i.refusal_code}: ${i.refusal}`);
+}
+
+/** What the plan says a deploy leaves undone, each with its service. */
+export function planNotes(p: InfraPlan | null): string[] {
+  return (p?.items ?? []).flatMap((i) => (i.notes ?? []).map((n) => `${i.service}: ${n}`));
+}
+
+/** What a deploy goes on with and says, with its code: an issuer pods
+ *  cannot reach, a configuration secret the description wins over. */
+export function planWarnings(p: InfraPlan | null): string[] {
+  return [
+    ...(p?.items ?? []).flatMap((i) => (i.warnings ?? []).map((w) => `${w.code}: ${w.message}`)),
+    ...(p?.configuration ?? []).filter((c) => !c.refuses).map((c) => `${c.code}: ${c.message}`),
+  ];
+}
+
+/** Every refusal of the plan: its services', then a configuration secret
+ *  that contradicts the description, which refuses an install too. */
+export function planAllRefusals(p: InfraPlan | null): string[] {
+  return [...planRefusals(p), ...(p?.configuration ?? []).filter((c) => c.refuses).map((c) => `${c.code}: ${c.message}`)];
+}
+
+/* ── Files a service's container reads (ADR-0064, amended) ──────────────── */
+
+/** As the backend: at most 20 files and 256 KiB together. */
+export const MAX_FILES = 20;
+export const MAX_FILES_BYTES = 256 * 1024;
+
+/** Where stock Keycloak imports realms from with `--import-realm`. */
+export const KEYCLOAK_IMPORT_DIR = "/opt/keycloak/data/import";
+
+/** What is wrong with a service's files, as the backend checks them: each
+ *  path absolute without `.`, `..` or empty names; the size together. */
+export function fileProblems(files: Record<string, string>): string[] {
+  const out: string[] = [];
+  const entries = Object.entries(files);
+  if (entries.length > MAX_FILES) out.push(`at most ${MAX_FILES} files`);
+  for (const [path] of entries) {
+    const names = path.slice(1).split("/");
+    if (!path.startsWith("/") || path.length < 2 || names.some((n) => n === "" || n === "." || n === ".."))
+      out.push(`"${path}" is not an absolute path in the container (/…, no ..)`);
+  }
+  const size = entries.reduce((n, [k, v]) => n + new TextEncoder().encode(k).length + new TextEncoder().encode(v).length, 0);
+  if (size > MAX_FILES_BYTES) out.push(`the files are ${size} bytes together; at most ${MAX_FILES_BYTES}`);
+  return out;
+}
+
+/** The realm a passport's issuer names: `{public_url}/realms/product` is
+ *  `product`. */
+export function realmNameOf(p: Pick<InfraPassport, "provides">): string {
+  return p.provides["oidc.issuer"]?.match(/\/realms\/([^/{}?#\s]+)/)?.[1] ?? "product";
+}
+
+/** `s`'s files and arguments with the realm the server made added: its
+ *  file, and `--import-realm` once. The realm itself is the server's
+ *  (`GET /infra-services/{name}/keycloak-realm`, the MCP tool
+ *  `infra_keycloak_realm`): a client for each gear that signs in, wired to
+ *  the secret it reads, and the root tenant on every confidential one. */
+export function withRealmFile(
+  s: Pick<InfraService, "files" | "args">,
+  realm: Pick<KeycloakRealm, "path" | "content" | "args">,
+): { files: Record<string, string>; args: string[] } {
+  const args = [...(s.args ?? [])];
+  for (const a of realm.args) if (!args.includes(a)) args.push(a);
+  return { files: { ...(s.files ?? {}), [realm.path]: realm.content }, args };
+}
+
+/** The realm's clients in words: `product-portal (public), mini-chat (mini-chat's, {env.MINI_CHAT_CLIENT_SECRET})`. */
+export function realmClientsText(realm: Pick<KeycloakRealm, "clients">): string {
+  return realm.clients
+    .map((c) => `${c.client_id} (${c.gear ? `${c.gear}'s` : c.kind}${c.secret ? `, secret ${c.secret}` : ""})`)
+    .join(", ");
+}
+
+/** Is `p` a Keycloak: it gives an issuer, or is named so. */
+export function isKeycloak(p: Pick<InfraPassport, "name" | "provides">): boolean {
+  return p.name === "keycloak" || "keycloak.admin_url" in p.provides;
 }
 
 /** The variables the product gets from its infra services, sorted. */
@@ -637,6 +715,12 @@ const REFUSAL_WORDS: Record<string, string> = {
   INFRA_IMAGE_NOT_IMPORTED: "no copy yet",
   IMAGE_NOT_IN_PROJECT_PATH: "copy outside the project",
   INFRA_NOT_IN_SHARED_PLACE: "not in the shared place",
+  INFRA_PUBLIC_URL_MISSING: "no public address",
+  INFRA_ISSUER_NOT_HTTPS: "issuer not https",
+};
+
+const WARNING_WORDS: Record<string, string> = {
+  INFRA_ISSUER_UNREACHABLE_IN_CLUSTER: "pods cannot reach it",
 };
 
 /** How one service comes in one environment, as its plan says. */
@@ -649,12 +733,20 @@ export function servicePill(env: Pick<RowEnvironment, "name">, item: InfraPlanIt
       text: `${env.name} ⚠ ${REFUSAL_WORDS[item.refusal_code ?? ""] ?? "refused"}`,
       detail: `${item.refusal_code}: ${item.refusal}`,
     };
+  const warnings = item.warnings ?? [];
+  if (warnings.length)
+    return {
+      environment: env.name,
+      tone: "warn",
+      text: `${env.name} ⚠ ${WARNING_WORDS[warnings[0].code] ?? "warning"}`,
+      detail: [INSTALL_WORDS[item.install], ...warnings.map((w) => `${w.code}: ${w.message}`)].join("; "),
+    };
   return {
     environment: env.name,
     tone: "ok",
     text: `${env.name} ✓ ${item.placement === "shared" ? "shared place" : "with the product"}`,
     // Without the image's reference: the digest is the environment's copy.
-    detail: INSTALL_WORDS[item.install],
+    detail: [INSTALL_WORDS[item.install], ...(item.route ? [`reached at ${item.route}`] : []), ...(item.notes ?? [])].join("; "),
   };
 }
 

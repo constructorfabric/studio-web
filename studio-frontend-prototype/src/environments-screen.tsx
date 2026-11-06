@@ -17,7 +17,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { profileLabel } from "./product";
+import { type DeclaredProfile, deployableProfiles, profileLabel } from "./product";
+import { useDeclaredProfiles } from "./declared-profiles";
 import { oneEach } from "./project-deploys";
 import {
   ApiError,
@@ -45,6 +46,7 @@ import {
   canReadStatus,
   clusterCards,
   clusterConnections,
+  codedWarnings,
   emptyEnvironment,
   environmentInput,
   environmentProblems,
@@ -57,6 +59,7 @@ import {
   stateTone,
 } from "./environments";
 import { InfraPlacementField } from "./infra-services-view";
+import { personLabel, usePeople, type PeopleNames } from "./user-names";
 import { DataTable, RowMenu, When } from "./data-table";
 import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
@@ -67,6 +70,8 @@ import { RegistryBrowser } from "./registry-browser-view";
 import { databaseWord, ladderOrder, versionOf, whatRunsWhere, type ProjectRuns } from "./releases";
 import { EmptyState, PageHeader, StatusChip, type Tone } from "./ui-standard";
 import "./infrastructure.css";
+import { useDomainRefresh } from "./domain-live";
+import { ModelFields } from "./object-attributes";
 
 const PROJECT_TYPE = /tenant\.project\.v1/;
 
@@ -82,7 +87,7 @@ function StateBadge({ d }: { d: Deployment }) {
 }
 
 /** One deployment as a row: what, where, who, when. */
-function DeploymentLine({ d, showProject }: { d: Deployment; showProject: boolean }) {
+function DeploymentLine({ d, showProject, people }: { d: Deployment; showProject: boolean; people: PeopleNames }) {
   return (
     <div className="env-deployment">
       <StateBadge d={d} />
@@ -103,16 +108,21 @@ function DeploymentLine({ d, showProject }: { d: Deployment; showProject: boolea
             · <code>{shortCommit(d.commit)}</code>
           </>
         )}{" "}
-        · {d.requested_by_name || d.requested_by} · {relTime(d.requested_at)}
+        · {personLabel(d.requested_by, d.requested_by_name, people)} · {relTime(d.requested_at)}
         {d.decided_at && (
           <>
             {" "}
-            · {d.state === "declined" ? "declined" : "approved"} by {d.decided_by_name || d.decided_by}
+            · {d.state === "declined" ? "declined" : "approved"} by {personLabel(d.decided_by, d.decided_by_name, people)}
           </>
         )}
       </span>
       {d.reason && <div className="sub">“{d.reason}”</div>}
       {d.outcome && <div className="sub env-outcome">{d.outcome}</div>}
+      {(d.warnings ?? []).map((w) => (
+        <div key={w} className="sub warn" data-deployment-warning>
+          {w}
+        </div>
+      ))}
     </div>
   );
 }
@@ -659,8 +669,12 @@ export function EnvironmentForm({
       </label>
       {(editing?.warnings ?? []).length > 0 && (
         <ul className="hint" data-environment-warnings>
-          {editing!.warnings!.map((w) => (
-            <li key={w}>{w}</li>
+          {codedWarnings(editing!.warnings, editing!.warning_codes).map((w) => (
+            <li key={w.text} data-warning-code={w.code ?? undefined}>
+              {w.code ? <code>{w.code}</code> : null}
+              {w.code ? " " : null}
+              {w.text}
+            </li>
           ))}
         </ul>
       )}
@@ -1044,6 +1058,8 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
   const [openClusters, setOpenClusters] = useState<string[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  // A requester may be in their project's user list alone.
+  const people = usePeople(token, [org.id, ...workspaceIds, ...deployments.map((d) => d.project_id)]);
   const [projects, setProjects] = useState<Tenant[]>([]);
   const [editing, setEditing] = useState<DeployEnvironment | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1109,6 +1125,7 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
       live = false;
     };
   }, [token, org.id]);
+  useDomainRefresh(["deployment-environment","environment-binding","environment-config-secret","deployment","connector-connection"], load);
   useEffect(load, [load]);
 
   useEffect(() => {
@@ -1414,7 +1431,7 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
               <ul className="env-list">
                 {waiting.map((d) => (
                   <li key={d.id}>
-                    <DeploymentLine d={d} showProject />
+                    <DeploymentLine d={d} showProject people={people} />
                     {mayManage ? (
                       <div className="env-actions">
                         <button
@@ -1691,6 +1708,11 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     <Answer id={e.id} />
+                    <ModelFields
+                      token={token}
+                      entity="deployment-environment"
+                      where={{ doc_tenant_id: { _eq: org.id }, doc_key: { _eq: e.id } }}
+                    />
                   </li>
                 ))}
               </ul>
@@ -1716,7 +1738,7 @@ export function OrgInfrastructure({ token, org, workspaceIds }: { token: string;
                   <ul className="env-list">
                     {(opened.card.running.length ? opened.card.running : opened.card.deployments.slice(0, 10)).map((d) => (
                       <li key={d.id}>
-                        <DeploymentLine d={d} showProject />
+                        <DeploymentLine d={d} showProject people={people} />
                         {opened.card!.running.includes(d) && (
                           <StatusButton token={token} org={org.id} d={d} place={opened.kind === "research" ? "Research" : "the cluster"} />
                         )}
@@ -1798,7 +1820,9 @@ export function ProjectEnvironments({
 }: {
   token: string;
   projectId: string;
-  profiles: readonly string[];
+  /** The profiles to offer; by default the ones the saved description
+   *  declares (its latest revision), each with its kind. */
+  profiles?: readonly DeclaredProfile[];
   /** The heading: where the bindings sit decides what they are called. */
   title?: string;
   /** Which of the two to draw. */
@@ -1809,10 +1833,16 @@ export function ProjectEnvironments({
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [bindings, setBindings] = useState<EnvironmentBinding[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const people = usePeople(token, [targets?.organization_id, projectId]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const read = useDeclaredProfiles(token, projectId);
+  const declared = profiles ?? read;
+  // An environment runs a profile it can deploy: a cluster, a `kubernetes`
+  // one (ADR-0057).
+  const offered = deployableProfiles(declared).map((p) => p.id);
 
   useEffect(() => {
     let live = true;
@@ -1889,9 +1919,9 @@ export function ProjectEnvironments({
                   <select value={bound(env.id)} onChange={(e) => bind(env.id, e.target.value)} aria-label={`Profile for ${env.name}`}>
                     <option value="">nothing: not bound</option>
                     {/* A profile bound before that this list does not offer stays shown. */}
-                    {[...profiles, ...(bound(env.id) && !profiles.includes(bound(env.id)) ? [bound(env.id)] : [])].map((p) => (
+                    {[...offered, ...(bound(env.id) && !offered.includes(bound(env.id)) ? [bound(env.id)] : [])].map((p) => (
                       <option key={p} value={p}>
-                        {profileLabel(p)}
+                        {profileLabel(p, declared)}
                       </option>
                     ))}
                   </select>
@@ -1921,7 +1951,7 @@ export function ProjectEnvironments({
         <ul className="env-list">
           {deployments.slice(0, 10).map((d) => (
             <li key={d.id}>
-              <DeploymentLine d={d} showProject={false} />
+              <DeploymentLine d={d} showProject={false} people={people} />
               {canReadStatus(d) && <StatusButton token={token} org={targets.organization_id} d={d} />}
             </li>
           ))}
@@ -1935,6 +1965,7 @@ export function ProjectEnvironments({
  *  when. A row opens on what the deploy said -- its reason, its outcome with
  *  a crashed container's error -- and asks the cluster how it is now. */
 function DeployHistory({ token, org, deployments }: { token: string; org: string; deployments: Deployment[] }) {
+  const people = usePeople(token, [org, ...new Set(deployments.map((d) => d.project_id))]);
   return (
     <DataTable<Deployment>
       list="deploy-history"
@@ -1944,7 +1975,7 @@ function DeployHistory({ token, org, deployments }: { token: string; org: string
       rowLabel={(d) => `${d.product} to ${d.environment_name}`}
       expand={(d) => (
         <div data-deploy-history-detail={d.id}>
-          <DeploymentLine d={d} showProject={false} />
+          <DeploymentLine d={d} showProject={false} people={people} />
           {canReadStatus(d) && <StatusButton token={token} org={org} d={d} />}
         </div>
       )}
@@ -1976,7 +2007,7 @@ function DeployHistory({ token, org, deployments }: { token: string; org: string
           ),
         },
         { id: "commit", header: "Commit", cell: (d) => (d.commit ? <code>{shortCommit(d.commit)}</code> : "—") },
-        { id: "by", header: "By", cell: (d) => d.requested_by_name || d.requested_by },
+        { id: "by", header: "By", cell: (d) => personLabel(d.requested_by, d.requested_by_name, people) },
         {
           id: "when",
           header: "When",

@@ -6,65 +6,72 @@ production data.
 
 ## Connections
 
-`max_connections` is declared in both templates at PostgreSQL's own default of
-100. It is written down rather than inherited because it is a budget several
-other files spend against, and an implicit ceiling is one nobody can check:
+`max_connections` is **160** in both templates. It is written down rather than
+inherited because it is a budget several other files spend against, and an
+implicit ceiling is one nobody can check. Per backend replica:
 
 | Consumer | Ceiling | Where it is set |
 |---|---|---|
-| studio-backend, 13 gear pools | 52 | `pool.max_conns: 4` on `pg_main`, `studio-backend/config/k8s.yaml` |
+| studio-backend, 14 gear pools | 42 | `pool.max_conns: 3` on `pg_main`, `studio-backend/config/k8s.yaml` |
 | studio-backend, graph-storage | 8 | that gear's own `pool` override |
 | studio-backend, studio-events | 2 | that gear's own `pool` override |
 | studio-backend, studio-product | 2 | that gear's own `pool` override (ADR-0053) |
+| studio-backend, studio-artifact-ingest | 2 | that gear's own `pool` override |
+| studio-backend, studio-domain-model | 2 | that gear's own `pool` override (ADR-0066) |
+| studio-backend, studio-environments | 1 | that gear's own `pool` override (ADR-0062) |
 | studio-backend, postgres-usage-collector-plugin | 3 | 1 on its toolkit `pool`, 2 on its own sqlx pool (`pool_size_max`) |
+| **One replica** | **62** | |
+
+And once, whatever the number of replicas:
+
+| Consumer | Ceiling | Where it is set |
+|---|---|---|
 | Keycloak | 10 | `keycloak.dbPoolMaxSize`, `deploy/helm/studio-web/values.yaml` |
 | backend-bootstrap Job | ~2 | transient, one pass per upgrade |
 | CloudNativePG + exporter | ~5 | the operator |
 | `superuser_reserved_connections` | 3 | PostgreSQL default |
-| **Total** | **~87** | |
+| **Everyone else** | **~20** | |
 
 The thing to know before changing any of it: toolkit-db caches one pool **per
 gear**, not per server, so the `max_conns` on `pg_main` is multiplied by the
-number of gear databases on it — fourteen. Raising it by one raises the ceiling by
-fourteen. Give a single gear its own `pool` block instead, the way
-`graph-storage` has one.
+number of gear databases that inherit it -- fourteen (the gears in `k8s.yaml`
+with a `database:` on `pg_main` and no `pool` of their own). Raising it by one
+raises the ceiling by fourteen per replica. Give a single gear its own `pool`
+block instead, the way `graph-storage` has one.
 
-A second backend replica doubles the backend's share — 128 on its own — which
-does not fit, and this is now the **main** thing in the way of running one.
-The other blocker, a push channel whose sequence lived in process memory, is
-gone: `studio-events` keeps its sequence and its replay window in the database
-listed above, so two replicas agree on what a cursor means.
+The arithmetic for two replicas, which is the whole reason for the numbers:
 
-So `max_connections` is **160**, not PostgreSQL's default of 100. The
-arithmetic, which is the whole reason for the number:
-
-| shared `max_conns` | per replica | two replicas | with everyone else | under 100? |
+| shared `max_conns` | per replica | two replicas | with everyone else | fits 160? |
 |---|---|---|---|---|
-| 4 (today) | 69 | 138 | 158 | no |
-| 3 | 56 | 112 | 132 | no |
-| 2 | 43 | 86 | 106 | no |
+| 4 (until 2026-11) | 76 | 152 | 172 | no |
+| **3 (today)** | **62** | **124** | **144** | **yes, 16 spare** |
+| 2 | 48 | 96 | 116 | yes, but a queue |
 
-(Per replica: thirteen gears on the shared pool, plus graph-storage's own 8,
-studio-events' 2, studio-artifact-ingest's 2, studio-product's 2 and the usage plugin's 3.)
+The shared pool was 4 until the domain read model (ADR-0066), the product
+descriptions (ADR-0053) and the environments gear (ADR-0062) each took their
+own pool: two replicas then needed more than 160, and a second replica could
+not start without raising `max_connections` again. It is 3 now, not the
+server limit higher:
 
-It was 150 until the usage plugin (issue #781) added three connections per
-replica and two replicas came to 154; 160 keeps them fitting with a little
-room. Dev's 3 Gi and test's 4 Gi memory limits cover the ten more processes.
+- **Lowering one knob** that every small gear inherits frees fourteen
+  connections per replica; lowering any single gear's own pool frees one or
+  two, and the gears with their own pools have them because they need them
+  (graph-storage's 8 is the busiest pool there is).
+- **Two replicas at 3 give each gear 6** connections in all, more than one
+  replica at 4 gave it. A gear that queues behind 3 on one replica is one that
+  wants its own `pool` block anyway.
+- **Raising the ceiling is not free.** A PostgreSQL backend is a process, so
+  every ten more is roughly another 30 MB of resident memory at saturation,
+  and `max_connections` is not reloadable.
 
-Lowering the per-gear pool is therefore not the way to make room: neither
-three nor two connections per gear fits in 100 any more, and two would be a
-queue rather than a budget for any gear serving a burst.
+Two is the floor not to go to: it would be a queue rather than a budget for
+any gear serving a burst. The pooler below is the other way to make room and
+is not available yet.
 
-Raising the ceiling is not free either. A PostgreSQL backend is a process, so
-160 of them is roughly another 450 MB of resident memory at saturation, and
-`resources.limits.memory` moves from 2 Gi to 3 Gi with it. That is the trade
-being made: memory on one server against a second replica of the backend.
-
-The pooler below is the third way and is not available yet.
-
-> **This takes effect on the next Deploy Infra**, and changing
-> `max_connections` restarts PostgreSQL — it is not a reloadable parameter.
-> Plan it like any other database restart.
+> **Changing `max_connections` takes effect on the next Deploy Infra**, and it
+> restarts PostgreSQL -- it is not a reloadable parameter. Plan it like any
+> other database restart. Changing a `max_conns` takes effect on the next
+> backend deploy.
 
 ### PgBouncer
 

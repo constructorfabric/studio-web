@@ -146,3 +146,39 @@ export function protectedReady(lines: readonly ReleaseSource[]): boolean {
 export function shortCommit(sha: string | null | undefined): string {
   return sha ? sha.slice(0, 8) : "—";
 }
+
+/** What the server said it could not read (`UnreadableSource` in api.ts):
+ *  `owner/repo`, or `project config` for the list of sources itself. */
+export interface SourceUnreadable {
+  source: string;
+  reason: string;
+}
+
+/** What the server names when the project's config itself was not read. */
+export const PROJECT_CONFIG_SOURCE = "project config";
+
+/** Why `source` cannot be read, as a warning on its row; null when nothing
+ *  is wrong that is known. The server's reason first ("source X unreadable:
+ *  why"); else a connection the source names that the caller's list of
+ *  connections no longer has -- deleted, or another person's own -- when
+ *  that list was read (`connections` null: not read, so not judged). */
+export function sourceWarning(
+  source: ProjectSource | undefined,
+  unreadable: readonly SourceUnreadable[] | null,
+  connections: ReadonlySet<string> | null,
+): string | null {
+  if (!source) return null;
+  const path = source.full_path.trim().replace(/^\/+|\/+$/g, "").toLowerCase();
+  const said =
+    unreadable?.find((u) => u.source.trim().replace(/^\/+|\/+$/g, "").toLowerCase() === path) ??
+    unreadable?.find((u) => u.source === PROJECT_CONFIG_SOURCE);
+  if (said) {
+    return said.source === PROJECT_CONFIG_SOURCE
+      ? `the project's sources could not be read: ${said.reason}`
+      : `source ${source.full_path} unreadable: ${said.reason}`;
+  }
+  if (source.connection_id && connections && !connections.has(source.connection_id)) {
+    return `source ${source.full_path} unreadable: its connection was deleted, or belongs to another user`;
+  }
+  return null;
+}

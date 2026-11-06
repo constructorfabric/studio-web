@@ -7,8 +7,12 @@
 //! reads and writes only those.
 
 pub(crate) mod gts;
+mod model_sink;
+#[cfg(test)]
+mod model_sink_tests;
 mod sink;
 
+pub(crate) use model_sink::ModelSink;
 pub(crate) use sink::{CatalogNodeView, CatalogSink, build_sink, build_sink_own_tenant};
 #[cfg(test)]
 pub(crate) use sink::{GraphNodeType, MemorySink};

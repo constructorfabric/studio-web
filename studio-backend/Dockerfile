@@ -52,10 +52,10 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 # merges, the engine is the snapshot of that PR's branch on its author's fork;
 # move back to a constructorfabric/gearbox release once it does.
 ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-c6bcfe5
-ARG STUDIO_GEARBOX_VERSION=0.1.0-c6bcfe5
-ARG STUDIO_GEARBOX_REF=c6bcfe58b40b00e94286cc4a3fa2734d5f8eaf3d
-ARG STUDIO_GEARBOX_SHA256=b886e945b83fd423ffca3dde6fa28796500063313ab842d7abae9342d0d5c0b7
+ARG STUDIO_GEARBOX_RELEASE=snapshot-f2deac5
+ARG STUDIO_GEARBOX_VERSION=0.1.0-f2deac5
+ARG STUDIO_GEARBOX_REF=f2deac58fee0144ad418abdd36abbc5d378e1474
+ARG STUDIO_GEARBOX_SHA256=acc86bffdde0417c91dfad0e3358ac14cd65953599ca72ca18c056110b62b305
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \
@@ -121,6 +121,13 @@ ENV STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox \
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 RUN chmod +x /app/studio-backend && chown -R studio:studio /app
+# The builder CI published from the same commit, by digest
+# (`…/studio-builder@sha256:…`, ADR-0062 §1): what a build runs in when the
+# deploy names none (STUDIO_BUILDER_IMAGE). Empty in a local build, which then
+# refuses builds with BUILDER_NOT_PINNED until one is named. Declared last so
+# a new digest invalidates no layer above.
+ARG STUDIO_BUILDER_IMAGE_BUILT=""
+ENV STUDIO_BUILDER_IMAGE_BUILT=${STUDIO_BUILDER_IMAGE_BUILT}
 
 # Numeric on purpose: with `runAsNonRoot: true` the kubelet must prove the
 # container is non-root BEFORE starting it, and a named USER gives it nothing

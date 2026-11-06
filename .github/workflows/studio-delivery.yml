@@ -1012,20 +1012,8 @@ jobs:
           echo "immutable=$immutable" >> "$GITHUB_OUTPUT"
           echo "promotions=$promotions" >> "$GITHUB_OUTPUT"
 
-      # `buildx build --push`, not `build` then `push`: the docker-container
-      # builder keeps its result to itself unless told to push it.
-      - name: Build & push immutable backend image
-        if: needs.build-require-ci.outputs.backend == 'true'
-        run: |
-          set -euo pipefail
-          tag="${{ steps.tags.outputs.immutable }}"
-          # shellcheck disable=SC2046 # the helper's arguments are meant to split
-          docker buildx build $(ci-cache-buildx-args studio-backend) --push \
-            -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-backend:$tag" studio-backend
-
       # The builder target (a build Job's prepare and publish steps) must run
-      # as the Job's pod runs it: uid 1000, no capabilities (ADR-0048 §9). Its
-      # stages are the server's, already built above.
+      # as the Job's pod runs it: uid 1000, no capabilities (ADR-0048 §9).
       - name: Check the builder image runs non-root
         if: needs.build-require-ci.outputs.backend == 'true'
         run: |
@@ -1038,8 +1026,9 @@ jobs:
       # (ADR-0062 §1): a project's build runs in it by digest, never in the
       # server's image, so a build does not change with the Studio that runs
       # it and the platform's image is never pushed into a project's registry.
-      # The digest is in the summary and is what the deploy pins.
+      # It is built before the server, which carries its digest (below).
       - name: Build & push the builder image
+        id: builder
         if: needs.build-require-ci.outputs.backend == 'true'
         run: |
           set -euo pipefail
@@ -1049,8 +1038,26 @@ jobs:
             --metadata-file /tmp/studio-builder.json \
             -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-builder:$tag" studio-backend
           digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' /tmp/studio-builder.json)"
+          case "$digest" in sha256:*) ;; *) echo "no digest for studio-builder: '$digest'" >&2; exit 1 ;; esac
           echo "studio-builder: $IMAGE_PREFIX/studio-builder@$digest"
           echo "- builder \`$IMAGE_PREFIX/studio-builder@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "image=$IMAGE_PREFIX/studio-builder@$digest" >> "$GITHUB_OUTPUT"
+
+      # `buildx build --push`, not `build` then `push`: the docker-container
+      # builder keeps its result to itself unless told to push it. The server
+      # carries the builder of its own commit, by digest
+      # (STUDIO_BUILDER_IMAGE_BUILT): a deploy that sets no
+      # `backend.builds.builderImage` -- a chart installed by Studio itself,
+      # docker compose -- still builds in the builder CI published with it.
+      - name: Build & push immutable backend image
+        if: needs.build-require-ci.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          # shellcheck disable=SC2046 # the helper's arguments are meant to split
+          docker buildx build $(ci-cache-buildx-args studio-backend) --push \
+            --build-arg "STUDIO_BUILDER_IMAGE_BUILT=${{ steps.builder.outputs.image }}" \
+            -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-backend:$tag" studio-backend
 
       - name: Build and push file-storage sidecar image
         if: needs.build-require-ci.outputs.backend == 'true'

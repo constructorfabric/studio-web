@@ -100,7 +100,9 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "domain_model_versions",
-            description: "The model's change history, newest first: each version's number,                 who made it and when, a one-line summary, and the patch with its inverse.                 The number is what `domain_model_revert` takes.",
+            description: "The model's change history, newest first: each version's number, \
+                who made it and when, a one-line summary, and the patch with its inverse. \
+                The number is what `domain_model_revert` takes.",
             input_schema: || object(json!({}), &[]),
             effect: Effect::Read,
             experimental: false,
@@ -108,7 +110,9 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "domain_type_add_field",
-            description: "Add a field to a domain type the model defines. Recorded as a model                 version, so `domain_model_revert` undoes it. Tell your person what you are                 adding before you call it: the model is shared by everyone in the organization.",
+            description: "Add a field to a domain type the model defines. Recorded as a model \
+                version, so `domain_model_revert` undoes it. Tell your person what you are \
+                adding before you call it: the model is shared by everyone in the organization.",
             input_schema: || {
                 object(
                     json!({
@@ -131,7 +135,11 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "domain_type_edit_field",
-            description: "Rename a field a type declares, change its type, its description, or                 whether it is required. A rename also moves the stored objects onto the new                 name unless `migrate` is false. Only the type's own fields: an inherited one                 is edited on the base that declares it (`domain_type` says which). Recorded                 as a model version; ask your person first.",
+            description: "Rename a field a type declares, change its type, its description, or \
+                whether it is required. A rename also moves the stored objects onto the new \
+                name unless `migrate` is false. Only the type's own fields: an inherited one \
+                is edited on the base that declares it (`domain_type` says which). Recorded \
+                as a model version; ask your person first.",
             input_schema: || {
                 object(
                     json!({
@@ -152,7 +160,9 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "domain_type_remove_field",
-            description: "Remove a field from a type's definition. Stored objects keep what                 they hold under it; `domain_type_conformance` then reports it as undeclared.                 Recorded as a model version; ask your person first.",
+            description: "Remove a field from a type's definition. Stored objects keep what \
+                they hold under it; `domain_type_conformance` then reports it as undeclared. \
+                Recorded as a model version; ask your person first.",
             input_schema: || {
                 object(
                     json!({
@@ -168,7 +178,10 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "domain_model_revert",
-            description: "Restore the model to an earlier version from `domain_model_versions`,                 by applying the inverse of every change since. The revert is a new version                 itself, so it can be reverted too. Refused when a change in the range has no                 inverse (an import of a whole model). Ask your person first.",
+            description: "Restore the model to an earlier version from `domain_model_versions`, \
+                by applying the inverse of every change since. The revert is a new version \
+                itself, so it can be reverted too. Refused when a change in the range has no \
+                inverse (an import of a whole model). Ask your person first.",
             input_schema: || {
                 object(
                     json!({ "to": { "type": "integer", "minimum": 0,

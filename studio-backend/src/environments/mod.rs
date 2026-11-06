@@ -36,21 +36,26 @@
 pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
 mod database;
 mod deploy;
+mod gear_overrides; // a configuration secret that sets a gear's field the description sets
 mod image_tasks; // delete, copy (promote, import) and sweep of image records
 pub(crate) mod images; // a project's images and charts as records (ADR-0062 §4)
 pub(crate) mod images_sink; // a pipeline's published images, recorded (ADR-0062 §4)
 pub(crate) mod infra; // a product's infra services, placed and installed with it (ADR-0064)
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 mod migrations;
 mod model;
 mod placement; // a project's slug, namespaces and registry path (ADR-0062 §3, §7)
 pub(crate) mod port; // what another gear asks of this one directly
 mod preflight; // what a deploy checks before and while it installs
 mod preview; // a build tried in a namespace of its own, removed when it expires (ADR-0055)
-mod readiness; // what a build or a deploy checks before it is queued
+mod readiness;
+mod realm; // the Keycloak realm a product's own Keycloak imports // what a build or a deploy checks before it is queued
 mod records; // the gear's own tables (ADR-0062)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod rest;
+mod secret_needs; // the configuration secrets a product needs in an environment
 mod service;
 mod store;
 mod workflow; // the build workflow proposed to a product's repository (ADR-0048)
@@ -73,6 +78,56 @@ pub const BINDINGS_METADATA_TYPE: &str =
 /// The organization's deployment records.
 pub const DEPLOYMENTS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.deployments.v1~";
+
+/// The documents this gear keeps as domain objects, each record of their
+/// lists an object (ADR-0066 §8a, `storage.metadata`).
+pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {
+    use crate::model_metadata::{Kind, Part};
+    &[
+        Kind {
+            type_id: ENVIRONMENTS_METADATA_TYPE,
+            gear: "studio-environments",
+            parts: &[Part {
+                field: "items",
+                entity: "deployment-environment",
+                name: "Deployment Environment",
+                description: "A cluster namespace an organization deploys its products to.",
+                key: &["id"],
+            }],
+        },
+        Kind {
+            type_id: BINDINGS_METADATA_TYPE,
+            gear: "studio-environments",
+            parts: &[
+                Part {
+                    field: "items",
+                    entity: "environment-binding",
+                    name: "Environment Binding",
+                    description: "Which environment a project's deployment profile deploys to, with its values.",
+                    key: &["profile", "environment_id"],
+                },
+                Part {
+                    field: "secrets",
+                    entity: "environment-config-secret",
+                    name: "Environment Config Secret",
+                    description: "A configuration secret a project sets for one environment; the value stays in credstore.",
+                    key: &["environment_id", "key"],
+                },
+            ],
+        },
+        Kind {
+            type_id: DEPLOYMENTS_METADATA_TYPE,
+            gear: "studio-environments",
+            parts: &[Part {
+                field: "items",
+                entity: "deployment",
+                name: "Deployment",
+                description: "One deploy of a project's build to an environment, and how it went.",
+                key: &["id"],
+            }],
+        },
+    ]
+};
 
 #[toolkit::gear(
     name = "studio-environments",
@@ -99,7 +154,9 @@ impl Gear for StudioEnvironmentsGear {
             Ok(db) => Some(Arc::new(records::Records::new(db.db()))),
             Err(e) => {
                 warn!(
-                    "studio-environments: no database configured -- namespaces follow the                      pattern, image paths the project's name, and the image routes answer 503                      until a `database:` section is added: {e}"
+                    "studio-environments: no database configured -- namespaces follow the \
+                     pattern, image paths the project's name, and the image routes answer 503 \
+                     until a `database:` section is added: {e}"
                 );
                 None
             }
@@ -139,7 +196,7 @@ impl RestApiCapability for StudioEnvironmentsGear {
             crate::studio_session::sdk::TenantMembership::new(Arc::clone(&am)),
         ));
         let service = Arc::new(service::EnvironmentService::new(
-            store::Store::new(am),
+            store::Store::new(crate::model_metadata::client_for(ctx, am, MODEL_KINDS)),
             ctx.client_hub(),
         ));
         if let Some(records) = self.records.get().cloned().flatten() {

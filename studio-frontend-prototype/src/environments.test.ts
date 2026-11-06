@@ -14,6 +14,8 @@ import {
   registryConnections,
   researchConnections,
   readinessBadge,
+  codedWarnings,
+  PULL_USES_PUSH_LOGIN,
   registryHost,
   runningNow,
   slug,
@@ -269,5 +271,25 @@ describe("a cluster's readiness", () => {
       tone: "danger",
       title: "connection refused",
     });
+  });
+
+  it("says when a ready cluster pulls with the push login", () => {
+    const badge = readinessBadge({
+      ...base,
+      level: "bootstrapped",
+      warnings: ["the cluster gets a credential that can write"],
+      warning_codes: [PULL_USES_PUSH_LOGIN],
+    });
+    expect(badge.tone).toBe("warn");
+    expect(badge.label).toBe("Bootstrapped · pulls with the push login");
+    expect(badge.title).toContain("PULL_USES_PUSH_LOGIN: the cluster gets a credential that can write");
+  });
+
+  it("pairs warnings with their codes by position", () => {
+    expect(codedWarnings(["a", "b"], [PULL_USES_PUSH_LOGIN])).toEqual([
+      { code: PULL_USES_PUSH_LOGIN, text: "a" },
+      { code: null, text: "b" },
+    ]);
+    expect(codedWarnings(undefined, undefined)).toEqual([]);
   });
 });

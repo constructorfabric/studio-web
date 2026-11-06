@@ -41,9 +41,9 @@ import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews, RungPlace, 
 import { EnvironmentForm, ProjectEnvironments } from "./environments-screen";
 import { clusterConnections, registryConnections, researchConnections } from "./environments";
 import { errText, relTime } from "./format";
-import { KUBERNETES_PROFILES } from "./product";
 import { deployableBuilds, productUrls, profilesBoundTo } from "./project-deploys";
 import { deploysHint, type PipelineTab } from "./pipeline";
+import { personLabel, usePeople } from "./user-names";
 import { PipelineLine } from "./pipeline-line";
 import { ladderSteps, newestRelease, releaseStatus, stepStatus, versionOf, type LadderStep } from "./releases";
 import { ProjectImages, SHOW_IMAGE_EVENT } from "./project-images";
@@ -285,7 +285,6 @@ export function ProjectReleases({
                 key={round}
                 token={token}
                 projectId={projectId}
-                profiles={KUBERNETES_PROFILES}
                 title="Deploy history"
                 show="history"
               />
@@ -398,7 +397,6 @@ export function ProjectReleases({
             key={round}
             token={token}
             projectId={projectId}
-            profiles={KUBERNETES_PROFILES}
             title="Which profile each environment runs"
             show="bindings"
             onSaved={() => changed("Bindings saved.")}
@@ -583,7 +581,9 @@ function ReleaseLadder({
         rows={steps}
         rowKey={(s) => s.environment.id}
         rowLabel={(s) => s.environment.name}
-        expand={(s) => <StepDetail step={s} token={token} projectId={projectId} bindings={bindings} onChanged={onChanged} />}
+        expand={(s) => (
+          <StepDetail step={s} token={token} projectId={projectId} organizationId={organizationId} bindings={bindings} onChanged={onChanged} />
+        )}
         expandOnClick
         detail={(s) => (s.environment.id === open ? panel(s) : null)}
         empty={{ title: "No environment to deploy to yet." }}
@@ -669,17 +669,20 @@ function StepDetail({
   step: s,
   token,
   projectId,
+  organizationId,
   bindings,
   onChanged,
 }: {
   step: LadderStep;
   token: string;
   projectId: string;
+  organizationId: string;
   bindings: ProjectTargets["bindings"];
   onChanged: (message: string) => void;
 }) {
   const e = s.environment;
   const profiles = profilesBoundTo(bindings, e.id);
+  const people = usePeople(token, [organizationId, projectId]);
   return (
     <div className="ladder-detail" data-ladder-detail={e.name}>
       <RungPlace token={token} projectId={projectId} step={s} onChanged={onChanged} />
@@ -701,7 +704,7 @@ function StepDetail({
         <div data-ladder-latest={s.latest.state}>
           <div className="sub">
             newest deploy: <b>{versionOf(s.latest) ?? s.latest.product}</b> · {s.latest.state} ·{" "}
-            {s.latest.requested_by_name || s.latest.requested_by} · {relTime(s.latest.requested_at)}
+            {personLabel(s.latest.requested_by, s.latest.requested_by_name, people)} · {relTime(s.latest.requested_at)}
           </div>
           {s.latest.reason && <div className="sub">“{s.latest.reason}”</div>}
           {s.latest.outcome && <pre className="ladder-outcome">{s.latest.outcome}</pre>}

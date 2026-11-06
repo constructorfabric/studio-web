@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader, StatusChip } from "./ui-standard";
 import { useDismiss } from "./use-dismiss";
+import { ObjectAttributes } from "./object-attributes";
 import { LevelBadge, LevelMark, LogoControl, OrgMark } from "./level-marks";
 import { HeaderIcon, TenantMark } from "./tenant-icon-view";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
@@ -18,6 +19,7 @@ import {
   DocumentsTab,
   DomainModelGraph,
   ViewsScreen,
+  DomainModelAdmin,
   GtsEntitiesTable,
   IdentityDirectory,
   LazyScreens,
@@ -47,6 +49,7 @@ import { OrgMembersView, OrganizationsTable } from "./org-admin";
 import { BackgroundWork } from "./tasks";
 import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./work-inbox";
 import { Notifications } from "./notifications";
+import { InboxButton, InboxView, useInbox } from "./inbox-view";
 import { StudioAI } from "./studio-ai";
 import { runRepoSync, pruneDetached, findRepoNode, type SyncProgress } from "./artifact-sync";
 import {
@@ -171,6 +174,18 @@ import {
   type RepoRoad,
 } from "./project-form";
 import { ProjectTypesTab } from "./project-types-editor";
+import {
+  FieldChips,
+  PROJECT_FIELDS_CHANGED,
+  ProjectFieldControls,
+  ProjectFieldSettings,
+  fieldFilters,
+  fieldMoveItems,
+  initialAttributes,
+  patchProjectConfig,
+  useProjectFields,
+} from "./project-fields-view";
+import { factsOf } from "./project-filters";
 import { productAttention, type TabAttention } from "./product-flow";
 import { ProductPage } from "./product-sections-view";
 import {
@@ -183,6 +198,10 @@ import {
   visibleTabs,
   type ProjectTemplate,
 } from "./project-types";
+import { isGeneric, shownTabs, tabToOpen } from "./level-tabs";
+import { BandMenu, LevelGenericTab, useHiddenTabs, useModelTabs } from "./level-tabs-ui";
+import { startDomainLive } from "./domain-live";
+import { reloadDomainModel } from "./domain-runtime";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -638,8 +657,11 @@ type View =
   | "org"
   | "reports"
   | "tasks"
+  | "inbox"
   | "system"
-  | "profile";
+  | "profile"
+  /** A tab the domain model adds to the organization (level-tabs.ts). */
+  | `type:${string}`;
 
 /** Monochrome line icons (lucide-style): consistent stroke, currentColor —
  *  they inherit the nav's text/accent color instead of emoji potpourri. */
@@ -817,7 +839,7 @@ const PLATFORM_VIEWS: ReadonlySet<View> = new Set(LEVEL_NAV.platform.map((n) => 
 
 /** Every destination the "+" picker can pin, by level. */
 const NAV_SECTIONS: { title: string; items: { id: View; icon: string; label: string }[] }[] = [
-  { title: "Platform", items: LEVEL_NAV.platform },
+  { title: "Components", items: LEVEL_NAV.platform },
   { title: "Organization", items: LEVEL_NAV.organization },
 ];
 
@@ -830,6 +852,7 @@ type AdminView =
   | "tenants"
   | "workspaces"
   | "objects"
+  | "model"
   | "views";
 
 /** Administration that survives concept v2: people, the shared catalogue,
@@ -846,6 +869,7 @@ const ADMIN_NAV: { id: AdminView; icon: string; label: string }[] = [
   // The type catalogue and the saved lists of its objects. They shape what
   // the organization's screens show, so they are set up here, once, rather
   // than sitting among the sections people work in.
+  { id: "model", icon: "layers", label: "Domain model" },
   { id: "objects", icon: "grid", label: "Objects" },
   { id: "views", icon: "grid", label: "Views" },
 ];
@@ -1744,6 +1768,22 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // component's, and their first catalogue or report fetch must already name
   // the organization. Assigning the same id again is a no-op.
   setCurrentOrganization(orgAsSpace?.id);
+  // The organization's band without the tabs an administrator turned off
+  // (level-tabs.ts), kept in its own workspace settings document.
+  // Which tabs it has is the domain model's.
+  const orgAll = useModelTabs(token, "organization", LEVEL_NAV.organization);
+  const orgHidden = useHiddenTabs(token, "organization", orgAsSpace?.id ?? null);
+  const orgTabs = useMemo(() => shownTabs(orgAll, orgHidden.shown), [orgAll, orgHidden.shown]);
+
+  // Changes to domain objects and to the model, from anywhere, reach every
+  // open screen (`domain-live.ts`) — the organization on screen's, which for a
+  // platform administrator is not their home tenant.
+  const liveOrg = orgAsSpace?.id;
+  useEffect(() => startDomainLive(token, liveOrg), [token, liveOrg]);
+  // The model is the organization's: another organization, another model.
+  useEffect(() => {
+    if (liveOrg) void reloadDomainModel(token).catch(() => undefined);
+  }, [token, liveOrg]);
 
   // The organizations offered in the switcher: every one that holds projects
   // (derived from the loaded workspaces, which carry orgId/orgName) plus any
@@ -1774,6 +1814,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const activeOrg = orgOptions.find((o) => o.id === activeOrgResolvedId) ?? null;
   // Workspaces of the active org — the path picker's workspace options.
   const orgWorkspaces = workspaces.filter((w) => w.orgId === activeOrgResolvedId);
+  // The person's inbox (inbox-view.tsx): everything that waits for them in
+  // the organization in view, read once for the top bar's count and the page.
+  const inbox = useInbox(token, activeOrg, orgWorkspaces);
 
   // When a project is open, the sidebar gains its tab nav (Overview / Artifacts
   // / Spec Quality / Team) so the tabs live on the panel rather than the page.
@@ -1824,21 +1867,45 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       window.removeEventListener(PRODUCT_CHANGED_EVENT, changed);
     };
   }, [crumb.nestedId, token]);
-  const projectTabs = visibleTabs(PROJECT_TABS, projectType).map((t) =>
-    attention[t.id] ? { ...t, attention: attention[t.id] } : t,
-  );
+  // Which tabs exist is the model's (level-tabs.ts); the template turns
+  // built-in ones off, and the model's own tabs follow it. Then without what
+  // the project turned off: the project's own setting narrows the template's.
+  const projectAll = useModelTabs(token, "project", PROJECT_TABS);
+  const templateTabs = useMemo(() => {
+    const kept = new Set<string>(visibleTabs(PROJECT_TABS, projectType).map((t) => t.id));
+    const builtIn = new Set<string>(PROJECT_TABS.map((t) => t.id));
+    return projectAll.filter((t) => !builtIn.has(t.id) || kept.has(t.id));
+  }, [projectAll, projectType]);
+  const projectHidden = useHiddenTabs(token, "project", projectOpen ? (crumb.nestedId ?? null) : null);
+  const projectTabs = shownTabs(templateTabs, projectHidden.shown).map((t) => {
+    const flag = attention[t.id as ProjTab];
+    return flag ? { ...t, attention: flag } : t;
+  });
+  const projectLanding = tabToOpen(projectTabs, landingTab(PROJECT_TABS, projectType));
   useEffect(() => {
     if (!projectType) return;
     const fresh = landOnType.current;
     landOnType.current = false;
-    if (fresh || !projectTabs.some((t) => t.id === projectTab)) setProjectTab(landingTab(PROJECT_TABS, projectType));
+    if (fresh || !projectTabs.some((t) => t.id === projectTab)) setProjectTab(projectLanding);
     // Only when the type arrives: a tab chosen afterwards is the person's.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectType]);
+  // A tab turned off while it is open: move to where the project lands.
+  useEffect(() => {
+    if (!projectTabs.some((t) => t.id === projectTab)) setProjectTab(projectLanding);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectHidden.hidden]);
   /** A workspace is open when one is picked and no project inside it is. The
    *  two are mutually exclusive, so exactly one band ever shows. */
   const workspaceOpen =
     !adminOpen && !activeSpace && view === "projects" && !!crumb.projectId && !crumb.nestedId;
+  const workspaceAll = useModelTabs(token, "workspace", WORKSPACE_TABS);
+  const workspaceHidden = useHiddenTabs(token, "workspace", workspaceOpen ? (crumb.projectId ?? null) : null);
+  const workspaceTabs = useMemo(() => shownTabs(workspaceAll, workspaceHidden.shown), [workspaceAll, workspaceHidden.shown]);
+  useEffect(() => {
+    if (!workspaceTabs.some((t) => t.id === workspaceTab)) setWorkspaceTab(tabToOpen(workspaceTabs, workspaceTab));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceTabs]);
   /** The level the path has open, which decides what the rail lists. */
   const level: Level = projectOpen
     ? "project"
@@ -2171,6 +2238,16 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               <SparkleIcon />
             </button>
           )}
+          <InboxButton
+            count={inbox.results === null ? null : inbox.open.length}
+            active={view === "inbox" && !adminOpen && !activeSpace}
+            onOpen={() => {
+              setInboxOpen(false);
+              setAdminOpen(false);
+              setActiveSpace(null);
+              setView("inbox");
+            }}
+          />
           <WorkInbox
             runs={completed.runs}
             unread={completed.unread}
@@ -2538,7 +2615,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           a project's below. The rail is only what the person pinned. */}
       {!adminOpen && !activeSpace && (level === "platform" || level === "organization") && (
         <nav className="project-sections" aria-label={level === "platform" ? "Platform sections" : "Organization sections"}>
-          {LEVEL_NAV[level].filter((n) => n.id !== "system" || showPlatform).map((n) => (
+          {(level === "organization" ? orgTabs : LEVEL_NAV[level])
+            .filter((n) => n.id !== "system" || showPlatform)
+            .map((n) => (
             <button
               key={n.id}
               className={`psection${view === n.id ? " on" : ""}`}
@@ -2554,24 +2633,26 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               {n.label}
             </button>
           ))}
-          {railPref !== "hidden" &&
-            (() => {
-              const pin: Pin = { kind: "view", id: view };
-              const already = isPinned(pins, pin);
-              return (
-                <button
-                  className={`psection psection-pin${already ? " on" : ""}`}
-                  aria-pressed={already}
-                  title={already ? "Unpin this section from the rail" : "Pin this section to the rail"}
-                  onClick={() => setPinned(togglePin(pins, pin))}
-                >
-                  <span className="ico" aria-hidden>
-                    {already ? "★" : "☆"}
-                  </span>
-                  {already ? "Pinned" : "Pin"}
-                </button>
-              );
-            })()}
+          {/* One control at the band's end: pin this page, customize the tabs. */}
+          {(() => {
+            const pin: Pin = { kind: "view", id: view };
+            const customizable = level === "organization" && !!orgAsSpace;
+            return (
+              <BandMenu
+                levelName="organization"
+                tabs={customizable ? orgAll : []}
+                hidden={orgHidden.hidden}
+                onSave={customizable ? orgHidden.save : undefined}
+                onPreview={orgHidden.setPreview}
+                icon={(name) => <NavIcon name={name} />}
+                pin={
+                  railPref !== "hidden"
+                    ? { pinned: isPinned(pins, pin), toggle: () => setPinned(togglePin(pins, pin)) }
+                    : undefined
+                }
+              />
+            );
+          })()}
         </nav>
       )}
       {/* The project's sections, as the product draws them: a 44px band across
@@ -2591,9 +2672,20 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onOpen={setProjectTab}
             icon={(name) => <NavIcon name={name} />}
           />
+          {/* The project's fields that draw a chip -- its status -- and the
+              moves from where it is. */}
+          {crumb.nestedId && (
+            <ProjectFieldControls
+              token={token}
+              projectId={crumb.nestedId}
+              workspaceId={crumb.projectId ?? null}
+              orgId={workspaces.find((w) => w.id === crumb.projectId)?.orgId ?? null}
+            />
+          )}
           {/* Pinning a project section belongs on the section, not in the rail:
               the rail cannot know which project is open, and a picker listing
-              every project x every section is a list nobody reads. */}
+              every project x every section is a list nobody reads. It sits in
+              the band's one menu, beside customizing the tabs. */}
           {(() => {
             const pin: Pin = {
               kind: "project",
@@ -2602,23 +2694,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               name: openProjectName ?? "Project",
               tab: projectTab,
             };
-            const already = isPinned(pins, pin);
             return (
-              <button
-                className={`psection psection-pin${already ? " on" : ""}`}
-                aria-pressed={already}
-                title={
-                  already
-                    ? "Unpin this section from the rail"
-                    : "Pin this section to the top of the rail"
-                }
-                onClick={() => setPinned(togglePin(pins, pin))}
-              >
-                <span className="ico" aria-hidden>
-                  {already ? "★" : "☆"}
-                </span>
-                {already ? "Pinned" : "Pin"}
-              </button>
+              <BandMenu
+                levelName="project"
+                tabs={templateTabs}
+                hidden={projectHidden.hidden}
+                onSave={projectHidden.save}
+                onPreview={projectHidden.setPreview}
+                icon={(name) => <NavIcon name={name} />}
+                pin={{ pinned: isPinned(pins, pin), toggle: () => setPinned(togglePin(pins, pin)) }}
+                note="Which tabs exist at all is the project's template's (Templates & phases in its workspace)."
+              />
             );
           })()}
         </nav>
@@ -2631,9 +2717,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         <nav className="project-sections" aria-label="Workspace sections">
           <OrderedSections
             prefKey={PREF_WORKSPACE_TAB_ORDER}
-            tabs={WORKSPACE_TABS}
+            tabs={workspaceTabs}
             active={workspaceTab}
             onOpen={setWorkspaceTab}
+            icon={(name) => <NavIcon name={name} />}
+          />
+          <BandMenu
+            levelName="workspace"
+            tabs={workspaceAll}
+            hidden={workspaceHidden.hidden}
+            onSave={workspaceHidden.save}
+            onPreview={workspaceHidden.setPreview}
             icon={(name) => <NavIcon name={name} />}
           />
         </nav>
@@ -2841,6 +2935,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               ))}
             {adminView === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
             {adminView === "objects" && <ObjectTypes token={token} query={filters.query} />}
+            {adminView === "model" && <DomainModelAdmin token={token} query={filters.query} />}
             {adminView === "views" && <ViewsScreen token={token} />}
           </>
         ) : (
@@ -2882,6 +2977,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             isPlatformAdmin={showPlatform}
             catalogueSettings={<PlatformSourcesPanel token={token} onSynced={() => undefined} />}
           />
+        )}
+        {isGeneric(view) && orgAsSpace && (
+          <LevelGenericTab key={view} token={token} level="organization" id={view} tenantId={null} />
         )}
         {view === "costs" && orgAsSpace && (
           <OrgCosts
@@ -2962,6 +3060,18 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
+        {view === "inbox" && (
+          <InboxView
+            inbox={inbox}
+            onOpenProject={(workspaceId, projectId) => {
+              setProjectLabel(undefined);
+              setCrumb({ projectId: workspaceId, nestedId: projectId });
+              setProjectTab("overview");
+              setView("projects");
+            }}
+            onOpenView={(v) => setView(v as View)}
+          />
+        )}
         {/* The deployment's own console -- raw types, JSON, test notifications
             -- is the platform administrator's, not every member's. */}
         {view === "system" && showPlatform && (
@@ -3528,14 +3638,14 @@ export function PathBar({
           type="button"
           className={`org-select path-platform${platformOpen ? " on" : ""}`}
           aria-current={platformOpen ? "page" : undefined}
-          title="The platform: the components every organization shares"
+          title="Components: what every organization shares"
           onClick={onOpenPlatform}
         >
           {/* Not a level one picks among -- there is one, under every
               organization -- so no level caption, and a layers mark rather
               than an initial. */}
-          <LevelMark level="platform" name="Platform" />
-          <span className="org-select-name">Platform</span>
+          <LevelMark level="platform" name="Components" />
+          <span className="org-select-name">Components</span>
         </button>
       </div>
 
@@ -3771,6 +3881,9 @@ function ProjectsView({
 
   // Level 3 — an open project (its own AM tenant): a self-contained screen.
   if (crumb.nestedId) {
+    if (isGeneric(projectTab)) {
+      return <LevelGenericTab key={projectTab} token={token} level="project" id={projectTab} tenantId={crumb.nestedId} />;
+    }
     return (
       <>
         <ProjectScreen
@@ -3801,6 +3914,16 @@ function ProjectsView({
           }}
           onChanged={onChanged}
         />
+      ) : isGeneric(workspaceTab) ? (
+        <>
+          <WorkspaceHeader token={token} workspace={root} />
+          <LevelGenericTab key={workspaceTab} token={token} level="workspace" id={workspaceTab} tenantId={root.id} />
+        </>
+      ) : workspaceTab === "about" ? (
+        <>
+          <WorkspaceHeader token={token} workspace={root} />
+          <ObjectAttributes token={token} entity="workspace" tenantId={root.id} name={root.name} title="Workspace attributes" />
+        </>
       ) : (
         <>
           <WorkspaceHeader token={token} workspace={root} />
@@ -3838,7 +3961,7 @@ function ProjectsView({
    journey stages and the capability vocabulary, was retired by ADR-0058. The
    stages are a computed status and the vocabulary is the platform's; an old
    address to that section opens the workspace's default one (place-url.ts). */
-type WorkspaceTab = "projects" | "ptypes" | "types";
+type WorkspaceTab = "projects" | "about" | "ptypes" | "types" | `type:${string}`;
 
 /** The workspace's page header, shown above EVERY one of its sections — the
  *  project screen does exactly this with its own name, and the level above
@@ -3873,7 +3996,8 @@ function WorkspaceHeader({
 
 const WORKSPACE_TABS: { id: WorkspaceTab; icon: string; label: string; hint: string }[] = [
   { id: "projects", icon: "grid", label: "Projects", hint: "The projects in this workspace" },
-  { id: "ptypes", icon: "layers", label: "Project templates", hint: "What a new project may start from: its sources, a brief, kits and tabs" },
+  { id: "about", icon: "file", label: "Attributes", hint: "What the organization records about this workspace, as its domain model defines it" },
+  { id: "ptypes", icon: "layers", label: "Templates & phases", hint: "What a new project may start from, and the phases a project moves through" },
   { id: "types", icon: "file", label: "Document types", hint: "Templates, section checklists and rules" },
 ];
 
@@ -3894,7 +4018,12 @@ function WorkspaceCatalogue({
   const workspaceId = workspace.id;
   return (
     <div>
-      {tab === "ptypes" && <ProjectTypesTab token={token} workspace={workspace} tabs={PROJECT_TABS} />}
+      {tab === "ptypes" && (
+        <div style={{ display: "grid", gap: 16 }}>
+          <ProjectTypesTab token={token} workspace={workspace} tabs={PROJECT_TABS} />
+          <ProjectFieldSettings token={token} workspace={workspace} />
+        </div>
+      )}
       {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
     </div>
   );
@@ -3945,6 +4074,10 @@ function WorkspaceProjects({
   // none is picked until somebody picks one, and a template only fills in the
   // fields below -- what the product is comes from its specs (product-kind.ts).
   const [offeredTemplates, setOfferedTemplates] = useState<ProjectTemplate[]>(BUILTIN_TEMPLATES);
+  // The project fields (project-fields-view.tsx): what the table filters by,
+  // the chips a row shows, the moves its menu offers, and what a new project
+  // starts with.
+  const fields = useProjectFields(token, workspace.id, workspace.orgId);
   const [templateKey, setTemplateKey] = useState<string | null>(null);
   const template = offeredTemplates.find((t) => t.key === templateKey) ?? null;
   // What the new project takes from the shared catalogue. A kit is a component
@@ -4035,6 +4168,13 @@ function WorkspaceProjects({
   // rest, rather than costing the whole column. Deliberately NOT part of
   // `reload`: a rename must not make every count blink back to "—".
   const projectIds = (projects ?? []).map((p) => p.id).join(",");
+  // A field changed from a row's menu: count again, so the row says it.
+  const [fieldTick, setFieldTick] = useState(0);
+  useEffect(() => {
+    const changed = () => setFieldTick((n) => n + 1);
+    window.addEventListener(PROJECT_FIELDS_CHANGED, changed);
+    return () => window.removeEventListener(PROJECT_FIELDS_CHANGED, changed);
+  }, []);
   useEffect(() => {
     if (!projectIds) {
       setRollups({});
@@ -4059,7 +4199,7 @@ function WorkspaceProjects({
     return () => {
       alive = false;
     };
-  }, [token, workspace.id, projectIds]);
+  }, [token, workspace.id, projectIds, fieldTick]);
 
   // Load the shared component catalogue when the create card opens.
   useEffect(() => {
@@ -4260,7 +4400,10 @@ function WorkspaceProjects({
           ...cfg,
           mode,
           ...(template ? { type: template.key } : {}),
-          status: cfg.status ?? "draft",
+          // What the project fields start a project with (its phase), unless
+          // a retried run already wrote it.
+          ...initialAttributes(fields),
+          ...(cfg.status ? { status: cfg.status } : {}),
           brief: brief.trim() || cfg.brief,
           source_git_url: ctx.cloneUrl || cfg.source_git_url,
         });
@@ -5206,6 +5349,7 @@ function WorkspaceProjects({
               options: REVIEW_FILTERS.filter((f) => f.id !== "all").map((f) => ({ value: f.id, label: f.label })),
               match: (p, value) => !!p.row && inReviewFilter(reviewOf(p.row), value as ReviewFilter),
             },
+            ...fieldFilters(fields, listed, (p) => factsOf(p.row)),
           ]}
           primary={
             <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
@@ -5252,6 +5396,23 @@ function WorkspaceProjects({
                 </div>
               ),
             },
+            // A column for each field that draws a chip (the lifecycle's Status).
+            ...fields
+              .filter((f) => f.chip)
+              .map((f) => ({
+                id: `field-${f.id}`,
+                header: f.header ?? f.label,
+                compare: (a: ProjectListRow, b: ProjectListRow) => {
+                  const order = (f.choices?.() ?? []).map((c) => c.value);
+                  const at = (r: ProjectListRow) => {
+                    const facts = factsOf(r.row);
+                    return facts ? order.indexOf(f.value(facts) ?? "") : -1;
+                  };
+                  return at(a) - at(b);
+                },
+                cell: (p: ProjectListRow) =>
+                  p.row ? <FieldChips fields={[f]} facts={factsOf(p.row)} /> : <span className="sub">—</span>,
+              })),
             {
               id: "review",
               header: "Review",
@@ -5342,6 +5503,10 @@ function WorkspaceProjects({
               ? []
               : [
                   { label: "Open", onSelect: () => onOpenProject(p) },
+                  // The fields' moves (the phase), as the project's tab bar offers them.
+                  ...fieldMoveItems(fields, factsOf(p.row), (patch) =>
+                    void patchProjectConfig(token, p.id, patch).catch((e) => setErr(errText(e))),
+                  ),
                   { label: "Rename", onSelect: () => startEdit(p) },
                   {
                     label: "Delete",
@@ -5362,7 +5527,11 @@ function WorkspaceProjects({
             <VTile
               icon={<span aria-hidden>▦</span>}
               title={p.name}
-              subtitle={kindLine(p.row)}
+              subtitle={
+                <>
+                  <FieldChips fields={fields} facts={factsOf(p.row)} /> {kindLine(p.row)}
+                </>
+              }
               onClick={open}
               tone={rollups[p.id]?.findings ? "attn" : undefined}
               stats={[
@@ -5777,12 +5946,17 @@ function ProjectScreen({
       <div className="proj-content">
         <ProjectTabHowto tab={tab} />
         {tab === "overview" && (
-          <ProjectOverview
-            token={token}
-            project={proj}
-            onOpenTab={setTab}
-            onOpenStudio={() => onOpenStudio(proj)}
-          />
+          <>
+            {/* Fields the organization defines for projects in its domain
+                model: added there, shown here, with no release (ADR-0066). */}
+            <ObjectAttributes token={token} entity="project" tenantId={proj.id} name={proj.name} title="Project attributes" />
+            <ProjectOverview
+              token={token}
+              project={proj}
+              onOpenTab={setTab}
+              onOpenStudio={() => onOpenStudio(proj)}
+            />
+          </>
         )}
         {tab === "artifacts" && (
           <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} onOpenTab={setTab} />

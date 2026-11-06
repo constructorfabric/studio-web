@@ -19,8 +19,11 @@ import {
 import { planKey, planLines, planRefusalText } from "./build-plan";
 import { InfraPlanView } from "./infra-services-view";
 import { type IdeBuild, buildRefusalText } from "./builds";
-import { STATE_LABELS, shortCommit, stateTone } from "./environments";
+import { STATE_LABELS, codedWarnings, shortCommit, stateTone } from "./environments";
+import { personLabel, usePeople } from "./user-names";
 import { ownBuildSummary } from "./project-build";
+import { readDeclaredProfiles, useDeclaredProfiles } from "./declared-profiles";
+import { deployableProfiles } from "./product";
 import { errText, relTime } from "./format";
 import {
   deployableBuilds,
@@ -285,6 +288,7 @@ function PendingDecisions({
   const [error, setError] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const people = usePeople(token, [organizationId, ...new Set(waiting.map((d) => d.project_id))]);
   useEffect(() => {
     if (!organizationId) return;
     let live = true;
@@ -324,7 +328,7 @@ function PendingDecisions({
               <StatusChip tone="warn">waits for a decision</StatusChip> <b>{d.chart_version ?? d.build ?? d.product}</b>{" "}
               {d.commit && <code>{shortCommit(d.commit)}</code>}{" "}
               <span className="sub">
-                asked by {d.requested_by_name || d.requested_by} {relTime(d.requested_at)}
+                asked by {personLabel(d.requested_by, d.requested_by_name, people)} {relTime(d.requested_at)}
               </span>
             </div>
             {mayDecide ? (
@@ -707,8 +711,9 @@ function BuildForResearch({
     setBusy(true);
     setError(null);
     try {
-      const targets = await api.projectTargets(token, projectId);
-      const b = await api.startBuild(token, projectId, { environment_id: env.id, profile: profileFor(targets.bindings, env.id) });
+      const [targets, declared] = await Promise.all([api.projectTargets(token, projectId), readDeclaredProfiles(token, projectId)]);
+      const deployable = deployableProfiles(declared).map((p) => p.id);
+      const b = await api.startBuild(token, projectId, { environment_id: env.id, profile: profileFor(targets.bindings, env.id, deployable) });
       onChanged?.(`Build ${b.build_id} started for ${env.name} in Research; it shows under Build as it goes.`);
     } catch (e) {
       setError(buildRefusalText(e, errText));
@@ -820,12 +825,14 @@ export function RungPlace({
 }
 
 /** The profile a build for `environment` takes: the one bound to it, else the
- *  one every other environment runs, else `prod`. */
-export function profileFor(bindings: readonly EnvironmentBinding[], environment: string): string {
+ *  one every other environment runs, else the first deployable profile the
+ *  saved description declares (`deployable`), else `prod`. */
+export function profileFor(bindings: readonly EnvironmentBinding[], environment: string, deployable: readonly string[] = []): string {
   const bound = bindings.find((b) => b.environment_id === environment)?.profile;
   if (bound) return bound;
   const all = [...new Set(bindings.map((b) => b.profile))];
-  return all.length === 1 ? all[0] : "prod";
+  if (all.length === 1) return all[0];
+  return deployable.includes("prod") ? "prod" : (deployable[0] ?? "prod");
 }
 
 /** Build in Studio: a Job in the environment's cluster clones the repository,
@@ -866,11 +873,12 @@ export function BuildInStudio({
   const [plan, setPlan] = useState<BuildPlan | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [started, setStarted] = useState(0);
+  const deployable = deployableProfiles(useDeclaredProfiles(token, projectId)).map((p) => p.id);
   const planEnv = choices.find((e) => e.id === envId) ?? choices[0];
   const planBody = planEnv
     ? {
         environment_id: planEnv.id,
-        profile: profile ?? profileFor(bindings, planEnv.id),
+        profile: profile ?? profileFor(bindings, planEnv.id, deployable),
         ...((productFile ?? saved?.path ?? "").trim() ? { product_file: (productFile ?? saved?.path ?? "").trim() } : {}),
         ...((gitRef ?? saved?.branch ?? "").trim() ? { ref: (gitRef ?? saved?.branch ?? "").trim() } : {}),
       }
@@ -929,8 +937,8 @@ export function BuildInStudio({
   const here = destinations.find((d) => d.environments.some((e) => e.id === env.id)) ?? destinations[0];
   const file = productFile ?? saved?.path ?? "";
   const branch = gitRef ?? saved?.branch ?? "";
-  const bound = profileFor(bindings, env.id);
-  const options = [...new Set([bound, ...bindings.map((b) => b.profile)])];
+  const bound = profileFor(bindings, env.id, deployable);
+  const options = [...new Set([bound, ...bindings.map((b) => b.profile), ...deployable])];
   const prof = profile ?? bound;
   return (
     <div data-build-in-studio>
@@ -1105,8 +1113,12 @@ function BuildPlanView({ plan }: { plan: BuildPlan }) {
       </dl>
       {plan.warnings.length > 0 && (
         <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }} data-build-plan-warnings>
-          {plan.warnings.map((w) => (
-            <li key={w}>{w}</li>
+          {codedWarnings(plan.warnings, plan.warning_codes).map((w) => (
+            <li key={w.text} data-warning-code={w.code ?? undefined}>
+              {w.code ? <code>{w.code}</code> : null}
+              {w.code ? " " : null}
+              {w.text}
+            </li>
           ))}
         </ul>
       )}
@@ -1135,6 +1147,7 @@ export function ProposeBuildWorkflow({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ pr_url?: string | null; branch: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const deployable = deployableProfiles(useDeclaredProfiles(token, projectId)).map((p) => p.id);
   if (choices.length === 0) {
     return (
       <p className="hint">
@@ -1144,7 +1157,7 @@ export function ProposeBuildWorkflow({
     );
   }
   const env = choices.find((e) => e.id === envId) ?? choices[0];
-  const profile = profileFor(bindings, env.id);
+  const profile = profileFor(bindings, env.id, deployable);
   const file = saved?.path;
   return (
     <div data-propose-workflow>

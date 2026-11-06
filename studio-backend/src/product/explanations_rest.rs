@@ -81,7 +81,17 @@ impl Product {
     fn explanations(&self) -> ApiResult<Store> {
         self.hub
             .get::<dyn account_management_sdk::AccountManagementClient>()
-            .map(Store::new)
+            .map(|am| {
+                Store::new(crate::model_metadata::wrap(
+                    am,
+                    Arc::clone(&self.hub),
+                    super::super::explanations::STORAGE
+                        .get()
+                        .copied()
+                        .unwrap_or_default(),
+                    super::super::explanations::MODEL_KINDS,
+                ))
+            })
             .map_err(|_| {
                 CanonicalError::service_unavailable()
                     .with_detail(

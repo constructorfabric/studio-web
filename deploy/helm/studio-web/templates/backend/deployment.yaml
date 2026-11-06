@@ -197,6 +197,12 @@ spec:
             # this installation names no administrator.
             - name: STUDIO_PLATFORM_ADMINS
               value: {{ .Values.backend.platformAdmins | quote }}
+            - name: STUDIO_ORG_SELF_SERVICE
+              value: {{ .Values.backend.organizations.selfService | quote }}
+            # Empty is no limit: the config leaves max_owned unquoted, so it
+            # reads as null.
+            - name: STUDIO_ORG_MAX_OWNED
+              value: {{ .Values.backend.organizations.maxOwned | quote }}
             # Unset keeps the subject fixed in the realm files (ADR-0030). Set
             # only when given: the config keeps an empty variable as a value,
             # and an empty subject left shared sessions without an actor.
@@ -275,7 +281,8 @@ spec:
             - name: STUDIO_OTLP_ENDPOINT
               value: {{ .Values.backend.telemetry.endpoint | quote }}
             # The builder by digest (ADR-0062 §1), never this server's image:
-            # empty refuses every build with BUILDER_NOT_PINNED.
+            # empty takes the one the backend image was published with
+            # (STUDIO_BUILDER_IMAGE_BUILT, baked by CI).
             - name: STUDIO_BUILDER_IMAGE
               value: {{ .Values.backend.builds.builderImage | quote }}
             - name: STUDIO_BUILDKIT_IMAGE

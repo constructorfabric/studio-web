@@ -363,15 +363,19 @@ pub fn is_pinned(image: &str) -> bool {
 
 /// The builder for a build in `env`: the environment's own (an
 /// organization's mirror), else the platform's (`STUDIO_BUILDER_IMAGE`, the
-/// `studio-builder` CI published by digest). Never this server's image: a
-/// project's build must not depend on the version of Studio that runs it.
-/// Refused unless it names a digest, but on a stand that sets
-/// `STUDIO_BUILDER_ALLOW_TAG=1`.
+/// `studio-builder` CI published by digest), else the one this server's
+/// image was published with (`STUDIO_BUILDER_IMAGE_BUILT`, which CI bakes
+/// in from the same commit). Never this server's image: a project's build
+/// must not depend on the version of Studio that runs it. Refused unless it
+/// names a digest, but on a stand that sets `STUDIO_BUILDER_ALLOW_TAG=1`.
 pub fn builder_for(env: &super::model::Environment) -> Result<BuilderSpec, (&'static str, String)> {
-    let platform = std::env::var("STUDIO_BUILDER_IMAGE")
-        .ok()
-        .map(|i| i.trim().to_owned())
-        .filter(|i| !i.is_empty());
+    let var = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .map(|i| i.trim().to_owned())
+            .filter(|i| !i.is_empty())
+    };
+    let platform = var("STUDIO_BUILDER_IMAGE").or_else(|| var("STUDIO_BUILDER_IMAGE_BUILT"));
     let allow_tag = std::env::var("STUDIO_BUILDER_ALLOW_TAG")
         .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"));
     builder_from(env, platform.as_deref(), allow_tag)
@@ -397,10 +401,11 @@ pub fn builder_from(
             None => {
                 return Err((
                     BUILDER_NOT_PINNED,
-                    "this Studio was deployed without a builder image: set \
-                     STUDIO_BUILDER_IMAGE to the studio-builder CI published, by digest \
-                     (…/studio-builder@sha256:…), or give the environment a builder image of \
-                     its own"
+                    "this Studio was deployed without a builder image, and its backend image \
+                     carries none (a local build): set STUDIO_BUILDER_IMAGE \
+                     (backend.builds.builderImage) to the studio-builder CI published, by \
+                     digest (…/studio-builder@sha256:…), or give the environment a builder \
+                     image of its own"
                         .into(),
                 ));
             }
@@ -777,6 +782,36 @@ pub async fn enqueue(
             },
         )
         .await
+}
+
+/// Keep what a build's lock says of its infra services on the project
+/// (ADR-0065 §3), where its deploys read them.
+async fn keep_infra(
+    hub: &Arc<ClientHub>,
+    org: Uuid,
+    project: Uuid,
+    build: &str,
+    services: Vec<super::infra::LockedService>,
+) -> anyhow::Result<()> {
+    let am = hub
+        .get::<dyn account_management_sdk::AccountManagementClient>()
+        .map_err(|_| anyhow!("account management is not available"))?;
+    let ctx = super::store::service_context(org)?;
+    match super::store::Store::new(am)
+        .update::<super::model::BindingList, (), std::convert::Infallible>(
+            &ctx,
+            project,
+            super::BINDINGS_METADATA_TYPE,
+            |row| {
+                super::infra::keep_built(&mut row.built_infra, build, services.clone());
+                Ok(())
+            },
+        )
+        .await?
+    {
+        Ok(_) => Ok(()),
+        Err(never) => match never {},
+    }
 }
 
 /// Record a build's outcome in the project's graph: in `records_in`, the
@@ -1486,10 +1521,12 @@ impl WatchTask {
     ) -> anyhow::Result<()> {
         use crate::artifact_ingest::port::BuildOutcome;
         let mut chart_digest = None;
+        let mut infra = Vec::new();
         let mut record_of = match outcome {
             Ok(manifest) => match serde_json::from_str::<Manifest>(manifest.trim()) {
                 Ok(m) => {
                     chart_digest = m.chart.digest.clone();
+                    infra = m.infra;
                     BuildOutcome {
                         build_id: p.build_id.clone(),
                         status: "passed".into(),
@@ -1532,6 +1569,29 @@ impl WatchTask {
             ),
         };
         record_of.description_revision = p.description_revision;
+        // The build's infra services are kept before it counts as passed, so
+        // a passed build always has what its deploys run (ADR-0065 §3). Every
+        // passed build is kept, one without infra too: a deploy can then tell
+        // a build that chose none from one whose services are no longer kept.
+        if record_of.status == "passed"
+            && let Err(e) = keep_infra(
+                &self.hub,
+                p.organization_id,
+                p.project_id,
+                &p.build_id,
+                std::mem::take(&mut infra),
+            )
+            .await
+        {
+            record_of = BuildOutcome::failed(
+                &p.build_id,
+                &p.repository,
+                &p.profile,
+                &format!("the build's infra services could not be kept: {e:#}"),
+                "publish",
+            );
+            record_of.description_revision = p.description_revision;
+        }
         // Each image and the chart becomes a record of the project
         // (ADR-0062 §4), from the manifest, before the build's own.
         if record_of.status == "passed"
@@ -1694,6 +1754,10 @@ pub struct Manifest {
     /// §3): what a dev build actually took from each branch.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<(String, String)>,
+    /// The infra services the build's lock resolved (ADR-0065 §3); empty
+    /// for a product without `infra`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra: Vec<super::infra::LockedService>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1720,6 +1784,9 @@ pub fn pushed_digest(output: &str) -> Option<String> {
     })
 }
 
+/// How much of a container's termination message the kubelet keeps.
+const TERMINATION_MESSAGE_BYTES: usize = 4096;
+
 /// What `prepare` leaves for `build` and `publish`, in `/work/build.json`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Prepared {
@@ -1734,6 +1801,38 @@ pub struct Prepared {
     /// `(source id, commit)` of every source fetched.
     #[serde(default)]
     pub sources: Vec<(String, String)>,
+    /// What the lock says of the product's infra services (ADR-0065 §3).
+    #[serde(default)]
+    pub infra: Vec<super::infra::LockedService>,
+    /// The description revision Studio laid over the checkout, when it did:
+    /// with the lock, what tells two builds of one commit apart.
+    #[serde(default)]
+    pub description_revision: Option<i64>,
+}
+
+/// The version a build publishes its chart at: `{base}-sha.{commit:12}`,
+/// then `.r{revision}` and `.l{lock:8}` when the build has them, so two
+/// builds of one commit with another description or lock never push over
+/// each other's chart. SemVer, as Helm wants: each of them a pre-release
+/// identifier of letters and digits.
+pub fn chart_version(
+    base: &str,
+    commit: &str,
+    description_revision: Option<i64>,
+    lock_hash: Option<&str>,
+) -> String {
+    let short: String = commit.chars().take(12).collect();
+    let mut version = format!("{base}-sha.{short}");
+    if let Some(r) = description_revision {
+        version.push_str(&format!(".r{r}"));
+    }
+    if let Some(lock) = lock_hash.filter(|l| l.bytes().all(|b| b.is_ascii_hexdigit())) {
+        let lock: String = lock.chars().take(8).collect();
+        if !lock.is_empty() {
+            version.push_str(&format!(".l{}", lock.to_ascii_lowercase()));
+        }
+    }
+    version
 }
 
 /// The applications `docker/build.sh` builds, `(app, image)`, and its build
@@ -2241,6 +2340,8 @@ pub fn prepare_own(
         chart_base: chart_base_version(&chart_yaml),
         apps: named,
         sources: Vec::new(),
+        infra: Vec::new(),
+        description_revision: None,
     };
     std::fs::write(
         work.join("build.json"),
@@ -2469,6 +2570,7 @@ pub fn prepare_as(
         ));
         named.push((app.clone(), name));
     }
+    let infra = locked_infra(&intent, &roots, &file, profile)?;
     let chart_dir = out.join("helm").join(&product);
     // The product's screens: one image beside the applications, built from
     // the generated frontend's own folder, and named as the chart's `ui`
@@ -2504,6 +2606,11 @@ pub fn prepare_as(
         chart_base,
         apps: named,
         sources: fetched,
+        infra,
+        description_revision: match description {
+            DescriptionFrom::Text { revision, .. } => *revision,
+            _ => None,
+        },
     };
     std::fs::write(
         work.join("build.json"),
@@ -2516,6 +2623,47 @@ pub fn prepare_as(
         prepared.product
     );
     Ok(())
+}
+
+/// What the lock says of the product's infra services (ADR-0065 §3): asked
+/// of `gearbox resolve` only when the description chooses any, since the
+/// resolve scans every root again.
+fn locked_infra(
+    intent: &serde_json::Value,
+    roots: &[PathBuf],
+    file: &Path,
+    profile: &str,
+) -> anyhow::Result<Vec<super::infra::LockedService>> {
+    let chooses = intent
+        .get("infra")
+        .and_then(|i| i.as_array())
+        .is_some_and(|i| !i.is_empty());
+    if !chooses {
+        return Ok(Vec::new());
+    }
+    let mut resolve = Command::new(gearbox());
+    resolve.arg("resolve");
+    for r in roots {
+        resolve.arg("--root").arg(r);
+    }
+    resolve
+        .arg("--product")
+        .arg(file)
+        .arg("--profile")
+        .arg(profile)
+        .args(["--format", "json"]);
+    let resolved: serde_json::Value = serde_json::from_str(&run(&mut resolve, "gearbox resolve")?)
+        .context("gearbox resolve did not answer JSON")?;
+    let services = super::infra::locked_services(&resolved).map_err(|e| anyhow!(e))?;
+    println!(
+        "infra services from the lock: {}",
+        services
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    Ok(services)
 }
 
 /// Leave what `prepare` made as its termination message, where Studio reads
@@ -2556,7 +2704,12 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
             image: format!("{prefix}/{name}:{tag}@{digest}"),
         });
     }
-    let version = format!("{}-sha.{short}", prepared.chart_base);
+    let version = chart_version(
+        &prepared.chart_base,
+        &prepared.commit,
+        prepared.description_revision,
+        prepared.lock_hash.as_deref(),
+    );
     let charts = work.join("charts");
     std::fs::create_dir_all(&charts)?;
     let home = work.join("helm");
@@ -2599,10 +2752,20 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
         },
         gearbox: engine_revision(),
         sources: prepared.sources,
+        infra: prepared.infra,
     };
     let text = serde_json::to_string(&manifest)?;
     // The kubelet keeps a container's termination message (at most 4 KiB):
-    // that is how Studio reads what was published without reading logs.
+    // that is how Studio reads what was published without reading logs. One
+    // cut short would be read as no manifest, or lose infra services.
+    if text.len() > TERMINATION_MESSAGE_BYTES {
+        bail!(
+            "the build's manifest is {} bytes, over the {TERMINATION_MESSAGE_BYTES} a \
+             termination message holds; its infra section has {} service(s)",
+            text.len(),
+            manifest.infra.len()
+        );
+    }
     let _ = std::fs::write("/dev/termination-log", &text);
     println!("{text}");
     Ok(text)
@@ -3137,6 +3300,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     }
 
     #[test]
+    fn two_builds_of_one_commit_publish_their_charts_at_two_versions() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let lock = "DEADBEEF00112233445566778899aabbccddeeff00112233445566778899aabb";
+        assert_eq!(
+            chart_version("0.1.0", commit, None, None),
+            "0.1.0-sha.0123456789ab"
+        );
+        let r4 = chart_version("0.1.0", commit, Some(4), Some(lock));
+        let r5 = chart_version("0.1.0", commit, Some(5), Some(lock));
+        assert_eq!(r4, "0.1.0-sha.0123456789ab.r4.ldeadbeef");
+        assert_ne!(r4, r5, "another description revision, another chart");
+        assert_ne!(
+            chart_version("0.1.0", commit, None, Some(lock)),
+            chart_version("0.1.0", commit, None, Some("aa")),
+            "another lock, another chart"
+        );
+        // SemVer as Helm reads it: pre-release identifiers of [0-9A-Za-z-].
+        let pre = r4.split_once('-').unwrap().1;
+        assert!(
+            pre.split('.')
+                .all(|id| !id.is_empty()
+                    && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        );
+        // A lock that is not hex is not written into the version.
+        assert_eq!(
+            chart_version("1.0.0", commit, None, Some("x/y")),
+            "1.0.0-sha.0123456789ab"
+        );
+    }
+
+    #[test]
     fn the_chart_version_and_the_digest_are_read_from_what_tools_wrote() {
         assert_eq!(
             chart_base_version("apiVersion: v2\nname: shop\nversion: \"0.1.0\"\n"),
@@ -3166,6 +3360,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
                 name: "csharp-hello".into(),
                 dockerfile: "Dockerfile".into(),
                 context: ".".into(),
+                values: Default::default(),
             }],
             chart: "chart/csharp-hello".into(),
         });

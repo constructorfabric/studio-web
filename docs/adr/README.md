@@ -76,6 +76,10 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0062](0062-a-projects-build-and-its-images-are-its-own-not-the-platforms.md) | A project's build, its images and its namespaces are its own, not the platform's | proposed | 2026-11-04 |
 | [0063](0063-what-a-product-is-comes-from-its-specs-and-a-project-starts-from-an-optional-template.md) | What a product is comes from its specs, and a project starts from an optional template | proposed | 2026-11-04 |
 | [0064](0064-a-products-infra-services-are-catalogue-components-deployed-with-it.md) | A product's infra services are catalogue components, deployed with it | proposed | 2026-11-04 |
+| [0065](0065-a-products-infra-services-are-said-by-its-description-and-placed-by-the-environment.md) | A product's infra services are said by its description and placed by the environment | proposed | 2026-11-05 |
+| [0066](0066-domain-objects-are-read-from-a-postgres-mirror-of-the-graph.md) | Domain objects are read from a Postgres mirror of the graph, and the domain query compiles to SQL over it | proposed | 2026-10-26 |
+| [0067](0067-a-domain-object-says-what-happened-to-it-and-kits-bring-the-rest.md) | A domain object says what happened to it, workflows react to that, and a kit brings the rest | proposed | 2026-10-27 |
+| [0068](0068-studio-is-a-shell-and-everything-inside-it-comes-from-kits.md) | Studio is a shell, and everything inside it comes from kits | proposed | 2026-11-06 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

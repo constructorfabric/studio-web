@@ -311,9 +311,72 @@ pub fn edge_key(type_id: &str, from: &str, to: &str) -> String {
     format!("{type_id}|{from}|{to}")
 }
 
+/// The GTS ids a model document's types and relation kinds are registered
+/// under, so a screen shows the ids without deriving them a second time:
+/// `{types: {entity id: {type, stored_as}}, relations: {kind: {type, stored_as}}}`.
+/// `type` is our id; `stored_as` the one graph-storage keeps, with its family.
+pub fn catalog_of(ontology: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{Map, Value, json};
+    let ids = |type_id: String| json!({ "stored_as": graph_type_id(&type_id), "type": type_id });
+    let mut types = Map::new();
+    let mut relations = Map::new();
+    let entities = ontology.get("entities").and_then(Value::as_array);
+    for e in entities.into_iter().flatten() {
+        let Some(id) = e.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        types.insert(id.to_owned(), ids(node_type_id(id)));
+        let properties = e.get("properties").and_then(Value::as_array);
+        for p in properties.into_iter().flatten() {
+            let is_relation = matches!(
+                p.get("extends").and_then(Value::as_str),
+                Some("edge" | "link")
+            );
+            match p.get("relationType").and_then(Value::as_str) {
+                Some(kind) if is_relation && !kind.is_empty() => {
+                    relations
+                        .entry(kind.to_owned())
+                        .or_insert_with(|| ids(edge_type_id(kind)));
+                }
+                _ => {}
+            }
+        }
+    }
+    json!({ "types": types, "relations": relations })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_catalog_names_every_type_and_relation_kind() {
+        let doc = serde_json::json!({ "entities": [
+            { "id": "role-assignment", "properties": [
+                { "name": "held_by", "type": "Person", "extends": "edge", "relationType": "owns" },
+                { "name": "note", "type": "string" }
+            ] },
+            { "id": "team" }
+        ] });
+        let c = catalog_of(&doc);
+        assert_eq!(
+            c["types"]["role-assignment"]["type"],
+            "gts.cf.studio.domain.role_assignment.v1~"
+        );
+        assert_eq!(
+            c["types"]["team"]["stored_as"],
+            "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.team.v1~"
+        );
+        assert_eq!(
+            c["relations"]["owns"]["type"],
+            "gts.cf.studio.domainrel.owns.v1~"
+        );
+        assert_eq!(
+            c["relations"]["owns"]["stored_as"],
+            "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainrel.owns.v1~"
+        );
+        assert_eq!(c["relations"].as_object().map(|r| r.len()), Some(1));
+    }
 
     #[test]
     fn node_ids_sanitize_hyphens() {

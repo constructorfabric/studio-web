@@ -1,7 +1,8 @@
 # Studio over MCP
 
-Studio's domain model, the requirements its specifications state and the
-spec-quality detectors, as tools in the agent you already work in: Claude
+Studio's domain model, the requirements its specifications state, the
+spec-quality detectors and a project's pipeline -- sources, product
+description, infra, build, deploy -- as tools in the agent you already work in: Claude
 Code, Codex, Cursor or any other MCP client. It is one more way into Studio,
 not a replacement for the portal; what you see and decide in the portal stays
 there.
@@ -10,9 +11,10 @@ Every call acts as you. The server sends each tool's requests to Studio's own
 REST API with your token, so a tool can do exactly what you can do in the
 portal and nothing more.
 
-Most tools read or check. The few that change the domain model are marked so
-your agent asks you first, and every change they make is a model version
-`domain_model_revert` undoes.
+Most tools read or check. The ones that change something (the domain model,
+a project's sources, its description, secrets, infra, builds and deploys) are
+marked so your agent asks you first. Every change to the domain model is a
+model version `domain_model_revert` undoes.
 
 | | |
 | --- | --- |
@@ -154,10 +156,94 @@ project.
 | `domain_type_remove_field` | *changes the model:* removes a field from a type |
 | `domain_model_revert` | *changes the model:* restores an earlier version |
 
-**Changes.** The four tools that change the model are annotated for your agent
-(`readOnlyHint: false`, and `destructiveHint` for the three that change or
-remove), so it asks you before calling them, and are marked experimental. Each
-change is a model version with its inverse: `domain_model_versions` shows it
+**The pipeline.** A project goes from its sources to a running product
+without the portal; each step is the REST route the portal calls for it.
+
+| Step | Tool | What it answers or does |
+| --- | --- | --- |
+| Sources | `project_sources` | the repositories the project is made of |
+| | `project_sources_set` | *changes:* replaces the list (only `sources`; the rest of the config is kept) |
+| | `project_connections` | the connections the project can read through |
+| | `connection_repositories` | the repositories one connection reaches |
+| Product | `product_description` | the latest description revision: text, number, `sources_lock` |
+| | `product_description_revisions` | the revisions, newest first, without text |
+| | `product_description_revision` | one revision with its text |
+| | `product_description_save` | *changes:* a new revision against a base; `stale` when someone saved since |
+| | `product_record` | the picked gears and the engine's kept checks per profile |
+| | `product_check` | the engine's verdict for one profile, composed from the picks |
+| | `product_description_check` | the engine's verdict on a saved revision as written, for one profile: GBX diagnostics |
+| | `gdl_file` | a component's `gear.gdl`, `frontx.gdl` or `service.gdl` |
+| Environments | `deploy_targets` | where the product can deploy, the bindings, the secret keys |
+| | `project_environments` | the project's own environments |
+| | `deploy_bindings_set` | *changes:* which profile each environment runs |
+| | `config_secrets` | the secret keys per environment (never values) |
+| | `config_secret_keys` | one environment's keys against what the description and infra services need there: `missing` |
+| | `config_secret_set` | *changes:* sets a secret; the value is never echoed back |
+| | `config_secret_delete` | *changes:* removes a secret |
+| Infra | `infra_services` | the infra services the product runs beside its gears |
+| | `infra_services_set` | *changes:* replaces the list |
+| | `infra_service_public_url_set` | *changes:* sets or removes one service's `public_url`, keeping the rest |
+| | `infra_plan` | what a deploy to one environment does with them |
+| | `image_import` | *changes:* copies an external image or chart into the project's path |
+| | `image_get` | one image: where, by digest, its state |
+| | `project_images` | the project's images and charts |
+| Build | `build_plan` | what a build would do and why it would be refused; starts nothing |
+| | `build_start` | *changes:* builds in an environment's cluster |
+| | `build_list` | the project's builds, newest first, with status and failure |
+| | `build_get` | one build: status, lock hash, images, chart, `built_infra` |
+| | `build_wait` | waits up to 25 s for a build to end; `done` and its record |
+| | `build_log` | a Studio build's steps with the end of each log |
+| Deploy | `deploy_request` | *changes:* deploys a build, redeploys, or uninstalls |
+| | `deployments` | deployments with state and outcome |
+| | `deployment_get` | one deployment: state, outcome, decision |
+| | `deployment_wait` | waits up to 25 s for a deployment to settle; `done` and its record |
+| | `deployment_decide` | *changes:* approves or declines (organization administrators) |
+| | `deployment_status` | the release as its cluster reports it now |
+| | `deployment_logs` | the end of each container's log |
+| Runs | `task_run` | the background run an import, build or deploy started |
+
+**The inbox.** Everything that waits for you in one organization, as the
+portal's Inbox lists it, and how to act on each item.
+
+| Tool | What it answers or does |
+| --- | --- |
+| `inbox` | deploys awaiting approval, reviews asked of you, pull requests whose next move is yours, your failed background work (an undelivered notification among it); each item's `act` names the tool that answers it |
+| `inbox_mark` | *changes:* marks an item done, snoozes it, or opens it again; the portal shows the same marks |
+| `review_requests` | a project's or workspace's review requests; `waiting_on: "me"` for yours |
+| `review_verdict` | *changes:* approves a review request or asks for changes |
+
+A deploy is answered with `deployment_decide`, a failed run read with
+`task_run`, a pull request on its provider. Each kind of item is one source
+in `src/user_profile/mcp.rs`; a new kind is one more source there and one in
+the portal's `inbox-sources.ts`.
+
+`product_check` composes the description from the picked gears and keeps its
+verdict in `product_record`; `product_description_check` checks a revision
+already saved, as a build lays it down, and keeps nothing.
+
+**Waiting.** A build takes minutes, a deploy less. `build_wait` and
+`deployment_wait` answer as soon as it ends, or after 25 seconds with
+`done: false` and the record as it is: call again until `done`. One call
+waits no longer because the gateway in front of Studio gives up on a request
+after 30 seconds. A deploy `awaiting_approval` counts as settled: nothing
+moves it but an administrator's `deployment_decide`.
+
+**Secrets.** `config_secret_keys` names what one environment needs: each
+`${NAME}` of the latest description outside every profile (a gear's
+configuration) or in the profile the environment runs, and each capability an
+infra service leaves to the project. One the database step or an infra
+service writes is marked so; `missing` is what a deploy would run without.
+Set each with `config_secret_set`: the value goes in through the tool's input
+and no tool ever answers it.
+
+Each of these steps has its own route: `GET /studio-environments/v1/builds/{build_id}`,
+`GET …/deployments/{deployment_id}`, `GET …/config-secrets` (all with
+`?project_id=`) and `POST /studio-product/v1/product-description-checks?project_id=`.
+
+**Changes.** Every tool that changes something (marked *changes* above) is
+annotated for your agent (`readOnlyHint: false`, and `destructiveHint` for one
+that replaces or removes), so it asks you before calling it, and is marked
+experimental. A change to the domain model is a model version with its inverse: `domain_model_versions` shows it
 and `domain_model_revert` undoes it. Objects, relations and documents are not
 offered for writing: nothing records a version of them, and a specification
 changes through your own commit, which people review.
@@ -277,7 +363,7 @@ tool made appear in the metrics of the routes they reached.
 A tool lives with the gear whose routes it calls, in that gear's `mcp.rs`
 (`src/domain_model/mcp.rs` is the pattern), and is listed in
 `crate::mcp::tools()`. It is a route and a description: `Run::Get` and
-`Run::Post`, `Run::Patch` and `Run::Delete` send the arguments to one route; `Run::Custom` is for more than one
+`Run::Post`, `Run::Put`, `Run::Patch` and `Run::Delete` send the arguments to one route; `Run::Custom` is for more than one
 request, as `spec_check` submits and then waits. Write the description for the
 agent: what the tool answers, when to call it, what it does not do. That text
 is all the agent knows about it. Set `effect` to what the call does to Studio,

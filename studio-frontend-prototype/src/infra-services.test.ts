@@ -37,6 +37,15 @@ import {
   sharedText,
   sourceText,
   variableOf,
+  fileProblems,
+  isKeycloak,
+  MAX_FILES_BYTES,
+  planAllRefusals,
+  planNotes,
+  planWarnings,
+  realmClientsText,
+  realmNameOf,
+  withRealmFile,
 } from "./infra-services";
 
 const keycloakNode = {
@@ -401,5 +410,105 @@ describe("the Infrastructure editor", () => {
       ["oidc", "keycloak"],
       ["keycloak", "keycloak"],
     ]);
+  });
+});
+
+describe("files, arguments and the address people reach", () => {
+  const kc = passportOf(keycloakNode)!;
+  const withClientSecret = { ...kc, secrets: ["KC_BOOTSTRAP_ADMIN_PASSWORD", "OIDC_CLIENT_SECRET"] };
+
+  it("checks files as the backend does", () => {
+    expect(fileProblems({ "/opt/keycloak/data/import/product.json": "{}" })).toEqual([]);
+    for (const bad of ["realm.json", "/opt/../etc", "/opt//x", "/opt/x/", "/"])
+      expect(fileProblems({ [bad]: "x" })).toHaveLength(1);
+    expect(fileProblems({ "/a": "x".repeat(MAX_FILES_BYTES) })[0]).toMatch(/bytes together/);
+  });
+
+  it("names the realm from the issuer", () => {
+    expect(realmNameOf(kc)).toBe("product");
+    expect(realmNameOf({ provides: { "oidc.issuer": "{public_url}/realms/shop" } })).toBe("shop");
+    expect(realmNameOf({ provides: {} })).toBe("product");
+  });
+
+  // The server makes the realm (infra_keycloak_realm): the editor lays it on.
+  const realm = {
+    path: "/opt/keycloak/data/import/product.json",
+    content: '{"realm":"product"}',
+    args: ["--import-realm"],
+    clients: [
+      { client_id: "product-portal", kind: "public" as const },
+      { client_id: "product-backend", kind: "confidential" as const, secret: "{secret.OIDC_CLIENT_SECRET}" },
+      { client_id: "mini-chat", kind: "confidential" as const, gear: "mini-chat", secret: "{env.MINI_CHAT_CLIENT_SECRET}" },
+    ],
+  };
+
+  it("adds the server's realm and --import-realm once, keeping other files", () => {
+    const s = { ...serviceFrom(withClientSecret), files: { "/etc/x": "y" }, args: [] };
+    const once = withRealmFile(s, realm);
+    expect(Object.keys(once.files).sort()).toEqual(["/etc/x", "/opt/keycloak/data/import/product.json"]);
+    expect(once.args).toEqual(["--import-realm"]);
+    expect(withRealmFile({ ...s, ...once }, realm).args).toEqual(["--import-realm"]);
+    expect(isKeycloak(kc)).toBe(true);
+    expect(isKeycloak(passportOf(postgresNode)!)).toBe(false);
+  });
+
+  it("says each client of the realm and the secret it is wired to", () => {
+    expect(realmClientsText(realm)).toBe(
+      "product-portal (public), product-backend (confidential, secret {secret.OIDC_CLIENT_SECRET}), mini-chat (mini-chat's, secret {env.MINI_CHAT_CLIENT_SECRET})",
+    );
+  });
+
+  it("shows an issuer that is not https as a refusal, and one pods cannot reach as a warning", () => {
+    const item = { service: "keycloak", placement: "with_product" as const, install: "generated" as const, provides: [] };
+    expect(
+      servicePill({ name: "dev" }, { ...item, refusal_code: "INFRA_ISSUER_NOT_HTTPS", refusal: "give it https" }),
+    ).toMatchObject({ tone: "danger", text: "dev ⚠ issuer not https" });
+    const warned = {
+      ...item,
+      warnings: [{ code: "INFRA_ISSUER_UNREACHABLE_IN_CLUSTER", message: "id.localtest.me reaches only this machine" }],
+    };
+    const pill = servicePill({ name: "dev" }, warned);
+    expect(pill).toMatchObject({ tone: "warn", text: "dev ⚠ pods cannot reach it" });
+    expect(pill.detail).toContain("INFRA_ISSUER_UNREACHABLE_IN_CLUSTER: id.localtest.me");
+    const plan: InfraPlan = {
+      environment_id: "e",
+      environment_name: "dev",
+      placement: "with_product",
+      namespace: "shop-dev",
+      items: [warned],
+      configuration: [
+        { code: "CONFIG_SECRET_SHADOWED_BY_DESCRIPTION", key: "K", gear: "mini-chat", field: "f", refuses: false, message: "the description wins" },
+        { code: "CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION", key: "L", gear: "mini-chat", field: "g", refuses: true, message: "keep one" },
+      ],
+    };
+    expect(planWarnings(plan)).toEqual([
+      "INFRA_ISSUER_UNREACHABLE_IN_CLUSTER: id.localtest.me reaches only this machine",
+      "CONFIG_SECRET_SHADOWED_BY_DESCRIPTION: the description wins",
+    ]);
+    expect(planAllRefusals(plan)).toEqual(["CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION: keep one"]);
+    expect(planWarnings(null)).toEqual([]);
+  });
+
+  it("shows the route, the notes and the missing address in the plan", () => {
+    const item = {
+      service: "keycloak",
+      placement: "with_product" as const,
+      install: "generated" as const,
+      provides: [],
+      route: "https://id.shop.example",
+    };
+    expect(planItemText(item)).toMatch(/reached at https:\/\/id\.shop\.example$/);
+    expect(servicePill({ name: "dev" }, item).detail).toMatch(/reached at https:\/\/id\.shop\.example/);
+    const plan = {
+      environment_id: "e",
+      environment_name: "dev",
+      placement: "with_product" as const,
+      namespace: "shop-dev",
+      items: [{ ...item, install: "chart" as const, route: null, notes: ["its files are not applied: a ready chart …"] }],
+    };
+    expect(planNotes(plan)).toEqual(["keycloak: its files are not applied: a ready chart …"]);
+    expect(
+      servicePill({ name: "dev" }, { ...item, refusal_code: "INFRA_PUBLIC_URL_MISSING", refusal: "set its public_url" }).text,
+    ).toBe("dev ⚠ no public address");
   });
 });

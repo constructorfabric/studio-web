@@ -31,6 +31,8 @@ import {
   withSuggestedFrontx,
   zonesOf,
   type Mfe,
+  stepsSummary,
+  type Step,
 } from "./frontend-constructor";
 
 const node = (name: string, value: Record<string, unknown> = {}, type = FRONTX_NODE_TYPE): CatalogNode =>
@@ -565,5 +567,26 @@ describe("the deployment's FrontX starting points", () => {
     );
     expect(templates.map((m) => m.repo)).toEqual(["acme/ui", "https://github.com/acme/ui.git", "git@github.com:acme/ui"]);
     expect(addable.map((m) => m.repo)).toEqual(["acme/ui-shop"]);
+  });
+});
+
+describe("what the build steps add up to", () => {
+  const step = (id: Step["id"], state: Step["state"]): Step => ({ id, title: id, state, detail: "" });
+
+  it("counts what to fix, never the steps the build itself does", () => {
+    const s = stepsSummary([step("shell", "warn"), step("mount", "ok"), step("signin", "bad"), step("build", "todo"), step("ship", "todo")]);
+    expect(s).toMatchObject({ tone: "danger", text: "2 things to fix" });
+    expect(s.fix.map((x) => x.id)).toEqual(["shell", "signin"]);
+  });
+
+  it("is ready to build when every check is ok, though build and ship have not run", () => {
+    expect(stepsSummary([step("shell", "ok"), step("info" as never, "info"), step("build", "todo"), step("ship", "todo")])).toMatchObject({
+      tone: "ok",
+      text: "Ready to build",
+    });
+  });
+
+  it("says how many steps are not ready when nothing is wrong yet", () => {
+    expect(stepsSummary([step("shell", "ok"), step("mount", "todo")]).text).toBe("1 step not ready");
   });
 });

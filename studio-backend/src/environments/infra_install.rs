@@ -145,6 +145,22 @@ async fn own_secrets(
         };
         out.insert(key.clone(), value);
     }
+    // What its files read as `{env.KEY}`: the project's configuration
+    // secret KEY there, made and kept once when none is set, so the realm's
+    // client and the gear that reads `${KEY}` hold the same value.
+    let one = std::slice::from_ref(i);
+    for key in infra::file_variables(one) {
+        let reference = model::config_secret_ref(p.project_id, p.environment_id, &key);
+        let value = match kept(credstore, ctx, &reference).await? {
+            Some(v) => v,
+            None => {
+                let v = new_secret();
+                keep(credstore, ctx, &reference, &v).await?;
+                v
+            }
+        };
+        out.insert(infra::env_slot(&key), value);
+    }
     Ok(out)
 }
 
@@ -211,10 +227,16 @@ pub(super) async fn bring(
                 let files = infra::generated_chart(
                     &i.service,
                     image,
+                    &p.namespace,
                     &secrets,
                     p.registry_connection_id.map(|_| PULL_SECRET),
+                    i.ingress.as_ref(),
                 )
                 .map_err(|e| anyhow!("{name}: {e}"))?;
+                if let Some(url) = i.ingress.as_ref().and(i.service.public_url.as_deref()) {
+                    ctx.progress(format!("{name}: an Ingress routes {url} to it"))
+                        .await;
+                }
                 let dir = scratch.path().join("infra").join(name);
                 write_chart(&dir, files)?;
                 ctx.progress(format!(

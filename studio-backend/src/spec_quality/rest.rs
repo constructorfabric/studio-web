@@ -103,7 +103,7 @@ pub struct SpecQualityCapabilitiesDto {
 /// it: the run is the thing to follow.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct AnalyzeEnqueuedDto {
+pub struct SpecQualityAnalyzeEnqueuedDto {
     /// The `studio-tasks` run watching this analysis.
     pub run_id: String,
     /// The upstream detector service's task id.
@@ -126,7 +126,8 @@ impl ProxyState {
             .map_err(|_| {
                 CanonicalError::service_unavailable()
                     .with_detail(
-                        "spec-quality analyses are not available in this deployment                          (studio-tasks has no database configured)",
+                        "spec-quality analyses are not available in this deployment \
+                         (studio-tasks has no database configured)",
                     )
                     .create()
             })
@@ -289,7 +290,7 @@ async fn enqueue_analysis(
     detector: &str,
     headers: &HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     let request_key = crate::idempotency::key(headers)?;
     // Resolved before the submit: accepting an analysis we then cannot watch
     // would leave the caller holding an id nothing in the portal can follow.
@@ -351,7 +352,7 @@ async fn enqueue_analysis(
 
     Ok((
         StatusCode::ACCEPTED,
-        Json(AnalyzeEnqueuedDto {
+        Json(SpecQualityAnalyzeEnqueuedDto {
             run_id: run_id.to_string(),
             task_id: upstream_task_id,
             detector: detector.to_owned(),
@@ -422,7 +423,8 @@ async fn analyze_batch(
     }
     if req.items.len() > MAX_ITEMS {
         return Err(CanonicalError::internal(format!(
-            "a sweep takes at most {MAX_ITEMS} documents, and this one has {} —              split it, or the run is one nobody will wait for",
+            "a sweep takes at most {MAX_ITEMS} documents, and this one has {} — \
+             split it, or the run is one nobody will wait for",
             req.items.len()
         ))
         .create());
@@ -479,7 +481,7 @@ async fn analyze_bloat(
     Extension(state): Extension<Arc<ProxyState>>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     enqueue_analysis(&ctx, &state, "bloat", &headers, body).await
 }
 
@@ -488,7 +490,7 @@ async fn analyze_purpose(
     Extension(state): Extension<Arc<ProxyState>>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     enqueue_analysis(&ctx, &state, "purpose", &headers, body).await
 }
 
@@ -497,7 +499,7 @@ async fn analyze_leak(
     Extension(state): Extension<Arc<ProxyState>>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     enqueue_analysis(&ctx, &state, "leak", &headers, body).await
 }
 
@@ -506,7 +508,7 @@ async fn analyze_traceability(
     Extension(state): Extension<Arc<ProxyState>>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     enqueue_analysis(&ctx, &state, "traceability", &headers, body).await
 }
 
@@ -1032,7 +1034,13 @@ pub fn register_routes(
         .operation_id("studio_spec_quality.analyze_batch")
         .summary("Run one detector over a set of documents, as a single run")
         .description(
-            "Replaces a submit-and-wait loop in the caller. Records one              studio-tasks run that analyses each document in turn; follow it on              studio-events (subject_type task_run). The run's result names each              document's upstream task rather than carrying the verdicts              themselves — read those with GET /studio-spec-quality/v1/verdicts?task_id=….              Answers 202 with the run_id; send an Idempotency-Key header to make a retry              safe, since a repeat with the same key answers the same run.",
+            "Replaces a submit-and-wait loop in the caller. Records one \
+             studio-tasks run that analyses each document in turn; follow it on \
+             studio-events (subject_type task_run). The run's result names each \
+             document's upstream task rather than carrying the verdicts \
+             themselves — read those with GET /studio-spec-quality/v1/verdicts?task_id=…. \
+             Answers 202 with the run_id; send an Idempotency-Key header to make a retry \
+             safe, since a repeat with the same key answers the same run.",
         )
         .tag("SpecQuality")
         .authenticated()
@@ -1090,13 +1098,29 @@ pub fn register_routes(
         .operation_id("studio_spec_quality.get_verdict")
         .summary("One analysis, read rather than relayed")
         .description(
-            "The upstream task a submit named, turned into a verdict. Every other              route here hands the upstream's bytes through untouched, which is right: the              wrapper's job is the key, not the schema. This one is different because reading a              detector's answer is a JUDGEMENT, and it was being made in the browser.
+            "The upstream task a submit named, turned into a verdict. Every other \
+             route here hands the upstream's bytes through untouched, which is right: the \
+             wrapper's job is the key, not the schema. This one is different because reading a \
+             detector's answer is a JUDGEMENT, and it was being made in the browser.
 
-             The service does not document these shapes — its OpenAPI declares the four              request bodies and nothing else — so every key is read defensively and the              judgements are the product: a doc type is reported with the share of the document              that was recognised as specification at all, an absent boolean stays null rather              than becoming false, only duplication ACROSS documents counts as bloat, and              `recognised` separates a shape this reader did not understand from a document set              that genuinely references nothing.
+             The service does not document these shapes — its OpenAPI declares the four \
+             request bodies and nothing else — so every key is read defensively and the \
+             judgements are the product: a doc type is reported with the share of the document \
+             that was recognised as specification at all, an absent boolean stays null rather \
+             than becoming false, only duplication ACROSS documents counts as bloat, and \
+             `recognised` separates a shape this reader did not understand from a document set \
+             that genuinely references nothing.
 
-             `?path=` repeats for the set detectors (`bloat`, `traceability`): a document              absent from it is absent from the answer, and absent reads as not analysed where              an empty list reads as analysed and nothing found.
+             `?path=` repeats for the set detectors (`bloat`, `traceability`): a document \
+             absent from it is absent from the answer, and absent reads as not analysed where \
+             an empty list reads as analysed and nothing found.
 
-             `findings` lists what the detector found, each placed in the analysed text: a              `purpose` gate violation by section and lines with its reason and evidence, a              `leak` by section and lines, a duplicated `bloat` passage by lines and the passage itself, with every              other copy as `related`. A finding's `id` hashes the rule, document, section and              passage and never the line numbers, so it is stable across re-runs and edits              elsewhere in the document.",
+             `findings` lists what the detector found, each placed in the analysed text: a \
+             `purpose` gate violation by section and lines with its reason and evidence, a \
+             `leak` by section and lines, a duplicated `bloat` passage by lines and the passage itself, with every \
+             other copy as `related`. A finding's `id` hashes the rule, document, section and \
+             passage and never the line numbers, so it is stable across re-runs and edits \
+             elsewhere in the document.",
         )
         .tag("SpecQuality")
         .authenticated()

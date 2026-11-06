@@ -181,7 +181,11 @@ pub trait BindingNames: Send + Sync + 'static {
 /// answered even for an analysis nobody was watching.
 #[async_trait]
 pub trait AnalysisRecorder: Send + Sync + 'static {
-    async fn record_detector_verdict(&self, verdict: DetectorVerdict) -> anyhow::Result<()>;
+    async fn record_detector_verdict(
+        &self,
+        ctx: &SecurityContext,
+        verdict: DetectorVerdict,
+    ) -> anyhow::Result<()>;
 }
 
 /// One detector's gate verdict on one document.
@@ -246,6 +250,7 @@ pub trait SpecNeeds: Send + Sync + 'static {
     /// non-functional statements, each with the document that says it.
     async fn needs(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> anyhow::Result<(Vec<DeclaredCapability>, Vec<DeclaredRequirement>)>;

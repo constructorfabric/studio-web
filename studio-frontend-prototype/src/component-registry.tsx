@@ -74,6 +74,7 @@ import {
   walkLine,
 } from "./registry";
 import type { RegistryAction } from "./registry";
+import { useDomainRefresh } from "./domain-live";
 
 /** What the registry tells the screen's header. */
 export interface RegistrySummary {
@@ -158,6 +159,7 @@ export function ComponentRegistry({
       else setError(errText(cause));
     }
   };
+  useDomainRefresh(["registry-entry","registry-occurrence","registry-decision","registry-settings","registry-read"], load);
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps

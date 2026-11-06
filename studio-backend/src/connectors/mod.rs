@@ -46,6 +46,8 @@ mod graph_sync;
 mod graph_sync_task;
 pub(crate) mod gts;
 mod kubernetes; // a cluster an organization deploys into (ADR-0043)
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 mod notify;
 mod oauth; // a connection signed in to rather than pasted (ADR-0049)
 mod ownership;
@@ -266,7 +268,9 @@ impl Gear for StudioConnectorGear {
                  connection APIs will answer 503"
             );
             if let (Ok(am), Ok(credstore)) = (
-                ctx.client_hub().get::<dyn AccountManagementClient>(),
+                ctx.client_hub()
+                    .get::<dyn AccountManagementClient>()
+                    .map(|am| crate::model_metadata::client_for(ctx, am, gts::MODEL_KINDS)),
                 ctx.client_hub().get::<dyn CredStoreClientV1>(),
             ) {
                 ctx.client_hub()
@@ -275,7 +279,11 @@ impl Gear for StudioConnectorGear {
             return Ok(());
         }
 
-        let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
+        let am = crate::model_metadata::client_for(
+            ctx,
+            ctx.client_hub().get::<dyn AccountManagementClient>()?,
+            gts::MODEL_KINDS,
+        );
         let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
         let service = ConnectorService::new(am, credstore, drivers);
         // The one connector service of the process: the other gears hold a
@@ -357,7 +365,9 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
                 ))
                 .inspect_err(|_| {
                     warn!(
-                        "studio-connector: studio-user person resolver not registered — a                          personal connection stays editable only from the sign-in method that                          created it"
+                        "studio-connector: studio-user person resolver not registered — a \
+                         personal connection stays editable only from the sign-in method that \
+                         created it"
                     );
                 })
                 .ok(),

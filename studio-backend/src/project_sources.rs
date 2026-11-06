@@ -340,18 +340,54 @@ pub fn mark_only(config: &mut Value, key: &str, url: Option<&str>) -> bool {
 }
 
 /// The project's sources, read under the caller's identity. `None` when its
-/// config cannot be read — not there, or not visible to the caller, which
-/// account-management does not tell apart and neither does this.
+/// config is not there or not visible to the caller (account-management
+/// answers both as not found); a config that could not be read for any other
+/// reason is `None` too, and logged with its cause. A reader that must tell
+/// the two apart -- an unreadable config is not "no sources" -- asks
+/// [`read_checked`].
 pub async fn read(
     am: &dyn AccountManagementClient,
     ctx: &SecurityContext,
     project: Uuid,
 ) -> Option<Vec<ProjectSource>> {
-    let entry = am
-        .get_metadata(ctx, project, GtsTypeId::new(PROJECT_CONFIG_TYPE))
-        .await
-        .ok()?;
-    Some(parse(&entry.value))
+    match read_checked(am, ctx, project).await {
+        Ok(sources) => sources,
+        Err(reason) => {
+            tracing::warn!(project_id = %project, %reason, "project sources: the project's config could not be read");
+            None
+        }
+    }
+}
+
+/// What a reader names as the source that could not be read when the
+/// project's config itself, its list of sources, could not be.
+pub const CONFIG_SOURCE: &str = "project config";
+
+/// The project's sources, read under the caller's identity: `Ok(None)` when
+/// it has no config the caller sees, `Err` with the reason when its config
+/// could not be read.
+pub async fn read_checked(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    project: Uuid,
+) -> Result<Option<Vec<ProjectSource>>, String> {
+    sources_of(
+        am.get_metadata(ctx, project, GtsTypeId::new(PROJECT_CONFIG_TYPE))
+            .await
+            .map(|entry| entry.value),
+    )
+}
+
+/// What a read of `project.config` says of the sources: not found is no
+/// config; any other failure is a reason, never "no sources".
+fn sources_of(
+    read: Result<Value, toolkit_canonical_errors::CanonicalError>,
+) -> Result<Option<Vec<ProjectSource>>, String> {
+    match read {
+        Ok(value) => Ok(Some(parse(&value))),
+        Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => Ok(None),
+        Err(e) => Err(format!("the project's config could not be read: {e}")),
+    }
 }
 
 /// Every repository the project's config names, as `owner/name` paths: its
@@ -565,6 +601,10 @@ pub async fn git_sources(
     }
     Some(resolved.into_iter().map(to_git_source).collect())
 }
+
+#[path = "project_sources_mcp.rs"]
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 
 #[cfg(test)]
 #[path = "project_sources_tests.rs"]
