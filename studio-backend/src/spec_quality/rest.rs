@@ -103,7 +103,7 @@ pub struct SpecQualityCapabilitiesDto {
 /// it: the run is the thing to follow.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct AnalyzeEnqueuedDto {
+pub struct SpecQualityAnalyzeEnqueuedDto {
     /// The `studio-tasks` run watching this analysis.
     pub run_id: String,
     /// The upstream detector service's task id.
@@ -289,7 +289,7 @@ async fn enqueue_analysis(
     detector: &str,
     headers: &HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     let request_key = crate::idempotency::key(headers)?;
     // Resolved before the submit: accepting an analysis we then cannot watch
     // would leave the caller holding an id nothing in the portal can follow.
@@ -351,7 +351,7 @@ async fn enqueue_analysis(
 
     Ok((
         StatusCode::ACCEPTED,
-        Json(AnalyzeEnqueuedDto {
+        Json(SpecQualityAnalyzeEnqueuedDto {
             run_id: run_id.to_string(),
             task_id: upstream_task_id,
             detector: detector.to_owned(),
@@ -479,7 +479,7 @@ async fn analyze_bloat(
     Extension(state): Extension<Arc<ProxyState>>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     enqueue_analysis(&ctx, &state, "bloat", &headers, body).await
 }
 
@@ -488,7 +488,7 @@ async fn analyze_purpose(
     Extension(state): Extension<Arc<ProxyState>>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     enqueue_analysis(&ctx, &state, "purpose", &headers, body).await
 }
 
@@ -497,7 +497,7 @@ async fn analyze_leak(
     Extension(state): Extension<Arc<ProxyState>>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     enqueue_analysis(&ctx, &state, "leak", &headers, body).await
 }
 
@@ -506,7 +506,7 @@ async fn analyze_traceability(
     Extension(state): Extension<Arc<ProxyState>>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<SpecQualityAnalyzeEnqueuedDto>)> {
     enqueue_analysis(&ctx, &state, "traceability", &headers, body).await
 }
 
