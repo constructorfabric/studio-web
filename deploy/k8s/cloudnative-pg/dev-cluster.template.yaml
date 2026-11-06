@@ -25,23 +25,16 @@ spec:
     name: studio-postgres-images
     major: 19
   primaryUpdateStrategy: unsupervised
-  # The ceiling every consumer is counted against. PostgreSQL's own default is
-  # also 100, so this changes nothing today — it is written down because the
-  # number is load-bearing: studio-backend/config/k8s.yaml sizes fourteen gear
-  # pools against it, and the Keycloak chart caps its pool against it too. An
-  # implicit default is not a budget anybody can check.
-  #
-  # 160 rather than PostgreSQL's default 100, and the number is load-bearing:
-  # studio-backend/config/k8s.yaml sizes sixteen gear pools against it and the
-  # Keycloak chart caps its pool against it. Two backend replicas need 134 for
-  # the backend alone and 154 with Keycloak, the bootstrap Job, the operator
-  # and the superuser reserve — which is what this headroom is for. It was 150
-  # until the usage plugin (issue #781) added three connections per replica.
-  #
-  # Lowering the per-gear pools instead does not work; the table in README.md
-  # shows why. Raising this is not free either: every backend is a process, so
-  # 160 of them is roughly 450 MB more resident memory at saturation, which is
-  # what the `limits.memory` bump below pays for.
+  # The ceiling every consumer is counted against: 160 rather than
+  # PostgreSQL's default 100, and the number is load-bearing.
+  # studio-backend/config/k8s.yaml sizes its gear pools against it (62 per
+  # replica) and the Keycloak chart caps its pool against it. Two backend
+  # replicas need 124, and 144 with Keycloak, the bootstrap Job, the operator
+  # and the superuser reserve; README.md carries the table. When a new gear
+  # pool does not fit, lower the shared pool or give the gear a small one of
+  # its own before raising this: every backend is a process, so 160 of them
+  # is roughly 450 MB more resident memory at saturation, which is what the
+  # `limits.memory` bump below pays for.
   #
   # NOT RELOADABLE — changing it restarts PostgreSQL.
   postgresql:

@@ -72,7 +72,7 @@ the artifact index follow from it:
   a server from `crate::test_pg`. A suite that runs migrations uses
   `fresh_database`, not the shared DSN: two suites migrating the shared
   database at once collide on the `_test` history table.
-- **Connection budget.** Each gear pool counts against `max_connections: 150`
+- **Connection budget.** Each gear pool counts against `max_connections: 160`
   on pg_main, and two replicas must fit. Give a new gear `pool.max_conns: 2`
   unless it needs more, and update the arithmetic in `config/k8s.yaml` and
   `deploy/k8s/cloudnative-pg/README.md`.

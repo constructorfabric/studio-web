@@ -36,20 +36,21 @@ database:
         #
         # toolkit-db caches one `Db` PER GEAR (manager.rs, `cache: DashMap<String, Db>`),
         # and a gear inherits this block unless it declares its own. This is
-        # therefore not "four connections to pg_main" — it is four PER GEAR, and
-        # this assembly configures fifteen gear databases: 13 x 4 = 52, plus
-        # the gears with their own override below, Keycloak, the bootstrap Job,
-        # the CloudNativePG manager and the reserved slots, 89 in all. A second
-        # replica needs 158, which is why `max_connections` is 160;
-        # deploy/k8s/cloudnative-pg/README.md carries the table and the memory
-        # that pays for it. Lowering this is not the way to make room (at 3 two
-        # replicas still need 128); raising it by one raises the ceiling by
-        # fourteen, so raise a single gear's own `pool` instead.
+        # therefore not "three connections to pg_main" — it is three PER GEAR,
+        # and fourteen gear databases below inherit it: 14 x 3 = 42, plus the
+        # gears with their own `pool` (20), 62 per replica. Two replicas need
+        # 124, and 144 with Keycloak, the bootstrap Job, the operator and the
+        # reserved slots, against `max_connections: 160`;
+        # deploy/k8s/cloudnative-pg/README.md carries the table. It was 4, and
+        # two replicas then needed 172. Two replicas at 3 still give each gear
+        # 6 in all, more than one replica at 4 did. Raising it by one raises
+        # the ceiling by fourteen per replica, so give a busy gear its own
+        # `pool` instead.
         #
         # Keep a run of comment lines under 32: the config's YAML parser
         # (granit-parser) refuses more before the next entry, and the backend
         # then does not start.
-        max_conns: 4
+        max_conns: 3
         # Nothing is held open for a gear nobody calls. Fourteen idle pools
         # each keeping a connection warm is fourteen connections spent on
         # nothing.
