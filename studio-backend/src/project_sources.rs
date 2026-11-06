@@ -566,6 +566,10 @@ pub async fn git_sources(
     Some(resolved.into_iter().map(to_git_source).collect())
 }
 
+#[path = "project_sources_mcp.rs"]
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
+
 #[cfg(test)]
 #[path = "project_sources_tests.rs"]
 mod tests;

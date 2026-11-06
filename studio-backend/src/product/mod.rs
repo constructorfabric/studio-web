@@ -20,6 +20,8 @@ mod explanations;
 mod frontx;
 mod gear_roots;
 mod gearbox;
+mod mcp;
+pub(crate) use mcp::tools as mcp_tools;
 mod migrations;
 mod new_gear;
 pub mod port;

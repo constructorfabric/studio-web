@@ -44,6 +44,15 @@ pub fn tools() -> Vec<sdk::Tool> {
     all.extend(crate::domain_model::mcp_tools());
     all.extend(crate::spec_mapping::mcp_tools());
     all.extend(crate::spec_quality::mcp_tools());
+    // The pipeline, in the order a project goes through it: its sources and
+    // the connections they are read through, the product's description,
+    // then where it runs, its builds, and the runs they start.
+    all.extend(crate::project_sources::mcp_tools());
+    all.extend(crate::connectors::mcp_tools());
+    all.extend(crate::product::mcp_tools());
+    all.extend(crate::environments::mcp_tools());
+    all.extend(crate::artifact_ingest::mcp_tools());
+    all.extend(crate::tasks::mcp_tools());
     all
 }
 
@@ -207,6 +216,50 @@ mod tests {
                     t.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn every_required_argument_is_a_declared_property() {
+        for t in tools() {
+            let schema = (t.input_schema)();
+            let properties = schema["properties"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{} has no properties", t.name));
+            for name in schema["required"].as_array().into_iter().flatten() {
+                let name = name.as_str().unwrap_or_default();
+                assert!(
+                    properties.contains_key(name),
+                    "{} requires `{name}`, which it does not declare",
+                    t.name
+                );
+            }
+            for (name, p) in properties {
+                assert!(p.is_object(), "{}: `{name}` is not a schema", t.name);
+            }
+        }
+    }
+
+    #[test]
+    fn every_pipeline_step_has_its_tools() {
+        let names: BTreeSet<&str> = tools().iter().map(|t| t.name).collect();
+        for step in [
+            "project_sources",
+            "project_sources_set",
+            "project_connections",
+            "product_description",
+            "product_description_save",
+            "infra_services_set",
+            "config_secret_set",
+            "image_import",
+            "build_plan",
+            "build_start",
+            "build_get",
+            "deploy_request",
+            "deployment_decide",
+            "deployment_status",
+        ] {
+            assert!(names.contains(step), "no tool {step}");
         }
     }
 
