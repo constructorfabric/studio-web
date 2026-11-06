@@ -55,6 +55,7 @@ mod records; // the gear's own tables (ADR-0062)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod rest;
+mod secret_needs; // the configuration secrets a product needs in an environment
 mod service;
 mod store;
 mod workflow; // the build workflow proposed to a product's repository (ADR-0048)

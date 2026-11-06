@@ -493,14 +493,6 @@ pub fn optional_text(args: &Map<String, Value>, name: &str) -> Option<String> {
     }
 }
 
-/// The item of `list` whose `key` is `id`.
-pub fn find_by(list: &Value, key: &str, id: &str) -> Option<Value> {
-    list.as_array()?
-        .iter()
-        .find(|i| i[key].as_str() == Some(id))
-        .cloned()
-}
-
 /// The `project_id` argument, as every project tool describes it.
 pub fn project_id() -> Value {
     json!({ "type": "string",

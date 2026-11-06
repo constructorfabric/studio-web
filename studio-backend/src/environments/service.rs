@@ -35,6 +35,12 @@ pub use images_service::{RetentionOf, RetentionScope, RunsIn};
 mod infra_service;
 pub use infra_service::InfraPlan;
 
+// One build, one deployment and an environment's secret keys, read one at a
+// time by an agent following the pipeline (`docs/mcp.md`).
+#[path = "service_pipeline.rs"]
+mod pipeline_service;
+pub use pipeline_service::{BuildView, SecretKeys};
+
 /// The privilege that manages an organization's environments and decides
 /// about deploys to its protected ones (ADR-0043 §1, §3).
 pub const MANAGE_PRIVILEGE: &str = "environment.manage";
