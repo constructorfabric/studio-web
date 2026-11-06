@@ -307,7 +307,8 @@ pub struct InfraPlanItemDto {
     pub provides: Vec<InfraProvidedDto>,
     /// The code a deploy would be refused with now
     /// (`INFRA_IMAGE_NOT_IMPORTED`, `IMAGE_NOT_IN_PROJECT_PATH`,
-    /// `INFRA_NOT_IN_SHARED_PLACE`, `INFRA_PUBLIC_URL_MISSING`).
+    /// `INFRA_NOT_IN_SHARED_PLACE`, `INFRA_PUBLIC_URL_MISSING`,
+    /// `INFRA_ISSUER_NOT_HTTPS`).
     pub refusal_code: Option<String>,
     pub refusal: Option<String>,
     /// The address its generated chart routes to it with an Ingress.
@@ -315,6 +316,37 @@ pub struct InfraPlanItemDto {
     /// What the deploy does not apply of what the project says of it (files
     /// and arguments, for a ready chart).
     pub notes: Vec<String>,
+    /// What the deploy goes on with and says
+    /// (`INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`).
+    pub warnings: Vec<InfraWarningDto>,
+}
+
+/// A warning of a deploy's plan: it goes on, and says so.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InfraWarningDto {
+    pub code: String,
+    pub message: String,
+}
+
+/// A configuration secret of the environment that sets a gear's config
+/// field the product description also sets.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConfigClashDto {
+    /// `CONFIG_SECRET_SHADOWED_BY_DESCRIPTION`: the description wins and the
+    /// secret is not given to the release (a warning).
+    /// `CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION`: an install is refused.
+    pub code: String,
+    /// The configuration secret: `APP__GEARS__MINI_CHAT__CONFIG__…`.
+    pub key: String,
+    /// The gear or plugin, as the description names it.
+    pub gear: String,
+    /// The field, dotted: `client_credentials.client_secret`.
+    pub field: String,
+    /// Whether it refuses an install.
+    pub refuses: bool,
+    pub message: String,
 }
 
 /// What a deploy of a project to one environment does with its infra
@@ -361,6 +393,26 @@ fn plan_dto(p: InfraPlan) -> InfraPlanDto {
                 refusal: i.refusal.map(|(_, why)| why),
                 route: i.route,
                 notes: i.notes,
+                warnings: i
+                    .warnings
+                    .into_iter()
+                    .map(|(code, message)| InfraWarningDto {
+                        code: code.to_owned(),
+                        message,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        configuration: p
+            .configuration
+            .into_iter()
+            .map(|c| ConfigClashDto {
+                refuses: c.refuses(),
+                code: c.code.to_owned(),
+                key: c.key,
+                gear: c.gear,
+                field: c.field,
+                message: c.message,
             })
             .collect(),
     }

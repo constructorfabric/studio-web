@@ -154,6 +154,21 @@ export function planNotes(p: InfraPlan | null): string[] {
   return (p?.items ?? []).flatMap((i) => (i.notes ?? []).map((n) => `${i.service}: ${n}`));
 }
 
+/** What a deploy goes on with and says, with its code: an issuer pods
+ *  cannot reach, a configuration secret the description wins over. */
+export function planWarnings(p: InfraPlan | null): string[] {
+  return [
+    ...(p?.items ?? []).flatMap((i) => (i.warnings ?? []).map((w) => `${w.code}: ${w.message}`)),
+    ...(p?.configuration ?? []).filter((c) => !c.refuses).map((c) => `${c.code}: ${c.message}`),
+  ];
+}
+
+/** Every refusal of the plan: its services', then a configuration secret
+ *  that contradicts the description, which refuses an install too. */
+export function planAllRefusals(p: InfraPlan | null): string[] {
+  return [...planRefusals(p), ...(p?.configuration ?? []).filter((c) => c.refuses).map((c) => `${c.code}: ${c.message}`)];
+}
+
 /* ── Files a service's container reads (ADR-0064, amended) ──────────────── */
 
 /** As the backend: at most 20 files and 256 KiB together. */
@@ -701,6 +716,11 @@ const REFUSAL_WORDS: Record<string, string> = {
   IMAGE_NOT_IN_PROJECT_PATH: "copy outside the project",
   INFRA_NOT_IN_SHARED_PLACE: "not in the shared place",
   INFRA_PUBLIC_URL_MISSING: "no public address",
+  INFRA_ISSUER_NOT_HTTPS: "issuer not https",
+};
+
+const WARNING_WORDS: Record<string, string> = {
+  INFRA_ISSUER_UNREACHABLE_IN_CLUSTER: "pods cannot reach it",
 };
 
 /** How one service comes in one environment, as its plan says. */

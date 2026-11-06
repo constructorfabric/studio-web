@@ -638,6 +638,9 @@ pub struct PlanItem {
     /// What the deploy does not do with what the project says of it: files
     /// and arguments only a generated chart applies.
     pub notes: Vec<String>,
+    /// What the deploy goes on with and says, with its code: an issuer pods
+    /// may not reach ([`ISSUER_UNREACHABLE`]).
+    pub warnings: Vec<(&'static str, String)>,
 }
 
 /// The code a deploy is refused with when a capability's value would be
@@ -680,6 +683,105 @@ fn public_url_missing(s: &InfraService) -> Option<String> {
          PUT /infra-services); placed with the product, its chart then routes that address to it",
         name = s.name()
     ))
+}
+
+/// The code a deploy is refused with when the issuer a service gives the
+/// product is not `https://`: oidc-authn-plugin refuses any other, and has
+/// no switch for a dev stand.
+pub const ISSUER_NOT_HTTPS: &str = "INFRA_ISSUER_NOT_HTTPS";
+
+/// The code of a warning: the issuer's host is one only the machine it is
+/// typed on reaches (`localhost`, `*.localtest.me`, `*.local`), never a pod.
+pub const ISSUER_UNREACHABLE: &str = "INFRA_ISSUER_UNREACHABLE_IN_CLUSTER";
+
+/// The capability an identity provider gives: its issuer.
+pub const OIDC_ISSUER: &str = "oidc.issuer";
+
+/// The issuer address `s`, brought as `install`, gives the product: the
+/// shared place's, else the public address its `oidc.issuer` is filled with.
+/// `None` when it gives no issuer, or one not made of its `public_url`.
+fn issuer_url(
+    s: &InfraService,
+    install: Install,
+    shared: Option<&SharedService>,
+) -> Option<String> {
+    match install {
+        Install::Shared => shared.and_then(|p| p.provides.get(OIDC_ISSUER)).cloned(),
+        Install::Database => None,
+        Install::Chart | Install::Generated => {
+            let template = s.passport.provides.get(OIDC_ISSUER)?;
+            let uses_url = service_gdl::template_refs(template)
+                .is_ok_and(|r| r.contains(&TemplateRef::PublicUrl));
+            uses_url
+                .then(|| s.public_url.clone())
+                .flatten()
+                .map(|u| template.replace("{public_url}", &u))
+        }
+    }
+}
+
+/// Why a deploy of `s` is refused for its issuer: it is not `https://`.
+pub fn issuer_refusal(
+    s: &InfraService,
+    install: Install,
+    shared: Option<&SharedService>,
+) -> Option<(&'static str, String)> {
+    let url = issuer_url(s, install, shared)?;
+    if url.starts_with("https://") {
+        return None;
+    }
+    let what = match install {
+        Install::Shared => "the shared place gives it",
+        _ => "its public_url makes it",
+    };
+    Some((
+        ISSUER_NOT_HTTPS,
+        format!(
+            "'{name}' gives the product the issuer {url} ({what}), which is not https:              oidc-authn-plugin refuses any other issuer, so every gear that checks a token              would crash at start. Give it an https:// address (Product › Infrastructure or              PUT /infra-services; a shared place in the environment's settings), with a              certificate the ingress serves",
+            name = s.name()
+        ),
+    ))
+}
+
+/// Whether `host` is one only the machine it is typed on reaches: it names
+/// the loopback, or a domain that resolves to it, or mDNS.
+pub fn local_only_host(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    let under = |d: &str| h == d || h.ends_with(&format!(".{d}"));
+    under("localhost")
+        || under("localtest.me")
+        || under("lvh.me")
+        || h.ends_with(".local")
+        || h.starts_with("127.")
+        || h == "0.0.0.0"
+        || h.contains("127.0.0.1")
+        || h.contains("127-0-0-1")
+}
+
+/// What a deploy of `s` goes on with and says about its issuer: a host pods
+/// cannot reach. A gear that signs in at start (`client_credentials`) or
+/// reads the issuer's discovery document runs inside the cluster.
+pub fn issuer_warnings(
+    s: &InfraService,
+    install: Install,
+    shared: Option<&SharedService>,
+) -> Vec<(&'static str, String)> {
+    let Some(url) = issuer_url(s, install, shared) else {
+        return Vec::new();
+    };
+    let Some((host, _)) = host_and_path(&url) else {
+        return Vec::new();
+    };
+    if !local_only_host(host) {
+        return Vec::new();
+    }
+    vec![(
+        ISSUER_UNREACHABLE,
+        format!(
+            "'{name}' gives the product the issuer {url}, and {host} reaches only the machine              it is typed on, not a pod: a gear that signs in at start (client_credentials, as              mini-chat does) or reads the issuer's discovery document fails inside the              cluster. Give it a host the cluster resolves to its ingress",
+            name = s.name()
+        ),
+    )]
 }
 
 /// What a deploy leaves undone of what the project says of `s`, installed
@@ -761,6 +863,10 @@ pub fn plan(
                 }
                 Install::Database | Install::Shared => None,
             });
+            let shared = placement
+                .filter(|_| install == Install::Shared)
+                .and_then(|p| p.shared.iter().find(|x| x.service == s.name()));
+            let refusal = refusal.or_else(|| issuer_refusal(s, install, shared));
             PlanItem {
                 service: s.name().to_owned(),
                 placement: mode,
@@ -786,6 +892,7 @@ pub fn plan(
                     .then(|| s.public_url.clone())
                     .flatten(),
                 notes: notes_for(install, s),
+                warnings: issuer_warnings(s, install, shared),
             }
         })
         .collect()

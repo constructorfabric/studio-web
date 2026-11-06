@@ -198,9 +198,16 @@ pub fn tools() -> Vec<Tool> {
         Tool {
             name: "infra_plan",
             description: "What a deploy to one environment does with the project's infra \
-                services: how each comes (`database`, `chart`, `generated` or `shared`), from \
-                which image or chart, the variables it gives the product, and the code a \
-                deploy would be refused with now.",
+                services, checked before the deploy: how each comes (`database`, `chart`, \
+                `generated` or `shared`), from which image or chart, the variables it gives \
+                the product, `refusal_code` a deploy would be refused with now \
+                (INFRA_PUBLIC_URL_MISSING, INFRA_ISSUER_NOT_HTTPS, ...) and `warnings` it goes \
+                on with (INFRA_ISSUER_UNREACHABLE_IN_CLUSTER: pods cannot reach the issuer). \
+                `configuration` lists the environment's configuration secrets that set a \
+                gear's config field the product description also sets: \
+                CONFIG_SECRET_SHADOWED_BY_DESCRIPTION (the description wins; the secret is \
+                not given to the release) or CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION (an \
+                install is refused until one goes). Call it before `deploy_request`.",
             input_schema: || {
                 object(
                     json!({
@@ -359,8 +366,12 @@ pub fn tools() -> Vec<Tool> {
                 uninstall (`action: uninstall` with `product` and `profile`). With `preview`, \
                 into a namespace of its own that expires. Answers the deployment record: \
                 `queued`, or `awaiting_approval` for a protected environment, which an \
-                organization administrator decides (`deployment_decide`). Follow it with \
-                `deployment_get`. Ask your person first.",
+                organization administrator decides (`deployment_decide`), and `warnings` it \
+                goes on with (CONFIG_SECRET_SHADOWED_BY_DESCRIPTION, \
+                INFRA_ISSUER_UNREACHABLE_IN_CLUSTER). Refused with \
+                CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION, INFRA_ISSUER_NOT_HTTPS and the other \
+                codes `infra_plan` shows first. Follow it with `deployment_get`. Ask your \
+                person first.",
             input_schema: || {
                 object(
                     json!({

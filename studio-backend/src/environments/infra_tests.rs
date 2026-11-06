@@ -787,3 +787,69 @@ fn the_lock_keeps_the_records_files_and_arguments() {
             .contains_key("/opt/keycloak/data/import/product.json")
     );
 }
+
+#[test]
+fn an_issuer_that_is_not_https_refuses_the_deploy() {
+    let mut s = keycloak();
+    s.public_url = Some("http://id.shop.example".into());
+    let item = &plan(None, std::slice::from_ref(&s), under_shop)[0];
+    let (code, why) = item.refusal.clone().expect("refused");
+    assert_eq!(code, ISSUER_NOT_HTTPS);
+    assert!(
+        why.contains("http://id.shop.example/realms/product"),
+        "{why}"
+    );
+    assert!(why.contains("oidc-authn-plugin"), "{why}");
+    // https passes; a service that gives no issuer is not asked.
+    assert_eq!(plan(None, &[keycloak()], under_shop)[0].refusal, None);
+    let mut other = postgres();
+    other.passport.provides = [("x.url".to_owned(), "{public_url}".to_owned())].into();
+    other.passport.ports = [("http".to_owned(), 80)].into();
+    other.passport.stateful = false;
+    other.public_url = Some("http://x.shop.example".into());
+    assert_eq!(plan(None, &[other], under_shop)[0].refusal, None);
+    // A shared place's issuer is checked the same.
+    let place = InfraPlacement {
+        placement: Placement::Shared,
+        shared: vec![SharedService {
+            service: "keycloak".into(),
+            namespace: None,
+            provides: [(
+                "oidc.issuer".to_owned(),
+                "http://id.acme.example/realms/shop".to_owned(),
+            )]
+            .into(),
+        }],
+        ingress: None,
+    };
+    let item = &plan(Some(&place), &[keycloak()], under_shop)[0];
+    assert_eq!(item.refusal.as_ref().unwrap().0, ISSUER_NOT_HTTPS);
+}
+
+#[test]
+fn an_issuer_only_this_machine_reaches_is_a_warning() {
+    for host in [
+        "id.localtest.me",
+        "localhost",
+        "keycloak.local",
+        "id.127.0.0.1.nip.io",
+    ] {
+        let mut s = keycloak();
+        s.public_url = Some(format!("https://{host}"));
+        let item = &plan(None, std::slice::from_ref(&s), under_shop)[0];
+        assert_eq!(item.refusal, None, "{host}: a warning, not a refusal");
+        assert_eq!(item.warnings.len(), 1, "{host}");
+        let (code, why) = &item.warnings[0];
+        assert_eq!(*code, ISSUER_UNREACHABLE);
+        assert!(why.contains(host), "{why}");
+        assert!(why.contains("client_credentials"), "{why}");
+        let installs = installs(None, std::slice::from_ref(&s), None);
+        assert_eq!(
+            issuer_warnings(&installs[0].service, installs[0].install, None).len(),
+            1
+        );
+    }
+    assert!(plan(None, &[keycloak()], under_shop)[0].warnings.is_empty());
+    assert!(!local_only_host("id.shop.example"));
+    assert!(!local_only_host("localhost.example.com"));
+}

@@ -1880,6 +1880,21 @@ export interface InfraPlanItem {
   route?: string | null;
   /** What the deploy does not apply of what the project says of it. */
   notes?: string[];
+  /** What the deploy goes on with and says (`INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`). */
+  warnings?: { code: string; message: string }[];
+}
+
+/** A configuration secret of the environment that sets a gear's config
+ *  field the product description also sets. */
+export interface ConfigClash {
+  /** `CONFIG_SECRET_SHADOWED_BY_DESCRIPTION` (the description wins) or
+   *  `CONFIG_SECRET_CONFLICTS_WITH_DESCRIPTION` (an install is refused). */
+  code: string;
+  key: string;
+  gear: string;
+  field: string;
+  refuses: boolean;
+  message: string;
 }
 
 /** What a deploy of the project to one environment does with its infra services. */
