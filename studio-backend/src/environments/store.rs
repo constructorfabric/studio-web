@@ -112,12 +112,40 @@ impl Store {
         ))
     }
 
-    /// A tenant's name, read as `ctx`; empty when it cannot be read.
-    pub async fn tenant_name(&self, ctx: &SecurityContext, tenant: Uuid) -> String {
-        self.am
+    /// A tenant's name, read as `ctx`. An error when account-management
+    /// does not answer it, or answers no name: a namespace is made of it,
+    /// and one made of nothing is not the project's.
+    pub async fn tenant_name(&self, ctx: &SecurityContext, tenant: Uuid) -> anyhow::Result<String> {
+        let t = self
+            .am
             .get_tenant(ctx, tenant)
             .await
-            .map(|t| t.name)
-            .unwrap_or_default()
+            .map_err(|e| anyhow!("account-management did not answer tenant {tenant}: {e}"))?;
+        named(tenant, t.name)
+    }
+}
+
+/// `name` as a tenant's name: not blank.
+fn named(tenant: Uuid, name: String) -> anyhow::Result<String> {
+    if name.trim().is_empty() {
+        Err(anyhow!("tenant {tenant} has no name"))
+    } else {
+        Ok(name)
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn a_blank_tenant_name_is_an_error_not_a_namespace() {
+        let t = Uuid::from_u128(5);
+        assert_eq!(named(t, "shop".into()).unwrap(), "shop");
+        let e = named(t, "  ".into()).unwrap_err().to_string();
+        assert!(
+            e.contains("has no name") && e.contains(&t.to_string()),
+            "{e}"
+        );
     }
 }

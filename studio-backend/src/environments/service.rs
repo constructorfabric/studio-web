@@ -170,6 +170,9 @@ pub struct BuildPlan {
     pub chart_repository: String,
     pub sources: Vec<PlanSource>,
     pub warnings: Vec<String>,
+    /// The codes of the environment's warnings among `warnings`, e.g.
+    /// `PULL_USES_PUSH_LOGIN`.
+    pub warning_codes: Vec<String>,
     /// The refusal a build would meet now: its code and why.
     pub refusal: Option<(String, String)>,
 }
@@ -227,6 +230,24 @@ pub struct EnvironmentService {
 
 /// A build or deploy that names no description, of a project whose product
 /// was never saved: there is nothing to say which `product.gdl` it means.
+/// The saved product description could not be read: the store's answer, not
+/// "the project has no product".
+fn saved_description_unreadable(e: anyhow::Error) -> Refusal {
+    Refusal::Unavailable(format!(
+        "the project's saved product description could not be read: {e:#}"
+    ))
+}
+
+/// The project's name could not be read, and a namespace is made of it: a
+/// deploy or a build is refused rather than placed in a namespace named
+/// after nothing.
+fn project_name_unreadable(project: Uuid, e: anyhow::Error) -> Refusal {
+    Refusal::Unavailable(format!(
+        "the name of project {project} could not be read, and its namespace is made of it: \
+         {e:#}"
+    ))
+}
+
 fn no_saved_product() -> Refusal {
     Refusal::Precondition(
         "PRODUCT_NOT_SAVED",
@@ -309,6 +330,15 @@ impl EnvironmentService {
         })
     }
 
+    /// The project's name, which its namespaces are made of: refused with
+    /// the cause when account-management does not answer it.
+    async fn project_name(&self, ctx: &SecurityContext, project: Uuid) -> Result<String> {
+        self.store
+            .tenant_name(ctx, project)
+            .await
+            .map_err(|e| project_name_unreadable(project, e))
+    }
+
     /// The project's immutable slug (ADR-0062 §3): recorded the first time,
     /// from its name; without the tables, its name as a slug.
     pub(super) async fn slug(
@@ -317,7 +347,7 @@ impl EnvironmentService {
         org: Uuid,
         project: Uuid,
     ) -> Result<String> {
-        let name = self.store.tenant_name(ctx, project).await;
+        let name = self.project_name(ctx, project).await?;
         match self.records() {
             Some(r) => r
                 .slug(org, project, &name)
@@ -779,7 +809,7 @@ impl EnvironmentService {
         org: Uuid,
         project: Option<Uuid>,
         environment: Uuid,
-    ) -> Result<connectors::ReadinessReport> {
+    ) -> Result<(connectors::ReadinessReport, Vec<String>, Vec<String>)> {
         let env = match project {
             Some(p) => self.project_environment(ctx, org, p, environment).await?,
             None => self.environment(ctx, org, environment).await?,
@@ -792,7 +822,7 @@ impl EnvironmentService {
         }
         let client = self.cluster_client(org, &env).await?;
         let given = env.boundaries.namespaces.clone().unwrap_or_default();
-        tokio::time::timeout(
+        let report = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             connectors::cluster_readiness(&client, &given),
         )
@@ -808,7 +838,10 @@ impl EnvironmentService {
                 "ENVIRONMENT_CLUSTER_UNREACHABLE",
                 format!("{}: {e:#}", env.name),
             )
-        })
+        })?;
+        // How the environment is set up says the rest: the cluster may be
+        // ready while it pulls with the push login.
+        Ok((report, env.warnings(), env.warning_codes()))
     }
 
     /* ── a project's own environments (ADR-0054) ── */
@@ -1221,7 +1254,7 @@ impl EnvironmentService {
 
     pub async fn targets(&self, ctx: &SecurityContext, project: Uuid) -> Result<Targets> {
         let org = self.organization_of_project(ctx, project).await?;
-        let project_name = self.store.tenant_name(ctx, project).await;
+        let project_name = self.project_name(ctx, project).await?;
         let (admitted, own) = self.visible(ctx, org, project).await?;
         let mut environments = Vec::new();
         for e in admitted.into_iter().chain(own) {
@@ -1544,6 +1577,7 @@ impl EnvironmentService {
             connection_id: env.connection_id,
             // The cluster pulls with the pull identity (ADR-0062 §2).
             registry_connection_id: env.pull_connection(),
+            pull_uses_push_login: env.pulls_with_push_login(),
             build_namespace: config.build_namespace.clone(),
             namespace: d.namespace.clone(),
             release: d.product.clone(),
@@ -1680,7 +1714,7 @@ impl EnvironmentService {
             // An organization environment added after this one may give the
             // project the same namespace on the same cluster (ADR-0054 §6).
             let (admitted, _) = self.visible(ctx, org, project).await?;
-            let project_name = self.store.tenant_name(ctx, project).await;
+            let project_name = self.project_name(ctx, project).await?;
             if let Some(taken) = model::namespace_clash(&env, &admitted, &project_name) {
                 return Err(Refusal::Precondition(
                     "ENVIRONMENT_NAMESPACE_TAKEN",
@@ -1702,7 +1736,7 @@ impl EnvironmentService {
             req = self.what_build_published(ctx, project, &build, req).await?;
         }
         let product = Self::release_name(&req.product)?;
-        let project_name = self.store.tenant_name(ctx, project).await;
+        let project_name = self.project_name(ctx, project).await?;
         let place = self.place(ctx, org, project, &env).await?;
         let mut namespace = place.namespace.clone();
         let id = Uuid::new_v4();
@@ -2236,11 +2270,12 @@ impl EnvironmentService {
             None => None,
         };
         let saved = match (&products, product_file.is_none()) {
+            // A read that failed is not "never saved": say why rather than
+            // answer PRODUCT_NOT_SAVED.
             (Some(products), true) => products
                 .saved_description(ctx, &project.to_string())
                 .await
-                .ok()
-                .flatten(),
+                .map_err(saved_description_unreadable)?,
             _ => None,
         };
         let product_file = product_file
@@ -2398,6 +2433,7 @@ impl EnvironmentService {
                     warnings: vec![
                         "Constructor Research builds and keeps the images itself".into(),
                     ],
+                    warning_codes: Vec::new(),
                     refusal: None,
                 })));
             }
@@ -2564,6 +2600,7 @@ impl EnvironmentService {
                 image_repositories,
                 sources,
                 warnings,
+                warning_codes: env.warning_codes(),
                 refusal,
             })));
         }
@@ -2936,7 +2973,7 @@ impl EnvironmentService {
             lock_hash = b.lock_hash;
         }
         let product = Self::release_name(&product)?;
-        let project_name = self.store.tenant_name(ctx, project).await;
+        let project_name = self.project_name(ctx, project).await?;
         let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
         let person = self.person(ctx).await;
         let d = Deployment {
@@ -3441,6 +3478,32 @@ pub struct BuildLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_description_that_cannot_be_read_is_not_a_product_never_saved() {
+        let r = saved_description_unreadable(anyhow::anyhow!("graph storage timed out"));
+        let Refusal::Unavailable(why) = r else {
+            panic!("a failed read is the store's answer, not PRODUCT_NOT_SAVED");
+        };
+        assert!(
+            why.contains("could not be read") && why.contains("graph storage timed out"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_project_name_that_cannot_be_read_refuses_with_its_cause() {
+        let project = Uuid::from_u128(3);
+        let Refusal::Unavailable(why) =
+            project_name_unreadable(project, anyhow::anyhow!("tenant {project} has no name"))
+        else {
+            panic!("refused as unavailable");
+        };
+        assert!(
+            why.contains("namespace") && why.contains("has no name"),
+            "{why}"
+        );
+    }
 
     #[test]
     fn a_build_that_failed_as_it_started_logs_its_reason_not_a_missing_pod() {

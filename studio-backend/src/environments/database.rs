@@ -26,7 +26,6 @@ use k8s_openapi::api::apps::v1::StatefulSet;
 use k8s_openapi::api::batch::v1::Job;
 use k8s_openapi::api::core::v1::{Secret, Service};
 use kube::api::{DeleteParams, Patch, PatchParams, PropagationPolicy};
-use serde::Deserialize as _;
 use serde_yaml::Value;
 
 /// The image a namespace's Postgres runs, unless the environment names one.
@@ -62,15 +61,66 @@ fn env_name(v: &str) -> Option<String> {
 
 /// What the rendered manifests of a chart need of databases: one entry per
 /// server host, merged across the applications that name it.
+/// Every manifest document that does not parse is skipped and logged, with
+/// its index; [`needs_reported`] also returns them.
 pub fn needs(rendered: &str) -> anyhow::Result<Vec<ServerNeed>> {
+    needs_reported(rendered).map(|(servers, _)| servers)
+}
+
+/// A manifest document that could not be read: its index in the stream
+/// (0-based, counting the empty one before a leading `---`) and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedDocument {
+    pub index: usize,
+    pub error: String,
+}
+
+/// The documents of a YAML stream, split at each `---` line. Split by hand
+/// rather than read through serde_yaml's stream: its iterator answers a
+/// document that does not parse with the same error forever, so one bad
+/// document would hide every database after it.
+fn documents(rendered: &str) -> Vec<String> {
+    let mut docs = vec![String::new()];
+    for line in rendered.lines() {
+        let separator = line
+            .strip_prefix("---")
+            .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace));
+        match separator {
+            Some(rest) => {
+                let mut doc = String::new();
+                if !rest.trim().is_empty() {
+                    doc.push_str(rest.trim());
+                    doc.push('\n');
+                }
+                docs.push(doc);
+            }
+            None => {
+                let doc = docs.last_mut().expect("one document at least");
+                doc.push_str(line);
+                doc.push('\n');
+            }
+        }
+    }
+    docs
+}
+
+/// [`needs`], and every manifest document skipped because it does not parse.
+pub fn needs_reported(rendered: &str) -> anyhow::Result<(Vec<ServerNeed>, Vec<SkippedDocument>)> {
     let mut servers: BTreeMap<String, ServerNeed> = BTreeMap::new();
     // env var -> secrets it is read from, across every workload.
     let mut secret_of: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for doc in serde_yaml::Deserializer::from_str(rendered) {
-        // A document that does not parse ends the stream: serde_yaml's
-        // iterator answers the same error again forever rather than move on.
-        let Ok(doc) = Value::deserialize(doc) else {
-            break;
+    let mut skipped = Vec::new();
+    for (index, text) in documents(rendered).iter().enumerate() {
+        let doc = match serde_yaml::from_str::<Value>(text) {
+            Ok(doc) => doc,
+            Err(e) => {
+                tracing::warn!(document = index, error = %e, "studio-environments: a rendered manifest document does not parse; skipped");
+                skipped.push(SkippedDocument {
+                    index,
+                    error: e.to_string(),
+                });
+                continue;
+            }
         };
         match doc.get("kind").and_then(Value::as_str) {
             Some("ConfigMap") => {
@@ -122,7 +172,7 @@ pub fn needs(rendered: &str) -> anyhow::Result<Vec<ServerNeed>> {
     for s in &mut out {
         s.secrets = secret_of.get(&s.password_env).cloned().unwrap_or_default();
     }
-    Ok(out)
+    Ok((out, skipped))
 }
 
 /// The servers and databases one application's configuration names.
@@ -654,9 +704,29 @@ spec:
     }
 
     #[test]
-    fn manifests_that_stop_parsing_end_the_read_instead_of_hanging_it() {
+    fn a_manifest_that_does_not_parse_is_skipped_and_reported_not_the_end_of_the_read() {
         let text = format!("{RENDERED}\n---\n: : not yaml [\n");
         assert_eq!(needs(&text).unwrap(), needs(RENDERED).unwrap());
+        // A bad document before the chart's own: the databases after it are
+        // still found, and the bad one is said, by index.
+        let text = format!("---\nkind: [unclosed\n{RENDERED}");
+        let (found, skipped) = needs_reported(&text).unwrap();
+        assert_eq!(
+            found,
+            needs(RENDERED).unwrap(),
+            "later databases are not lost"
+        );
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].index, 1);
+        assert!(!skipped[0].error.is_empty());
+    }
+
+    #[test]
+    fn documents_split_at_separator_lines_only() {
+        let docs = documents("a: 1\n---\nb: '---'\n--- # Source: x\nc: 3\n----x: 4\n");
+        assert_eq!(docs.len(), 3);
+        assert_eq!(docs[1], "b: '---'\n");
+        assert_eq!(docs[2], "# Source: x\nc: 3\n----x: 4\n");
     }
 
     #[test]

@@ -8,6 +8,8 @@ import {
   protectedReady,
   releaseSources,
   shortCommit,
+  sourceWarning,
+  PROJECT_CONFIG_SOURCE,
   withFlag,
   type LockedSource,
 } from "./source-roles";
@@ -57,5 +59,29 @@ describe("source roles", () => {
     expect(protectedReady(releaseSources([{ ...lock[0], commit: null }]))).toBe(false);
     expect(shortCommit(SHA)).toBe("75f5d9ea");
     expect(shortCommit(null)).toBe("—");
+  });
+});
+
+describe("a source that cannot be read", () => {
+  const conns = new Set(["c1"]);
+  it("says the server's reason on its row", () => {
+    const why = "the token for connection 'X' is not readable — it may belong to another user (personal scope)";
+    expect(sourceWarning(src("acme/api"), [{ source: "Acme/API", reason: why }], conns)).toBe(
+      `source acme/api unreadable: ${why}`,
+    );
+    expect(sourceWarning(src("acme/web"), [{ source: "acme/api", reason: why }], conns)).toBeNull();
+  });
+
+  it("says a deleted connection, but only when the connections were read", () => {
+    const gone = src("acme/api", { connection_id: "deleted" });
+    expect(sourceWarning(gone, [], conns)).toMatch(/connection was deleted/);
+    expect(sourceWarning(gone, [], null)).toBeNull();
+  });
+
+  it("says an unreadable list of sources on every row", () => {
+    expect(sourceWarning(src("acme/api"), [{ source: PROJECT_CONFIG_SOURCE, reason: "503" }], conns)).toBe(
+      "the project's sources could not be read: 503",
+    );
+    expect(sourceWarning(undefined, [{ source: PROJECT_CONFIG_SOURCE, reason: "503" }], conns)).toBeNull();
   });
 });

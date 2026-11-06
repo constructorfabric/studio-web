@@ -1690,6 +1690,9 @@ export interface DeployEnvironment {
   infra?: InfraPlacement | null;
   /** What the server thinks is risky about how it is set up, one sentence each. */
   warnings?: string[];
+  /** The code of each of `warnings`, in order: `PULL_USES_PUSH_LOGIN` while
+   *  the cluster pulls with the push login. Absent from an older backend. */
+  warning_codes?: string[];
   updated_by: string;
   updated_at: string;
 }
@@ -1707,6 +1710,10 @@ export interface EnvironmentReadiness {
   /** The cluster enforces Studio's policy on what runs in its namespaces. */
   policy_enforced: boolean;
   detail?: string | null;
+  /** What the environment's own setup should fix, though the cluster is ready. */
+  warnings?: string[];
+  /** The code of each of `warnings` (`PULL_USES_PUSH_LOGIN`). */
+  warning_codes?: string[];
 }
 
 /** What an environment says of previews (ADR-0055). */
@@ -1906,6 +1913,9 @@ export interface BuildPlan {
   chart_repository: string;
   sources: BuildPlanSource[];
   warnings: string[];
+  /** The codes of the environment's warnings among `warnings`
+   *  (`PULL_USES_PUSH_LOGIN`); absent from an older backend. */
+  warning_codes?: string[];
   /** Why Studio would refuse to start it; absent: it would start. */
   refusal?: { code: string; message: string } | null;
 }
@@ -3519,6 +3529,18 @@ export interface ProjectGearRepo {
   branch?: string;
 }
 
+/** A project source the server could not read, and why: the components
+ *  list, the gearbox catalogue and status, and a product check carry these
+ *  rather than reading the source as absent. `source` is `owner/repo`, or
+ *  `project config` when the project's list of sources itself was not read. */
+export interface UnreadableSource {
+  /** Absent in the components list (it is about one project already), and
+   *  when the organization's projects could not be read at all. */
+  project_id?: string | null;
+  source: string;
+  reason: string;
+}
+
 /** Whether product previews run here (`product/gearbox.rs`), and
  *  the gear corpus they resolve against — which a product project's IDE
  *  session checks out beside the project under `source_id`. */
@@ -3537,6 +3559,8 @@ export interface GearboxStatus {
   /** The organization's repositories left out: a platform repository has
    *  the same source id. */
   shadowed?: string[];
+  /** The organization's project sources the last read could not read. */
+  unreadable?: UnreadableSource[];
   /** Where a product's frontend starts in this deployment (`STUDIO_FRONTX_*`);
    *  absent from a backend from before it said (`frontxDefaultsOf`). */
   frontx?: { shell_template: string; source_repo: string; source_ref: string } | null;
@@ -3743,6 +3767,9 @@ export interface ProductPreview {
    *  carries on and lands in the product's `checks[profile]`. Absent from an
    *  older backend. */
   checking?: boolean;
+  /** The project's sources the check could not read, and why: it ran
+   *  without them. Absent from an older backend. */
+  unreadable?: UnreadableSource[];
 }
 
 /** What `importDomainModel` loaded. */
@@ -4136,7 +4163,7 @@ export const api = {
     }),
   /** The services and applications of a project's repositories beyond its gears. */
   projectComponents: (token: string, projectId: string) =>
-    request<{ items: ProjectComponent[]; total: number; repos: number }>(
+    request<{ items: ProjectComponent[]; total: number; repos: number; unreadable?: { sources: UnreadableSource[] } }>(
       `/studio-components-catalog/v1/project-components?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),

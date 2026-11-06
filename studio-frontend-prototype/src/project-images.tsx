@@ -14,6 +14,7 @@ import { api, type DeployEnvironment, type ImageRetention, type ProjectImage } f
 import { DataTable, When, type RowAction } from "./data-table";
 import { slug } from "./environments";
 import { errText } from "./format";
+import { personLabel, usePeople } from "./user-names";
 import {
   defaultMirrorName,
   groupImages,
@@ -85,6 +86,7 @@ export function ProjectImages({
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [mine, setMine] = useState(0);
+  const people = usePeople(token, [projectId]);
   const [panel, setPanel] = useState<"retention" | "import" | null>(null);
   const [focus, setFocus] = useState<string | null>(() => wanted);
 
@@ -316,7 +318,7 @@ export function ProjectImages({
               cell: ({ image: i }) => (
                 <>
                   <When iso={i.pushed_at} />
-                  {i.pushed_by ? <div className="sub">by {i.pushed_by}</div> : null}
+                  {i.pushed_by ? <div className="sub">by {personLabel(i.pushed_by, null, people)}</div> : null}
                 </>
               ),
             },

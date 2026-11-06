@@ -138,6 +138,10 @@ pub struct EnvironmentDto {
     /// What should be fixed but does not stop a build or a deploy, e.g. "the
     /// cluster gets a credential that can write".
     pub warnings: Vec<String>,
+    /// The code of each of `warnings`, in its order: `PULL_USES_PUSH_LOGIN`
+    /// while the cluster pulls with the push login. Ignored in a request.
+    #[serde(default)]
+    pub warning_codes: Vec<String>,
     pub updated_by: String,
     pub updated_at: String,
 }
@@ -199,6 +203,7 @@ fn kind_str(k: EnvironmentKind) -> &'static str {
 fn env_dto(e: Environment) -> EnvironmentDto {
     let strictness = e.strictness().as_str().to_owned();
     let warnings = e.warnings();
+    let warning_codes = e.warning_codes();
     let b = e.boundaries;
     EnvironmentDto {
         builder_image: b.builder_image,
@@ -209,6 +214,7 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         allow_broad_registry_token: b.allow_broad_registry_token,
         infra: infra_routes::placement_dto(b.infra),
         warnings,
+        warning_codes,
         id: e.id,
         name: e.name,
         description: e.description,

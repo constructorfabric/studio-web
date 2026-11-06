@@ -1429,6 +1429,10 @@ response	GET /studio-components-catalog/v1/gearbox/catalogue	roots.source_id	Str
 response	GET /studio-components-catalog/v1/gearbox/catalogue	roots.tier	String	always
 response	GET /studio-components-catalog/v1/gearbox/catalogue	roots.url	String	always
 response	GET /studio-components-catalog/v1/gearbox/catalogue	source_id	String	always
+response	GET /studio-components-catalog/v1/gearbox/catalogue	unreadable	Vec<{}>	always
+response	GET /studio-components-catalog/v1/gearbox/catalogue	unreadable.project_id	Uuid	optional
+response	GET /studio-components-catalog/v1/gearbox/catalogue	unreadable.reason	String	always
+response	GET /studio-components-catalog/v1/gearbox/catalogue	unreadable.source	String	always
 response	GET /studio-components-catalog/v1/platform/curators	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/platform/curators	items.id	String	always
 response	GET /studio-components-catalog/v1/platform/curators	items.name	String	optional
@@ -1487,6 +1491,10 @@ response	GET /studio-components-catalog/v1/project-components	items.reasons	Vec<
 response	GET /studio-components-catalog/v1/project-components	items.repo	String	always
 response	GET /studio-components-catalog/v1/project-components	repos	u32	always
 response	GET /studio-components-catalog/v1/project-components	total	u32	always
+response	GET /studio-components-catalog/v1/project-components	unreadable	{}	always
+response	GET /studio-components-catalog/v1/project-components	unreadable.sources	Vec<{}>	always
+response	GET /studio-components-catalog/v1/project-components	unreadable.sources.reason	String	always
+response	GET /studio-components-catalog/v1/project-components	unreadable.sources.source	String	always
 response	GET /studio-components-catalog/v1/publications	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/publications	items.artifact	{}	optional
 response	GET /studio-components-catalog/v1/publications	items.artifact.kind	String	optional
@@ -2869,6 +2877,7 @@ response	GET /studio-environments/v1/environments	items.research_project	String	
 response	GET /studio-environments/v1/environments	items.strictness	String	always
 response	GET /studio-environments/v1/environments	items.updated_at	String	always
 response	GET /studio-environments/v1/environments	items.updated_by	String	always
+response	GET /studio-environments/v1/environments	items.warning_codes	Vec<String>	always
 response	GET /studio-environments/v1/environments	items.warnings	Vec<String>	always
 response	GET /studio-environments/v1/environments	may_manage	bool	always
 response	GET /studio-environments/v1/environments	open_clusters	{}	always
@@ -2896,6 +2905,8 @@ response	GET /studio-environments/v1/environments/{}/readiness	level	String	alwa
 response	GET /studio-environments/v1/environments/{}/readiness	missing	Vec<String>	always
 response	GET /studio-environments/v1/environments/{}/readiness	namespaces	Vec<String>	always
 response	GET /studio-environments/v1/environments/{}/readiness	policy_enforced	bool	always
+response	GET /studio-environments/v1/environments/{}/readiness	warning_codes	Vec<String>	always
+response	GET /studio-environments/v1/environments/{}/readiness	warnings	Vec<String>	always
 response	GET /studio-environments/v1/image-retention	inherited	bool	optional
 response	GET /studio-environments/v1/image-retention	keep_days	u32	optional
 response	GET /studio-environments/v1/image-retention	keep_last	u32	optional
@@ -3046,6 +3057,7 @@ response	GET /studio-environments/v1/project-environments	items.research_project
 response	GET /studio-environments/v1/project-environments	items.strictness	String	always
 response	GET /studio-environments/v1/project-environments	items.updated_at	String	always
 response	GET /studio-environments/v1/project-environments	items.updated_by	String	always
+response	GET /studio-environments/v1/project-environments	items.warning_codes	Vec<String>	always
 response	GET /studio-environments/v1/project-environments	items.warnings	Vec<String>	always
 response	GET /studio-environments/v1/project-environments	open_clusters	{}	always
 response	GET /studio-environments/v1/project-environments	open_clusters.connection_ids	Vec<Uuid>	always
@@ -3144,6 +3156,7 @@ response	GET /studio-environments/v1/targets	environments.environment.research_p
 response	GET /studio-environments/v1/targets	environments.environment.strictness	String	always
 response	GET /studio-environments/v1/targets	environments.environment.updated_at	String	always
 response	GET /studio-environments/v1/targets	environments.environment.updated_by	String	always
+response	GET /studio-environments/v1/targets	environments.environment.warning_codes	Vec<String>	always
 response	GET /studio-environments/v1/targets	environments.environment.warnings	Vec<String>	always
 response	GET /studio-environments/v1/targets	environments.namespace	String	always
 response	GET /studio-environments/v1/targets	organization_id	Uuid	always
@@ -3439,6 +3452,10 @@ response	GET /studio-product/v1/gearbox	sources.git_ref	String	always
 response	GET /studio-product/v1/gearbox	sources.repo	String	always
 response	GET /studio-product/v1/gearbox	sources.source_id	String	always
 response	GET /studio-product/v1/gearbox	sources.tier	String	always
+response	GET /studio-product/v1/gearbox	unreadable	Vec<{}>	always
+response	GET /studio-product/v1/gearbox	unreadable.project_id	Uuid	optional
+response	GET /studio-product/v1/gearbox	unreadable.reason	String	always
+response	GET /studio-product/v1/gearbox	unreadable.source	String	always
 response	GET /studio-product/v1/gearbox/catalogue	catalogue	Value	always
 response	GET /studio-product/v1/gearbox/catalogue	corpus	String	always
 response	GET /studio-product/v1/gearbox/catalogue	corpus_clone_path	String	optional
@@ -3458,6 +3475,10 @@ response	GET /studio-product/v1/gearbox/catalogue	roots.source_id	String	always
 response	GET /studio-product/v1/gearbox/catalogue	roots.tier	String	always
 response	GET /studio-product/v1/gearbox/catalogue	roots.url	String	always
 response	GET /studio-product/v1/gearbox/catalogue	source_id	String	always
+response	GET /studio-product/v1/gearbox/catalogue	unreadable	Vec<{}>	always
+response	GET /studio-product/v1/gearbox/catalogue	unreadable.project_id	Uuid	optional
+response	GET /studio-product/v1/gearbox/catalogue	unreadable.reason	String	always
+response	GET /studio-product/v1/gearbox/catalogue	unreadable.source	String	always
 response	GET /studio-product/v1/gearbox/extension-points	items	Vec<{}>	always
 response	GET /studio-product/v1/gearbox/extension-points	items.host	String	always
 response	GET /studio-product/v1/gearbox/extension-points	items.host_id	String	always
@@ -5190,6 +5211,7 @@ response	POST /studio-environments/v1/builds/plan	sources.id	String	always
 response	POST /studio-environments/v1/builds/plan	sources.ref	String	always
 response	POST /studio-environments/v1/builds/plan	sources.repository	String	always
 response	POST /studio-environments/v1/builds/plan	strictness	String	always
+response	POST /studio-environments/v1/builds/plan	warning_codes	Vec<String>	always
 response	POST /studio-environments/v1/builds/plan	warnings	Vec<String>	always
 response	POST /studio-environments/v1/deployments	action	String	always
 response	POST /studio-environments/v1/deployments	build	String	optional
@@ -5301,6 +5323,7 @@ response	POST /studio-environments/v1/environments	research_project	String	optio
 response	POST /studio-environments/v1/environments	strictness	String	always
 response	POST /studio-environments/v1/environments	updated_at	String	always
 response	POST /studio-environments/v1/environments	updated_by	String	always
+response	POST /studio-environments/v1/environments	warning_codes	Vec<String>	always
 response	POST /studio-environments/v1/environments	warnings	Vec<String>	always
 response	POST /studio-environments/v1/environments/{}/push-tokens	expires_in	u64	optional
 response	POST /studio-environments/v1/environments/{}/push-tokens	prefix	String	always
@@ -5351,6 +5374,7 @@ response	POST /studio-environments/v1/project-environments	research_project	Stri
 response	POST /studio-environments/v1/project-environments	strictness	String	always
 response	POST /studio-environments/v1/project-environments	updated_at	String	always
 response	POST /studio-environments/v1/project-environments	updated_by	String	always
+response	POST /studio-environments/v1/project-environments	warning_codes	Vec<String>	always
 response	POST /studio-environments/v1/project-environments	warnings	Vec<String>	always
 response	POST /studio-environments/v1/project-environments/{}/test	message	String	always
 response	POST /studio-identity/v1/memberships/backfill	failed	i64	always
@@ -5626,6 +5650,10 @@ response	POST /studio-product/v1/projects/{}/product/preview	plugin_options.avai
 response	POST /studio-product/v1/projects/{}/product/preview	plugin_options.host	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	product_gdl	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	profile	String	always
+response	POST /studio-product/v1/projects/{}/product/preview	unreadable	Vec<{}>	always
+response	POST /studio-product/v1/projects/{}/product/preview	unreadable.project_id	Uuid	optional
+response	POST /studio-product/v1/projects/{}/product/preview	unreadable.reason	String	always
+response	POST /studio-product/v1/projects/{}/product/preview	unreadable.source	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	written	{}	optional
 response	POST /studio-product/v1/projects/{}/product/preview	written.branch	String	optional
 response	POST /studio-product/v1/projects/{}/product/preview	written.commit_sha	String	optional
@@ -6035,6 +6063,7 @@ response	PUT /studio-environments/v1/environments/{}	research_project	String	opt
 response	PUT /studio-environments/v1/environments/{}	strictness	String	always
 response	PUT /studio-environments/v1/environments/{}	updated_at	String	always
 response	PUT /studio-environments/v1/environments/{}	updated_by	String	always
+response	PUT /studio-environments/v1/environments/{}	warning_codes	Vec<String>	always
 response	PUT /studio-environments/v1/environments/{}	warnings	Vec<String>	always
 response	PUT /studio-environments/v1/image-retention	inherited	bool	optional
 response	PUT /studio-environments/v1/image-retention	keep_days	u32	optional
@@ -6153,6 +6182,7 @@ response	PUT /studio-environments/v1/project-environments/{}	research_project	St
 response	PUT /studio-environments/v1/project-environments/{}	strictness	String	always
 response	PUT /studio-environments/v1/project-environments/{}	updated_at	String	always
 response	PUT /studio-environments/v1/project-environments/{}	updated_by	String	always
+response	PUT /studio-environments/v1/project-environments/{}	warning_codes	Vec<String>	always
 response	PUT /studio-environments/v1/project-environments/{}	warnings	Vec<String>	always
 response	PUT /studio-organizations/v1/logo	content_type	String	always
 response	PUT /studio-organizations/v1/logo	data	String	always

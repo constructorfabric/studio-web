@@ -2175,20 +2175,46 @@ impl CatalogService {
         ctx: &SecurityContext,
         project_id: &str,
     ) -> Vec<ProjectRepo> {
+        self.source_repos_checked(ctx, project_id).await.0
+    }
+
+    /// [`Self::source_repos`], and every source left out with why: the
+    /// project's config could not be read (`project config`), a source names
+    /// no connection, or its connection is not visible -- deleted, or another
+    /// user's personal one. Each is logged with the project and the source.
+    pub(super) async fn source_repos_checked(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> (Vec<ProjectRepo>, Vec<SkippedSource>) {
         let (Some(am), Some(connectors)) =
             (self.account_management.get(), self.connector_service())
         else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let Ok(project) = Uuid::parse_str(project_id) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let mut out: Vec<ProjectRepo> = Vec::new();
-        for source in crate::project_sources::read(am.as_ref(), ctx, project)
-            .await
-            .unwrap_or_default()
-        {
+        let mut skipped = Vec::new();
+        let sources = match crate::project_sources::read_checked(am.as_ref(), ctx, project).await {
+            Ok(s) => s.unwrap_or_default(),
+            Err(reason) => {
+                skipped.push(SkippedSource::new(
+                    project_id,
+                    crate::project_sources::CONFIG_SOURCE,
+                    reason,
+                ));
+                Vec::new()
+            }
+        };
+        for source in sources {
             let Some(connection_id) = source.connection_id else {
+                skipped.push(SkippedSource::new(
+                    project_id,
+                    &source.full_path,
+                    "it names no connection: pick one for it in the project's Sources".into(),
+                ));
                 continue;
             };
             match connectors.nearest_by_id(ctx, project, connection_id).await {
@@ -2200,16 +2226,44 @@ impl CatalogService {
                     branch: source.branch.unwrap_or_default(),
                     owned: false,
                 }),
-                None => tracing::info!(
+                None => skipped.push(SkippedSource::new(
                     project_id,
-                    repo = source.full_path,
-                    "studio-components-catalog: a project source's connection is not visible"
-                ),
+                    &source.full_path,
+                    format!(
+                        "its connection {connection_id} is not visible here: it was deleted, \
+                         or it belongs to another user (personal scope)"
+                    ),
+                )),
             }
         }
         let mut seen = std::collections::HashSet::new();
         out.retain(|r| seen.insert(r.repo.trim().to_ascii_lowercase()));
-        out
+        (out, skipped)
+    }
+}
+
+/// A project source a read left out, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SkippedSource {
+    /// `owner/repo`, or `project config`.
+    pub(crate) source: String,
+    pub(crate) reason: String,
+}
+
+impl SkippedSource {
+    /// Logged with the project and the source as it is made: a left-out
+    /// source is never silent.
+    pub(crate) fn new(project_id: &str, source: &str, reason: String) -> Self {
+        tracing::warn!(
+            project_id,
+            repo = source,
+            %reason,
+            "studio-components-catalog: a project source is not readable"
+        );
+        Self {
+            source: source.to_owned(),
+            reason,
+        }
     }
 }
 
