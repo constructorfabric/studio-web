@@ -2114,15 +2114,6 @@
           "description": "A tab of the project: what it shows."
         },
         {
-          "name": "frontend",
-          "type": "frontx-package",
-          "relation": "frontx-package",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Frontend",
-          "description": "A tab of the project: what it shows."
-        },
-        {
           "name": "parts",
           "type": "gear",
           "relation": "gear",
@@ -2132,12 +2123,12 @@
           "description": "A tab of the project: what it shows."
         },
         {
-          "name": "builds",
-          "type": "workflow",
-          "relation": "workflow",
+          "name": "releases",
+          "type": "deployment",
+          "relation": "deployment",
           "extends": "edge",
           "relationType": "shows",
-          "relationLabel": "Builds",
+          "relationLabel": "Releases",
           "description": "A tab of the project: what it shows."
         },
         {
@@ -2147,15 +2138,6 @@
           "extends": "edge",
           "relationType": "shows",
           "relationLabel": "Tests",
-          "description": "A tab of the project: what it shows."
-        },
-        {
-          "name": "deploys",
-          "type": "deployment",
-          "relation": "deployment",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Deploys",
           "description": "A tab of the project: what it shows."
         },
         {
@@ -2195,30 +2177,12 @@
           "description": "A tab of the project: what it shows."
         },
         {
-          "name": "timeline",
-          "type": "milestone",
-          "relation": "milestone",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Timeline",
-          "description": "A tab of the project: what it shows."
-        },
-        {
           "name": "people",
           "type": "person",
           "relation": "person",
           "extends": "edge",
           "relationType": "shows",
           "relationLabel": "Team",
-          "description": "A tab of the project: what it shows."
-        },
-        {
-          "name": "automation",
-          "type": "workflow",
-          "relation": "workflow",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Automation",
           "description": "A tab of the project: what it shows."
         }
       ],
@@ -2415,7 +2379,7 @@
           "relation": "deployment-environment",
           "extends": "edge",
           "relationType": "shows",
-          "relationLabel": "Environments",
+          "relationLabel": "Infrastructure",
           "description": "A tab of the organization: what it shows."
         },
         {
@@ -2530,7 +2494,7 @@
           "relation": "project-type",
           "extends": "edge",
           "relationType": "shows",
-          "relationLabel": "Project types",
+          "relationLabel": "Project templates",
           "description": "A tab of the workspace: what it shows."
         },
         {
@@ -2540,15 +2504,6 @@
           "extends": "edge",
           "relationType": "shows",
           "relationLabel": "Document types",
-          "description": "A tab of the workspace: what it shows."
-        },
-        {
-          "name": "process",
-          "type": "lifecycle-stage",
-          "relation": "lifecycle-stage",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Process",
           "description": "A tab of the workspace: what it shows."
         }
       ]
