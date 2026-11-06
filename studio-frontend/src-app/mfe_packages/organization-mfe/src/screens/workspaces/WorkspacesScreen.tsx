@@ -7,7 +7,7 @@ import {
   useMfeBridge,
   useSharedProperty,
 } from "@gears-frontx/react";
-import { Folder } from "lucide-react";
+import { Folder, Search } from "lucide-react";
 import {
   Button,
   Empty,
@@ -16,6 +16,7 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
+  Input,
   Skeleton,
 } from "@gears-frontx/ui-kit";
 import {
@@ -27,7 +28,7 @@ import {
 } from "@constructor-studio/mfe-shared";
 import { requestWorkspace } from "../../actions/workspaceActions";
 import { useWorkspacesScreenTranslations, useWorkspacesText } from "../../i18n";
-import { WorkspacesToolbar } from "./components/WorkspacesToolbar";
+import { WorkspacesHeader } from "./components/WorkspacesHeader";
 import { WorkspacesTable } from "./components/WorkspacesTable";
 import styles from "./WorkspacesScreen.module.css";
 
@@ -90,16 +91,29 @@ const WorkspaceList: React.FC<{
 
   return (
     <div className={styles.screen}>
-      <WorkspacesToolbar
-        query={query}
-        onQueryChange={setQuery}
+      <WorkspacesHeader
         busy={pending}
         canCreate
         total={all.length}
         projectTotal={projectTotal}
       />
 
-      <div className={styles.panel}>
+      <div className={styles.body}>
+        {/* TODO: DataGrid's text search replaces this row. */}
+        <div className={styles.searchRow}>
+          <div className={styles.searchBox}>
+            <Input
+              className={styles.search}
+              type="search"
+              value={query}
+              icon={<Search size={16} strokeWidth={1.3} />}
+              placeholder={t("search_placeholder")}
+              onChange={(event) => setQuery(event.target.value)}
+              aria-label={t("search_placeholder")}
+            />
+          </div>
+        </div>
+
         {pending ? (
           <div className={styles.loading}>
             <Skeleton className={styles.rowSkeleton} />
@@ -171,9 +185,7 @@ export const WorkspacesScreen: React.FC = () => {
   if (!org) {
     return (
       <div className={styles.screen} data-state="no-organization">
-        <WorkspacesToolbar
-          query=""
-          onQueryChange={() => {}}
+        <WorkspacesHeader
           busy={loading || translationsPending}
           canCreate={false}
         />

@@ -41,6 +41,7 @@ export {
   type ChainOutcomes,
 } from './host/chainOutcome';
 export { useNotify } from './host/useNotify';
+export { SectionHeader } from './ui/SectionHeader';
 export { StudioMfeLifecycle } from './mfe/StudioMfeLifecycle';
 export { authShared } from './auth/authShared';
 export {

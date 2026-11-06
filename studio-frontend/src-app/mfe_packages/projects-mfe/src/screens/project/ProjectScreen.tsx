@@ -8,14 +8,13 @@ import {
   useMfeBridge,
 } from '@gears-frontx/react';
 import { Skeleton } from '@gears-frontx/ui-kit';
-import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
+import { SectionHeader, useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
 import { useProjectScreenTranslations, useProjectText } from '../../i18n';
 import { useArtifactCount } from '../../shared/useArtifacts';
 import { useArtifactImport } from '../../shared/useArtifactImport';
 import { useSourcesSync } from '../../shared/useSourcesSync';
 import { NAV_SLICE_KEY, landOnFirstImport, type ProjectSection } from '../../slices/navSlice';
 import { announceSection } from '../../actions/projectsActions';
-import { SectionHeader } from '../../components/SectionHeader';
 import { PlaceholderSection } from './sections/PlaceholderSection';
 import { ArtifactsSection } from './sections/ArtifactsSection';
 import { SpecsSection } from './sections/specs/SpecsSection';

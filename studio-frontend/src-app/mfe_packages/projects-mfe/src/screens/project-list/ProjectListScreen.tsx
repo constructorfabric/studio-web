@@ -12,12 +12,12 @@ import {
   Skeleton,
 } from '@gears-frontx/ui-kit';
 import { useMfeBridge } from '@gears-frontx/react';
+import { SectionHeader } from '@constructor-studio/mfe-shared';
 import { useProjectListScreenTranslations, useProjectListText } from '../../i18n';
 import { WorkspaceProjectsProvider } from '../../shared/workspaceProjects';
 import { useProjectList } from '../../shared/useProjectList';
 import { DEFAULT_SORT_OPTION, type ProjectSortOption } from '../../model/project';
 import { openProjectWizard } from '../../actions/wizardActions';
-import { SectionHeader } from '../../components/SectionHeader';
 import { ProjectsTable } from './components/ProjectsTable';
 import styles from './ProjectListScreen.module.css';
 
